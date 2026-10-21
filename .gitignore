@@ -1,0 +1,9 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+__pycache__/
+/资料/
+output/*
+!output/README.md

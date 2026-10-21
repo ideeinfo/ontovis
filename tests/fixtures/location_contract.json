@@ -1,0 +1,1462 @@
+{
+  "fixtureKind": "synthetic_location_contract",
+  "contractVersion": "0.1",
+  "description": "全为合成数据；facts为可信提供方的录制替身，不是客户端权限。覆盖字段只关联验收编号，不表示真实验收通过。case request/facts/expected仅浅覆盖base同级字段，report导出完整输入和响应。",
+  "baseRequest": {
+    "selectedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+    "sceneId": "fixture-scene",
+    "resolutionMode": "live",
+    "contextEpoch": "fixture-context-1"
+  },
+  "baseFacts": {
+    "requestId": "fixture-request-1",
+    "ontobaseConnectionId": "fixture-ob",
+    "projectCode": "fixture-project",
+    "installationContextId": "fixture-installation-1",
+    "resolvedAsOf": "2026-10-20T06:00:00Z",
+    "resolvedAt": "2026-10-20T06:00:00Z",
+    "sourceState": "connected",
+    "access": {
+      "project": true,
+      "scene": true,
+      "objectRefs": [
+        {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+        {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+        {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+        {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+        {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"}
+      ]
+    },
+    "objects": [
+      {
+        "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+        "resolution": "exact",
+        "lifecycle": "active",
+        "entityRevision": "fixture-entity-r1",
+        "installationContextId": "fixture-installation-1"
+      },
+      {
+        "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+        "resolution": "exact",
+        "lifecycle": "active",
+        "entityRevision": "fixture-entity-r1",
+        "installationContextId": "fixture-installation-1"
+      },
+      {
+        "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+        "resolution": "exact",
+        "lifecycle": "active",
+        "entityRevision": "fixture-entity-r1",
+        "installationContextId": "fixture-installation-1"
+      },
+      {
+        "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+        "resolution": "exact",
+        "lifecycle": "active",
+        "entityRevision": "fixture-entity-r1",
+        "installationContextId": "fixture-installation-1"
+      },
+      {
+        "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+        "resolution": "exact",
+        "lifecycle": "active",
+        "entityRevision": "fixture-entity-r1",
+        "installationContextId": "fixture-installation-1"
+      }
+    ],
+    "scene": {
+      "sceneId": "fixture-scene",
+      "sceneRevision": "fixture-scene-r1",
+      "bindingRevision": "fixture-binding-r1",
+      "published": true,
+      "unavailableParts": [],
+      "instances": [
+        {
+          "sceneModelInstanceId": "fixture-instance-1",
+          "installationContextId": "fixture-installation-1",
+          "modelVersionId": "fixture-model-v1",
+          "componentKeys": ["fixture-ct-body", "fixture-cn1-body", "fixture-cn-body", "fixture-cn-door", "fixture-cn-body-alt", "fixture-unit-body"]
+        }
+      ]
+    },
+    "hierarchy": {
+      "resolvedAsOf": "2026-10-20T06:00:00Z",
+      "hierarchyRevision": "fixture-tree-r1",
+      "installationContextId": "fixture-installation-1",
+      "consistent": true,
+      "completeness": "complete",
+      "path": [
+        {
+          "relationId": "fixture-child-cn",
+          "status": "confirmed",
+          "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+          "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+          "relationRevision": "fixture-relation-r1",
+          "validFrom": "2026-10-01T00:00:00Z",
+          "validTo": null,
+          "evidenceRefs": [
+            {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+          ]
+        },
+        {
+          "relationId": "fixture-cn-unit",
+          "status": "confirmed",
+          "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+          "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+          "relationRevision": "fixture-relation-r1",
+          "validFrom": "2026-10-01T00:00:00Z",
+          "validTo": null,
+          "evidenceRefs": [
+            {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+          ]
+        }
+      ]
+    },
+    "representations": [
+      {
+        "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+        "status": "published",
+        "sceneRevision": "fixture-scene-r1",
+        "bindingRevision": "fixture-binding-r1",
+        "sceneModelInstanceId": "fixture-instance-1",
+        "modelVersionId": "fixture-model-v1",
+        "componentKeys": ["fixture-ct-body"],
+        "entityRevision": "fixture-entity-r1",
+        "reviewedPrimary": true,
+        "geometryQuality": "proxy_schematic"
+      },
+      {
+        "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+        "status": "published",
+        "sceneRevision": "fixture-scene-r1",
+        "bindingRevision": "fixture-binding-r1",
+        "sceneModelInstanceId": "fixture-instance-1",
+        "modelVersionId": "fixture-model-v1",
+        "componentKeys": ["fixture-cn1-body"],
+        "entityRevision": "fixture-entity-r1",
+        "reviewedPrimary": true,
+        "geometryQuality": "proxy_schematic"
+      },
+      {
+        "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+        "status": "published",
+        "sceneRevision": "fixture-scene-r1",
+        "bindingRevision": "fixture-binding-r1",
+        "sceneModelInstanceId": "fixture-instance-1",
+        "modelVersionId": "fixture-model-v1",
+        "componentKeys": ["fixture-cn-body", "fixture-cn-door"],
+        "entityRevision": "fixture-entity-r1",
+        "reviewedPrimary": true,
+        "geometryQuality": "source_candidate"
+      },
+      {
+        "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+        "status": "published",
+        "sceneRevision": "fixture-scene-r1",
+        "bindingRevision": "fixture-binding-r1",
+        "sceneModelInstanceId": "fixture-instance-1",
+        "modelVersionId": "fixture-model-v1",
+        "componentKeys": ["fixture-unit-body"],
+        "entityRevision": "fixture-entity-r1",
+        "reviewedPrimary": true,
+        "geometryQuality": "proxy_schematic"
+      }
+    ]
+  },
+  "baseExpected": {
+    "requestedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+    "selectedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+    "identityState": "exact",
+    "canonicalObjectRef": null,
+    "locatedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+    "locationMode": "ancestor_proxy",
+    "geometryQuality": "source_candidate",
+    "resolutionMode": "live",
+    "resolvedAsOf": "2026-10-20T06:00:00Z",
+    "resolvedAt": "2026-10-20T06:00:00Z",
+    "sceneRevision": "fixture-scene-r1",
+    "bindingRevision": "fixture-binding-r1",
+    "hierarchyRevision": "fixture-tree-r1",
+    "modelVersionId": "fixture-model-v1",
+    "sceneModelInstanceId": "fixture-instance-1",
+    "componentKey": "fixture-cn-body",
+    "componentKeys": ["fixture-cn-body", "fixture-cn-door"],
+    "path": [
+      {
+        "relationId": "fixture-child-cn",
+        "status": "confirmed",
+        "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+        "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+        "relationRevision": "fixture-relation-r1",
+        "validFrom": "2026-10-01T00:00:00Z",
+        "validTo": null,
+        "evidenceRefs": [
+          {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+        ]
+      }
+    ],
+    "representationChoices": [],
+    "reasonCode": "ANCESTOR_GEOMETRY",
+    "reason": "定位到所属祖先几何；所选设备未独立建模，内部坐标未知",
+    "contextEpoch": "fixture-context-1"
+  },
+  "cases": [
+    {
+      "caseId": "child-ancestor-proxy",
+      "covers": ["S-03", "S-16"],
+      "expected": {}
+    },
+    {
+      "caseId": "ct-direct-composition",
+      "covers": ["S-02", "S-05"],
+      "request": {
+        "selectedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"}
+      },
+      "expected": {
+        "requestedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+        "selectedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+        "locatedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+        "locationMode": "direct_geometry",
+        "geometryQuality": "proxy_schematic",
+        "hierarchyRevision": null,
+        "componentKey": "fixture-ct-body",
+        "componentKeys": ["fixture-ct-body"],
+        "path": [],
+        "reasonCode": "DIRECT_GEOMETRY",
+        "reason": "定位到所选对象的已发布几何"
+      }
+    },
+    {
+      "caseId": "cn1-direct-composition",
+      "covers": ["S-02", "S-05"],
+      "request": {
+        "selectedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"}
+      },
+      "expected": {
+        "requestedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+        "selectedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+        "locatedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+        "locationMode": "direct_geometry",
+        "geometryQuality": "proxy_schematic",
+        "hierarchyRevision": null,
+        "componentKey": "fixture-cn1-body",
+        "componentKeys": ["fixture-cn1-body"],
+        "path": [],
+        "reasonCode": "DIRECT_GEOMETRY",
+        "reason": "定位到所选对象的已发布几何"
+      }
+    },
+    {
+      "caseId": "cn-direct-composition",
+      "covers": ["S-02", "S-05"],
+      "request": {
+        "selectedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"}
+      },
+      "expected": {
+        "requestedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+        "selectedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+        "locatedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+        "locationMode": "direct_geometry",
+        "geometryQuality": "source_candidate",
+        "hierarchyRevision": null,
+        "componentKey": "fixture-cn-body",
+        "componentKeys": ["fixture-cn-body", "fixture-cn-door"],
+        "path": [],
+        "reasonCode": "DIRECT_GEOMETRY",
+        "reason": "定位到所选对象的已发布几何"
+      }
+    },
+    {
+      "caseId": "project-forbidden",
+      "covers": ["S-11"],
+      "facts": {
+        "access": {
+          "project": false,
+          "scene": true,
+          "objectRefs": [
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"}
+          ]
+        }
+      },
+      "expectedError": {"code": "FORBIDDEN", "message": "当前无权访问项目或场景", "retryable": false, "requestId": "fixture-request-1"}
+    },
+    {
+      "caseId": "scene-forbidden",
+      "covers": ["S-11"],
+      "facts": {
+        "access": {
+          "project": true,
+          "scene": false,
+          "objectRefs": [
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"}
+          ]
+        }
+      },
+      "expectedError": {"code": "FORBIDDEN", "message": "当前无权访问项目或场景", "retryable": false, "requestId": "fixture-request-1"}
+    },
+    {
+      "caseId": "object-hidden",
+      "covers": ["S-11"],
+      "facts": {
+        "access": {
+          "project": true,
+          "scene": true,
+          "objectRefs": [
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"}
+          ]
+        }
+      },
+      "expectedError": {"code": "NOT_FOUND_OR_FORBIDDEN", "message": "对象不可用或无权访问", "retryable": false, "requestId": "fixture-request-1"}
+    },
+    {
+      "caseId": "object-missing",
+      "covers": ["S-11"],
+      "facts": {
+        "objects": [
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          }
+        ]
+      },
+      "expectedError": {"code": "NOT_FOUND_OR_FORBIDDEN", "message": "对象不可用或无权访问", "retryable": false, "requestId": "fixture-request-1"}
+    },
+    {
+      "caseId": "same-uid-other-project",
+      "covers": ["S-05", "S-11"],
+      "request": {
+        "selectedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-other-project", "entityUid": "fixture-controller"}
+      },
+      "expectedError": {"code": "NOT_FOUND_OR_FORBIDDEN", "message": "对象不可用或无权访问", "retryable": false, "requestId": "fixture-request-1"}
+    },
+    {
+      "caseId": "source-unavailable",
+      "covers": ["S-11"],
+      "facts": {"sourceState": "unavailable"},
+      "expectedError": {"code": "SOURCE_UNAVAILABLE", "message": "工程对象来源暂不可用", "retryable": true, "requestId": "fixture-request-1"}
+    },
+    {
+      "caseId": "merged-identity-visible",
+      "covers": ["S-10"],
+      "facts": {
+        "objects": [
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            "resolution": "merged",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1",
+            "canonicalRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-canonical"}
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          }
+        ],
+        "access": {
+          "project": true,
+          "scene": true,
+          "objectRefs": [
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-canonical"}
+          ]
+        }
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "IDENTITY_CHANGED",
+        "reason": "工程身份已变化，绑定需要复核",
+        "identityState": "needs_review",
+        "canonicalObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-canonical"}
+      }
+    },
+    {
+      "caseId": "merged-identity-hidden",
+      "covers": ["S-10", "S-11"],
+      "facts": {
+        "objects": [
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            "resolution": "merged",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1",
+            "canonicalRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-canonical"}
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          }
+        ]
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "IDENTITY_CHANGED",
+        "reason": "工程身份已变化，绑定需要复核",
+        "identityState": "needs_review"
+      }
+    },
+    {
+      "caseId": "retired-selected-object",
+      "covers": ["S-10"],
+      "facts": {
+        "objects": [
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            "resolution": "exact",
+            "lifecycle": "retired",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          }
+        ]
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "OBJECT_RETIRED",
+        "reason": "工程对象已退役，当前位置不可用"
+      }
+    },
+    {
+      "caseId": "installation-context-mismatch",
+      "covers": ["S-05"],
+      "facts": {
+        "objects": [
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-other-installation"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            "resolution": "exact",
+            "lifecycle": "active",
+            "entityRevision": "fixture-entity-r1",
+            "installationContextId": "fixture-installation-1"
+          }
+        ]
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "INSTANCE_MISMATCH",
+        "reason": "对象与安装实例不一致"
+      }
+    },
+    {
+      "caseId": "unknown-scene-instance",
+      "covers": ["S-05"],
+      "request": {"sceneModelInstanceId": "fixture-other-instance"},
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "INSTANCE_MISMATCH",
+        "reason": "对象与安装实例不一致"
+      }
+    },
+    {
+      "caseId": "no-confirmed-chain",
+      "covers": ["S-04"],
+      "facts": {"hierarchy": null},
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "NO_CONFIRMED_PATH",
+        "reason": "没有完整的已确认物理父链"
+      }
+    },
+    {
+      "caseId": "incomplete-chain",
+      "covers": ["S-04"],
+      "facts": {
+        "hierarchy": {
+          "resolvedAsOf": "2026-10-20T06:00:00Z",
+          "hierarchyRevision": "fixture-tree-r1",
+          "installationContextId": "fixture-installation-1",
+          "consistent": true,
+          "completeness": "partial",
+          "path": [
+            {
+              "relationId": "fixture-child-cn",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            },
+            {
+              "relationId": "fixture-cn-unit",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "NO_CONFIRMED_PATH",
+        "reason": "没有完整的已确认物理父链"
+      }
+    },
+    {
+      "caseId": "restricted-ancestor-no-skip",
+      "covers": ["S-04", "S-11"],
+      "facts": {
+        "access": {
+          "project": true,
+          "scene": true,
+          "objectRefs": [
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"}
+          ]
+        }
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "PATH_UNAVAILABLE",
+        "reason": "物理父链不可用"
+      }
+    },
+    {
+      "caseId": "unconfirmed-relation",
+      "covers": ["S-04"],
+      "facts": {
+        "hierarchy": {
+          "resolvedAsOf": "2026-10-20T06:00:00Z",
+          "hierarchyRevision": "fixture-tree-r1",
+          "installationContextId": "fixture-installation-1",
+          "consistent": true,
+          "completeness": "complete",
+          "path": [
+            {
+              "relationId": "fixture-child-cn",
+              "status": "candidate",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            },
+            {
+              "relationId": "fixture-cn-unit",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "NO_CONFIRMED_PATH",
+        "reason": "没有完整的已确认物理父链"
+      }
+    },
+    {
+      "caseId": "nearest-stale-no-farther-fallback",
+      "covers": ["S-04"],
+      "facts": {
+        "representations": [
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-ct-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn1-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "status": "stale",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn-body", "fixture-cn-door"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "source_candidate"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-unit-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          }
+        ]
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": "fixture-tree-r1",
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "REVISION_CONFLICT",
+        "reason": "读取修订不一致，请重新获取"
+      }
+    },
+    {
+      "caseId": "fixed-scene-missing",
+      "covers": ["S-09"],
+      "request": {"resolutionMode": "history", "asOf": "2026-10-20T06:00:00Z", "sceneRevision": "fixture-scene-missing"},
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "HISTORY_UNAVAILABLE",
+        "reason": "指定历史组合不可用，请另行选择查询时点",
+        "resolutionMode": "history",
+        "sceneRevision": null,
+        "bindingRevision": null
+      }
+    },
+    {
+      "caseId": "fixed-tree-missing",
+      "covers": ["S-09"],
+      "request": {"resolutionMode": "history", "asOf": "2026-10-20T06:00:00Z", "sceneRevision": "fixture-scene-r1", "hierarchyRevision": "fixture-tree-missing"},
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "HISTORY_UNAVAILABLE",
+        "reason": "指定历史组合不可用，请另行选择查询时点",
+        "resolutionMode": "history"
+      }
+    },
+    {
+      "caseId": "fixed-model-missing",
+      "covers": ["S-09"],
+      "request": {"resolutionMode": "history", "asOf": "2026-10-20T06:00:00Z", "sceneRevision": "fixture-scene-r1"},
+      "facts": {
+        "scene": {
+          "sceneId": "fixture-scene",
+          "sceneRevision": "fixture-scene-r1",
+          "bindingRevision": "fixture-binding-r1",
+          "published": true,
+          "unavailableParts": ["model"],
+          "instances": [
+            {
+              "sceneModelInstanceId": "fixture-instance-1",
+              "installationContextId": "fixture-installation-1",
+              "modelVersionId": "fixture-model-v1",
+              "componentKeys": ["fixture-ct-body", "fixture-cn1-body", "fixture-cn-body", "fixture-cn-door", "fixture-cn-body-alt", "fixture-unit-body"]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": null,
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "HISTORY_UNAVAILABLE",
+        "reason": "指定历史组合不可用，请另行选择查询时点",
+        "resolutionMode": "history"
+      }
+    },
+    {
+      "caseId": "no-ancestor-geometry",
+      "covers": ["S-04"],
+      "facts": {
+        "representations": []
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": "fixture-tree-r1",
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "NO_GEOMETRY",
+        "reason": "没有可用的已发布几何"
+      }
+    },
+    {
+      "caseId": "live-snapshot-change",
+      "covers": ["S-04"],
+      "facts": {
+        "hierarchy": {
+          "resolvedAsOf": "2026-10-20T06:00:00Z",
+          "hierarchyRevision": "fixture-tree-r1",
+          "installationContextId": "fixture-installation-1",
+          "consistent": false,
+          "completeness": "complete",
+          "path": [
+            {
+              "relationId": "fixture-child-cn",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            },
+            {
+              "relationId": "fixture-cn-unit",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            }
+          ]
+        }
+      },
+      "expectedError": {"code": "REVISION_CONFLICT", "message": "读取修订不一致，请重新获取", "retryable": true, "requestId": "fixture-request-1"}
+    },
+    {
+      "caseId": "context-epoch-roundtrip",
+      "covers": ["S-16"],
+      "request": {"contextEpoch": "fixture-context-2"},
+      "expected": {"contextEpoch": "fixture-context-2"}
+    },
+    {
+      "caseId": "multiple-representations-require-choice",
+      "covers": ["S-05"],
+      "facts": {
+        "representations": [
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-ct-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn1-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn-body", "fixture-cn-door"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": false,
+            "geometryQuality": "source_candidate"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-unit-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn-body-alt"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": false,
+            "geometryQuality": "source_candidate"
+          }
+        ]
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": "fixture-tree-r1",
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [
+          {
+            "sceneRevision": "fixture-scene-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn-body", "fixture-cn-door"]
+          },
+          {
+            "sceneRevision": "fixture-scene-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn-body-alt"]
+          }
+        ],
+        "reasonCode": "MULTIPLE_REPRESENTATIONS",
+        "reason": "存在多个几何表示，请明确选择"
+      }
+    },
+    {
+      "caseId": "explicit-representation-choice",
+      "covers": ["S-05"],
+      "request": {
+        "representationChoice": {
+          "sceneRevision": "fixture-scene-r1",
+          "sceneModelInstanceId": "fixture-instance-1",
+          "modelVersionId": "fixture-model-v1",
+          "componentKeys": ["fixture-cn-body-alt"]
+        }
+      },
+      "facts": {
+        "representations": [
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-ct-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn1-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn-body", "fixture-cn-door"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": false,
+            "geometryQuality": "source_candidate"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-unit-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn-body-alt"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": false,
+            "geometryQuality": "source_candidate"
+          }
+        ]
+      },
+      "expected": {
+        "componentKey": "fixture-cn-body-alt",
+        "componentKeys": ["fixture-cn-body-alt"]
+      }
+    },
+    {
+      "caseId": "forged-representation-choice",
+      "covers": ["S-05"],
+      "request": {
+        "representationChoice": {
+          "sceneRevision": "fixture-scene-r1",
+          "sceneModelInstanceId": "fixture-instance-1",
+          "modelVersionId": "fixture-model-v1",
+          "componentKeys": ["fixture-cn-body"]
+        }
+      },
+      "facts": {
+        "representations": [
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-ct"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-ct-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn1-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn-body", "fixture-cn-door"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": false,
+            "geometryQuality": "source_candidate"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-unit-body"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": true,
+            "geometryQuality": "proxy_schematic"
+          },
+          {
+            "objectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "status": "published",
+            "sceneRevision": "fixture-scene-r1",
+            "bindingRevision": "fixture-binding-r1",
+            "sceneModelInstanceId": "fixture-instance-1",
+            "modelVersionId": "fixture-model-v1",
+            "componentKeys": ["fixture-cn-body-alt"],
+            "entityRevision": "fixture-entity-r1",
+            "reviewedPrimary": false,
+            "geometryQuality": "source_candidate"
+          }
+        ]
+      },
+      "expected": {
+        "locatedObjectRef": null,
+        "locationMode": "unlocated",
+        "geometryQuality": null,
+        "hierarchyRevision": "fixture-tree-r1",
+        "modelVersionId": null,
+        "sceneModelInstanceId": null,
+        "componentKey": null,
+        "componentKeys": [],
+        "path": [],
+        "representationChoices": [],
+        "reasonCode": "REVISION_CONFLICT",
+        "reason": "读取修订不一致，请重新获取"
+      }
+    },
+    {
+      "caseId": "move-before-boundary",
+      "covers": ["S-09"],
+      "request": {"resolutionMode": "history", "asOf": "2026-10-14T23:59:59Z", "sceneRevision": "fixture-scene-r1", "hierarchyRevision": "fixture-tree-r1"},
+      "facts": {
+        "resolvedAsOf": "2026-10-14T23:59:59Z",
+        "hierarchy": {
+          "resolvedAsOf": "2026-10-14T23:59:59Z",
+          "hierarchyRevision": "fixture-tree-r1",
+          "installationContextId": "fixture-installation-1",
+          "consistent": true,
+          "completeness": "complete",
+          "path": [
+            {
+              "relationId": "fixture-child-cn",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": "2026-10-15T00:00:00Z",
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            },
+            {
+              "relationId": "fixture-cn-unit",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "resolutionMode": "history",
+        "resolvedAsOf": "2026-10-14T23:59:59Z",
+        "hierarchyRevision": "fixture-tree-r1",
+        "path": [
+          {
+            "relationId": "fixture-child-cn",
+            "status": "confirmed",
+            "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn"},
+            "relationRevision": "fixture-relation-r1",
+            "validFrom": "2026-10-01T00:00:00Z",
+            "validTo": "2026-10-15T00:00:00Z",
+            "evidenceRefs": [
+              {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "caseId": "move-at-boundary",
+      "covers": ["S-09"],
+      "request": {"resolutionMode": "history", "asOf": "2026-10-15T00:00:00Z", "sceneRevision": "fixture-scene-r1", "hierarchyRevision": "fixture-tree-r2"},
+      "facts": {
+        "resolvedAsOf": "2026-10-15T00:00:00Z",
+        "hierarchy": {
+          "resolvedAsOf": "2026-10-15T00:00:00Z",
+          "hierarchyRevision": "fixture-tree-r2",
+          "installationContextId": "fixture-installation-1",
+          "consistent": true,
+          "completeness": "complete",
+          "path": [
+            {
+              "relationId": "fixture-child-cn1",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-15T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            },
+            {
+              "relationId": "fixture-cn1-unit",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "resolutionMode": "history",
+        "resolvedAsOf": "2026-10-15T00:00:00Z",
+        "hierarchyRevision": "fixture-tree-r2",
+        "path": [
+          {
+            "relationId": "fixture-child-cn1",
+            "status": "confirmed",
+            "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "relationRevision": "fixture-relation-r1",
+            "validFrom": "2026-10-15T00:00:00Z",
+            "validTo": null,
+            "evidenceRefs": [
+              {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+            ]
+          }
+        ],
+        "locatedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+        "geometryQuality": "proxy_schematic",
+        "componentKey": "fixture-cn1-body",
+        "componentKeys": ["fixture-cn1-body"]
+      }
+    },
+    {
+      "caseId": "move-after-boundary",
+      "covers": ["S-09"],
+      "request": {"resolutionMode": "history", "asOf": "2026-10-15T00:00:01Z", "sceneRevision": "fixture-scene-r1", "hierarchyRevision": "fixture-tree-r2"},
+      "facts": {
+        "resolvedAsOf": "2026-10-15T00:00:01Z",
+        "hierarchy": {
+          "resolvedAsOf": "2026-10-15T00:00:01Z",
+          "hierarchyRevision": "fixture-tree-r2",
+          "installationContextId": "fixture-installation-1",
+          "consistent": true,
+          "completeness": "complete",
+          "path": [
+            {
+              "relationId": "fixture-child-cn1",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-15T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            },
+            {
+              "relationId": "fixture-cn1-unit",
+              "status": "confirmed",
+              "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+              "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-unit"},
+              "relationRevision": "fixture-relation-r1",
+              "validFrom": "2026-10-01T00:00:00Z",
+              "validTo": null,
+              "evidenceRefs": [
+                {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+              ]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "resolutionMode": "history",
+        "resolvedAsOf": "2026-10-15T00:00:01Z",
+        "hierarchyRevision": "fixture-tree-r2",
+        "path": [
+          {
+            "relationId": "fixture-child-cn1",
+            "status": "confirmed",
+            "childRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-controller"},
+            "parentRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+            "relationRevision": "fixture-relation-r1",
+            "validFrom": "2026-10-15T00:00:00Z",
+            "validTo": null,
+            "evidenceRefs": [
+              {"evidenceId": "fixture-evidence-1", "documentVersionId": "fixture-doc-v1"}
+            ]
+          }
+        ],
+        "locatedObjectRef": {"ontobaseConnectionId": "fixture-ob", "projectCode": "fixture-project", "entityUid": "fixture-cn1"},
+        "geometryQuality": "proxy_schematic",
+        "componentKey": "fixture-cn1-body",
+        "componentKeys": ["fixture-cn1-body"]
+      }
+    }
+  ]
+}
