@@ -14,6 +14,8 @@ ONTOVis 是独立产品，首个验证场景为风电，产品结构适用于油
 
 本机只读会话工具14项测试、真实API/三维交互18项、注入失败/迟到响应13项、窄屏3项检查通过，分别记录，不相加为生产覆盖率。当前仅本机操作者会话，工程发布保持阻断；公网多用户登录、受保护原文、受控退役、模型上传/正式绑定尚未完成，G1/G2/G3未整体通过。
 
+公开空间演示现可访问 **[vis.ontobase.ai](https://vis.ontobase.ai/#site)**：用户确认现模型公网授权后，已部署独立41文件资源包并接入既有Cloudflare隧道；真实浏览器29项HTTPS检查及HTTP跳转通过。公开包工程服务明确未连接，真实工程清单与本机操作者会话未公开；模型不声明开放许可，授权依据待补充。[部署记录](docs/plans/公网演示部署记录.md)列明范围和证据。
+
 GitHub 主仓库：[ideeinfo/ontovis](https://github.com/ideeinfo/ontovis)，本机`origin`已关联；首批设计、工具与测试纳入版本管理，开发分支为`codex/design-foundation`。模型、生产数据、原始附件、凭据和本机输出不进入远端。
 
 管理工作台的活动视觉与交互设计已迁入 MagicPath 独立项目 **ONTOVis 产品设计**。现有三个管理画面包含八个管理视图，新增一个全球—风场—风机连续导航画面；版本及交互范围见[MagicPath 设计索引](docs/design/MagicPath交互设计.md)。
@@ -32,6 +34,7 @@ GitHub 主仓库：[ideeinfo/ontovis](https://github.com/ideeinfo/ontovis)，本
 - [三柜绑定与无几何子设备定位契约（拟议）](docs/contracts/三柜绑定与子设备定位契约.md)
 - [首批实施任务、待评审项与验收清单](docs/plans/首批实施任务与评审清单.md)
 - [开发执行记录与当前任务](docs/plans/开发执行记录.md)
+- [公网空间演示部署](docs/plans/公网演示部署记录.md)、[下一批公网会话评审](docs/plans/公网会话与工程读取评审.md)
 - [MagicPath 交互设计与版本索引](docs/design/MagicPath交互设计.md)
 - [产品与架构设计](docs/design/ONTOVis产品与架构设计.md)
 - [模型与设备关联工作流](docs/design/模型与设备关联工作流.md)
