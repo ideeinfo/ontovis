@@ -116,7 +116,7 @@ export function Workbench() {
   }
   const active = session?.state === 'active';
   const location = modelLocation(detail,model);
-  const host = location ? location.mode === 'ancestor' ? t('ancestor') : location.binding.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate') : detail?.item.entityUid === model?.rootEntityUid ? t('modelReady') : t('unlocated');
+  const host = location ? location.mode === 'ancestor' ? t('ancestor') : location.binding.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate') : !!model && detail?.item.entityUid === model.rootEntityUid ? t('modelReady') : t('unlocated');
   const parent = detail?.ancestors.path[0]?.object;
   const kinds = {turbine:'turbine', cabinet:'cabinet', device:'device', component:'component'} as const;
   const kind = detail && kinds[detail.item.objectKind as keyof typeof kinds];
