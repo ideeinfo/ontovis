@@ -1,6 +1,14 @@
-# ONTOVis 会话与工程读取参考实现
+# ONTOVis 只读工作台与会话
 
-当前定位：空间连续导航Demo仅作本机交互参考，相关公网演示已撤下；以下代码和测试保留作正式ONTOVis实现的技术参考，不代表正式产品已部署。
+当前首切：[workbench](workbench/README.md)是依据已确认MagicPath设计实现的正式只读工作台，包含本人登录、当前安装树/对象及关联图纸预览。后端`api/workbench_server.py`固定部署项目和安装范围，动态读取当前对象，不使用固定五个角色UID清单，不提供写入或任意文件代理。
+
+共用`authority.py`、`user_sessions.py`和`session_http.py`处理受限回环读取、内存会话及同源HTTP边界。令牌只保留在服务端内存，30分钟无操作或最长8小时失效；每次读取核验当前项目成员，读取/渲染后重查权限和会话。客户端只收到不透明HttpOnly会话Cookie，登录仅用户名、密码。
+
+维护检查：`python3 -m unittest tests.test_workbench_server tests.test_session_server tests.test_installation_preview -v`共47项；Node 22执行`npm --prefix apps/workbench run check`包含严格类型、9项时序检查和构建。首批接口/限制见[当前图纸评审与实际范围](../docs/plans/关联图纸首切页面与服务评审.md)。部署模板为[正式会话服务](../deploy/ontovis-workbench.service)和[正式入口](../deploy/nginx-workbench.conf)，项目与安装范围为部署私有配置，不含凭据或模型清单。
+
+## 历史空间演示参考
+
+空间连续导航Demo仅作本机交互参考，相关公网演示已撤下；以下参考入口独立保留，不能作为正式产品构建包。
 
 `api/session_server.py`是固定演示来源的逐用户只读会话参考；`web/session.js`、`web/session.css`及`web/authority-preview.js`覆盖现有空间演示的账号入口与工程页。管理工作台设计继续维护于MagicPath，不将历史HTML转为设计源。
 
