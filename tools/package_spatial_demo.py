@@ -65,7 +65,7 @@ CT/CN1为示意代理，CN为controller源候选；构件可视化不确认现�
 '''
 
 
-def package(source: Path, output: Path, authorization_basis: str) -> dict:
+def package(source: Path, output: Path, authorization_basis: str, *, user_sessions: bool = False) -> dict:
     source, output = source.resolve(), output.absolute()
     basis = authorization_basis.strip()
     if not basis or len(basis) > 2000 or PRIVATE_PATH.search(basis.encode()):
@@ -93,6 +93,15 @@ def package(source: Path, output: Path, authorization_basis: str) -> dict:
         for before, after in rows:
             text = text.replace(before, after)
         payloads[relative] = text.encode()
+    if user_sessions:
+        maintained = Path(__file__).resolve().parents[1]/'apps/web'
+        for name in ('authority-preview.js','session.js','session.css'):
+            data = (maintained/name).read_bytes()
+            if PRIVATE_PATH.search(data): raise ValueError('Private path in session module')
+            payloads[name] = data
+        payloads['index.html'] = payloads['index.html'].replace(
+            b'<link rel="stylesheet" href="./styles.css">',
+            b'<link rel="stylesheet" href="./styles.css"><link rel="stylesheet" href="./session.css">')
     template = json.loads(payloads['data/turbine-template.json'])
     template['purpose'] = 'public test visualization only; not engineering binding'
     payloads['data/turbine-template.json'] = (json.dumps(template,ensure_ascii=False,indent=2)+'\n').encode()
@@ -110,8 +119,26 @@ def package(source: Path, output: Path, authorization_basis: str) -> dict:
         'sources/model-authorization.json':(json.dumps(authorization,ensure_ascii=False,indent=2)+'\n').encode(),
         'robots.txt':b'User-agent: *\nDisallow: /\n',
     })
+    locations = json.loads(payloads['data/turbines.geojson'])
+    metadata = locations.get('metadata', {})
+    if 'currentTurbineCount' in metadata:
+        count = metadata['currentTurbineCount']
+        if type(count) is not int or count != len(locations['features']):
+            raise ValueError('Current turbine count does not match runtime data')
+        excluded = '、'.join(metadata.get('excludedPlanLabels', []))
+        summary = f'当前保留{count}个图示机位；核减编号为{excluded}。原图19个符号和历史18台/48MW口径分别保留，当前容量待核。'
+        payloads['README.md'] = payloads['README.md'].replace(
+            '夏李显示1–18及B1共19个图示机位；公开项目18台/48MW与B1的关系待核。'.encode(), summary.encode())
+        payloads['sources/locations-readme.md'] = payloads['sources/locations-readme.md'].replace(
+            '按用户正式平面图配准，显示1–18和B1共19个图示机位。'.encode(), ('按用户正式平面图配准。'+summary).encode()).replace(
+            '公开历史项目口径18台/48MW，B1归属待核。'.encode(), '公开历史项目口径18台/48MW不作为当前数量和容量。'.encode())
+    if user_sessions:
+        payloads['README.md'] = payloads['README.md'].replace(
+            '本站只提供空间演示，工程服务未连接；工程身份与资料须经逐用户项目授权，正式工程发布保持阻断。'.encode(),
+            '空间演示公开可用。工程对象须本人登录并取得项目权限，首批仅读取7号五个演示安装对象；正式工程发布保持阻断，不开放资料原文或设备控制。'.encode())
     manifest = {'schemaVersion':1,'purpose':'public_spatial_demo', 'engineeringServiceConnected':False,
                 'files':{name:{'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()} for name,data in sorted(payloads.items())}}
+    if user_sessions: manifest['engineeringSessionMode'] = 'per_user'
     manifest['releaseId'] = hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest()[:16]
     payloads['release.json'] = (json.dumps(manifest,ensure_ascii=False,indent=2)+'\n').encode()
     output.parent.mkdir(parents=True,exist_ok=True)
@@ -135,9 +162,10 @@ def main():
     parser.add_argument('--source',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--model-authorization-basis',required=True)
+    parser.add_argument('--with-user-sessions',action='store_true')
     args = parser.parse_args()
     try:
-        result = package(args.source,args.output,args.model_authorization_basis)
+        result = package(args.source,args.output,args.model_authorization_basis,user_sessions=args.with_user_sessions)
     except (OSError,ValueError) as error:
         parser.exit(1,str(error)+'\n')
     print(json.dumps({'releaseId':result['releaseId'],'files':len(result['files'])+1,

@@ -18,6 +18,7 @@ class SpatialPackageTests(unittest.TestCase):
             path=self.source/name
             path.parent.mkdir(parents=True,exist_ok=True)
             path.write_bytes(b'{}' if name.endswith('.json') else b'synthetic-content')
+        (self.source/'data/turbines.geojson').write_text('{}')
 
     def build(self):
         return package(self.source,self.output,'Synthetic authorization for test assets')
@@ -83,6 +84,23 @@ class SpatialPackageTests(unittest.TestCase):
         self.build()
         self.assertEqual((self.output/'index.html').read_text(),'测试数据包')
         self.assertIn('工程服务尚未连接',(self.output/'authority-preview.js').read_text())
+
+    def test_session_bundle_uses_maintained_modules_without_private_manifest(self):
+        (self.source/'index.html').write_text('<link rel="stylesheet" href="./styles.css">')
+        result = package(self.source,self.output,'Synthetic authorization',user_sessions=True)
+        self.assertEqual(result['engineeringSessionMode'],'per_user')
+        self.assertIn('session.css',(self.output/'index.html').read_text())
+        self.assertIn("./session.js",(self.output/'authority-preview.js').read_text())
+        self.assertNotIn('session-manifest.json',result['files'])
+        self.assertIn('credentials:',(self.output/'session.js').read_text())
+
+    def test_current_locations_summary_follows_dataset_without_renumbering(self):
+        locations = {'metadata':{'currentTurbineCount':2,'excludedPlanLabels':['2','3']},
+                     'features':[{'properties':{'label':'1'}},{'properties':{'label':'4'}}]}
+        (self.source/'data/turbines.geojson').write_text(json.dumps(locations))
+        self.build()
+        self.assertIn('当前保留2个图示机位',(self.output/'README.md').read_text())
+        self.assertEqual(json.loads((self.output/'data/turbines.geojson').read_text()), locations)
 
 
 if __name__ == '__main__':

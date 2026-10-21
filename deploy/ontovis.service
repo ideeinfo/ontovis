@@ -1,0 +1,28 @@
+[Unit]
+Description=ONTOVis read-only user session service
+After=network.target
+
+[Service]
+Type=simple
+User=ontovis
+Group=ontovis
+WorkingDirectory=/data/ontovis/api-current
+ExecStart=/usr/bin/python3 /data/ontovis/api-current/apps/api/session_server.py --manifest /data/ontovis/private/session-manifest.json --model-root /data/ontovis/private/model-check
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=256
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

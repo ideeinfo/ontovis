@@ -188,7 +188,8 @@ class InstallationPreview:
             child = uid
             for step in path:
                 parent, relation = step['object'], step['relation']
-                if (parent.get('installationContextId') != self.manifest['installationContextId']
+                if (parent.get('entityUid') not in self.allowed_uids
+                        or parent.get('installationContextId') != self.manifest['installationContextId']
                         or parent.get('lifecycle') != 'active' or relation.get('status') != 'assumed'
                         or relation.get('childEntityUid') != child or relation.get('parentEntityUid') != parent.get('entityUid')):
                     raise PreviewError(409,'INVALID_HIERARCHY')
