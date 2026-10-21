@@ -16,6 +16,8 @@ ONTOVis 是独立产品，首个验证场景为风电，产品结构适用于油
 
 2026-10-21用户最新定位：**空间连续导航Demo仅作为ONTOVis交互实现参考，不发布到vis.ontobase.ai。** 公网Demo页面、资源及配套演示会话服务已撤下，域名仅显示“尚未开放”；本机数据、模型、源码及历史验证证据保留。正式ONTOVis按既有MagicPath项目实施，不把夏李Demo当作产品发布包。50项定向、21项组件、22项合成会话及26项原公网检查均是对应技术样机的历史证据，不代表正式产品已上线。详见[撤下记录](docs/plans/公网演示部署记录.md)及[执行记录](docs/plans/开发执行记录.md)。
 
+后续权限切片（2026-10-21）：按用户“全部项目统一收紧”的选择，OntoBase测试环境已部署`3e457185`，34条既有GET路径及项目目录要求当前活跃成员。旧Web同步改为受保护的PDF/图片预览，退出、撤权与迟到响应清理配套；24项后端、586项Web及14/8项合成浏览器检查分别通过，真实源站17项与两个TLS入口通过。公网边缘探测的403/TLS限制单列，未记完整公网验收。正式关联图纸页已在原MagicPath工作台补齐，当前候选修订463633480128040960，30项交互及类型检查通过；[版本策略与首切评审](docs/plans/关联图纸首切页面与服务评审.md)待选择，不代表新证据API或正式页面已上线。
+
 GitHub 主仓库：[ideeinfo/ontovis](https://github.com/ideeinfo/ontovis)，本机`origin`已关联；首批设计、工具与测试纳入版本管理，开发分支为`codex/design-foundation`。模型、生产数据、原始附件、凭据和本机输出不进入远端。
 
 管理工作台的活动视觉与交互设计已迁入 MagicPath 独立项目 **ONTOVis 产品设计**。现有三个管理画面包含八个管理视图，新增一个全球—风场—风机连续导航画面；版本及交互范围见[MagicPath 设计索引](docs/design/MagicPath交互设计.md)。
@@ -34,6 +36,8 @@ GitHub 主仓库：[ideeinfo/ontovis](https://github.com/ideeinfo/ontovis)，本
 - [三柜绑定与无几何子设备定位契约（拟议）](docs/contracts/三柜绑定与子设备定位契约.md)
 - [首批实施任务、待评审项与验收清单](docs/plans/首批实施任务与评审清单.md)
 - [开发执行记录与当前任务](docs/plans/开发执行记录.md)
+- [旧读取授权与已完成范围](docs/plans/受保护证据与旧入口授权评审.md)
+- [关联图纸首切页面与服务评审](docs/plans/关联图纸首切页面与服务评审.md)
 - [公网空间演示部署](docs/plans/公网演示部署记录.md)、[历史演示会话契约](docs/plans/公网会话与工程读取评审.md)
 - [MagicPath 交互设计与版本索引](docs/design/MagicPath交互设计.md)
 - [产品与架构设计](docs/design/ONTOVis产品与架构设计.md)
