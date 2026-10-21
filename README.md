@@ -12,9 +12,9 @@ ONTOVis 是独立产品，首个验证场景为风电，产品结构适用于油
 
 后续开发（2026-10-21）：用户确认先完成演示闭环。OntoBase测试环境已部署提交`a08c6412`及迁移73/74，10条路径支持受控对象读取、独立安装建档和有效期物理层级；73项单元/PostgreSQL测试通过。指定账户的项目管理员授权已通过API执行。7号演示范围已建立5个独立安装对象、4条假定关系；同型号定义共用，安装UID独立，原1,131个定义保留。三柜与无几何子对象已通过真实API连接本机三维演示，分析对象与CN空间宿主分列。详见[首切页面与服务评审](docs/plans/首切页面与服务评审.md)、[实际服务剖面](docs/contracts/三柜绑定与子设备定位契约.md#8-已实现的受控对象读取剖面2026-10-21)及[执行记录§9](docs/plans/开发执行记录.md#9-已确认范围安装后端与7号演示闭环)。
 
-本机只读会话工具14项测试、真实API/三维交互18项、注入失败/迟到响应13项、窄屏3项检查通过，分别记录，不相加为生产覆盖率。当前仅本机操作者会话，工程发布保持阻断；公网多用户登录、受保护原文、受控退役、模型上传/正式绑定尚未完成，G1/G2/G3未整体通过。
+本机只读会话工具14项测试、真实API/三维交互18项、注入失败/迟到响应13项、窄屏3项检查通过，分别记录，不相加为生产覆盖率。后续已完成固定演示范围的公网本人会话，工程发布保持阻断；受保护原文、受控退役、模型上传/正式绑定尚未完成，G1/G2/G3未整体通过。
 
-公开空间演示现可访问 **[vis.ontobase.ai](https://vis.ontobase.ai/#site)**：用户确认现模型公网授权后，已部署独立41文件资源包并接入既有Cloudflare隧道；真实浏览器29项HTTPS检查及HTTP跳转通过。公开包工程服务明确未连接，真实工程清单与本机操作者会话未公开；模型不声明开放许可，授权依据待补充。[部署记录](docs/plans/公网演示部署记录.md)列明范围和证据。
+[vis.ontobase.ai](https://vis.ontobase.ai/#site)已上线空间演示和简单用户名/密码登录。本人OntoBase账号按当前项目权限读取7号五个演示角色；三柜与子对象→CN、退出清理已真实核验。当前43文件包e5ff66eb630a3d1f，服务源码2d59e70；50项定向测试、21项MagicPath组件检查、22项合成会话浏览器及26项真实公网检查分别通过。真实清单、凭据、模型不进入Git；模型公网使用按用户授权声明，依据待补充。详见[部署记录](docs/plans/公网演示部署记录.md)和[会话契约](docs/plans/公网会话与工程读取评审.md)。
 
 GitHub 主仓库：[ideeinfo/ontovis](https://github.com/ideeinfo/ontovis)，本机`origin`已关联；首批设计、工具与测试纳入版本管理，开发分支为`codex/design-foundation`。模型、生产数据、原始附件、凭据和本机输出不进入远端。
 
@@ -47,6 +47,6 @@ GitHub 主仓库：[ideeinfo/ontovis](https://github.com/ideeinfo/ontovis)，本
 
 ## 仓库边界
 
-两个仓库独立构建、发布和版本管理。ONTOVis 通过明确的授权 API 访问 OntoBase，不导入其业务 Feature、不直连其数据库、不拷贝生产数据。正式代码按切片放 `apps/web`、`apps/api`、`apps/worker`；当前ONTOVis维护代码为`tools/wind_catalog.py`、`tools/model_probe.py`、`tools/location_contract.py`、`tools/installation_preview.py`及其测试。最后一项为固定演示范围的本机只读会话工具，不是公网多用户服务；尚未创建空应用框架。工程权威API在OntoBase自身后端实现。
+两个仓库独立构建、发布和版本管理。ONTOVis 通过明确的授权 API 访问 OntoBase，不导入其业务 Feature、不直连其数据库、不拷贝生产数据。正式代码按切片放 `apps/web`、`apps/api`、`apps/worker`；当前ONTOVis维护代码包括目录/模型/契约/定位/打包工具及测试；[首个应用切片](apps/README.md)实现逐用户会话与现有空间演示的简单登录。原installation_preview仍仅供本机操作者预览；未创建空应用框架。工程权威API在OntoBase自身后端实现。
 
 维护中的设计在 `docs/`，用户 Logo 原件副本在 `assets/brand/`。HTML、截图、归档、临时脚本在 `output/`，不进入 Git；用户原始附件`资料/`也排除。原始业务资料仍在 OntoBase 的原位置。跨产品逻辑契约与未实施能力继续标为提案，已落地的HTTP范围单独列在实际服务剖面中。

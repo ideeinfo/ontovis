@@ -15,4 +15,4 @@ node --check apps/web/session.js
 node --check apps/web/authority-preview.js
 ```
 
-测试使用合成用户、身份与来源，不连接真实数据库。部署配置见[会话与工程读取](../docs/plans/公网会话与工程读取评审.md)、[systemd单元](../deploy/ontovis.service)和[Nginx模板](../deploy/nginx-vis.conf)。来源固定回环，服务使用独立无登录账户；私有清单/模型检查文件放静态根外。未建立空Web框架、通用代理、连接器平台或Worker。
+维护的定向测试合计50项（24会话、14定位、12导出）。测试使用合成用户、身份与来源，不连接真实数据库。部署配置见[会话与工程读取](../docs/plans/公网会话与工程读取评审.md)、[systemd单元](../deploy/ontovis.service)和[Nginx模板](../deploy/nginx-vis.conf)。来源固定回环，服务使用独立无登录账户；私有清单/模型检查文件放静态根外。未建立空Web框架、通用代理、连接器平台或Worker。
