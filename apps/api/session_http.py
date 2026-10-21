@@ -50,9 +50,9 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             try: self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError): pass
 
-        def image(self, data, revision):
+        def image(self, data, revision, media_type='image/png'):
             self.send_response(200)
-            for key, value in (('Content-Type','image/png'), ('Content-Length',str(len(data))),
+            for key, value in (('Content-Type',media_type), ('Content-Length',str(len(data))),
                                ('Cache-Control','no-store'), ('X-Content-Type-Options','nosniff'),
                                ('X-Session-Revision',revision)):
                 self.send_header(key, value)
@@ -83,7 +83,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, value)
             if self.command == 'GET' and parts.path in ('/api/demo/context','/api/demo/locate'):
                 return self.reply(200, sessions.read(sid, parts.path, query))
-            workbench_paths = ('/api/workbench/context','/api/workbench/children','/api/workbench/object',
+            workbench_paths = ('/api/workbench/context','/api/workbench/children','/api/workbench/object','/api/workbench/catalog',
+                               '/api/workbench/model','/api/workbench/model/content',
                                '/api/workbench/evidence/resolve','/api/workbench/evidence/content')
             if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
@@ -97,8 +98,9 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
             if parts.path in workbench_paths:
                 value = sessions.read(sid, parts.path, payload)
-                if parts.path.endswith('/evidence/content'):
-                    return self.image(value['content'], value['sessionRevision'])
+                if parts.path in ('/api/workbench/evidence/content','/api/workbench/model/content'):
+                    return self.image(value['content'], value['sessionRevision'],
+                                      'model/gltf-binary' if parts.path.endswith('/model/content') else 'image/png')
                 return self.reply(200, value)
             if parts.path.endswith('/login'):
                 client = self.client_address[0] if development else self.headers.get('X-Vis-Client-IP','loopback')[:128]

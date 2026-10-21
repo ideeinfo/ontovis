@@ -75,3 +75,11 @@ test('a content conflict stays a conflict, without an automatic fallback read', 
   await assert.rejects(api.request('/api/workbench/evidence/content',{}), error => error.status === 409 && error.code === 'CONTENT_CHANGED');
   assert.equal(calls,1);
 });
+
+test('protected model bytes require the model media type and matching session', async () => {
+  const api = new WorkbenchApi(async()=>new Response('synthetic-model',{headers:{'Content-Type':'model/gltf-binary','X-Session-Revision':'r1'}}));
+  api.session('r1');const blob=await api.request('/api/workbench/model/content',{},undefined,'model');
+  assert.equal(blob.type,'model/gltf-binary');
+  const wrong=new WorkbenchApi(async()=>new Response('html',{headers:{'Content-Type':'text/html','X-Session-Revision':'r1'}}));wrong.session('r1');
+  await assert.rejects(wrong.request('/api/workbench/model/content',{},undefined,'model'),error=>error instanceof ApiError&&error.status===502);
+});

@@ -1,189 +1,156 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
-import { Box, Boxes, Building2, ChevronDown, ChevronRight, CheckCheck, Database, FileText, GitBranch, Layers3, Link2, Settings2, ShieldCheck, Sparkles } from 'lucide-react';
+import * as Dropdown from '@radix-ui/react-dropdown-menu';
+import { Boxes, Building2, ChevronDown, Focus, Languages, Link2, LogOut, PanelLeft, PanelRight, RefreshCw, Sun, User } from 'lucide-react';
 import logo from '../../../assets/brand/ONTOVis.png';
 import { ApiError, cancelled, failureMessage, WorkbenchApi } from './api';
-import type { ChildrenView, ContextView, EngineeringObject, Installation, ObjectView, SessionView } from './types';
-import { Badge, Btn, Modal, Panel } from './Primitives';
+import type { ContextView, ModelView, ObjectView, SessionView } from './types';
+import type { MessageKey } from './messages';
+import { usePreferences } from './Preferences';
+import { Badge, Btn, IconBtn, Modal } from './Primitives';
+import { ObjectsPanel } from './ObjectsPanel';
+import { modelLocation } from './modelLocation';
 import { SourceEvidence } from './SourceEvidence';
 
 const api = new WorkbenchApi();
-const navigation = [
-  ['project', '项目与访问', Building2], ['models', '模型中心', Boxes], ['bindings', '构件绑定', Link2],
-  ['devices', '设备层级', GitBranch], ['scene', '场景与可视化', Layers3], ['data', '数据与告警', Database],
-  ['ai', 'AI 策略', Sparkles], ['evidence', '证据与审计', FileText],
-] as const;
-
-function TreeNode({object, context, selected, onSelect, depth = 0, initialOpen = false}: {
-  object: EngineeringObject; context: Installation; selected: string; onSelect: (uid: string) => void;
-  depth?: number; initialOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(initialOpen);
-  const [children, setChildren] = useState<ChildrenView | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController(); setLoading(true); setError('');
-    api.request<ChildrenView>('/api/workbench/children', {parentEntityUid: object.entityUid,
-      cursor, expectedHierarchyRevision: context.hierarchyRevision}, controller.signal)
-      .then(value => setChildren(previous => ({...value, items: cursor ? [...(previous?.items || []), ...value.items] : value.items})))
-      .catch(error => {if (!cancelled(error)) setError(failureMessage(error));})
-      .finally(() => {if (!controller.signal.aborted) setLoading(false);});
-    return () => controller.abort();
-  }, [open, cursor, attempt]);
-  return <div className="ov-runtime-tree-node">
-    <div className="ov-runtime-tree-row">
-      <button className="ov-text-btn ov-expand-node" type="button" disabled={depth >= 31} aria-label={`${open ? '收起' : '展开'}${object.displayName}`} aria-expanded={open} onClick={() => setOpen(v => !v)}>{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button>
-      <button type="button" className={selected === object.entityUid ? 'active' : ''} onClick={() => onSelect(object.entityUid)}><Box size={15} /><span><strong>{object.displayName}</strong><small>{object.objectKind === 'unknown' ? '类型待核实' : object.objectKind}</small></span></button>
-    </div>
-    {open && <div className="ov-tree-branch">
-      {children?.items.map(child => <TreeNode key={child.object.entityUid} object={child.object} context={context} selected={selected} onSelect={onSelect} depth={depth + 1} />)}
-      {loading ? <p className="ov-source-note" role="status">正在读取…</p> : error ? <div role="alert"><p className="ov-source-note">{error}</p><Btn onClick={() => setAttempt(v => v + 1)}>重试读取</Btn></div> : children?.items.length === 0 ? <p className="ov-source-note">无下级对象</p> : null}
-      {!loading && children?.nextCursor && <Btn onClick={() => setCursor(children.nextCursor)}>加载更多</Btn>}
-    </div>}
-  </div>;
-}
-
-function Schematic() {
-  return <div className="ov-model-view" aria-label="三柜布局示意，未绑定工程空间">
-    <div className="ov-model-top"><div className="ov-view-crumb"><Box size={14} />构件视图</div><Badge>示意布局</Badge></div>
-    <div className="ov-model-floor" /><div className="ov-cabinets">
-      {['CN1','CN','CT'].map((id, i) => <div key={id} className={`ov-cabinet position-${i} ${id === 'CT' ? 'short' : ''}`}><span className="ov-cab-top" /><span className="ov-cab-side" /><span className="ov-cab-front"><span className="ov-cab-vents" /><span className="ov-cab-screen" /><span className="ov-cab-handle" /><span className="ov-cab-label">{id}</span></span><span className="ov-cab-ground" /></div>)}
-    </div><div className="ov-model-bottom"><span>几何绑定待审核</span><span>空间位置未知</span></div>
-  </div>;
-}
-
+const ModelViewport = lazy(() => import('./ModelViewport').then(module => ({default:module.ModelViewport})));
 export function Workbench() {
+  const {t, locale, theme, setTheme, setLocale} = usePreferences();
   const [session, setSession] = useState<SessionView | null>(null);
   const [context, setContext] = useState<ContextView | null>(null);
-  const [selected, setSelected] = useState('');
+  const [selection, setSelection] = useState({uid:'', scope:'equipment' as 'equipment' | 'project'});
   const [detail, setDetail] = useState<ObjectView | null>(null);
-  const [page, setPage] = useState<'bindings' | 'project'>('bindings');
-  const [tab, setTab] = useState('对象');
-  const [loginOpen, setLoginOpen] = useState(false);
+  const [model, setModel] = useState<ModelView | null>(null);
+  const [tab, setTab] = useState('details');
+  const [modal, setModal] = useState<'login' | 'account' | 'project' | 'model' | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [signingIn, setSigningIn] = useState(false);
-  const [loginError, setLoginError] = useState('');
-  const [message, setMessage] = useState('正在检查会话…');
+  const [loginError, setLoginError] = useState<unknown>(null);
+  const [message, setMessage] = useState<MessageKey | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const [reload, setReload] = useState(0);
-  const [layout, setLayout] = useState('balanced');
+  const [left, setLeft] = useState(false), [right, setRight] = useState(false);
+  const [focusSignal, setFocusSignal] = useState(0);
   const channel = useRef<BroadcastChannel | null>(null);
   const current = useRef(session); current.current = session;
   const lastActivity = useRef(0);
 
-  function clear(state: string, text: string) {
-    api.invalidate(); setContext(null); setSelected(''); setDetail(null); setLoading(false);
-    setSession(previous => previous ? {...previous, state} : null); setMessage(text);
-    setPassword('');
+  function clear(state:string, text:MessageKey | null) {
+    api.invalidate(); setContext(null); setSelection({uid:'', scope:'equipment'}); setDetail(null); setModel(null);
+    setLoading(false); setSession(previous => previous ? {...previous, state} : null);
+    setMessage(text); setError(null); setPassword('');
   }
   async function inspect(activity = false) {
     try {
       const value = await api.request<SessionView>('/api/session' + (activity ? '?activity=1' : ''));
       if (value.state !== 'active') {
-        clear(value.state, value.state === 'denied' ? '当前项目不可读，请联系项目管理员。' : '登录后读取工程对象。');
+        clear(value.state, value.state === 'denied' ? 'denied' : value.state === 'expired' ? 'expired' : 'loginPrompt');
         api.session(value.sessionRevision); setSession(value);
       } else if (!current.current || current.current.sessionRevision !== value.sessionRevision || current.current.state !== 'active') {
-        clear('active', ''); api.session(value.sessionRevision); setSession(value); setReload(v => v + 1);
+        clear('active', null); api.session(value.sessionRevision); setSession(value); setReload(value => value+1);
       }
-    } catch (error) {if (!cancelled(error)) clear('unavailable', '工程服务暂不可达，请重试。');}
+    } catch (value) {if (!cancelled(value)) clear('unavailable', 'unavailable');}
   }
   useEffect(() => {
-    api.onDenied = status => clear(status === 401 ? 'expired' : 'denied', status === 401 ? '会话已失效，请重新登录。' : '当前项目不可读，请联系项目管理员。');
+    api.onDenied = status => clear(status === 401 ? 'expired' : 'denied', status === 401 ? 'expired' : 'denied');
     void inspect();
     channel.current = new BroadcastChannel('ontovis-workbench-session');
-    channel.current.onmessage = () => {clear('signedOut', '会话已变化，工程详情已清理。'); void inspect();};
+    channel.current.onmessage = () => {clear('signedOut', 'sessionChanged'); void inspect();};
     const poll = window.setInterval(() => {void inspect();}, 30000);
     const activity = () => {
-      if (current.current?.state === 'active' && Date.now() - lastActivity.current > 60000) {
+      if (current.current?.state === 'active' && Date.now()-lastActivity.current > 60000) {
         lastActivity.current = Date.now(); void inspect(true);
       }
     };
-    window.addEventListener('pointerdown', activity); window.addEventListener('keydown', activity);
-    const visible = () => {if (!document.hidden) void inspect();};
-    document.addEventListener('visibilitychange', visible);
-    return () => {window.clearInterval(poll); channel.current?.close(); api.onDenied = () => {};
-      window.removeEventListener('pointerdown', activity); window.removeEventListener('keydown', activity);
-      document.removeEventListener('visibilitychange', visible); api.invalidate();};
+    window.addEventListener('pointerdown',activity); window.addEventListener('keydown',activity);
+    const visible = () => {if (!document.hidden) void inspect();}; document.addEventListener('visibilitychange',visible);
+    return () => {window.clearInterval(poll); channel.current?.close(); api.onDenied=() => {};
+      window.removeEventListener('pointerdown',activity); window.removeEventListener('keydown',activity);
+      document.removeEventListener('visibilitychange',visible); api.invalidate();};
   }, []);
-
   useEffect(() => {
     if (session?.state !== 'active') return;
-    const controller = new AbortController(); setLoading(true); setMessage('正在读取当前安装范围…');
+    const controller = new AbortController(); setLoading(true); setMessage(null); setError(null);
     api.request<ContextView>('/api/workbench/context', {}, controller.signal)
-      .then(value => {setContext(value); setMessage('演示安装关系仍待核实；工程绑定和发布尚未开放。');})
-      .catch(error => {if (!cancelled(error)) {setContext(null); setMessage(failureMessage(error));}})
+      .then(value => {setContext(value); if (value.root) setSelection({uid:value.root.entityUid, scope:'equipment'});})
+      .catch(value => {if (!cancelled(value)) {setContext(null); setError(value);}})
       .finally(() => {if (!controller.signal.aborted) setLoading(false);});
     return () => controller.abort();
   }, [session?.state, session?.sessionRevision, reload]);
-
   useEffect(() => {
     setDetail(null);
-    if (!selected || !context || session?.state !== 'active') return;
-    const controller = new AbortController();
-    api.request<ObjectView>('/api/workbench/object', {entityUid: selected,
-      expectedHierarchyRevision: context.context.hierarchyRevision}, controller.signal)
-      .then(setDetail).catch(error => {if (!cancelled(error)) {
-        if (error instanceof ApiError && error.status === 409) clear('active', failureMessage(error));
-        else setMessage(failureMessage(error));
+    if (!selection.uid || !context || session?.state !== 'active') return;
+    const controller = new AbortController(); setError(null);
+    api.request<ObjectView>('/api/workbench/object', {entityUid:selection.uid, scope:selection.scope,
+      expectedHierarchyRevision:context.context.hierarchyRevision}, controller.signal)
+      .then(setDetail).catch(value => {if (!cancelled(value)) {
+        if (value instanceof ApiError && value.status === 409) {setContext(null); setSelection({uid:'',scope:'equipment'});}
+        setError(value);
       }});
     return () => controller.abort();
-  }, [selected, context, session?.state, session?.sessionRevision]);
-
+  }, [selection, context, session?.state, session?.sessionRevision]);
   async function login() {
-    setSigningIn(true); setLoginError('');
+    setSigningIn(true); setLoginError(null);
     try {
       const value = await api.request<SessionView>('/api/session/login', {username, password});
-      clear(value.state, ''); api.session(value.sessionRevision); setSession(value); setLoginOpen(false);
-      setReload(v => v + 1); channel.current?.postMessage('session-changed');
-    } catch (error) {if (!cancelled(error)) setLoginError(error instanceof ApiError && error.code === 'CREDENTIALS_REJECTED' ? '账号或密码不正确，请重新登录。' : failureMessage(error));}
+      clear(value.state,null); api.session(value.sessionRevision); setSession(value); setModal(null);
+      setReload(value => value+1); channel.current?.postMessage('session-changed');
+    } catch (value) {if (!cancelled(value)) setLoginError(value);}
     finally {setPassword(''); setSigningIn(false);}
   }
   async function logout() {
-    const revision = api.revision;
-    clear('signedOut', '已退出，工程详情已清理。');
+    const revision = api.revision; clear('signedOut','loginPrompt'); setModal(null);
     channel.current?.postMessage('session-changed');
-    try {await api.request('/api/session/logout', {expectedSessionRevision: revision});}
-    catch (error) {if (!cancelled(error)) setMessage('退出状态待核验，请重试退出。');}
+    try {await api.request('/api/session/logout', {expectedSessionRevision:revision});}
+    catch (value) {if (!cancelled(value)) setMessage('logoutFailed');}
     finally {void inspect();}
   }
-  function closeLogin() {
-    setLoginOpen(false); setPassword('');
-    if (signingIn) {void logout();}
+  function closeModal() {setModal(null); setPassword(''); if (signingIn) void logout();}
+  function refresh() {
+    api.invalidate(); setContext(null); setDetail(null); setSelection({uid:'',scope:'equipment'}); setModel(null); setReload(value => value+1);
   }
-  const isActive = session?.state === 'active';
-  const title = page === 'bindings' ? '构件绑定' : '项目与访问';
+  function select(uid:string, scope:'equipment' | 'project' = 'equipment') {
+    setDetail(null); setSelection({uid,scope}); setLeft(false);
+  }
+  const active = session?.state === 'active';
+  const location = modelLocation(detail,model);
+  const host = location ? location.mode === 'ancestor' ? t('ancestor') : location.binding.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate') : detail?.item.entityUid === model?.rootEntityUid ? t('modelReady') : t('unlocated');
   const parent = detail?.ancestors.path[0]?.object;
-  return <div className="ov-app">
-    <header className="ov-topbar"><a className="ov-logo" href="#project" onClick={event => {event.preventDefault(); setPage('project');}} aria-label="ONTOVis 项目首页"><img src={logo} alt="ONTOVis 本源数智" /></a><span className="ov-top-divider" />
-      <button className="ov-project-picker" type="button" onClick={() => setPage('project')}><Building2 size={15} /><span>{context?.projectName || '工程工作台'}</span><ChevronDown size={13} /></button><div className="ov-top-spacer" /><Badge>只读试点</Badge>
-      {session?.username && <span className="ov-muted">{session.username}</span>}{isActive || session?.state === 'denied' ? <Btn onClick={logout}>退出</Btn> : <Btn onClick={() => {setLoginError(''); setLoginOpen(true);}}>登录</Btn>}</header>
-    <div className="ov-shell"><aside className="ov-sidebar"><div className="ov-sidebar-label">项目管理</div><nav aria-label="项目管理">
-      {navigation.map(([id,label,Icon]) => <button type="button" key={id} aria-current={page === id ? 'page' : undefined} className={page === id ? 'active' : ''} disabled={!['project','bindings'].includes(id)} title={['project','bindings'].includes(id) ? label : '尚未开放'} onClick={() => setPage(id as 'project' | 'bindings')}><Icon size={17} strokeWidth={1.7} /><span>{label}</span></button>)}
-    </nav><div className="ov-sidebar-bottom"><div className="ov-connection"><span className={`ov-dot ${isActive ? '' : 'muted'}`} />OntoBase <Badge>{isActive ? '已登录' : '未连接'}</Badge></div><button type="button" onClick={() => setPage('project')}><Settings2 size={15} />项目与访问<ChevronRight size={13} /></button></div></aside>
-    <main className="ov-main"><div className="ov-breadcrumb">项目管理<ChevronRight size={12} />{title}</div><div className="ov-page-head"><div><h1>{title}</h1><div className="ov-page-meta"><span>{context?.context.displayName || '当前工程范围'}</span><Badge>演示安装 · 待核实</Badge></div></div><div className="ov-page-actions"><Btn primary disabled title="工程身份、物理证据和几何绑定尚未审核"><CheckCheck size={15} />发布</Btn></div></div>
-      <section className="ov-slice-review" aria-label="当前读取状态"><div className="ov-slice-status" role="status"><span>{message}</span>{isActive && <Btn disabled={loading} onClick={() => {setContext(null); setSelected(''); setDetail(null); api.invalidate(); setReload(v => v + 1);}}>重新读取</Btn>}</div></section>
-      {page === 'project' ? <Panel title="工程访问"><div className="ov-panel-body"><div className="ov-inline"><ShieldCheck size={18} /><strong>{isActive ? '当前项目可读' : '登录后读取工程对象'}</strong></div><p className="ov-runtime-description">使用本人 OntoBase 账号。工程对象、安装层级和资料按当前项目权限读取。</p><p className="ov-source-note">首批开放当前图纸预览；安装关系为演示假定。绑定确认、发布和现场控制尚未开放。</p><div className="ov-session-actions">{isActive ? <Btn primary onClick={() => setPage('bindings')}>进入工作台</Btn> : <Btn primary onClick={() => setLoginOpen(true)}>登录</Btn>}</div></div></Panel>
-      : <><div className="ov-binding-toolbar"><div className="ov-inline"><Badge tone="amber">演示假定</Badge><span className="ov-muted">工程绑定未确认</span></div><div className="ov-toolbar-end"><div className="ov-segment" aria-label="工作台布局">{[['balanced','均衡'],['model','模型'],['evidence','证据']].map(([id,label]) => <button type="button" key={id} className={layout === id ? 'active' : ''} onClick={() => setLayout(id)}>{label}</button>)}</div></div></div>
-        <div className={`ov-binding-grid layout-${layout}`}><Panel title="工程对象" className="ov-tree-panel"><div className="ov-tree">{context?.root ? <TreeNode key={`${context.context.hierarchyRevision}:${session?.sessionRevision}:${reload}`} object={context.root} context={context.context} selected={selected} onSelect={uid => {setDetail(null); setSelected(uid);}} initialOpen /> : <p className="ov-source-note">{isActive ? '当前没有可读的安装对象。' : '登录后读取安装对象。'}</p>}</div></Panel>
-          <Panel className="ov-viewport-panel"><Schematic /></Panel>
-          <Panel className="ov-inspector"><div className="ov-inspector-heading"><span className="ov-eyebrow">当前对象</span><h2>{detail?.item.displayName || (selected ? '正在读取…' : '请选择工程对象')}</h2>{detail && <div className="ov-inline"><Badge tone="amber">{detail.item.reviewStatus === 'confirmed' ? '正式对象' : '待核实'}</Badge><span className="ov-source-note">{detail.item.objectKind === 'unknown' ? '类型未知' : detail.item.objectKind}</span></div>}</div>
-            {detail && context && <Tabs.Root value={tab} onValueChange={setTab}><Tabs.List className="ov-tabs" aria-label="对象详情">{['对象','属性','证据'].map(label => <Tabs.Trigger className={tab === label ? 'active' : ''} key={label} value={label}>{label}</Tabs.Trigger>)}</Tabs.List>
-              <Tabs.Content value="对象" className="ov-inspector-body"><dl className="ov-kv"><dt>分析对象</dt><dd>{detail.item.displayName}</dd><dt>安装身份</dt><dd>独立安装对象</dd><dt>所属对象</dt><dd>{parent?.displayName || '未取得上级对象'}</dd><dt>物理关系</dt><dd>{detail.ancestors.completeness === 'complete' ? '演示假定 · 待核实' : '父链不完整'}</dd><dt>空间定位</dt><dd>未知 · 几何绑定待审核</dd></dl></Tabs.Content>
-              <Tabs.Content value="属性" className="ov-inspector-body"><dl className="ov-kv"><dt>对象 UID</dt><dd className="ov-mono">{detail.item.entityUid}</dd><dt>对象修订</dt><dd className="ov-mono">{detail.item.entityRevision}</dd><dt>型号来源</dt><dd className="ov-mono">{detail.item.sourceTemplateEntityUid || '无固定来源'}</dd></dl></Tabs.Content>
-              <Tabs.Content value="证据" className="ov-inspector-body"><SourceEvidence key={`${selected}:${detail.item.entityRevision}:${context.context.hierarchyRevision}:${session?.sessionRevision}`} api={api} object={detail.item} context={context.context} host="未知 · 几何绑定待审核" /></Tabs.Content>
-            </Tabs.Root>}
-            <div className="ov-inspector-footer"><Btn primary disabled title="需要核实工程身份、物理关系和几何绑定">确认绑定</Btn></div>
-          </Panel></div><div className="ov-context-strip"><span>所选：{detail?.item.displayName || '未选择'}</span><span>空间定位：未知</span><span className="ov-spacer" /><span className="ov-muted">示意布局 · 工程发布未开放</span></div></>}
-    </main></div>
-    {loginOpen && <Modal title="登录 ONTOVis" description="使用本人 OntoBase 账号登录" onClose={closeLogin}><form className="ov-simple-login" onSubmit={event => {event.preventDefault(); void login();}}>
-      <input aria-label="用户名" placeholder="用户名" autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required disabled={signingIn} />
-      <input aria-label="密码" placeholder="密码" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={signingIn} />
-      {loginError && <p role="alert">{loginError}</p>}<button type="submit" className="ov-btn primary" disabled={signingIn}>{signingIn ? '正在登录…' : '登录'}</button>
+  const kinds = {turbine:'turbine', cabinet:'cabinet', device:'device', component:'component'} as const;
+  const kind = detail && kinds[detail.item.objectKind as keyof typeof kinds];
+  return <div className="ov-app ov-compact">
+    <header className="cw-header"><a className="cw-brand" href="#project" onClick={event => {event.preventDefault();setModal('project');}} aria-label="ONTOVis"><img src={logo} alt="ONTOVis 本源数智"/></a><span className="cw-divider"/>
+      <button className="cw-project" type="button" onClick={() => setModal('project')}><Building2 size={15}/><span>{context?.projectName || t('workbench')}</span><ChevronDown size={12}/></button><span className="cw-grow"/>
+      {active ? <Dropdown.Root><Dropdown.Trigger asChild><button type="button" className="cw-avatar" aria-label={t('account')}>{session?.username?.slice(0,2).toUpperCase() || <User size={16}/>}</button></Dropdown.Trigger><Dropdown.Portal><Dropdown.Content className="cw-menu" align="end" sideOffset={8}>
+        <div className="cw-user-info"><strong>{session?.username}</strong><span className="cw-caption">{context?.projectName}</span></div>
+        <Dropdown.Item onSelect={() => setModal('account')}><User size={15}/>{t('account')}</Dropdown.Item><Dropdown.Separator/>
+        <div className="cw-preference"><span><Languages size={14}/>{t('language')}</span><Dropdown.RadioGroup value={locale} onValueChange={value => setLocale(value as 'zh' | 'en')}><Dropdown.RadioItem value="zh">简体中文</Dropdown.RadioItem><Dropdown.RadioItem value="en">English</Dropdown.RadioItem></Dropdown.RadioGroup></div>
+        <div className="cw-preference"><span><Sun size={14}/>{t('theme')}</span><Dropdown.RadioGroup value={theme} onValueChange={value => setTheme(value as 'light' | 'dark' | 'system')}>{(['light','system','dark'] as const).map(value => <Dropdown.RadioItem key={value} value={value}>{t(value)}</Dropdown.RadioItem>)}</Dropdown.RadioGroup></div>
+        <Dropdown.Separator/><Dropdown.Item onSelect={() => void logout()}><LogOut size={15}/>{t('signOut')}</Dropdown.Item>
+      </Dropdown.Content></Dropdown.Portal></Dropdown.Root> : <Btn onClick={() => {setLoginError(null);setModal('login');}}>{t('signIn')}</Btn>}
+    </header>
+    <div className="cw-shell"><nav className="cw-rail" aria-label={t('project')}><IconBtn label={t('project')} onClick={() => setModal('project')}><Building2 size={19}/></IconBtn><IconBtn label={t('models')} onClick={() => setModal('model')}><Boxes size={19}/></IconBtn><button type="button" className="active" title={t('links')} aria-label={t('links')}><Link2 size={19}/></button></nav>
+      <main className="cw-main"><div className="cw-toolbar"><IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn><h1>{t('workbench')}</h1><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}<span className="cw-grow"/><IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn><IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn></div>
+      {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}</div>}
+      <div className="cw-workspace">
+        <ObjectsPanel key={`${session?.sessionRevision}:${reload}:${context?.context.hierarchyRevision}`} api={api} view={context} selected={selection.uid} onSelect={select} className={left ? 'is-open' : ''}/>
+        <Suspense fallback={<section className="cw-panel cw-scene"><p className="cw-state" role="status">{t('loading')}</p></section>}>{active ? <ModelViewport key={`${session?.sessionRevision}:${reload}`} api={api} active={active} detail={detail} model={model} onModel={setModel} onSelect={uid => select(uid)} focusSignal={focusSignal}/> : <section className="cw-panel cw-scene"><header><strong>{t('modelView')}</strong></header><p className="cw-state">{t('loginPrompt')}</p></section>}</Suspense>
+        <aside className={`cw-panel cw-inspector ${right ? 'is-open' : ''}`}><header><strong>{detail?.item.displayName || (selection.uid ? t('loading') : t('select'))}</strong>{detail && <Badge tone={detail.item.reviewStatus === 'confirmed' ? 'neutral' : 'amber'}>{detail.item.reviewStatus === 'confirmed' ? t('confirmed') : t('unverified')}</Badge>}</header>
+          {detail && context && <Tabs.Root value={tab} onValueChange={setTab}><Tabs.List className="cw-tabs" aria-label={t('details')}>{(['details','properties','drawings'] as const).map(value => <Tabs.Trigger value={value} key={value} className={tab === value ? 'active' : ''}>{t(value)}</Tabs.Trigger>)}</Tabs.List>
+            <div className="cw-inspector-scroll"><Tabs.Content value="details"><dl className="cw-kv"><dt>{t('parent')}</dt><dd>{parent?.displayName || (detail.item.installationContextId ? t('noParent') : t('definition'))}</dd><dt>{t('kind')}</dt><dd>{kind ? t(kind) : t('unknown')}</dd><dt>{t('location')}</dt><dd>{host}</dd>{location && <><dt>{t('modelView')}</dt><dd>{location.binding.componentKey}</dd></>}</dl><Btn disabled={!location} onClick={() => setFocusSignal(value => value+1)}><Focus size={14}/>{t('locate')}</Btn><details className="cw-details"><summary>{t('moreInfo')}<ChevronDown size={12}/></summary><p>{t('reviewNote')}</p>{location?.mode === 'ancestor' && <p>{t('noGeometry')}</p>}{!detail.item.installationContextId && <p>{t('sourceOnly')}</p>}{detail.ancestors.completeness === 'incomplete' && <p>{t('incomplete')}</p>}</details></Tabs.Content>
+            <Tabs.Content value="properties"><dl className="cw-kv"><dt>{t('objectUid')}</dt><dd className="ov-mono">{detail.item.entityUid}</dd><dt>{t('objectRevision')}</dt><dd className="ov-mono">{detail.item.entityRevision}</dd><dt>{t('template')}</dt><dd className="ov-mono">{detail.item.sourceTemplateEntityUid || t('noTemplate')}</dd></dl></Tabs.Content>
+            <Tabs.Content value="drawings"><SourceEvidence key={`${selection.uid}:${detail.item.entityRevision}:${context.context.hierarchyRevision}:${session?.sessionRevision}`} api={api} object={detail.item} context={context.context} host={host}/></Tabs.Content></div>
+          </Tabs.Root>}
+        </aside>
+      </div></main>
+    </div>
+    {modal === 'login' && <Modal title={t('signInTitle')} description={t('accountHint')} onClose={closeModal}><form className="ov-simple-login" onSubmit={event => {event.preventDefault();void login();}}>
+      <input aria-label={t('username')} placeholder={t('username')} autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required disabled={signingIn}/><input aria-label={t('password')} placeholder={t('password')} type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={signingIn}/>
+      {loginError ? <p role="alert">{failureMessage(loginError,locale)}</p> : null}<button type="submit" className="ov-btn primary" disabled={signingIn}>{signingIn ? t('signingIn') : t('signIn')}</button>
     </form></Modal>}
+    {(modal === 'account' || modal === 'project') && <Modal title={t(modal === 'account' ? 'account' : 'project')} description={t('access')} onClose={closeModal}><dl className="cw-kv"><dt>{t('username')}</dt><dd>{session?.username || '—'}</dd><dt>{t('currentProject')}</dt><dd>{context?.projectName || '—'}</dd><dt>{t('access')}</dt><dd>{active ? t('readOnly') : t('loginPrompt')}</dd></dl>{!active && <Btn primary onClick={() => setModal('login')}>{t('signIn')}</Btn>}</Modal>}
+    {modal === 'model' && <Modal title={t('models')} description={t('modelView')} onClose={closeModal}><dl className="cw-kv"><dt>{t('modelSource')}</dt><dd>{t('modelName')}</dd><dt>{t('binding')}</dt><dd>{model ? t('modelReady') : t('modelUnavailable')}</dd><dt>{t('location')}</dt><dd>{t('geometryNote')}</dd></dl>{model && <div className="cw-model-links">{model.bindings.map(row => <button type="button" className="cw-list-item" key={row.entityUid} onClick={() => {select(row.entityUid);setModal(null);}}>{row.componentKey}<span className="cw-grow"/><Badge>{row.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate')}</Badge></button>)}</div>}<details className="cw-details"><summary>{t('moreInfo')}</summary><p>{t('reviewNote')}</p><p className="ov-mono">{model?.sha256}</p></details></Modal>}
   </div>;
 }

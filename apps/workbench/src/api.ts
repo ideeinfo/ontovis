@@ -15,7 +15,7 @@ export class WorkbenchApi {
   invalidate() { this.epoch += 1; }
   session(revision: string) { this.invalidate(); this.revision = revision; }
 
-  async request<T>(path: string, body?: object, signal?: AbortSignal, image = false): Promise<T> {
+  async request<T>(path: string, body?: object, signal?: AbortSignal, image: boolean | 'model' = false): Promise<T> {
     const epoch = this.epoch, revision = this.revision;
     const guard = () => {
       if (epoch !== this.epoch || revision !== this.revision || signal?.aborted) {
@@ -37,7 +37,7 @@ export class WorkbenchApi {
     if (image) {
       const blob = await response.blob();
       guard();
-      if (response.headers.get('X-Session-Revision') !== revision || blob.type !== 'image/png'
+      if (response.headers.get('X-Session-Revision') !== revision || blob.type !== (image === 'model' ? 'model/gltf-binary' : 'image/png')
           || blob.size > 20 * 1024 * 1024) throw new ApiError(502, 'SOURCE_UNAVAILABLE');
       return blob as T;
     }
@@ -50,9 +50,22 @@ export class WorkbenchApi {
   }
 }
 
-export function failureMessage(error: unknown): string {
+export function failureMessage(error: unknown, locale = 'zh'): string {
+  if (locale === 'en') {
+    if (error instanceof ApiError) {
+      if (error.code === 'CREDENTIALS_REJECTED') return 'Incorrect username or password.';
+      if (error.code === 'IMAGE_INVALID') return 'Drawing display incomplete. Retry.';
+      if (error.status === 401) return 'Session expired. Sign in again.';
+      if (error.status === 403) return 'Content unavailable or access denied.';
+      if (error.code === 'SOURCE_MISSING') return 'Source unavailable. The reference is retained.';
+      if (error.status === 409) return 'Object or source changed. Reload and select again.';
+      if (error.status === 413) return 'Content exceeds this preview limit.';
+    }
+    return 'Read failed. Retry later.';
+  }
   if (error instanceof ApiError) {
     if (error.code === 'CREDENTIALS_REJECTED') return '账号或密码不正确，请重新登录。';
+    if (error.code === 'IMAGE_INVALID') return '图纸未完整显示，请重试。';
     if (error.status === 401) return '会话已失效，请重新登录。';
     if (error.status === 403) return '资料不可用或无权访问。';
     if (error.code === 'SOURCE_MISSING') return '原文暂不可用，保留资料引用。';

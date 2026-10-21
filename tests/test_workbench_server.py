@@ -129,3 +129,47 @@ class WorkbenchTests(unittest.TestCase):
             value=original(*args);account.allowed=False;return value
         account.image=image
         self.assert_error('FORBIDDEN',lambda:self.read('evidence/content',**self.selection(),evidenceRef='fixture-evidence',expectedSourceRevision='a'*64,expectedContentSha256='b'*64))
+
+    def test_project_catalog_forwards_only_bounded_search_and_server_cursor(self):
+        account=self.accounts[0];original=account.request
+        def request(method,path,body=None):
+            if '/objects?' in path:return {'items':[], 'nextCursor':'opaque', 'query':parse_qs(urlsplit(path).query)}
+            return original(method,path,body)
+        account.request=request
+        result=self.read('catalog',q='CN + 01',cursor='opaque',scope='project')
+        self.assertEqual(result['query'],{'q':['CN + 01'],'cursor':['opaque'],'limit':['50']})
+        self.assertEqual(result['nextCursor'],'opaque')
+        self.assertFalse(any('/installations/' in call[1] for call in account.calls))
+        self.assert_error('INVALID_REQUEST',lambda:self.read('catalog',q='x'*201))
+        self.assert_error('INVALID_REQUEST',lambda:self.read('catalog',url='https://example.invalid'))
+
+    def test_project_definition_does_not_borrow_an_equipment_parent(self):
+        account=self.accounts[0];original=account.request
+        def request(method,path,body=None):
+            value=original(method,path,body)
+            if path.endswith('/objects/resolve'):value['items'][0]['object']['installationContextId']=None
+            return value
+        account.request=request
+        result=self.read('object',entityUid='definition',expectedHierarchyRevision=CONTEXT+':1',scope='project')
+        self.assertEqual(result['ancestors'],{'path':[],'completeness':'not_applicable'})
+        self.assertFalse(any('/ancestors?' in call[1] for call in account.calls))
+        self.assert_error('NOT_FOUND_OR_FORBIDDEN',lambda:self.read('object',entityUid='definition',expectedHierarchyRevision=CONTEXT+':1',scope='equipment'))
+
+    def test_definition_evidence_keeps_nullable_identity_pair(self):
+        selection={**self.selection(),'installationContextId':None,'expectedHierarchyRevision':None}
+        self.assertEqual(len(self.read('evidence/resolve',**selection)['items']),1)
+        self.assert_error('INVALID_REQUEST',lambda:self.read('evidence/resolve',**{**selection,'expectedHierarchyRevision':'unexpected'}))
+
+    def test_model_read_is_fixed_version_and_rechecks_permission_after_bytes(self):
+        account=self.accounts[0]
+        class Model:
+            value={'sha256':'a'*64,'bindings':[{'entityUid':'CT'},{'entityUid':'CN'},{'entityUid':'CN1'}]}
+            def metadata(self,items,context):return {'sha256':'a'*64,'engineeringUseAllowed':False}
+            def content(self):return b'glTFsynthetic'
+        self.sessions.model=Model()
+        self.assertTrue(self.read('model/content',expectedModelSha256='a'*64)['content'].startswith(b'glTF'))
+        self.assert_error('MODEL_CHANGED',lambda:self.read('model/content',expectedModelSha256='b'*64))
+        self.assert_error('INVALID_REQUEST',lambda:self.read('model/content',expectedModelSha256='a'*64,url='https://example.invalid'))
+        def revoked():account.allowed=False;return b'glTFsynthetic'
+        self.sessions.model.content=revoked
+        self.assert_error('FORBIDDEN',lambda:self.read('model/content',expectedModelSha256='a'*64))
