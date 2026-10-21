@@ -4,7 +4,7 @@
 
 共用`authority.py`、`user_sessions.py`和`session_http.py`处理受限回环读取、内存会话及同源HTTP边界。令牌只保留在服务端内存，30分钟无操作或最长8小时失效；每次读取核验当前项目成员，读取/渲染后重查权限和会话。客户端只收到不透明HttpOnly会话Cookie，登录仅用户名、密码。
 
-维护检查：`python3 -m unittest tests.test_workbench_server tests.test_session_server tests.test_installation_preview tests.test_model_assets -v`共76项（命令另加`tests.test_model_upload`）；Node 22执行`npm --prefix apps/workbench run check`包含严格类型、20项时序/定位/语言检查和构建。上传限额与演示写入见[模型上传首切](../docs/plans/模型上传与演示关联切片.md)。本批服务及素材边界见[紧凑工作台切片](../docs/plans/紧凑工作台与模型接入切片.md)。部署模板为[正式会话服务](../deploy/ontovis-workbench.service)和[正式入口](../deploy/nginx-workbench.conf)；私有设备配置不含凭据，模型与UID映射不进入Git或静态发布目录。
+维护检查：`python3 -m unittest tests.test_workbench_server tests.test_session_server tests.test_installation_preview tests.test_model_assets tests.test_model_upload -v`共76项；Node 22执行`npm --prefix apps/workbench run check`包含严格类型、20项时序/定位/语言检查和构建。上传限额与演示写入见[模型上传首切](../docs/plans/模型上传与演示关联切片.md)。本批服务及素材边界见[紧凑工作台切片](../docs/plans/紧凑工作台与模型接入切片.md)。部署模板为[正式会话服务](../deploy/ontovis-workbench.service)和[正式入口](../deploy/nginx-workbench.conf)；私有设备配置不含凭据，模型与UID映射不进入Git或静态发布目录。
 
 ## 历史空间演示参考
 
