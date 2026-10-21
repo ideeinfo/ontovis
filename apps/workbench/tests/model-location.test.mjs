@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {bindingNeedsReview,modelLocation} from '../src/modelLocation.ts';
+import {bindingNeedsReview,modelLocation,modelNavigation} from '../src/modelLocation.ts';
 import {messages,translate} from '../src/messages.ts';
 const obj=(uid,revision='r1')=>({entityUid:uid,entityRevision:revision,installationContextId:'equipment',lifecycle:'active'});
-const binding=(uid,key)=>({entityUid:uid,entityRevision:'r1',componentKey:key,geometryQuality:'source_candidate'});
-const model={bindings:[binding('near','CN'),binding('far','CT')]};
+const binding=(uid,key)=>({entityUid:uid,entityRevision:'r1',componentKey:key,geometryQuality:'source_candidate',bounds:[[0,0,0],[1,2,1]]});
+const model={rootEntityUid:'root',bindings:[binding('near','CN'),binding('far','CT')]};
 const detail={item:obj('child'),ancestors:{completeness:'complete',path:[{object:obj('near')},{object:obj('far')}]}};
 
 test('child locates nearest recorded bound parent without replacing selected identity',()=>{
@@ -33,6 +33,30 @@ test('review indicators concern the selected object and its own physical ancesto
  assert.equal(bindingNeedsReview(detail,{...model,bindingWarnings:[{entityUid:'unrelated'}]}),false);
  assert.equal(bindingNeedsReview(detail,{...model,bindingWarnings:[{entityUid:'near'}]}),true);
  assert.equal(modelLocation({...detail,ancestors:{...detail.ancestors,path:[{object:{...obj('near'),lifecycle:'merged'}},{object:obj('far')}]}},model),null);
+});
+test('cabinet switches retain the last camera destination across pending details',()=>{
+ const cabinet=uid=>({item:obj(uid),ancestors:{completeness:'complete',path:[]}});
+ let previous='';const moves=[];
+ for(const selected of [cabinet('near'),null,null,cabinet('far'),null,cabinet('near')]) {
+  const next=modelNavigation(selected,model,previous);
+  if(next){moves.push(next);previous=next.entityUid;}
+ }
+ assert.deepEqual(moves.map(move=>move.entityUid),['near','far','near']);
+ assert.ok(moves.every(move=>move.bounds));
+ assert.equal(modelNavigation(cabinet('near'),model,previous),null);
+});
+test('unlocated or stale objects hold the view; only an explicit whole-unit selection fits the model',()=>{
+ const unlocated={item:obj('definition'),ancestors:{completeness:'complete',path:[]}};
+ assert.equal(modelNavigation(unlocated,model,'near'),null);
+ assert.equal(modelNavigation({...unlocated,item:obj('near','r2')},model,'far'),null);
+ assert.deepEqual(modelNavigation({...unlocated,item:obj('root')},model,'near'),{entityUid:'root',bounds:null});
+ assert.equal(modelNavigation({...unlocated,item:{...obj('root'),lifecycle:'merged'}},model,'near'),null);
+});
+test('child navigation targets its recorded cabinet without changing the selected identity',()=>{
+ const next=modelNavigation(detail,model,'far');
+ assert.equal(next.entityUid,'child');assert.deepEqual(next.bounds,model.bindings[0].bounds);
+ assert.equal(detail.item.entityUid,'child');
+ assert.equal(modelNavigation({...detail,ancestors:{...detail.ancestors,completeness:'incomplete'}},model,'far'),null);
 });
 test('locale resources cover the same business states and preserve interpolation',()=>{
  assert.deepEqual(Object.keys(messages.zh).sort(),Object.keys(messages.en).sort());

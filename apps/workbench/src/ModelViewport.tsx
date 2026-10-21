@@ -6,7 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ApiError, cancelled, failureMessage, type WorkbenchApi } from './api';
 import { IconBtn } from './Primitives';
 import { usePreferences } from './Preferences';
-import { bindingNeedsReview, modelLocation } from './modelLocation';
+import { bindingNeedsReview, modelLocation, modelNavigation } from './modelLocation';
 import type { ModelView, ObjectView } from './types';
 
 type Controls = {fit:() => void; locate:() => void; zoom:(factor:number) => void};
@@ -118,6 +118,9 @@ export function ModelViewport({api, active, detail, model, modelVersionId, onMod
       update.current = () => {
         if (!scene || !orbit) return;
         const state = current.current, location = modelLocation(state.detail, metadata);
+        // Clear stale highlights while loading without sending the camera back to the whole model.
+        if (!state.detail && tween) {tween = null; lastSelection = '';}
+        const destination = modelNavigation(state.detail, metadata, lastSelection);
         const css = getComputedStyle(document.documentElement);
         scene.background = new THREE.Color(css.getPropertyValue('--sceneBackground').trim());
         disposeObject(highlight); highlight.clear();
@@ -140,9 +143,15 @@ export function ModelViewport({api, active, detail, model, modelVersionId, onMod
         if (location) {
           const box = new THREE.Box3(new THREE.Vector3(...location.binding.bounds[0]), new THREE.Vector3(...location.binding.bounds[1]));
           const helper = new THREE.Box3Helper(box, new THREE.Color(css.getPropertyValue('--primary').trim())); highlight.add(helper);
-          if (state.detail?.item.entityUid !== lastSelection) fit(box, true, new THREE.Vector3(box.getCenter(new THREE.Vector3()).x<0 ? -1 : 1, .35, -1.5));
-        } else if (lastSelection) fit(whole);
-        lastSelection = state.detail?.item.entityUid || ''; request();
+        }
+        if (destination) {
+          if (destination.bounds) {
+            const box = new THREE.Box3(new THREE.Vector3(...destination.bounds[0]), new THREE.Vector3(...destination.bounds[1]));
+            fit(box, true, new THREE.Vector3(box.getCenter(new THREE.Vector3()).x<0 ? -1 : 1, .35, -1.5));
+          } else fit(whole);
+          lastSelection = destination.entityUid;
+        }
+        request();
       };
       controls.current = {fit:() => fit(whole), locate:() => {const l = modelLocation(current.current.detail,metadata); if (l) fit(new THREE.Box3(new THREE.Vector3(...l.binding.bounds[0]),new THREE.Vector3(...l.binding.bounds[1])), true, new THREE.Vector3(l.binding.bounds[0][0]+l.binding.bounds[1][0]<0 ? -1 : 1,.35,-1.5));},
         zoom:factor => {if (!orbit) return; tween=null; camera.position.sub(orbit.target).multiplyScalar(factor).add(orbit.target); request();}};

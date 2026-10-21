@@ -23,3 +23,13 @@ export function modelLocation(detail: ObjectView | null, model: ModelView | null
   }
   return null;
 }
+
+export function modelNavigation(detail:ObjectView|null, model:ModelView, previousEntityUid:string) {
+  if (!detail || detail.item.entityUid === previousEntityUid) return null;
+  const {item} = detail, location = modelLocation(detail, model);
+  if (location) return {entityUid:item.entityUid, bounds:location.binding.bounds};
+  if (item.entityUid === model.rootEntityUid && item.installationContextId && item.lifecycle === 'active') {
+    return {entityUid:item.entityUid, bounds:null};
+  }
+  return null;
+}
