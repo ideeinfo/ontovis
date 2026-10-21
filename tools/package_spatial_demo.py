@@ -102,6 +102,17 @@ def package(source: Path, output: Path, authorization_basis: str, *, user_sessio
         payloads['index.html'] = payloads['index.html'].replace(
             b'<link rel="stylesheet" href="./styles.css">',
             b'<link rel="stylesheet" href="./styles.css"><link rel="stylesheet" href="./session.css">')
+        versioned = [name for name in payloads if '/' not in name and name.endswith(('.js','.css'))]
+        frontend_version = hashlib.sha256(b''.join(
+            name.encode()+hashlib.sha256(payloads[name]).digest() for name in sorted(versioned))).hexdigest()[:12]
+        # Existing open browsers must not reuse a previous module graph after a
+        # release switch. Version both entry points and their relative imports.
+        for name in versioned:
+            if name.endswith('.js'):
+                payloads[name] = re.sub(rb'''(\bfrom\s+['"])(\./[^'"]+\.js)(['"])''',
+                    lambda match: match[1]+match[2]+b'?v='+frontend_version.encode()+match[3], payloads[name])
+        payloads['index.html'] = re.sub(rb'((?:src|href)="\./(?:app\.js|styles\.css|session\.css))"',
+            lambda match:match[1]+b'?v='+frontend_version.encode()+b'"',payloads['index.html'])
     template = json.loads(payloads['data/turbine-template.json'])
     template['purpose'] = 'public test visualization only; not engineering binding'
     payloads['data/turbine-template.json'] = (json.dumps(template,ensure_ascii=False,indent=2)+'\n').encode()
@@ -138,7 +149,9 @@ def package(source: Path, output: Path, authorization_basis: str, *, user_sessio
             '空间演示公开可用。工程对象须本人登录并取得项目权限，首批仅读取7号五个演示安装对象；正式工程发布保持阻断，不开放资料原文或设备控制。'.encode())
     manifest = {'schemaVersion':1,'purpose':'public_spatial_demo', 'engineeringServiceConnected':False,
                 'files':{name:{'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()} for name,data in sorted(payloads.items())}}
-    if user_sessions: manifest['engineeringSessionMode'] = 'per_user'
+    if user_sessions:
+        manifest['engineeringSessionMode'] = 'per_user'
+        manifest['frontendVersion'] = frontend_version
     manifest['releaseId'] = hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest()[:16]
     payloads['release.json'] = (json.dumps(manifest,ensure_ascii=False,indent=2)+'\n').encode()
     output.parent.mkdir(parents=True,exist_ok=True)

@@ -102,6 +102,18 @@ class SpatialPackageTests(unittest.TestCase):
         self.assertIn('当前保留2个图示机位',(self.output/'README.md').read_text())
         self.assertEqual(json.loads((self.output/'data/turbines.geojson').read_text()), locations)
 
+    def test_entry_and_module_graph_change_version_between_frontend_releases(self):
+        (self.source/'index.html').write_text('<script src="./app.js"></script><link rel="stylesheet" href="./styles.css">')
+        (self.source/'app.js').write_text("import { InstallationAuthorityPanel } from './authority-preview.js';")
+        first=package(self.source,self.output,'Synthetic authorization',user_sessions=True)
+        version=first['frontendVersion']
+        self.assertIn('app.js?v='+version,(self.output/'index.html').read_text())
+        self.assertIn('authority-preview.js?v='+version,(self.output/'app.js').read_text())
+        self.assertIn('session.js?v='+version,(self.output/'authority-preview.js').read_text())
+        (self.source/'app.js').write_text((self.source/'app.js').read_text()+'\n// changed frontend\n')
+        second=package(self.source,self.output.parent/'second','Synthetic authorization',user_sessions=True)
+        self.assertNotEqual(version,second['frontendVersion'])
+
 
 if __name__ == '__main__':
     unittest.main()
