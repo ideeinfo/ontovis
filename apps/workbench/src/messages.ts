@@ -1,5 +1,9 @@
 export const messages = {
   zh: {
+    projectManagement:'项目管理', projectAccess:'项目与访问', modelCenter:'模型中心',
+    componentBinding:'构件绑定', equipmentHierarchy:'设备层级', sceneSettings:'场景与可视化',
+    dataAlarms:'数据与告警', aiPolicy:'AI 策略', evidenceAudit:'证据与审计',
+    workbenchLayout:'工作台布局', balanced:'均衡', modelLayout:'模型', drawingLayout:'图纸',
     workbench:'设备与模型', project:'项目', models:'模型', links:'对象关联',
     objects:'项目对象', equipment:'设备', search:'搜索名称或编号', loading:'正在读取…',
     refresh:'刷新', retry:'重试', more:'加载更多', noMatch:'没有匹配的对象',
@@ -41,6 +45,10 @@ export const messages = {
     rotor:'风叶', tower:'塔筒', nacelle:'机舱', controller:'控制器',
   },
   en: {
+    projectManagement:'Project management', projectAccess:'Project & access', modelCenter:'Model center',
+    componentBinding:'Component binding', equipmentHierarchy:'Equipment hierarchy', sceneSettings:'Scene & visualization',
+    dataAlarms:'Data & alarms', aiPolicy:'AI policy', evidenceAudit:'Evidence & audit',
+    workbenchLayout:'Workbench layout', balanced:'Balanced', modelLayout:'Model', drawingLayout:'Drawings',
     workbench:'Assets & model', project:'Project', models:'Models', links:'Object links',
     objects:'Project objects', equipment:'Equipment', search:'Search name or ID', loading:'Loading…',
     refresh:'Refresh', retry:'Retry', more:'Load more', noMatch:'No matching objects',
