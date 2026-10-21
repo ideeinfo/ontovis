@@ -1,10 +1,10 @@
-# ONTOVis 只读工作台与会话
+# ONTOVis 工作台与会话
 
-当前首切：[workbench](workbench/README.md)承接MagicPath紧凑工作台，包含本人登录、设备树/完整项目对象搜索分页、现模型和三柜关联、子设备祖先定位及图纸预览。后端`api/workbench_server.py`固定部署项目和设备上下文，动态读取对象，不使用固定五个角色UID清单限制目录。已授权现模型的三柜映射单独存放静态目录之外，固定文件和对象修订；不提供业务写入或任意文件代理。
+当前首切：[workbench](workbench/README.md)承接MagicPath紧凑工作台，包含本人登录、设备树/完整项目对象搜索分页、现模型和三柜关联、子设备祖先定位及图纸预览。后端`api/workbench_server.py`固定部署项目和设备上下文，动态读取对象，不使用固定五个角色UID清单限制目录。已授权现模型的三柜映射单独存放静态目录之外，固定文件和对象修订；新增自有私有模型库、受控上传和演示关联写入；不写OntoBase业务库、不提供任意文件代理。
 
 共用`authority.py`、`user_sessions.py`和`session_http.py`处理受限回环读取、内存会话及同源HTTP边界。令牌只保留在服务端内存，30分钟无操作或最长8小时失效；每次读取核验当前项目成员，读取/渲染后重查权限和会话。客户端只收到不透明HttpOnly会话Cookie，登录仅用户名、密码。
 
-维护检查：`python3 -m unittest tests.test_workbench_server tests.test_session_server tests.test_installation_preview tests.test_model_assets -v`共57项；Node 22执行`npm --prefix apps/workbench run check`包含严格类型、15项时序/定位/语言检查和构建。本批服务及素材边界见[紧凑工作台切片](../docs/plans/紧凑工作台与模型接入切片.md)。部署模板为[正式会话服务](../deploy/ontovis-workbench.service)和[正式入口](../deploy/nginx-workbench.conf)；私有设备配置不含凭据，模型与UID映射不进入Git或静态发布目录。
+维护检查：`python3 -m unittest tests.test_workbench_server tests.test_session_server tests.test_installation_preview tests.test_model_assets -v`共76项（命令另加`tests.test_model_upload`）；Node 22执行`npm --prefix apps/workbench run check`包含严格类型、20项时序/定位/语言检查和构建。上传限额与演示写入见[模型上传首切](../docs/plans/模型上传与演示关联切片.md)。本批服务及素材边界见[紧凑工作台切片](../docs/plans/紧凑工作台与模型接入切片.md)。部署模板为[正式会话服务](../deploy/ontovis-workbench.service)和[正式入口](../deploy/nginx-workbench.conf)；私有设备配置不含凭据，模型与UID映射不进入Git或静态发布目录。
 
 ## 历史空间演示参考
 

@@ -6,14 +6,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ApiError, cancelled, failureMessage, type WorkbenchApi } from './api';
 import { IconBtn } from './Primitives';
 import { usePreferences } from './Preferences';
-import { modelLocation } from './modelLocation';
+import { bindingNeedsReview, modelLocation } from './modelLocation';
 import type { ModelView, ObjectView } from './types';
 
 type Controls = {fit:() => void; locate:() => void; zoom:(factor:number) => void};
-export function ModelViewport({api, active, detail, model, onModel, onSelect, focusSignal}: {
+export function ModelViewport({api, active, detail, model, modelVersionId, onModel, onSelect, focusSignal}: {
   api:WorkbenchApi; active:boolean; detail:ObjectView | null; model:ModelView | null;
   onModel:(value:ModelView | null) => void; onSelect:(uid:string) => void;
   focusSignal:number;
+  modelVersionId:string|null;
 }) {
   const {t, locale, resolved} = usePreferences();
   const mount = useRef<HTMLDivElement>(null);
@@ -26,9 +27,11 @@ export function ModelViewport({api, active, detail, model, onModel, onSelect, fo
   useEffect(() => {
     if (!active || !mount.current) return;
     const abort = new AbortController(); const element = mount.current;
+    const epoch=api.epoch,revision=api.revision;
     let renderer:THREE.WebGLRenderer | null = null, scene:THREE.Scene | null = null;
     let orbit:OrbitControls | null = null, observer:ResizeObserver | null = null, frame = 0;
     let disposed = false;
+    const stale=()=>disposed || abort.signal.aborted || api.epoch!==epoch || api.revision!==revision;
     onModel(null); setReading(true); setError(null);
     const disposeObject = (object:THREE.Object3D) => object.traverse(node => {
       if (node instanceof THREE.Mesh || node instanceof THREE.LineSegments) {
@@ -41,14 +44,15 @@ export function ModelViewport({api, active, detail, model, onModel, onSelect, fo
       }
     });
     async function start() {
-      const metadata = await api.request<ModelView>('/api/workbench/model', {}, abort.signal);
-      const blob = await api.request<Blob>('/api/workbench/model/content', {expectedModelSha256:metadata.sha256}, abort.signal, 'model');
+      const metadata = await api.request<ModelView>('/api/workbench/model', modelVersionId ? {modelVersionId} : {}, abort.signal);
+      const reference = modelVersionId ? {modelVersionId,expectedModelRevision:metadata.modelRevision,expectedViewRevision:metadata.viewRevision} : {};
+      const blob = await api.request<Blob>('/api/workbench/model/content', {...reference,expectedModelSha256:metadata.sha256}, abort.signal, 'model');
       const bytes = await blob.arrayBuffer();
       const sha = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))).map(v => v.toString(16).padStart(2,'0')).join('');
-      if (disposed) return;
+      if (stale()) return;
       if (sha !== metadata.sha256) throw new ApiError(409, 'MODEL_CHANGED');
       const gltf = await new GLTFLoader().parseAsync(bytes, '');
-      if (disposed) {disposeObject(gltf.scene); return;}
+      if (stale()) {disposeObject(gltf.scene); return;}
       scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(42, 1, .05, 3000);
       renderer = new THREE.WebGLRenderer({antialias:true, powerPreference:'high-performance'});
@@ -57,11 +61,20 @@ export function ModelViewport({api, active, detail, model, onModel, onSelect, fo
       renderer.domElement.setAttribute('aria-label', t('modelView')); renderer.domElement.setAttribute('role','img');
       element.append(renderer.domElement);
       const root = gltf.scene;
+      const keys = new Map(metadata.components?.flatMap(row=>row.nodeIndices.map(index=>[index,row.componentKey] as const)) || []);
+      root.traverse(node=>{
+        let source:THREE.Object3D|null=node;
+        while(source) {
+          const index=gltf.parser.associations.get(source)?.nodes;
+          if(index!==undefined && keys.has(index)){node.userData.ontoVisKey=keys.get(index);break;}
+          source=source.parent;
+        }
+      });
       const materials = new Map<string, THREE.Material>();
       root.traverse(node => {
         if (!(node instanceof THREE.Mesh)) return;
         const copy = (material:THREE.Material) => {
-          const key = `${node.userData.component}:${material.uuid}`;
+          const key = `${node.userData.ontoVisKey || node.userData.component}:${material.uuid}`;
           if (!materials.has(key)) materials.set(key, material.clone());
           return materials.get(key)!;
         };
@@ -72,7 +85,7 @@ export function ModelViewport({api, active, detail, model, onModel, onSelect, fo
         const bounds = new THREE.Box3(new THREE.Vector3(...binding.bounds[0]), new THREE.Vector3(...binding.bounds[1]));
         const size = bounds.getSize(new THREE.Vector3());
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(size.x,size.y,size.z), new THREE.MeshStandardMaterial({color:0x718275,roughness:.75}));
-        mesh.position.copy(bounds.getCenter(new THREE.Vector3())); mesh.userData.component = binding.componentKey;
+        mesh.position.copy(bounds.getCenter(new THREE.Vector3())); mesh.userData.component = binding.componentKey;mesh.userData.ontoVisKey=binding.componentKey;
         proxy.add(mesh);
       }
       root.add(proxy); scene.add(root);
@@ -111,7 +124,7 @@ export function ModelViewport({api, active, detail, model, onModel, onSelect, fo
         const selectedKey = location?.binding.componentKey;
         root.traverse(node => {
           if (!(node instanceof THREE.Mesh)) return;
-          const selected = node.userData.component === selectedKey || selectedKey === 'CN' && node.userData.component === 'controller';
+          const selected = metadata.components ? node.userData.ontoVisKey===selectedKey && !!selectedKey : node.userData.component === selectedKey || selectedKey === 'CN' && node.userData.component === 'controller';
           const mats = Array.isArray(node.material) ? node.material : [node.material];
           for (const material of mats) {
             if (material instanceof THREE.MeshStandardMaterial) {
@@ -127,11 +140,11 @@ export function ModelViewport({api, active, detail, model, onModel, onSelect, fo
         if (location) {
           const box = new THREE.Box3(new THREE.Vector3(...location.binding.bounds[0]), new THREE.Vector3(...location.binding.bounds[1]));
           const helper = new THREE.Box3Helper(box, new THREE.Color(css.getPropertyValue('--primary').trim())); highlight.add(helper);
-          if (state.detail?.item.entityUid !== lastSelection) fit(box, true, new THREE.Vector3(location.binding.componentKey === 'CN' ? -1 : 1, .35, -1.5));
+          if (state.detail?.item.entityUid !== lastSelection) fit(box, true, new THREE.Vector3(box.getCenter(new THREE.Vector3()).x<0 ? -1 : 1, .35, -1.5));
         } else if (lastSelection) fit(whole);
         lastSelection = state.detail?.item.entityUid || ''; request();
       };
-      controls.current = {fit:() => fit(whole), locate:() => {const l = modelLocation(current.current.detail,metadata); if (l) fit(new THREE.Box3(new THREE.Vector3(...l.binding.bounds[0]),new THREE.Vector3(...l.binding.bounds[1])), true, new THREE.Vector3(l.binding.componentKey === 'CN' ? -1 : 1,.35,-1.5));},
+      controls.current = {fit:() => fit(whole), locate:() => {const l = modelLocation(current.current.detail,metadata); if (l) fit(new THREE.Box3(new THREE.Vector3(...l.binding.bounds[0]),new THREE.Vector3(...l.binding.bounds[1])), true, new THREE.Vector3(l.binding.bounds[0][0]+l.binding.bounds[1][0]<0 ? -1 : 1,.35,-1.5));},
         zoom:factor => {if (!orbit) return; tween=null; camera.position.sub(orbit.target).multiplyScalar(factor).add(orbit.target); request();}};
       orbit.addEventListener('change', request); orbit.addEventListener('start', () => {tween=null;});
       observer = new ResizeObserver(() => {
@@ -145,8 +158,8 @@ export function ModelViewport({api, active, detail, model, onModel, onSelect, fo
         const rect = element.getBoundingClientRect(); const ray = new THREE.Raycaster();
         ray.setFromCamera(new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1),camera);
         const hit = ray.intersectObject(root,true).find(item => item.object instanceof THREE.Mesh && item.object.visible);
-        const key = hit?.object.userData.component;
-        const binding = metadata.bindings.find(item => item.componentKey === key || item.componentKey === 'CN' && key === 'controller');
+        const key = metadata.components ? hit?.object.userData.ontoVisKey : hit?.object.userData.component;
+        const binding = metadata.bindings.find(item => item.componentKey === key || !metadata.components && item.componentKey === 'CN' && key === 'controller');
         if (binding) current.current.onSelect(binding.entityUid);
       });
       fit(whole,false); onModel(metadata); update.current(); setReading(false);
@@ -158,14 +171,14 @@ export function ModelViewport({api, active, detail, model, onModel, onSelect, fo
       if (renderer) {renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();}
       controls.current=null; update.current=() => {};
     };
-  }, [active, attempt]);
+  }, [active, attempt, modelVersionId]);
   useEffect(() => {update.current(); mount.current?.querySelector('canvas')?.setAttribute('aria-label', t('modelView'));}, [detail, resolved, locale]);
   useEffect(() => {controls.current?.locate();}, [focusSignal]);
   const location = modelLocation(detail, model);
-  return <section className="cw-panel cw-scene"><header><Box size={15}/><strong>{t('modelView')}</strong><span className="cw-grow"/><span className="cw-caption">{model ? t('modelName') : ''}</span></header>
+  return <section className="cw-panel cw-scene"><header><Box size={15}/><strong>{t('modelView')}</strong><span className="cw-grow"/><span className="cw-caption">{model ? model.displayName || t('modelName') : ''}</span></header>
     <div className="cw-model-stage"><div className="cw-canvas" ref={mount}/>
       {(!active || reading || !!error) && <div className="cw-model-state" role={error ? 'alert' : 'status'}>{!active ? t('loginPrompt') : reading ? t('loading') : failureMessage(error,locale)}{error ? <button className="ov-btn" onClick={() => setAttempt(v => v+1)}>{t('retry')}</button> : null}</div>}
       {model && <div className="cw-scene-tools"><IconBtn label={t('zoomIn')} onClick={() => controls.current?.zoom(.8)}><ZoomIn size={16}/></IconBtn><IconBtn label={t('zoomOut')} onClick={() => controls.current?.zoom(1.25)}><ZoomOut size={16}/></IconBtn><IconBtn label={t('showAll')} onClick={() => controls.current?.fit()}><Maximize size={16}/></IconBtn><IconBtn label={t('locate')} disabled={!location} onClick={() => controls.current?.locate()}><Focus size={16}/></IconBtn></div>}
-    </div><footer className="cw-panel-foot"><span>{detail?.item.displayName || t('select')}</span><span className="cw-grow"/><span>{location ? location.mode === 'ancestor' ? t('ancestor') : location.binding.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate') : !!model && detail?.item.entityUid === model.rootEntityUid ? t('modelReady') : t('unlocated')}</span></footer>
+    </div><footer className="cw-panel-foot"><span>{detail?.item.displayName || t('select')}</span><span className="cw-grow"/><span>{bindingNeedsReview(detail,model) ? t('bindingChanged') : location ? location.mode === 'ancestor' ? t('ancestor') : location.binding.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate') : !!model && detail?.item.entityUid === model.rootEntityUid ? t('modelReady') : t('unlocated')}</span></footer>
   </section>;
 }

@@ -1,12 +1,14 @@
-# ONTOVis 只读设备与模型工作台
+# ONTOVis 设备与模型工作台
 
-承接MagicPath工作台修订`463673785090985984`及用户离线色板：48px顶栏、42px工具栏、32px对象行，正文13px/说明11px，三栏独立滚动，原Logo透明底。账户菜单提供语言、深浅/系统主题、账户信息和退出；偏好之外的工程数据不落浏览器本地存储。
+承接MagicPath修订463695831967600640，保留原命名管理侧栏、页面入口和树/模型/详情三栏；附件只提供灰绿深浅配色。56px顶栏、64px标题区、32px对象行，13px正文/11px说明；透明原Logo和中英文/主题账户偏好保留。
 
-`Workbench.tsx`复用当前本人会话；`ObjectsPanel.tsx`分列设备树和完整项目对象目录，使用OntoBase搜索及每页50项服务端游标，不把型号定义挂到风机。`SourceEvidence.tsx`支持设备对象的固定型号来源和未安装对象自身图纸；内容变化需重选，旧区域未绑定文件版本时整页显示。
+`Workbench.tsx`复用本人会话，`ObjectsPanel.tsx`分列真实设备树与完整项目目录，服务端每页50项。`SourceEvidence.tsx`按对象自身或固定型号来源打开受保护当前图纸；内容变化拒绝并重选，不借用所属柜资料。
 
-`ModelViewport.tsx`登录后按需加载Three与已授权私有GLB，限制像素比、按需绘制。三柜采用实际OntoBase UID及固定对象修订，CT/CN1显示柜体示意，CN为候选构件；子对象保持自身身份和图纸，仅沿完整物理祖先链定位所属柜体。未知、变化或断链不猜精确坐标。退出、失效或对象切换清理临时图纸URL、模型、高亮及迟到响应。没有通用上传/转码、正式绑定写入或工程发布。
+`ModelLibraryPanel.tsx`落实原模型中心、报告/版本页签和四步上传。仅接收20MiB以内的自包含静态GLB；实际校验成功生成私有不可变版本，预览需显式选择，坐标/工程身份继续待核实。来源与授权由上传者声明，不替代许可或工程审核。文件更换清空原声明，失败显示原因。
 
-`theme.css`是用户色板和密度变量；`design.css`提供共享控件，`compact.css`承接当前MagicPath布局。Radix Dialog/Tabs/Dropdown处理弹窗、页签及账户菜单。实际模型、UID映射和图纸不进入构建包；空间连续导航Demo继续只作本机参考。
+`BindingEditor.tsx`保存三柜演示关联，后端核验当前项目管理员、三柜真实身份/修订、完整父链和模型修订。CT/CN1的既有示意只用于相同文件指纹；新文件不能继承旧工程关联。`modelLocation.ts`保留子设备身份，通过最近有效柜体定位，旧近层关联失效时不跳远层。
+
+`ModelViewport.tsx`登录后按需加载Three/私有GLB，绑定提取目录的版本内节点，按需绘制并限制像素比。`theme.css`仅定义色板/尺寸，`navigation.css`保留原管理结构；`models.css`补原模型流程控件。Radix负责弹窗、页签和账户菜单。退出/失效清理详情、文件、模型和迟到结果。工程确认/发布、在线CAD转换和空间导航Demo不在部署包中。
 
 Node 22：
 
@@ -16,6 +18,6 @@ npm --prefix apps/workbench run check
 npm --prefix apps/workbench run dev
 ```
 
-检查包含严格类型、15项请求时序/定位/语言测试与构建。产物在`output/compact-workbench-20261021/workbench-dist/`，不进入Git。临时预览4180代理固定本机18084，使用结束后关闭，保留参考Demo8766。
+检查包含严格类型、20项请求/定位/语言检查和构建。产物在`output/compact-workbench-20261021/workbench-dist/`，不进入Git。临时4180预览代理固定本机18084；本机空间参考Demo的资源独立保留。
 
-API服务通过`--project-code`、`--installation-context-id`及可选`--model-root`固定部署来源。模型目录仅包含`model.json`及`model.glb`，校验指纹、自包含资源、三柜实际身份/修订；生产模板使用服务器私有目录。浏览器不能提交文件路径或上游URL。配置/限额和服务范围见[切片契约](../../docs/plans/紧凑工作台与模型接入切片.md)。
+API以`--project-code`、`--installation-context-id`、`--model-root`和`--library-root`固定部署范围。原模型映射、上传库/SQLite/审计放服务器私有目录，不进入Git或静态发布目录。上传与演示关联不修改OntoBase业务数据。详细服务、资源限制和边界见[上传切片](../../docs/plans/模型上传与演示关联切片.md)。

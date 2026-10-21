@@ -5,6 +5,31 @@ import { ApiError, WorkbenchApi } from '../src/api.ts';
 const json = value => new Response(JSON.stringify(value), {headers: {'Content-Type':'application/json'}});
 const deferred = () => {let resolve; const promise = new Promise(r => {resolve = r;}); return {promise,resolve};};
 
+test('model upload streams a Blob and encodes Unicode metadata with the current session', async () => {
+  let sent;
+  const api=new WorkbenchApi(async(path,options)=>{sent={path,options};return json({sessionRevision:'r1',item:{state:'ready'}});});
+  api.session('r1');const blob=new Blob(['synthetic-glb']);await api.upload(blob,{displayName:'三柜模型',expectedLibraryRevision:'library:0'});
+  assert.equal(sent.path,'/api/workbench/models/upload');assert.equal(sent.options.body,blob);
+  assert.equal(sent.options.credentials,'same-origin');assert.equal(sent.options.cache,'no-store');
+  const metadata=JSON.parse(Buffer.from(sent.options.headers['X-Model-Metadata'],'base64').toString('utf8'));
+  assert.equal(metadata.displayName,'三柜模型');assert.equal(metadata.expectedSessionRevision,'r1');
+  assert.equal(sent.options.headers.Authorization,undefined);
+});
+
+test('logout discards a late completed model import', async()=>{
+  const waiting=deferred(),api=new WorkbenchApi(()=>waiting.promise);api.session('r1');
+  const result=api.upload(new Blob(['synthetic']),{});api.invalidate();waiting.resolve(json({sessionRevision:'r1',item:{state:'ready'}}));
+  await assert.rejects(result,{name:'AbortError'});
+});
+test('write permission loss does not falsely revoke a valid project read session',async()=>{
+ const api=new WorkbenchApi(async()=>new Response('{"code":"MODEL_WRITE_FORBIDDEN"}',{status:403}));api.session('r1');
+ let denied=false;api.onDenied=()=>{denied=true;};const epoch=api.epoch;
+ await assert.rejects(api.upload(new Blob(['synthetic']),{}),error=>error.code==='MODEL_WRITE_FORBIDDEN');
+ assert.equal(denied,false);assert.equal(api.epoch,epoch);
+ await assert.rejects(api.request('/api/workbench/object',{}),error=>error.status===403);
+ assert.equal(denied,true);
+});
+
 test('default transport calls the browser fetch without a foreign receiver', async () => {
   const original = globalThis.fetch;
   globalThis.fetch = function () {assert.equal(this, undefined); return Promise.resolve(json({state:'signedOut'}));};

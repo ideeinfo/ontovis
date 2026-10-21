@@ -31,9 +31,15 @@ export interface Evidence {
 }
 export interface EvidenceList { items: Evidence[]; complete: true }
 export interface ModelBinding {
-  entityUid:string; entityRevision:string; componentKey:'CT' | 'CN' | 'CN1';
+  entityUid:string; entityRevision:string; componentKey:string; displayName?:string;
   geometryQuality:'source_candidate' | 'proxy_schematic'; bounds:[number[], number[]];
 }
 export interface ModelView {
   sha256:string; rootEntityUid:string; bindingStatus:'demonstration_draft'; engineeringUseAllowed:false; bindings:ModelBinding[];
+  modelVersionId?:string; modelRevision?:number; viewRevision?:string; displayName?:string;
+  components?:ModelComponent[]; canEditBindings?:boolean; bindingWarnings?:{entityUid:string;code:string}[];
 }
+export interface ModelComponent {componentKey:string;displayName:string;nodeIndices:number[];keyStability:'version_local';geometryQuality:'source_candidate'|'proxy_schematic';bounds:[number[],number[]]}
+export interface ModelReport {bytes:number;nodes:number;activeMeshInstances:number;triangles:number;images:number;coordinateVerification:'unverified';externalResourcesFetched:0}
+export interface ModelVersion {versionId:string;displayName:string;sourceNote:string;sha256:string;bytes:number;createdAt:string;modelRevision:number;state:'ready';report:ModelReport;bindingCount:number}
+export interface ModelLibraryView {libraryRevision:string;canUpload:boolean;hasCurrentModel:boolean;maxBytes:number;maxModels:number;items:ModelVersion[]}

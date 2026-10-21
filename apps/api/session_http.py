@@ -1,11 +1,13 @@
 """Same-origin HTTP boundary for ONTOVis in-memory user sessions."""
 from __future__ import annotations
 from http.cookies import SimpleCookie, CookieError
+import base64
 from http.server import BaseHTTPRequestHandler
 import json
 from urllib.parse import parse_qs, urlsplit
 from .authority import PreviewError
 from .user_sessions import COOKIE, UserSessions
+from tools.model_probe import strict_json
 
 def handler_type(sessions: UserSessions, origin: str, *, development=False):
     parsed = urlsplit(origin)
@@ -83,8 +85,22 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, value)
             if self.command == 'GET' and parts.path in ('/api/demo/context','/api/demo/locate'):
                 return self.reply(200, sessions.read(sid, parts.path, query))
+            if self.command == 'POST' and parts.path=='/api/workbench/models/upload' and not query:
+                if (self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type')!='model/gltf-binary'
+                        or len(self.headers.get_all('Content-Length',[]))!=1
+                        or len(self.headers.get_all('X-Model-Metadata',[]))!=1): raise PreviewError(415,'INVALID_REQUEST')
+                try:
+                    header = self.headers['X-Model-Metadata']
+                    if len(header)>8192: raise ValueError()
+                    data = base64.b64decode(header,validate=True)
+                    if len(data)>6144: raise ValueError()
+                    payload = strict_json(data)
+                    length = int(self.headers['Content-Length'])
+                    if not isinstance(payload,dict): raise ValueError()
+                except (ValueError,UnicodeError): raise PreviewError(422,'INVALID_REQUEST') from None
+                return self.reply(200,sessions.upload(sid,payload,self.rfile,length))
             workbench_paths = ('/api/workbench/context','/api/workbench/children','/api/workbench/object','/api/workbench/catalog',
-                               '/api/workbench/model','/api/workbench/model/content',
+                               '/api/workbench/model','/api/workbench/model/content','/api/workbench/models','/api/workbench/models/binding',
                                '/api/workbench/evidence/resolve','/api/workbench/evidence/content')
             if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
@@ -96,6 +112,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             try: payload = json.loads(self.rfile.read(length))
             except (ValueError, UnicodeError): raise PreviewError(422, 'INVALID_REQUEST') from None
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
+            if parts.path=='/api/workbench/models/binding': return self.reply(200,sessions.save_binding(sid,payload))
             if parts.path in workbench_paths:
                 value = sessions.read(sid, parts.path, payload)
                 if parts.path in ('/api/workbench/evidence/content','/api/workbench/model/content'):
