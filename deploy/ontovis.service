@@ -1,3 +1,5 @@
+# Historical demo-session reference only; not an ONTOVis product deployment.
+# The server copy is stopped and disabled under the reference-only decision.
 [Unit]
 Description=ONTOVis read-only user session service
 After=network.target

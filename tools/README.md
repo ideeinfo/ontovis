@@ -75,9 +75,9 @@ GET `/api/demo/context`和GET `/api/demo/locate`为仅有的工程读取入口�
 
 14项测试覆盖真实本机HTTP入口、方法/来源限制、清单指纹、跨范围/未知身份、权限拒绝、合并不自动改绑、完整父链及有界重读。测试全为合成数据，不依赖服务器或现有演示清单。实际API/三维与浏览器故障验证分列在[本机交付说明](../output/installation-preview-20261021/README.md)，不等于G3正式工程验收。
 
-## 公开空间演示打包
+## 历史演示资源打包（仅归档参考）
 
-[package_spatial_demo.py](package_spatial_demo.py)针对本次已批准的夏李技术演示导出固定资源清单。原模型、工程清单、原始附件/商业参考影像、日志与中间文件不进入公开包；声明需有非敏感授权依据，不自动推断素材开放许可。2026-10-21用户已确认现有TU-3000公网用途授权，保留模型，书面依据待补充。
+[package_spatial_demo.py](package_spatial_demo.py)针对夏李技术演示导出固定资源清单。用户最新要求Demo仅作本机交互参考，不发布到vis.ontobase.ai；下列打包能力保留归档，不作为当前发布任务。原模型、工程清单、原始附件/商业参考影像、日志与中间文件不进入公开包；声明需有非敏感授权依据，不自动推断素材开放许可。2026-10-21用户已确认现有TU-3000公网用途授权，保留模型，书面依据待补充。
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_package_spatial_demo.py' -v
@@ -89,6 +89,6 @@ python3 tools/package_spatial_demo.py \
 
 上述目录已存在，复跑必须换新目录。工具拒绝覆盖，拒绝缺文件/符号链接和本机路径，输出逐文件SHA/字节数的release.json、公开来源与模型声明。9项合成测试通过；实际服务器包/公网浏览器检查另见[部署记录](../docs/plans/公网演示部署记录.md)。包不含工程身份或登录凭据，工程读取明确未连接；它不是完整产品或用户会话实现。
 
-## 公网逐用户会话包
+## 历史逐用户会话包（仅参考）
 
 `package_spatial_demo.py --with-user-sessions`将维护中的apps/web会话与工程页覆盖入固定空间资源包，新增session.js/session.css；私有身份清单不导出。打包本身不证明后端已连接，实际部署见[部署记录](../docs/plans/公网演示部署记录.md)，服务与检查见[应用说明](../apps/README.md)。当前机位数量按源GeoJSON元数据生成公开说明，保留原编号；不修改机位坐标。
