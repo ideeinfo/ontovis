@@ -220,10 +220,15 @@ def _anchor(anchor,terrain):
     height=anchor['anchorHeight']
     _require(type(height) is dict)
     if height.get('mode')=='terrain_ground':
-        _fields(height,('mode','terrainVersionId','offsetM'))
+        _fields(height,('mode','terrainVersionId','offsetM'),('offsetCompensationM',))
         _require(height['terrainVersionId']==terrain.trusted.version_id,'RESOURCE_CHANGED','The anchor uses a different terrain version.')
         ground=terrain.sample(*anchor['geographicAnchor']);offset=_number(height['offsetM'],100000)
         result=ground+offset
+        if 'offsetCompensationM' in height:
+            compensation=_number(height['offsetCompensationM'],1)
+            _require(terrain.datum=='UNKNOWN_RELATIVE' and abs(compensation)<=max(math.ulp(ground),math.ulp(offset)),
+                     'INVALID_COORDINATE','The preserved relative origin compensation exceeds floating-point roundoff.')
+            result=math.fsum((ground,offset,compensation))
     else:
         _fields(height,('mode','valueM','verticalDatum','sourceNote'))
         _require(height['mode']=='absolute' and terrain.datum!='UNKNOWN_RELATIVE' and height['verticalDatum']==terrain.datum,'VERTICAL_DATUM_CONFLICT','The absolute anchor datum is incompatible.')
@@ -323,6 +328,9 @@ def anchor_preview(local_snapshot,candidate_terrain_version_id,anchor,trusted_te
     """Transform all placements and the initial camera, without persisting them."""
     try:
         value=_base_snapshot(local_snapshot);_local(value)
+        _fields(anchor,('localAnchor','geographicAnchor','trueNorthHeadingDeg','anchorHeight','heightStrategy'))
+        _require(type(anchor['anchorHeight']) is dict and 'offsetCompensationM' not in anchor['anchorHeight'],
+                 'INVALID_REQUEST','Origin compensation is generated only by a checked terrain replacement.')
         terrain=_terrain(trusted_terrains,candidate_terrain_version_id)
         frame,record=_scene_frame(anchor,terrain)
         anchor_h=frame.origin_height_m
@@ -361,6 +369,108 @@ def anchor_preview(local_snapshot,candidate_terrain_version_id,anchor,trusted_te
     except (OSError,ValueError,TypeError,KeyError,IndexError,OverflowError,RecursionError):raise GeometryError('INVALID_REQUEST','The geographic anchor input is invalid.') from None
 
 
+def terrain_replacement_preview(snapshot,candidate_terrain_version_id,strategy,trusted_terrains):
+    """Preview one fixed terrain replacement without moving geographic identity.
+
+    The old snapshot is checked strictly before deriving any proposed fields.
+    Optional diagnostic samples never turn a declared absolute height into a
+    ground constraint; required ground samples retain the normal NoData rules.
+    """
+    try:
+        _require(strategy in ('keep_height','resample_ground'))
+        _uuid(candidate_terrain_version_id)
+        _require(type(trusted_terrains) is dict and len(trusted_terrains)<=2)
+        previous=geometry_check(snapshot,trusted_terrains)
+        value=previous['snapshot'];old_frame=value['coordinateFrame']
+        _require(old_frame['mode']=='projected_site','SCENE_SCOPE_UNSUPPORTED','Terrain replacement requires an already anchored scene.')
+        old_id=value['terrain']['terrainVersionId']
+        _require(candidate_terrain_version_id!=old_id)
+        _require(set(trusted_terrains)=={old_id,candidate_terrain_version_id},'NOT_FOUND_OR_FORBIDDEN','Exactly the old and candidate fixed terrains must be authorized.')
+        old=_terrain(trusted_terrains,old_id);new=_terrain(trusted_terrains,candidate_terrain_version_id)
+        _require(old.datum==new.datum,'VERTICAL_DATUM_CONFLICT','Terrain replacement does not perform a vertical datum conversion.')
+        if old.datum=='UNKNOWN_RELATIVE':
+            _require(old.relative_reference==new.relative_reference,'VERTICAL_DATUM_CONFLICT','Unknown terrains require the same explicit relative height reference.')
+        _require(old.frame.horizontal_crs==new.frame.horizontal_crs and old.frame.transform_id==new.frame.transform_id,
+                 'TRANSFORM_UNAVAILABLE','The candidate terrain requires another regional transformation.')
+        old_ref=old.reference();new_ref=new.reference()
+        anchor=json.loads(json.dumps(old_frame['anchor']))
+        old_anchor_source=json.loads(json.dumps(anchor['anchorHeight']))
+        if new.datum=='UNKNOWN_RELATIVE':
+            anchor_sample=new.sample(*anchor['geographicAnchor'])
+            offset=old_frame['originHeight']-anchor_sample
+            anchor['anchorHeight']={'mode':'terrain_ground','terrainVersionId':candidate_terrain_version_id,
+                'offsetM':offset,'offsetCompensationM':math.fsum((old_frame['originHeight'],-anchor_sample,-offset))}
+        else:
+            anchor['anchorHeight']={'mode':'absolute','valueM':old_frame['originHeight'],'verticalDatum':old.datum,
+                'sourceNote':'Preserved scene height origin from the reviewed old terrain '+old_id+' and its anchor; not a surveyed height.'}
+        def browser_stable_numbers(item):
+            if type(item) is float and item.is_integer():return int(item)
+            if type(item) is list:return [browser_stable_numbers(child) for child in item]
+            if type(item) is dict:return {key:browser_stable_numbers(child) for key,child in item.items()}
+            return item
+        # Only new replacement anchors change their number spelling. Existing
+        # frame digests retain their original integer/float encoding semantics.
+        anchor=browser_stable_numbers(anchor)
+        frame,record=_scene_frame(anchor,new)
+        fixed_keys=('horizontalCrs','verticalDatum','transformId','originEasting','originNorthing','originHeight','convergenceRuleId')
+        _require(all(record[key]==old_frame[key] for key in fixed_keys),'FRAME_CHANGED','The candidate cannot preserve the exact established scene origin and datum.')
+        _require(record['frameRevision']!=old_frame['frameRevision'],'FRAME_CHANGED','A terrain replacement requires a new fixed frame revision.')
+        sample_issues=[];changes=[];old_notes={note['sceneModelInstanceId']:note for note in previous['heightProvenance']}
+        old_displays={item['sceneModelInstanceId']:item for item in previous['displayPlacements']}
+        def diagnostic_sample(terrain,longitude,latitude,identifier,role,required):
+            try:return terrain.sample(longitude,latitude)
+            except (CoordinateError,TerrainError) as error:
+                if required or error.code not in ('NO_DATA','OUTSIDE_COVERAGE','OUTSIDE_PROJECTION_AREA'):raise
+                sample_issues.append({'sceneModelInstanceId':identifier,'terrainVersionId':terrain.trusted.version_id,
+                                      'role':role,'code':error.code})
+                return None
+        previous_heights={}
+        for item in value['instances']:
+            identifier=item['sceneModelInstanceId'];placement=item['placement'];position=placement['position'];height=placement['height']
+            previous_heights[identifier]=json.loads(json.dumps(height))
+            longitude,latitude=position['longitude'],position['latitude'];old_mode=height['mode']
+            old_h=old_displays[identifier]['heightM']
+            old_sample=diagnostic_sample(old,longitude,latitude,identifier,'old',old_mode=='terrain_ground')
+            required=old_mode=='terrain_ground' and (strategy=='resample_ground' or new.datum=='UNKNOWN_RELATIVE')
+            new_sample=diagnostic_sample(new,longitude,latitude,identifier,'new',required)
+            if old_mode=='terrain_ground':
+                if strategy=='keep_height' and new.datum!='UNKNOWN_RELATIVE':
+                    placement['height']={'mode':'absolute','valueM':old_h,'verticalDatum':new.datum,
+                        'sourceNote':'Height preserved from old terrain estimate '+old_id+'; not a surveyed foundation height.'}
+                else:
+                    offset=height['offsetM'] if strategy=='resample_ground' else old_h-new_sample
+                    placement['height']={'mode':'terrain_ground','terrainVersionId':candidate_terrain_version_id,
+                        'terrainSha256':new.trusted.sha256,'sampleLongitude':longitude,'sampleLatitude':latitude,
+                        'sampledHeightM':new_sample,'offsetM':offset,'verticalDatum':new.datum,'samplingRule':PLACEMENT_SAMPLING_RULE}
+            position['frameRevision']=record['frameRevision']
+            new_height=placement['height'];new_h=new_height['valueM'] if new_height['mode']=='absolute' else new_height['sampledHeightM']+new_height['offsetM']
+            _number(new_h,100000)
+            _require(not item['positionLocked'] or abs(new_h-old_h)<=SAMPLE_EPSILON_M,'INSTANCE_POSITION_LOCKED','The locked instance would change its actual height.')
+            changes.append({'sceneModelInstanceId':identifier,'oldHeightMode':old_mode,'newHeightMode':new_height['mode'],
+                'oldSampledHeightM':old_sample,'newSampledHeightM':new_sample,
+                'sampledHeightDeltaM':None if old_sample is None or new_sample is None else new_sample-old_sample,
+                'oldHeightM':old_h,'newHeightM':new_h,'heightDeltaM':new_h-old_h})
+        value['coordinateFrame']=record
+        value['terrain']={'terrainVersionId':new.trusted.version_id,'expectedContentRevision':new.trusted.content_revision}
+        result=geometry_check(value,trusted_terrains)
+        for note in result['heightProvenance']:
+            identifier=note['sceneModelInstanceId'];old_height=previous_heights[identifier]
+            note['replacementStrategy']=strategy
+            note['previousHeight']=old_height;note['previousHeightProvenance']=old_notes[identifier]
+            note['previousTerrainRef']=old_ref;note['previousAnchorHeight']=old_anchor_source
+            if old_height['mode']=='terrain_ground':
+                note['kind']='terrain_estimate_preserved_as_absolute' if strategy=='keep_height' and new.datum!='UNKNOWN_RELATIVE' else 'terrain_estimate_on_replacement'
+        result['impact']={'kind':'terrain_replacement','strategy':strategy,'oldTerrainVersionId':old_id,
+            'newTerrainVersionId':candidate_terrain_version_id,'oldTerrainRef':old_ref,'newTerrainRef':new_ref,
+            'oldFrameRevision':old_frame['frameRevision'],'newFrameRevision':record['frameRevision'],
+            'instanceIds':[item['sceneModelInstanceId'] for item in value['instances']],
+            'instances':changes,'sampleIssues':sample_issues,'explicitConfirmationRequired':True}
+        return result
+    except GeometryError:raise
+    except (CoordinateError,TerrainError) as error:raise GeometryError(error.code,str(error)) from error
+    except (OSError,ValueError,TypeError,KeyError,IndexError,OverflowError,RecursionError):raise GeometryError('INVALID_REQUEST','The fixed terrain replacement input is invalid.') from None
+
+
 def main(argv=None):
     import argparse
     import resource
@@ -379,18 +489,23 @@ def main(argv=None):
         raw=args.request.read_bytes();_require(len(raw)<=MAX_REQUEST_BYTES)
         request=strict_json(raw);_require(type(request) is dict);kind=request.get('kind')
         keys=('kind','snapshot','trustedTerrains')
-        _fields(request,keys,('expectedFrame','resampleGround')) if kind=='validate' else _fields(request,keys+('candidateTerrainVersionId','anchor'))
-        _require(kind in ('validate','anchor'))
-        manifests=request['trustedTerrains'];_require(type(manifests) is list and len(manifests)<=1)
+        _require(kind in ('validate','anchor','terrain_replacement'))
+        if kind=='validate':_fields(request,keys,('expectedFrame','resampleGround'))
+        elif kind=='anchor':_fields(request,keys+('candidateTerrainVersionId','anchor'))
+        else:_fields(request,keys+('candidateTerrainVersionId','strategy'))
+        manifests=request['trustedTerrains'];_require(type(manifests) is list and len(manifests)<=(2 if kind=='terrain_replacement' else 1))
         terrains={}
         if manifests:
             _require(args.terrain_root is not None and args.terrain_root.is_absolute() and args.terrain_root.is_dir() and not args.terrain_root.is_symlink())
             for item in manifests:
                 _fields(item,('terrainVersionId','contentRevision','sha256','reportSha256'))
                 version=_uuid(item['terrainVersionId'])
+                _require(version not in terrains)
                 _text(item['contentRevision']);_sha(item['sha256']);_sha(item['reportSha256'])
                 terrains[version]=TrustedTerrain(version,item['contentRevision'],item['sha256'],item['reportSha256'],args.terrain_root/version/'derived')
-        result=geometry_check(request['snapshot'],terrains,expected_frame=request.get('expectedFrame'),resample_ground=request.get('resampleGround',False)) if kind=='validate' else anchor_preview(request['snapshot'],request['candidateTerrainVersionId'],request['anchor'],terrains)
+        if kind=='validate':result=geometry_check(request['snapshot'],terrains,expected_frame=request.get('expectedFrame'),resample_ground=request.get('resampleGround',False))
+        elif kind=='anchor':result=anchor_preview(request['snapshot'],request['candidateTerrainVersionId'],request['anchor'],terrains)
+        else:result=terrain_replacement_preview(request['snapshot'],request['candidateTerrainVersionId'],request['strategy'],terrains)
         encoded=json.dumps(result,ensure_ascii=False,allow_nan=False,separators=(',',':'))
         _require(len(encoded.encode())<=MAX_OUTPUT_BYTES,'SCENE_LIMIT_EXCEEDED','The geometry result exceeds its output budget.')
         print(encoded);return 0

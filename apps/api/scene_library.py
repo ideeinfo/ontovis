@@ -535,6 +535,84 @@ class SceneLibrary:
                 'heightProvenance': [], 'terrainRefs': []}
 
     @staticmethod
+    def _height_provenance(db, revision):
+        row = db.execute('select height_provenance from scene_spatial_validations where revision=?', (revision,)).fetchone()
+        return json.loads(row['height_provenance']) if row is not None else []
+
+    @staticmethod
+    def _retain_height_basis(previous, proposed, spatial, previous_provenance, previous_revision):
+        old_items = {item['sceneModelInstanceId']: item for item in previous['instances']}
+        new_items = {item['sceneModelInstanceId']: item for item in proposed['instances']}
+        notes = {note['sceneModelInstanceId']: note for note in previous_provenance}
+        retained = []
+        for note in spatial['heightProvenance']:
+            identifier = note['sceneModelInstanceId']
+            old, new, basis = old_items.get(identifier), new_items.get(identifier), notes.get(identifier)
+            if old is not None and new is not None and basis is not None and _receipt_snapshot_digest(old['placement']['height']) == _receipt_snapshot_digest(new['placement']['height']):
+                # The original sample position belongs to this height's basis,
+                # even when an absolute-height instance has since moved.
+                carried = json.loads(_json(basis))
+                carried['kind'] = 'retained_height_basis'
+                carried['basisKind'] = basis.get('basisKind', basis['kind'])
+                carried['basisSceneRevision'] = basis.get('basisSceneRevision', previous_revision)
+                retained.append(carried)
+            else:
+                retained.append(note)
+        _json(retained)
+        spatial['heightProvenance'] = retained
+
+    @staticmethod
+    def _height_basis(height, note, revision, terrain_ref):
+        basis = note.get('heightBasis')
+        if basis is None:
+            source_height, source_ref = height, terrain_ref if height['mode'] == 'terrain_ground' else None
+            # Read the earlier, already-saved estimate form without retaining its
+            # complete provenance tree in each later revision.
+            if height['mode'] == 'absolute' and type(note.get('previousHeight')) is dict and note['previousHeight'].get('mode') == 'terrain_ground':
+                source_height, source_ref = note['previousHeight'], note.get('previousTerrainRef')
+            basis = {'kind': note.get('basisKind', note['kind']),
+                     'reviewedSceneRevision': note.get('basisSceneRevision', revision),
+                     'height': source_height, 'terrainRef': source_ref}
+        _fields(basis, ('kind', 'reviewedSceneRevision', 'height', 'terrainRef'))
+        _text(basis['kind']); _text(basis['reviewedSceneRevision'])
+        source_height = basis['height']
+        _require(type(source_height) is dict, 'INVALID_GEOMETRY_RESULT')
+        if source_height.get('mode') == 'terrain_ground':
+            _fields(source_height, ('mode', 'terrainVersionId', 'terrainSha256', 'sampleLongitude', 'sampleLatitude',
+                                    'sampledHeightM', 'offsetM', 'verticalDatum', 'samplingRule'))
+            refs = SceneLibrary._terrain_refs([basis['terrainRef']])
+            _require(refs[0]['terrainVersionId'] == source_height['terrainVersionId']
+                     and refs[0]['sha256'] == source_height['terrainSha256'], 'INVALID_GEOMETRY_RESULT')
+        else:
+            _fields(source_height, ('mode', 'valueM', 'verticalDatum', 'sourceNote'))
+            _require(source_height['mode'] == 'absolute' and basis['terrainRef'] is None, 'INVALID_GEOMETRY_RESULT')
+        return json.loads(_json(basis))
+
+    @staticmethod
+    def _replacement_height_basis(previous, proposed, spatial, previous_provenance, previous_revision, old_manifest, new_manifest, operation):
+        old_items = {item['sceneModelInstanceId']: item for item in previous['instances']}
+        new_items = {item['sceneModelInstanceId']: item for item in proposed['instances']}
+        notes = {note['sceneModelInstanceId']: note for note in previous_provenance}
+        for note in spatial['heightProvenance']:
+            identifier = note['sceneModelInstanceId']
+            old_height = old_items[identifier]['placement']['height']
+            basis = notes.get(identifier)
+            _require(basis is not None and _receipt_snapshot_digest(note.get('previousHeight')) == _receipt_snapshot_digest(old_height),
+                     'INVALID_GEOMETRY_RESULT')
+            old_basis = SceneLibrary._height_basis(old_height, basis, previous_revision, old_manifest['terrains'][0])
+            note['previousHeightProvenance'] = {'kind': 'height_basis_summary', 'previousSceneRevision': previous_revision, 'basis': old_basis}
+            new_height = new_items[identifier]['placement']['height']
+            if operation['strategy'] == 'resample_ground' and old_height['mode'] == 'terrain_ground':
+                note['heightBasis'] = SceneLibrary._height_basis(new_height, {'kind': note['kind']}, previous_revision, new_manifest['terrains'][0])
+            else:
+                note['heightBasis'] = old_basis
+            if _receipt_snapshot_digest(old_height) == _receipt_snapshot_digest(new_height):
+                note['kind'] = 'retained_height_basis'
+                note['basisKind'] = basis.get('basisKind', basis['kind'])
+                note['basisSceneRevision'] = basis.get('basisSceneRevision', previous_revision)
+        _json(spatial['heightProvenance'])
+
+    @staticmethod
     def _check_model_history(previous_refs, current_refs):
         prior = {item['modelVersionId']: item for item in previous_refs}
         _require(all(item['modelVersionId'] not in prior or prior[item['modelVersionId']] == item for item in current_refs),
@@ -557,6 +635,187 @@ class SceneLibrary:
             _require(actual == expected, 'SPATIAL_PRECHECK_INVALID', 409)
         except PreviewError:
             raise PreviewError(409, 'SPATIAL_PRECHECK_INVALID') from None
+
+    @staticmethod
+    def _replacement_operation(value):
+        _require(type(value) is dict and value.get('kind') in ('model', 'terrain'))
+        if value['kind'] == 'model':
+            _fields(value, ('kind', 'sceneModelInstanceId', 'candidateModelVersionId'))
+            _uuid(value['sceneModelInstanceId']); _uuid(value['candidateModelVersionId'])
+        else:
+            _fields(value, ('kind', 'candidateTerrainVersionId', 'strategy'))
+            _uuid(value['candidateTerrainVersionId'])
+            _require(value['strategy'] in ('keep_height', 'resample_ground'))
+        return json.loads(_json(value))
+
+    @staticmethod
+    def _replacement_key(db):
+        _, key = SceneLibrary._catalog(db)
+        return hmac.digest(key, b'ontovis.scene-resource-replacement.v1', 'sha256')
+
+    def _replacement_receipt(self, db, receipt):
+        try:
+            value = self._uncursor(receipt, self._replacement_key(db))
+            _require(type(value) is dict)
+            self._replacement_operation(value.get('operation'))
+            return value
+        except PreviewError:
+            raise PreviewError(409, 'SPATIAL_PRECHECK_INVALID') from None
+
+    def _replacement_context(self, actor, access_revision, scene_id, base_revision,
+                             previous, proposed, operation, old_manifest, new_manifest):
+        return {'kind': 'scene-resource-replacement-v1', 'project': self.project_code, 'actor': actor,
+                'accessRevision': _text(access_revision), 'sceneId': scene_id, 'baseRevision': base_revision,
+                'operation': operation, 'oldSnapshotSha256': _digest(previous),
+                'proposedSnapshotSha256': _receipt_snapshot_digest(proposed),
+                'oldResourceDigest': _digest(old_manifest), 'newResourceDigest': _digest(new_manifest)}
+
+    def _verify_replacement(self, db, receipt, expected):
+        _require(self._replacement_receipt(db, receipt) == expected, 'SPATIAL_PRECHECK_INVALID', 409)
+
+    @staticmethod
+    def _model_summary(value, identifier, reference):
+        _require(type(value) is dict and value.get('modelVersionId') == identifier
+                 and value.get('modelAssetId') == reference.get('modelAssetId')
+                 and value.get('contentRevision') == reference['contentRevision']
+                 and value.get('sha256') == reference['sha256'], 'RESOURCE_CHANGED', 409)
+        _uuid(value.get('modelAssetId'))
+        calibration, report = value.get('calibration'), value.get('report')
+        _require(value.get('state') == 'ready' and value.get('canPlace') is True
+                 and value.get('calibrationState') == 'verified' and type(calibration) is dict
+                 and calibration.get('state') == 'verified', 'MODEL_CALIBRATION_REQUIRED', 409)
+        _require(type(report) is dict and type(report.get('bounds')) is dict
+                 and type(value.get('components')) is list, 'RESOURCE_CHANGED', 409)
+        low, high = _vector(report['bounds'].get('min')), _vector(report['bounds'].get('max'))
+        _require(all(a <= b for a, b in zip(low, high)), 'RESOURCE_CHANGED', 409)
+        return {'modelAssetId': value['modelAssetId'], 'modelVersionId': identifier,
+                'contentRevision': reference['contentRevision'], 'sha256': reference['sha256'],
+                'bounds': [low, high], 'dimensionsM': [b-a for a, b in zip(low, high)],
+                'basePoint': _vector(calibration.get('basePoint')), 'forward': _vector(calibration.get('forward')),
+                'componentCount': len(value['components'])}
+
+    @staticmethod
+    def _terrain_replacement_shape(previous, proposed, operation, old_manifest, new_manifest):
+        _require(proposed['coordinateFrame']['mode'] == previous['coordinateFrame']['mode'] == 'projected_site',
+                 'INVALID_GEOMETRY_RESULT')
+        _require(all(previous[key] == proposed[key] for key in ('displayName', 'defaults', 'initialView')),
+                 'INVALID_GEOMETRY_RESULT')
+        old_frame, new_frame = previous['coordinateFrame'], proposed['coordinateFrame']
+        _require({key: value for key, value in old_frame.items() if key not in ('frameRevision', 'anchor')}
+                 == {key: value for key, value in new_frame.items() if key not in ('frameRevision', 'anchor')},
+                 'INVALID_GEOMETRY_RESULT')
+        _require(proposed['terrain']['terrainVersionId'] == operation['candidateTerrainVersionId']
+                 and len(previous['instances']) == len(proposed['instances']), 'INVALID_GEOMETRY_RESULT')
+        for old, new in zip(previous['instances'], proposed['instances']):
+            _require(all(old[key] == new[key] for key in old if key != 'placement'), 'INVALID_GEOMETRY_RESULT')
+            before, after = old['placement'], new['placement']
+            _require(before['headingDeg'] == after['headingDeg']
+                     and {key: value for key, value in before['position'].items() if key != 'frameRevision'}
+                     == {key: value for key, value in after['position'].items() if key != 'frameRevision'},
+                     'INVALID_GEOMETRY_RESULT')
+            old_height, new_height = before['height'], after['height']
+            if old_height['mode'] == 'absolute':
+                _require(old_height == new_height, 'INVALID_GEOMETRY_RESULT')
+                continue
+            old_h = old_height['sampledHeightM'] + old_height['offsetM']
+            new_h = new_height['valueM'] if new_height['mode'] == 'absolute' else new_height['sampledHeightM'] + new_height['offsetM']
+            if operation['strategy'] == 'resample_ground':
+                _require(new_height['mode'] == 'terrain_ground' and new_height['offsetM'] == old_height['offsetM'],
+                         'INVALID_GEOMETRY_RESULT')
+            else:
+                expected_mode = 'terrain_ground' if old_frame['verticalDatum'] == 'UNKNOWN_RELATIVE' else 'absolute'
+                _require(new_height['mode'] == expected_mode and abs(old_h-new_h) <= 1e-6, 'INVALID_GEOMETRY_RESULT')
+            if new_height['mode'] == 'terrain_ground':
+                _require(new_height['terrainVersionId'] == new_manifest['terrains'][0]['terrainVersionId']
+                         and new_height['terrainSha256'] == new_manifest['terrains'][0]['sha256'], 'RESOURCE_CHANGED', 409)
+            _require(not old['positionLocked'] or abs(old_h-new_h) <= 1e-6, 'INSTANCE_POSITION_LOCKED', 409)
+
+    def _replacement_result(self, previous, operation, old_manifest, validate_resources,
+                            geometry_check, terrain_replacement, model_details):
+        if operation['kind'] == 'model':
+            _require(callable(model_details), 'SCENE_SCOPE_UNSUPPORTED')
+            proposed = json.loads(_json(previous))
+            items = [item for item in proposed['instances'] if item['sceneModelInstanceId'] == operation['sceneModelInstanceId']]
+            _require(len(items) == 1, 'NOT_FOUND_OR_FORBIDDEN', 404)
+            item = items[0]
+            _require(not item['positionLocked'], 'INSTANCE_POSITION_LOCKED', 409)
+            old_id, new_id = item['modelVersionId'], operation['candidateModelVersionId']
+            _require(old_id != new_id)
+            item['modelVersionId'] = new_id
+            new_manifest = self._manifest(proposed, validate_resources)
+            old_ref = next(ref for ref in old_manifest['models'] if ref['modelVersionId'] == old_id)
+            new_ref = next(ref for ref in new_manifest['models'] if ref['modelVersionId'] == new_id)
+            old_model = self._model_summary(model_details(old_id), old_id, old_ref)
+            new_model = self._model_summary(model_details(new_id), new_id, new_ref)
+            if proposed['coordinateFrame']['mode'] == 'projected_site':
+                _require(callable(geometry_check), 'SCENE_SCOPE_UNSUPPORTED')
+                result = geometry_check(json.loads(_json(proposed)), expected_frame=json.loads(_json(previous['coordinateFrame'])))
+                normalized, spatial = self._geometry(result, proposed, new_manifest)
+                _require(_receipt_snapshot_digest(normalized) == _receipt_snapshot_digest(proposed), 'INVALID_GEOMETRY_RESULT')
+            else:
+                spatial = self._local_spatial()
+            spatial['validation']['impact'] = {'kind': 'model_replacement',
+                'sceneModelInstanceId': item['sceneModelInstanceId'], 'instanceIds': [item['sceneModelInstanceId']],
+                'oldModelVersionId': old_id, 'newModelVersionId': new_id, 'oldModel': old_model, 'newModel': new_model,
+                'explicitConfirmationRequired': True}
+        else:
+            _require(callable(terrain_replacement) and previous['coordinateFrame']['mode'] == 'projected_site',
+                     'SCENE_SCOPE_UNSUPPORTED')
+            _require(previous['terrain']['terrainVersionId'] != operation['candidateTerrainVersionId'])
+            result = terrain_replacement(json.loads(_json(previous)), operation['candidateTerrainVersionId'], operation['strategy'])
+            _require(type(result) is dict and type(result.get('snapshot')) is dict, 'INVALID_GEOMETRY_RESULT')
+            proposed = validate_snapshot(result['snapshot'], geographic=True)
+            new_manifest = self._manifest(proposed, validate_resources)
+            self._terrain_replacement_shape(previous, proposed, operation, old_manifest, new_manifest)
+            proposed, spatial = self._geometry(result, proposed, new_manifest)
+            impact = spatial['validation'].get('impact')
+            _require(type(impact) is dict and impact.get('kind') == 'terrain_replacement'
+                     and impact.get('strategy') == operation['strategy']
+                     and impact.get('oldTerrainRef') == old_manifest['terrains'][0]
+                     and impact.get('newTerrainRef') == new_manifest['terrains'][0], 'INVALID_GEOMETRY_RESULT')
+        _json(spatial)
+        return proposed, spatial, new_manifest
+
+    def replacement_check(self, body, actor, authorize: Authorize, validate_resources: ValidateResources,
+                          validate_engineering: ValidateEngineering, geometry_check=None, terrain_replacement=None,
+                          model_details=None, *, access_revision):
+        self._callbacks(authorize, validate_resources, validate_engineering)
+        authorize(); _json(body)
+        _require(type(body) is dict and body.get('kind') in ('model', 'terrain'))
+        common = {'sceneId', 'expectedSceneRevision', 'snapshot'}
+        operation = self._replacement_operation({key: value for key, value in body.items() if key not in common})
+        _fields(body, common | set(operation))
+        actor, access_revision = _text(actor), _text(access_revision)
+        scene_id, base_revision = _uuid(body['sceneId']), _text(body['expectedSceneRevision'])
+        validate_snapshot(body['snapshot'], geographic=callable(geometry_check) or callable(terrain_replacement))
+        with self.library.connect() as db:
+            db.execute('begin')
+            _require(self._scope(db, scene_id)['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
+            row = self._revision(db, scene_id, base_revision)
+            previous, previous_refs = validate_snapshot(json.loads(row['snapshot']), geographic=True), json.loads(row['resource_refs'])
+            previous_provenance = self._height_provenance(db, base_revision)
+        _require(_receipt_snapshot_digest(body['snapshot']) == _receipt_snapshot_digest(previous), 'SCENE_DRAFT_REQUIRES_SAVE', 409)
+        old_manifest = self._manifest(previous, validate_resources)
+        self._check_model_history(previous_refs, old_manifest['models'])
+        validate_engineering(json.loads(_json(previous)), [], [])
+        proposed, spatial, new_manifest = self._replacement_result(previous, operation, old_manifest, validate_resources,
+                                                                  geometry_check, terrain_replacement, model_details)
+        if operation['kind'] == 'model':
+            self._retain_height_basis(previous, proposed, spatial, previous_provenance, base_revision)
+        else:
+            self._replacement_height_basis(previous, proposed, spatial, previous_provenance, base_revision, old_manifest, new_manifest, operation)
+        validate_engineering(json.loads(_json(proposed)), [], [])
+        with self.library.connect() as db:
+            db.execute('begin')
+            _require(self._scope(db, scene_id)['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
+            _require(self._manifest(previous, validate_resources, db=db) == old_manifest
+                     and self._manifest(proposed, validate_resources, db=db) == new_manifest, 'RESOURCE_CHANGED', 409)
+            authorize()
+            receipt = self._cursor(self._replacement_context(actor, access_revision, scene_id, base_revision,
+                previous, proposed, operation, old_manifest, new_manifest), self._replacement_key(db))
+        return {'sceneId': scene_id, 'baseSceneRevision': base_revision, 'proposedSnapshot': proposed,
+                'validation': spatial['validation'], 'heightProvenance': spatial['heightProvenance'],
+                'resourceRefs': new_manifest, 'spatialChange': {'kind': operation['kind'], 'receipt': receipt}}
 
     @staticmethod
     def _anchor_result(local, proposed):
@@ -585,6 +844,7 @@ class SceneLibrary:
             row = self._revision(db, scene_id, base_revision)
             previous = validate_snapshot(json.loads(row['snapshot']), geographic=True)
             previous_refs = json.loads(row['resource_refs'])
+            previous_provenance = self._height_provenance(db, base_revision)
             if is_anchor:
                 _require(callable(anchor_preview) and callable(geometry_check)
                          and previous['coordinateFrame']['mode'] == snapshot['coordinateFrame']['mode'] == 'local_plane',
@@ -593,7 +853,7 @@ class SceneLibrary:
                 _require(previous['coordinateFrame'] == snapshot['coordinateFrame'] and previous['terrain'] == snapshot['terrain'],
                          'SCENE_SCOPE_UNSUPPORTED')
             self._validate_changes(db, scene_id, previous, snapshot, anchor_draft=is_anchor,
-                                   reject_model_changes=is_anchor or snapshot['coordinateFrame']['mode'] == 'projected_site')
+                                   reject_model_changes=True)
         local_manifest = self._manifest(snapshot, validate_resources)
         self._check_model_history(previous_refs, local_manifest['models'])
         validate_engineering(json.loads(_json(snapshot)), [], [])
@@ -613,6 +873,8 @@ class SceneLibrary:
             proposed, spatial = self._geometry(result, snapshot, manifest)
         else:
             proposed, spatial, manifest = snapshot, self._local_spatial(), local_manifest
+        if not is_anchor:
+            self._retain_height_basis(previous, proposed, spatial, previous_provenance, base_revision)
         validate_engineering(json.loads(_json(proposed)), [], [])
         with self.library.connect() as db:
             db.execute('begin')
@@ -626,7 +888,8 @@ class SceneLibrary:
                 'resourceRefs': manifest, 'spatialChange': {'kind': 'anchor', 'receipt': receipt} if is_anchor else None}
 
     def save(self, body, actor, authorize: Authorize, validate_resources: ValidateResources,
-             validate_engineering: ValidateEngineering, *, validate_geometry=None, access_revision=None):
+             validate_engineering: ValidateEngineering, *, validate_geometry=None, access_revision=None,
+             terrain_replacement=None, model_details=None):
         self._callbacks(authorize, validate_resources, validate_engineering)
         authorize(); _json(body)
         required = {'sceneId', 'expectedSceneRevision', 'clientRequestId', 'snapshot',
@@ -635,16 +898,18 @@ class SceneLibrary:
         actor, request_id, scene_id = _text(actor), _uuid(body['clientRequestId']), _uuid(body['sceneId'])
         base_revision = _text(body['expectedSceneRevision'])
         _require(body['reviewedEngineering'] == [] and body['rootBindingChanges'] == [], 'SCENE_SCOPE_UNSUPPORTED')
-        snapshot = validate_snapshot(body['snapshot'], geographic=callable(validate_geometry))
         change = body.get('spatialChange')
-        anchored = change is not None
-        if anchored:
+        if change is not None:
             _fields(change, ('kind', 'receipt'))
-            _require(change['kind'] == 'anchor' and isinstance(change['receipt'], str)
+            _require(change['kind'] in ('anchor', 'model', 'terrain') and isinstance(change['receipt'], str)
                      and 0 < len(change['receipt']) <= 8192, 'SPATIAL_PRECHECK_INVALID', 409)
             _text(access_revision)
+        anchored = change is not None and change['kind'] == 'anchor'
+        replacing = change is not None and change['kind'] in ('model', 'terrain')
+        snapshot = validate_snapshot(body['snapshot'], geographic=callable(validate_geometry)
+            or replacing and change['kind'] == 'terrain' and callable(terrain_replacement))
         business = {**body, 'snapshot': snapshot}
-        if not anchored:
+        if change is None:
             business.pop('spatialChange', None)
         digest = _digest(business)
         # Read/replay and collect the old fixed state without holding a write lock.
@@ -659,30 +924,50 @@ class SceneLibrary:
             row = self._revision(db, scene_id, base_revision)
             previous = validate_snapshot(json.loads(row['snapshot']), geographic=True)
             previous_refs = json.loads(row['resource_refs'])
-            if anchored:
+            previous_provenance = self._height_provenance(db, base_revision)
+            if replacing:
+                signed = self._replacement_receipt(db, change['receipt'])
+                operation = signed['operation']
+                _require(operation['kind'] == change['kind'], 'SPATIAL_PRECHECK_INVALID', 409)
+            elif anchored:
                 _require(previous['coordinateFrame']['mode'] == 'local_plane'
                          and snapshot['coordinateFrame']['mode'] == 'projected_site', 'SPATIAL_PRECHECK_INVALID', 409)
             else:
                 _require(previous['coordinateFrame'] == snapshot['coordinateFrame'] and previous['terrain'] == snapshot['terrain'],
                          'SCENE_SCOPE_UNSUPPORTED')
-            self._validate_changes(db, scene_id, previous, snapshot, anchored=anchored,
-                                   reject_model_changes=anchored or snapshot['coordinateFrame']['mode'] == 'projected_site')
+            if not replacing:
+                self._validate_changes(db, scene_id, previous, snapshot, anchored=anchored, reject_model_changes=True)
         manifest = self._manifest(snapshot, validate_resources)
         self._check_model_history(previous_refs, manifest['models'])
         validate_engineering(json.loads(_json(snapshot)), [], [])
-        if anchored:
+        if replacing:
+            old_manifest = self._manifest(previous, validate_resources)
+            self._check_model_history(previous_refs, old_manifest['models'])
+            with self.library.connect() as db:
+                self._verify_replacement(db, change['receipt'], self._replacement_context(actor, access_revision,
+                    scene_id, base_revision, previous, snapshot, operation, old_manifest, manifest))
+            normalized, spatial, computed_manifest = self._replacement_result(previous, operation, old_manifest,
+                validate_resources, validate_geometry, terrain_replacement, model_details)
+            _require(computed_manifest == manifest, 'RESOURCE_CHANGED', 409)
+            _require(_receipt_snapshot_digest(normalized) == _receipt_snapshot_digest(snapshot), 'SPATIAL_PRECHECK_INVALID', 409)
+            snapshot = normalized
+            if operation['kind'] == 'terrain':
+                self._replacement_height_basis(previous, snapshot, spatial, previous_provenance, base_revision, old_manifest, manifest, operation)
+        elif anchored:
             with self.library.connect() as db:
                 self._verify_receipt(db, change['receipt'], self._receipt_context(
                     actor, access_revision, scene_id, base_revision, previous, snapshot, manifest))
-        if snapshot['coordinateFrame']['mode'] == 'projected_site':
+        if not replacing and snapshot['coordinateFrame']['mode'] == 'projected_site':
             _require(callable(validate_geometry), 'SCENE_SCOPE_UNSUPPORTED')
             result = validate_geometry(json.loads(_json(snapshot)), expected_frame=None if anchored else json.loads(_json(previous['coordinateFrame'])))
             normalized, spatial = self._geometry(result, snapshot, manifest)
             if anchored:
                 _require(normalized == snapshot, 'SPATIAL_PRECHECK_INVALID', 409)
             snapshot = normalized
-        else:
+        elif not replacing:
             spatial = self._local_spatial()
+        if not anchored and not (replacing and operation['kind'] == 'terrain'):
+            self._retain_height_basis(previous, snapshot, spatial, previous_provenance, base_revision)
         # GIS has finished. Only local compare-and-swap, fixed identities and
         # current authorization/resource callbacks run under the SQLite write lock.
         with self.library.connect() as db:
@@ -694,8 +979,12 @@ class SceneLibrary:
             _require(self._scope(db, scene_id)['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
             current = self._revision(db, scene_id, base_revision)
             _require(_digest(json.loads(current['snapshot'])) == _digest(previous), 'SCENE_CHANGED', 409)
-            self._validate_changes(db, scene_id, previous, snapshot, anchored=anchored,
-                                   reject_model_changes=anchored or snapshot['coordinateFrame']['mode'] == 'projected_site')
+            if replacing:
+                self._verify_replacement(db, change['receipt'], self._replacement_context(actor, access_revision,
+                    scene_id, base_revision, previous, snapshot, operation, old_manifest, manifest))
+                _require(self._manifest(previous, validate_resources, db=db) == old_manifest, 'RESOURCE_CHANGED', 409)
+            else:
+                self._validate_changes(db, scene_id, previous, snapshot, anchored=anchored, reject_model_changes=True)
             if anchored:
                 self._verify_receipt(db, change['receipt'], self._receipt_context(
                     actor, access_revision, scene_id, base_revision, previous, snapshot, manifest))
@@ -711,6 +1000,8 @@ class SceneLibrary:
                 result['terrainRefs'] = spatial['terrainRefs']
             self._finish(db, actor, 'save', request_id, digest, result)
             _require(self._manifest(snapshot, validate_resources, db=db) == manifest, 'RESOURCE_CHANGED', 409)
+            if replacing:
+                _require(self._manifest(previous, validate_resources, db=db) == old_manifest, 'RESOURCE_CHANGED', 409)
             validate_engineering(json.loads(_json(snapshot)), [], [])
             authorize()
             return result

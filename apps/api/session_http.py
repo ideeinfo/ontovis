@@ -134,7 +134,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                '/api/workbench/model','/api/workbench/model/content','/api/workbench/models','/api/workbench/models/binding',
                                '/api/workbench/evidence/resolve','/api/workbench/evidence/content')
             scene_paths = ('/api/workbench/scenes','/api/workbench/scenes/create','/api/workbench/scenes/open',
-                           '/api/workbench/scenes/head','/api/workbench/scenes/save','/api/workbench/scenes/check')
+                           '/api/workbench/scenes/head','/api/workbench/scenes/save','/api/workbench/scenes/check',
+                           '/api/workbench/scenes/replacement-check')
             terrain_paths = ('/api/workbench/terrains', '/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
                              '/api/workbench/terrains/version', '/api/workbench/terrains/content')
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
@@ -150,7 +151,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 raise PreviewError(422, 'INVALID_REQUEST')
             try: length = int(self.headers.get('Content-Length','0'))
             except ValueError: raise PreviewError(422, 'INVALID_REQUEST') from None
-            large_scene = parts.path in ('/api/workbench/scenes/save', '/api/workbench/scenes/check')
+            large_scene = parts.path in ('/api/workbench/scenes/save', '/api/workbench/scenes/check',
+                                         '/api/workbench/scenes/replacement-check')
             limit = MAX_SCENE_BYTES if large_scene else 16384 if parts.path in (*workbench_paths, *scene_paths, *terrain_paths, *resource_paths) else 4096
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')

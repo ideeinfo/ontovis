@@ -292,6 +292,32 @@ class WorkbenchSessions(UserSessions):
             def preview_anchor(snapshot, candidate, anchor):
                 return geometry_result(snapshot, candidate=candidate, anchor=anchor)
 
+            def model_details(identifier):
+                identity = self.project_models.content_identity(identifier)
+                if not identity['isProjectResource']:
+                    raise PreviewError(409, 'MODEL_CALIBRATION_REQUIRED')
+                value = self.project_models.model(identity['modelAssetId'], identifier, authorize)
+                expected = (identity['sha256'], identity['contentRevision'])
+                if identifier in fixed_models and fixed_models[identifier] != expected:
+                    raise PreviewError(409, 'RESOURCE_CHANGED')
+                fixed_models[identifier] = expected
+                return value
+
+            def terrain_replacement(snapshot, candidate, strategy):
+                if self.geometry is None or self.terrains is None:
+                    raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+                manifests = []
+                for identifier in sorted({snapshot['terrain']['terrainVersionId'], candidate}):
+                    version = self.terrains.version(identifier, authorize)
+                    identity = {'terrainVersionId': identifier, 'contentRevision': version['contentRevision'],
+                        'sha256': version['sha256'], 'reportSha256': version['expectedReportSha256']}
+                    if identifier in fixed_terrains and fixed_terrains[identifier] != identity:
+                        raise PreviewError(409, 'RESOURCE_CHANGED')
+                    fixed_terrains[identifier] = identity
+                    manifests.append(identity)
+                return self.geometry.process({'kind': 'terrain_replacement', 'snapshot': snapshot,
+                    'candidateTerrainVersionId': candidate, 'strategy': strategy, 'trustedTerrains': manifests}, authorize)
+
             if path == '/api/workbench/scenes' and set(body).issubset({'q','cursor','limit'}):
                 value = self.scenes.listing(authority.username, authorize,
                     access_revision=baseline['accessRevision'], **body)
@@ -308,12 +334,19 @@ class WorkbenchSessions(UserSessions):
             elif path == '/api/workbench/scenes/save':
                 value = self.scenes.save(body, authority.username, authorize, validate_resources, validate_engineering,
                     validate_geometry=validate_geometry if self.geometry is not None else None,
-                    access_revision=baseline['accessRevision'])
+                    access_revision=baseline['accessRevision'],
+                    terrain_replacement=terrain_replacement, model_details=model_details)
             elif path == '/api/workbench/scenes/check':
                 value = self.scenes.check(body, authority.username, authorize, validate_resources, validate_engineering,
                     preview_geometry if self.geometry is not None else None,
                     preview_anchor if self.geometry is not None else None,
                     access_revision=baseline['accessRevision'])
+            elif path == '/api/workbench/scenes/replacement-check':
+                value = self.scenes.replacement_check(body, authority.username, authorize,
+                    validate_resources, validate_engineering,
+                    preview_geometry if self.geometry is not None else None,
+                    terrain_replacement if self.geometry is not None else None,
+                    model_details, access_revision=baseline['accessRevision'])
             else:
                 raise PreviewError(422, 'INVALID_REQUEST')
             self.guard(sid, row)

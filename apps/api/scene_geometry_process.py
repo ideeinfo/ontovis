@@ -78,11 +78,11 @@ class SceneGeometryProcess:
                 allowed = {'INVALID_REQUEST', 'INVALID_COORDINATE', 'UNSUPPORTED_CRS', 'VERTICAL_DATUM_CONFLICT',
                     'OUTSIDE_COVERAGE', 'OUTSIDE_PROJECTION_AREA', 'NO_DATA', 'RESOURCE_CHANGED', 'INVALID_TERRAIN',
                     'TRANSFORM_UNAVAILABLE', 'FRAME_CHANGED', 'TERRAIN_SAMPLE_CHANGED', 'SCENE_SCOPE_UNSUPPORTED',
-                    'SCENE_LIMIT_EXCEEDED', 'PROCESSING_UNAVAILABLE', 'NOT_FOUND_OR_FORBIDDEN'}
+                    'SCENE_LIMIT_EXCEEDED', 'PROCESSING_UNAVAILABLE', 'NOT_FOUND_OR_FORBIDDEN', 'INSTANCE_POSITION_LOCKED'}
                 if not isinstance(code, str) or code not in allowed:
                     code = 'INVALID_REQUEST'
                 status = 503 if code in ('PROCESSING_UNAVAILABLE', 'TRANSFORM_UNAVAILABLE') else 409 if code in (
-                    'FRAME_CHANGED', 'RESOURCE_CHANGED', 'TERRAIN_SAMPLE_CHANGED') else 404 if code == 'NOT_FOUND_OR_FORBIDDEN' else 422
+                    'FRAME_CHANGED', 'RESOURCE_CHANGED', 'TERRAIN_SAMPLE_CHANGED', 'INSTANCE_POSITION_LOCKED') else 404 if code == 'NOT_FOUND_OR_FORBIDDEN' else 422
                 raise PreviewError(status, code)
             if not {'snapshot', 'resourceRefs', 'geometrySummary', 'heightProvenance', 'displayPlacements'} <= set(value):
                 raise PreviewError(502, 'PROCESSING_UNAVAILABLE')
