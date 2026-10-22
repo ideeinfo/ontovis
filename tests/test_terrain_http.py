@@ -150,7 +150,7 @@ class TerrainHttpTests(unittest.TestCase):
         self.assertIsNone(self.sessions.model)
         self.assertEqual(version['sha256'], hashlib.sha256(self.data).hexdigest())
         self.assertEqual(version['sessionRevision'], self.admin['revision'])
-        self.assertFalse(version['capabilities']['sceneTerrainPlacement'])
+        self.assertTrue(version['capabilities']['sceneTerrainPlacement'])
         self.assertEqual(version['limits']['maxUploadBytes'], MAX_BYTES)
         self.assertNotIn(str(self.root), json.dumps(version))
         self.assertNotIn('actor', item)

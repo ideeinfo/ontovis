@@ -113,8 +113,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 if not 8 <= length <= MAX_TERRAIN_BYTES:
                     raise PreviewError(413, 'TERRAIN_LIMIT_EXCEEDED')
                 return self.reply(202, sessions.terrain_upload(sid, payload, self.rfile, length))
-            if self.command == 'POST' and parts.path=='/api/workbench/models/upload' and not query:
-                if (self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type')!='model/gltf-binary'
+            if self.command == 'POST' and parts.path in ('/api/workbench/models/upload', '/api/workbench/resources/model/upload') and not query:
+                if (self.headers.get_all('Transfer-Encoding') or self.headers.get_all('Content-Type')!=['model/gltf-binary']
                         or len(self.headers.get_all('Content-Length',[]))!=1
                         or len(self.headers.get_all('X-Model-Metadata',[]))!=1): raise PreviewError(415,'INVALID_REQUEST')
                 try:
@@ -123,18 +123,24 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                     data = base64.b64decode(header,validate=True)
                     if len(data)>6144: raise ValueError()
                     payload = strict_json(data)
-                    length = int(self.headers['Content-Length'])
+                    text_length = self.headers['Content-Length']
+                    if not text_length.isascii() or not text_length.isdecimal(): raise ValueError()
+                    length = int(text_length)
                     if not isinstance(payload,dict): raise ValueError()
                 except (ValueError,UnicodeError,ProbeError): raise PreviewError(422,'INVALID_REQUEST') from None
-                return self.reply(200,sessions.upload(sid,payload,self.rfile,length))
+                method = sessions.resource_upload if parts.path.endswith('/resources/model/upload') else sessions.upload
+                return self.reply(200,method(sid,payload,self.rfile,length))
             workbench_paths = ('/api/workbench/context','/api/workbench/children','/api/workbench/object','/api/workbench/catalog',
                                '/api/workbench/model','/api/workbench/model/content','/api/workbench/models','/api/workbench/models/binding',
                                '/api/workbench/evidence/resolve','/api/workbench/evidence/content')
             scene_paths = ('/api/workbench/scenes','/api/workbench/scenes/create','/api/workbench/scenes/open',
-                           '/api/workbench/scenes/head','/api/workbench/scenes/save')
+                           '/api/workbench/scenes/head','/api/workbench/scenes/save','/api/workbench/scenes/check')
             terrain_paths = ('/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
                              '/api/workbench/terrains/version', '/api/workbench/terrains/content')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *terrain_paths) or query:
+            resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
+                              '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',
+                              '/api/workbench/resources/uses')
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *terrain_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
                     or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json'):
@@ -143,9 +149,10 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 raise PreviewError(422, 'INVALID_REQUEST')
             try: length = int(self.headers.get('Content-Length','0'))
             except ValueError: raise PreviewError(422, 'INVALID_REQUEST') from None
-            limit = MAX_SCENE_BYTES if parts.path == '/api/workbench/scenes/save' else 16384 if parts.path in (*workbench_paths, *scene_paths, *terrain_paths) else 4096
+            large_scene = parts.path in ('/api/workbench/scenes/save', '/api/workbench/scenes/check')
+            limit = MAX_SCENE_BYTES if large_scene else 16384 if parts.path in (*workbench_paths, *scene_paths, *terrain_paths, *resource_paths) else 4096
             if not 0 < length <= limit:
-                raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if parts.path == '/api/workbench/scenes/save' else 'INVALID_REQUEST')
+                raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')
             try:
                 raw = self.rfile.read(length)
                 if len(raw) != length:
@@ -154,6 +161,11 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             except (ValueError, UnicodeError, ProbeError): raise PreviewError(422, 'INVALID_REQUEST') from None
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
             if parts.path in scene_paths: return self.reply(200,sessions.scene_request(sid,parts.path,payload))
+            if parts.path in resource_paths:
+                value = sessions.resource_request(sid, parts.path, payload)
+                if parts.path.endswith('/content'):
+                    return self.image(value['content'], value['sessionRevision'], 'model/gltf-binary', value['sha256'])
+                return self.reply(200, value)
             if parts.path in terrain_paths:
                 value = sessions.terrain_request(sid, parts.path, payload)
                 if parts.path.endswith('/content'):

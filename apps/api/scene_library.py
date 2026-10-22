@@ -1,4 +1,4 @@
-"""Immutable local-plane scene snapshots in the existing private model library.
+"""Immutable local and explicitly anchored regional scene snapshots.
 
 This first storage slice accepts unbound models only. The HTTP service must
 provide current authorization and resource/engineering checks; this module does
@@ -26,6 +26,7 @@ MAX_COORDINATE_M = 1_000_000
 Authorize = Callable[[], object]
 ValidateResources = Callable[[dict], object]
 ValidateEngineering = Callable[[dict, list, list], object]
+ValidateGeometry = Callable[..., dict]
 
 
 def _require(condition, code='INVALID_REQUEST', status=422):
@@ -173,11 +174,88 @@ def validate_local_snapshot(value: dict) -> dict:
     return result
 
 
+def validate_snapshot(value: dict, *, geographic=False) -> dict:
+    """Keep the legacy local whitelist; regional geometry needs a trusted callback."""
+    _json(value)
+    _fields(value, ('displayName', 'coordinateFrame', 'terrain', 'instances', 'initialView', 'defaults'))
+    frame = value['coordinateFrame']
+    _require(type(frame) is dict)
+    if frame.get('mode') == 'local_plane':
+        return validate_local_snapshot(value)
+    _require(geographic and frame.get('mode') == 'projected_site', 'SCENE_SCOPE_UNSUPPORTED')
+    required = {'mode', 'frameRevision', 'horizontalCrs', 'verticalDatum', 'transformId',
+                'originEasting', 'originNorthing', 'originHeight', 'convergenceRuleId', 'anchor'}
+    _require(required <= set(frame) <= required | {'relativeReferenceId'})
+    for key in ('frameRevision', 'horizontalCrs', 'transformId', 'convergenceRuleId'):
+        _text(frame[key], 500)
+    _require(frame['verticalDatum'] in ('EGM2008', 'EGM96', 'WGS84_ELLIPSOIDAL', 'UNKNOWN_RELATIVE'))
+    for key in ('originEasting', 'originNorthing', 'originHeight'):
+        _number(frame[key], 20_000_000)
+    _require(type(frame['anchor']) is dict)
+    if frame['verticalDatum'] == 'UNKNOWN_RELATIVE':
+        _text(frame.get('relativeReferenceId'))
+    else:
+        _require('relativeReferenceId' not in frame)
+    _fields(value['terrain'], ('terrainVersionId', 'expectedContentRevision'))
+    _uuid(value['terrain']['terrainVersionId']); _text(value['terrain']['expectedContentRevision'])
+    _require(type(value['instances']) is list and len(value['instances']) <= MAX_INSTANCES,
+             'SCENE_LIMIT_EXCEEDED', 413)
+    result = json.loads(_json(value))
+    # Reuse the existing common instance/name/camera/default whitelist without
+    # asking the local-plane validator to interpret geographic height fields.
+    common = json.loads(_json(value))
+    common['coordinateFrame'] = {'mode': 'local_plane', 'frameRevision': 'schema-check',
+                                 'origin': [0, 0, 0], 'unit': 'm', 'axes': 'X_EAST_Y_UP_Z_SOUTH'}
+    common['terrain'] = None
+    for item, probe in zip(result['instances'], common['instances']):
+        _require(type(item) is dict and type(item.get('placement')) is dict)
+        placement = item['placement']
+        _fields(placement, ('position', 'height', 'headingDeg'))
+        position, height = placement['position'], placement['height']
+        _fields(position, ('mode', 'longitude', 'latitude', 'transformId', 'frameRevision'))
+        _require(position['mode'] == 'geographic'
+                 and position['transformId'] == frame['transformId']
+                 and position['frameRevision'] == frame['frameRevision'])
+        _number(position['longitude'], 180); _number(position['latitude'], 90)
+        _require(type(height) is dict)
+        if height.get('mode') == 'terrain_ground':
+            _fields(height, ('mode', 'terrainVersionId', 'terrainSha256', 'sampleLongitude',
+                             'sampleLatitude', 'sampledHeightM', 'offsetM', 'verticalDatum', 'samplingRule'))
+            _uuid(height['terrainVersionId']); _sha(height['terrainSha256'])
+            _number(height['sampleLongitude'], 180); _number(height['sampleLatitude'], 90)
+            _number(height['sampledHeightM'], 100_000); _number(height['offsetM'], 100_000)
+            _text(height['samplingRule'])
+        else:
+            _fields(height, ('mode', 'valueM', 'verticalDatum', 'sourceNote'))
+            _require(height['mode'] == 'absolute')
+            _number(height['valueM'], 100_000); _text(height['sourceNote'], 2000)
+        _require(height['verticalDatum'] == frame['verticalDatum'], 'VERTICAL_DATUM_CONFLICT')
+        probe['placement'] = {'position': {'mode': 'local', 'xM': 0, 'zM': 0},
+                              'height': {'mode': 'local_relative', 'relativeHeightM': 0},
+                              'headingDeg': placement['headingDeg']}
+    normalized = validate_local_snapshot(common)
+    result['displayName'] = normalized['displayName']
+    for item, normal in zip(result['instances'], normalized['instances']):
+        item['displayName'] = normal['displayName']
+    return result
+
+
+def _sha(value):
+    _require(isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value))
+    return value
+
+
+def _digest(value):
+    return hashlib.sha256(_json(value).encode()).hexdigest()
+
+
 class SceneLibrary:
     """A bounded storage slice, not a public service or an authorization layer."""
 
-    def __init__(self, library: ModelLibrary):
+    def __init__(self, library: ModelLibrary, *, model_identity=None):
         self.library = library
+        _require(model_identity is None or callable(model_identity))
+        self.model_identity = model_identity
         with library.connect() as db:
             self.project_code = db.execute('select project_code from library where id=1').fetchone()[0]
             db.executescript('''
@@ -195,6 +273,15 @@ class SceneLibrary:
                     primary key(revision, instance_id));
                 create index if not exists scene_uses_model_version on scene_resource_uses(model_version_id);
                 create index if not exists scene_revisions_scene on scene_revisions(scene_id);
+                create table if not exists scene_spatial_validations (
+                    revision text primary key references scene_revisions(revision),
+                    validation text not null, height_provenance text not null);
+                create table if not exists scene_terrain_uses (
+                    revision text not null references scene_revisions(revision),
+                    terrain_version_id text not null references terrain_versions(id), content_revision text not null,
+                    source_sha256 text not null, report_sha256 text not null,
+                    primary key(revision, terrain_version_id));
+                create index if not exists scene_uses_terrain on scene_terrain_uses(terrain_version_id);
                 create table if not exists scene_instance_ids (
                     scene_id text not null references scenes(id), instance_id text not null,
                     primary key(scene_id, instance_id));
@@ -214,14 +301,22 @@ class SceneLibrary:
                     begin select raise(abort, 'immutable scene reference'); end;
                 create trigger if not exists scene_use_no_delete before delete on scene_resource_uses
                     begin select raise(abort, 'retained scene reference'); end;
+                create trigger if not exists scene_spatial_no_update before update on scene_spatial_validations
+                    begin select raise(abort, 'immutable scene validation'); end;
+                create trigger if not exists scene_spatial_no_delete before delete on scene_spatial_validations
+                    begin select raise(abort, 'retained scene validation'); end;
+                create trigger if not exists scene_terrain_no_update before update on scene_terrain_uses
+                    begin select raise(abort, 'immutable scene terrain reference'); end;
+                create trigger if not exists scene_terrain_no_delete before delete on scene_terrain_uses
+                    begin select raise(abort, 'retained scene terrain reference'); end;
             ''')
             db.execute('insert or ignore into scene_catalog values (1,0,?)', (secrets.token_hex(32),))
 
     @staticmethod
-    def capabilities():
-        return {'storageScope': 'local_plane_unbound', 'supportsGeographic': False,
+    def capabilities(*, geographic=False):
+        return {'storageScope': 'projected_site_unbound' if geographic else 'local_plane_unbound', 'supportsGeographic': geographic,
                 'supportsEngineeringBindings': False, 'maxInstances': MAX_INSTANCES,
-                'maxSnapshotBytes': MAX_SCENE_BYTES}
+                'maxSnapshotBytes': MAX_SCENE_BYTES, 'maxCheckJsonBytes': MAX_SCENE_BYTES}
 
     @staticmethod
     def _callbacks(authorize, validate_resources, validate_engineering):
@@ -264,12 +359,22 @@ class SceneLibrary:
             row = db.execute('select id,sha256 from versions where id=?', (identifier,)).fetchone()
             if row is None:
                 raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
-            refs.append({'modelVersionId': identifier, 'sha256': row['sha256'],
-                         'contentRevision': 'sha256:' + row['sha256']})
+            if self.model_identity is None:
+                refs.append({'modelVersionId': identifier, 'sha256': row['sha256'],
+                             'contentRevision': 'sha256:' + row['sha256']})
+            else:
+                identity = self.model_identity(identifier, db=db)
+                _require(type(identity) is dict and identity.get('modelVersionId') == identifier
+                         and identity.get('sha256') == row['sha256'], 'RESOURCE_CHANGED', 409)
+                ref = {'modelVersionId': identifier, 'sha256': _sha(identity['sha256']),
+                       'contentRevision': _text(identity.get('contentRevision'))}
+                if identity.get('modelAssetId') is not None:
+                    ref['modelAssetId'] = _uuid(identity['modelAssetId'])
+                refs.append(ref)
         return refs
 
-    def _insert_snapshot(self, db, scene_id, revision, snapshot, now):
-        refs = self._resource_refs(db, snapshot)
+    def _insert_snapshot(self, db, scene_id, revision, snapshot, now, *, refs=None, spatial=None):
+        refs = self._resource_refs(db, snapshot) if refs is None else refs
         db.execute('insert into scene_revisions values (?,?,?,?,?)',
                    (revision, scene_id, _json(snapshot), _json(refs), now))
         for item in snapshot['instances']:
@@ -277,6 +382,14 @@ class SceneLibrary:
                        (revision, item['sceneModelInstanceId'], item['modelVersionId']))
             db.execute('insert or ignore into scene_instance_ids values (?,?)',
                        (scene_id, item['sceneModelInstanceId']))
+        spatial = spatial or {'validation': {'scope': 'local_plane_unbound', 'bindingIssues': []},
+                              'heightProvenance': [], 'terrainRefs': []}
+        db.execute('insert into scene_spatial_validations values (?,?,?)',
+                   (revision, _json(spatial['validation']), _json(spatial['heightProvenance'])))
+        for terrain in spatial['terrainRefs']:
+            db.execute('insert into scene_terrain_uses values (?,?,?,?,?)',
+                       (revision, terrain['terrainVersionId'], terrain['contentRevision'],
+                        terrain['sha256'], terrain['reportSha256']))
 
     @staticmethod
     def _empty(display_name):
@@ -317,55 +430,268 @@ class SceneLibrary:
             authorize()
             return result
 
-    def save(self, body, actor, authorize: Authorize, validate_resources: ValidateResources,
-             validate_engineering: ValidateEngineering):
+    @staticmethod
+    def _terrain_refs(value):
+        _require(type(value) is list and len(value) <= 1, 'RESOURCE_CHANGED', 409)
+        refs = []
+        for item in value:
+            _fields(item, ('terrainVersionId', 'contentRevision', 'sha256', 'reportSha256'))
+            refs.append({'terrainVersionId': _uuid(item['terrainVersionId']),
+                         'contentRevision': _text(item['contentRevision']),
+                         'sha256': _sha(item['sha256']), 'reportSha256': _sha(item['reportSha256'])})
+        return refs
+
+    def _manifest(self, snapshot, validate_resources, *, db=None):
+        checked = validate_resources(json.loads(_json(snapshot)))
+        geographic = snapshot['coordinateFrame']['mode'] == 'projected_site'
+        if geographic:
+            _require(type(checked) is dict and set(checked) == {'terrains'}, 'RESOURCE_VALIDATION_REQUIRED', 409)
+            terrains = self._terrain_refs(checked['terrains'])
+            _require(len(terrains) == 1 and terrains[0]['terrainVersionId'] == snapshot['terrain']['terrainVersionId']
+                     and terrains[0]['contentRevision'] == snapshot['terrain']['expectedContentRevision'], 'RESOURCE_CHANGED', 409)
+        else:
+            _require(checked is None or type(checked) is dict and checked.get('terrains') == [], 'SCENE_SCOPE_UNSUPPORTED')
+            terrains = []
+        if db is not None:
+            models = self._resource_refs(db, snapshot)
+        else:
+            with self.library.connect() as connection:
+                models = self._resource_refs(connection, snapshot)
+        return {'models': models, 'terrains': terrains}
+
+    @staticmethod
+    def _validate_changes(db, scene_id, previous, snapshot, *, anchor_draft=False, anchored=False, reject_model_changes=False):
+        old_items = {item['sceneModelInstanceId']: item for item in previous['instances']}
+        new_items = {item['sceneModelInstanceId']: item for item in snapshot['instances']}
+        for identifier, old in old_items.items():
+            current = new_items.get(identifier)
+            if old['positionLocked']:
+                _require(current is not None, 'INSTANCE_POSITION_LOCKED', 409)
+                if anchor_draft:
+                    _require(current['placement'] == old['placement'] and current['modelVersionId'] == old['modelVersionId'],
+                             'INSTANCE_POSITION_LOCKED', 409)
+                elif not anchored and current['positionLocked']:
+                    _require(current['placement'] == old['placement'] and current['modelVersionId'] == old['modelVersionId'],
+                             'INSTANCE_POSITION_LOCKED', 409)
+            if reject_model_changes and current is not None:
+                _require(current['modelVersionId'] == old['modelVersionId'], 'SCENE_SCOPE_UNSUPPORTED')
+        for identifier in new_items.keys() - old_items.keys():
+            reused = db.execute('select 1 from scene_instance_ids where scene_id=? and instance_id=?',
+                                (scene_id, identifier)).fetchone()
+            _require(reused is None, 'INSTANCE_ID_REUSED', 409)
+
+    @staticmethod
+    def _geometry(result, snapshot, manifest):
+        _require(type(result) is dict and type(result.get('snapshot')) is dict
+                 and type(result.get('resourceRefs')) is dict, 'INVALID_GEOMETRY_RESULT')
+        normalized = validate_snapshot(result['snapshot'], geographic=True)
+        _require(normalized['coordinateFrame'] == snapshot['coordinateFrame']
+                 and normalized['terrain'] == snapshot['terrain'], 'INVALID_GEOMETRY_RESULT')
+        intended = json.loads(_json(normalized))
+        for item, original in zip(intended['instances'], snapshot['instances']):
+            if item['placement']['height']['mode'] == original['placement']['height']['mode'] == 'terrain_ground':
+                for key in ('sampleLongitude', 'sampleLatitude', 'sampledHeightM'):
+                    item['placement']['height'][key] = original['placement']['height'][key]
+        _require(intended == snapshot, 'INVALID_GEOMETRY_RESULT')
+        resources = result['resourceRefs']
+        _require(resources.get('models') == sorted({item['modelVersionId'] for item in normalized['instances']})
+                 and SceneLibrary._terrain_refs(resources.get('terrains')) == manifest['terrains'], 'RESOURCE_CHANGED', 409)
+        provenance = result.get('heightProvenance')
+        _require(type(provenance) is list and len(provenance) <= MAX_INSTANCES, 'INVALID_GEOMETRY_RESULT')
+        _require(all(type(item) is dict for item in provenance), 'INVALID_GEOMETRY_RESULT')
+        actual_ids = [item.get('sceneModelInstanceId') for item in provenance]
+        _require(len(actual_ids) == len(set(actual_ids)) and set(actual_ids) == {item['sceneModelInstanceId'] for item in normalized['instances']},
+                 'INVALID_GEOMETRY_RESULT')
+        validation = {'scope': 'projected_site_unbound', 'bindingIssues': []}
+        for key in ('geometrySummary', 'displayPlacements', 'terrainDisplayTransform', 'anchorTransform', 'impact'):
+            if key in result:
+                validation[key] = result[key]
+        _json(validation); _json(provenance)
+        return normalized, {'validation': validation, 'heightProvenance': json.loads(_json(provenance)),
+                            'terrainRefs': manifest['terrains']}
+
+    @staticmethod
+    def _local_spatial():
+        return {'validation': {'scope': 'local_plane_unbound', 'bindingIssues': []},
+                'heightProvenance': [], 'terrainRefs': []}
+
+    @staticmethod
+    def _check_model_history(previous_refs, current_refs):
+        prior = {item['modelVersionId']: item for item in previous_refs}
+        _require(all(item['modelVersionId'] not in prior or prior[item['modelVersionId']] == item for item in current_refs),
+                 'RESOURCE_CHANGED', 409)
+
+    @staticmethod
+    def _receipt_key(db):
+        _, key = SceneLibrary._catalog(db)
+        return hmac.digest(key, b'ontovis.scene-anchor-precheck.v1', 'sha256')
+
+    def _receipt_context(self, actor, access_revision, scene_id, base_revision, previous, proposed, manifest):
+        return {'kind': 'scene-anchor-precheck-v1', 'project': self.project_code, 'actor': actor,
+                'accessRevision': _text(access_revision), 'sceneId': scene_id, 'baseRevision': base_revision,
+                'oldSnapshotSha256': _digest(previous), 'proposedSnapshotSha256': _digest(proposed),
+                'resourceDigest': _digest(manifest)}
+
+    def _verify_receipt(self, db, receipt, expected):
+        try:
+            actual = self._uncursor(receipt, self._receipt_key(db))
+            _require(actual == expected, 'SPATIAL_PRECHECK_INVALID', 409)
+        except PreviewError:
+            raise PreviewError(409, 'SPATIAL_PRECHECK_INVALID') from None
+
+    @staticmethod
+    def _anchor_result(local, proposed):
+        _require(proposed['coordinateFrame']['mode'] == 'projected_site', 'INVALID_GEOMETRY_RESULT')
+        _require(all(local[key] == proposed[key] for key in ('displayName', 'defaults')), 'INVALID_GEOMETRY_RESULT')
+        _require(len(local['instances']) == len(proposed['instances']), 'INVALID_GEOMETRY_RESULT')
+        for before, after in zip(local['instances'], proposed['instances']):
+            _require(all(before[key] == after[key] for key in before if key != 'placement'), 'INVALID_GEOMETRY_RESULT')
+
+    def check(self, body, actor, authorize: Authorize, validate_resources: ValidateResources,
+              validate_engineering: ValidateEngineering, geometry_check=None, anchor_preview=None, *, access_revision):
+        """Read-only preflight; a signed anchor receipt stores no draft and holds no lock."""
         self._callbacks(authorize, validate_resources, validate_engineering)
-        authorize()
-        _json(body)
-        _fields(body, ('sceneId', 'expectedSceneRevision', 'clientRequestId', 'snapshot',
-                       'reviewedEngineering', 'rootBindingChanges'))
+        authorize(); _json(body)
+        base = {'kind', 'sceneId', 'expectedSceneRevision', 'snapshot'}
+        _require(type(body) is dict and body.get('kind') in ('validate', 'anchor'))
+        _fields(body, base | ({'candidateTerrainVersionId', 'anchor'} if body['kind'] == 'anchor' else set()))
+        actor, access_revision = _text(actor), _text(access_revision)
+        scene_id, base_revision = _uuid(body['sceneId']), _text(body['expectedSceneRevision'])
+        is_anchor = body['kind'] == 'anchor'
+        snapshot = validate_snapshot(body['snapshot'], geographic=callable(geometry_check))
+        with self.library.connect() as db:
+            db.execute('begin')
+            scene = self._scope(db, scene_id)
+            _require(scene['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
+            row = self._revision(db, scene_id, base_revision)
+            previous = validate_snapshot(json.loads(row['snapshot']), geographic=True)
+            previous_refs = json.loads(row['resource_refs'])
+            if is_anchor:
+                _require(callable(anchor_preview) and callable(geometry_check)
+                         and previous['coordinateFrame']['mode'] == snapshot['coordinateFrame']['mode'] == 'local_plane',
+                         'SCENE_SCOPE_UNSUPPORTED')
+            else:
+                _require(previous['coordinateFrame'] == snapshot['coordinateFrame'] and previous['terrain'] == snapshot['terrain'],
+                         'SCENE_SCOPE_UNSUPPORTED')
+            self._validate_changes(db, scene_id, previous, snapshot, anchor_draft=is_anchor,
+                                   reject_model_changes=is_anchor or snapshot['coordinateFrame']['mode'] == 'projected_site')
+        local_manifest = self._manifest(snapshot, validate_resources)
+        self._check_model_history(previous_refs, local_manifest['models'])
+        validate_engineering(json.loads(_json(snapshot)), [], [])
+        if is_anchor:
+            _uuid(body['candidateTerrainVersionId']); _require(type(body['anchor']) is dict)
+            result = anchor_preview(json.loads(_json(snapshot)), body['candidateTerrainVersionId'], json.loads(_json(body['anchor'])))
+            _require(type(result) is dict and type(result.get('snapshot')) is dict, 'INVALID_GEOMETRY_RESULT')
+            proposed = validate_snapshot(result['snapshot'], geographic=True)
+            self._anchor_result(snapshot, proposed)
+            manifest = self._manifest(proposed, validate_resources)
+            _require(manifest['models'] == local_manifest['models'], 'RESOURCE_CHANGED', 409)
+            proposed, spatial = self._geometry(result, proposed, manifest)
+        elif snapshot['coordinateFrame']['mode'] == 'projected_site':
+            _require(callable(geometry_check), 'SCENE_SCOPE_UNSUPPORTED')
+            result = geometry_check(json.loads(_json(snapshot)), expected_frame=json.loads(_json(previous['coordinateFrame'])))
+            manifest = local_manifest
+            proposed, spatial = self._geometry(result, snapshot, manifest)
+        else:
+            proposed, spatial, manifest = snapshot, self._local_spatial(), local_manifest
+        validate_engineering(json.loads(_json(proposed)), [], [])
+        with self.library.connect() as db:
+            db.execute('begin')
+            _require(self._scope(db, scene_id)['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
+            _require(self._manifest(proposed, validate_resources, db=db) == manifest, 'RESOURCE_CHANGED', 409)
+            authorize()
+            receipt = self._cursor(self._receipt_context(actor, access_revision, scene_id, base_revision,
+                                                         previous, proposed, manifest), self._receipt_key(db)) if is_anchor else None
+        return {'sceneId': scene_id, 'baseSceneRevision': base_revision, 'proposedSnapshot': proposed,
+                'validation': spatial['validation'], 'heightProvenance': spatial['heightProvenance'],
+                'resourceRefs': manifest, 'spatialChange': {'kind': 'anchor', 'receipt': receipt} if is_anchor else None}
+
+    def save(self, body, actor, authorize: Authorize, validate_resources: ValidateResources,
+             validate_engineering: ValidateEngineering, *, validate_geometry=None, access_revision=None):
+        self._callbacks(authorize, validate_resources, validate_engineering)
+        authorize(); _json(body)
+        required = {'sceneId', 'expectedSceneRevision', 'clientRequestId', 'snapshot',
+                    'reviewedEngineering', 'rootBindingChanges'}
+        _require(type(body) is dict and required <= set(body) <= required | {'spatialChange'})
         actor, request_id, scene_id = _text(actor), _uuid(body['clientRequestId']), _uuid(body['sceneId'])
-        _text(body['expectedSceneRevision'])
+        base_revision = _text(body['expectedSceneRevision'])
         _require(body['reviewedEngineering'] == [] and body['rootBindingChanges'] == [], 'SCENE_SCOPE_UNSUPPORTED')
-        snapshot = validate_local_snapshot(body['snapshot'])
+        snapshot = validate_snapshot(body['snapshot'], geographic=callable(validate_geometry))
+        change = body.get('spatialChange')
+        anchored = change is not None
+        if anchored:
+            _fields(change, ('kind', 'receipt'))
+            _require(change['kind'] == 'anchor' and isinstance(change['receipt'], str)
+                     and 0 < len(change['receipt']) <= 8192, 'SPATIAL_PRECHECK_INVALID', 409)
+            _text(access_revision)
         business = {**body, 'snapshot': snapshot}
-        digest = hashlib.sha256(_json(business).encode()).hexdigest()
+        if not anchored:
+            business.pop('spatialChange', None)
+        digest = _digest(business)
+        # Read/replay and collect the old fixed state without holding a write lock.
+        with self.library.connect() as db:
+            db.execute('begin')
+            prior = self._prior(db, actor, 'save', request_id, digest)
+            if prior is not None:
+                self._scope(db, scene_id); authorize()
+                return prior
+            scene = self._scope(db, scene_id)
+            _require(scene['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
+            row = self._revision(db, scene_id, base_revision)
+            previous = validate_snapshot(json.loads(row['snapshot']), geographic=True)
+            previous_refs = json.loads(row['resource_refs'])
+            if anchored:
+                _require(previous['coordinateFrame']['mode'] == 'local_plane'
+                         and snapshot['coordinateFrame']['mode'] == 'projected_site', 'SPATIAL_PRECHECK_INVALID', 409)
+            else:
+                _require(previous['coordinateFrame'] == snapshot['coordinateFrame'] and previous['terrain'] == snapshot['terrain'],
+                         'SCENE_SCOPE_UNSUPPORTED')
+            self._validate_changes(db, scene_id, previous, snapshot, anchored=anchored,
+                                   reject_model_changes=anchored or snapshot['coordinateFrame']['mode'] == 'projected_site')
+        manifest = self._manifest(snapshot, validate_resources)
+        self._check_model_history(previous_refs, manifest['models'])
+        validate_engineering(json.loads(_json(snapshot)), [], [])
+        if anchored:
+            with self.library.connect() as db:
+                self._verify_receipt(db, change['receipt'], self._receipt_context(
+                    actor, access_revision, scene_id, base_revision, previous, snapshot, manifest))
+        if snapshot['coordinateFrame']['mode'] == 'projected_site':
+            _require(callable(validate_geometry), 'SCENE_SCOPE_UNSUPPORTED')
+            result = validate_geometry(json.loads(_json(snapshot)), expected_frame=None if anchored else json.loads(_json(previous['coordinateFrame'])))
+            normalized, spatial = self._geometry(result, snapshot, manifest)
+            if anchored:
+                _require(normalized == snapshot, 'SPATIAL_PRECHECK_INVALID', 409)
+            snapshot = normalized
+        else:
+            spatial = self._local_spatial()
+        # GIS has finished. Only local compare-and-swap, fixed identities and
+        # current authorization/resource callbacks run under the SQLite write lock.
         with self.library.connect() as db:
             db.execute('begin immediate')
             prior = self._prior(db, actor, 'save', request_id, digest)
             if prior is not None:
-                self._scope(db, scene_id)
-                authorize()
+                self._scope(db, scene_id); authorize()
                 return prior
-            scene = self._scope(db, scene_id)
-            _require(scene['head_revision'] == body['expectedSceneRevision'], 'SCENE_CHANGED', 409)
-            previous = json.loads(self._revision(db, scene_id, scene['head_revision'])['snapshot'])
-            # A later, richer snapshot must never be silently downgraded by this limited writer.
-            validate_local_snapshot(previous)
-            _require(previous['coordinateFrame'] == snapshot['coordinateFrame'], 'SCENE_SCOPE_UNSUPPORTED')
-            old_items = {item['sceneModelInstanceId']: item for item in previous['instances']}
-            new_items = {item['sceneModelInstanceId']: item for item in snapshot['instances']}
-            for identifier, old in old_items.items():
-                current = new_items.get(identifier)
-                if old['positionLocked']:
-                    _require(current is not None, 'INSTANCE_POSITION_LOCKED', 409)
-                    _require(not current['positionLocked'] or current['placement'] == old['placement'],
-                             'INSTANCE_POSITION_LOCKED', 409)
-            for identifier in new_items.keys() - old_items.keys():
-                reused = db.execute('select 1 from scene_instance_ids where scene_id=? and instance_id=?',
-                                    (scene_id, identifier)).fetchone()
-                _require(reused is None, 'INSTANCE_ID_REUSED', 409)
-            # Both checks are mandatory service callbacks, not claims made by the browser.
-            validate_resources(json.loads(_json(snapshot)))
-            validate_engineering(json.loads(_json(snapshot)), [], [])
+            _require(self._scope(db, scene_id)['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
+            current = self._revision(db, scene_id, base_revision)
+            _require(_digest(json.loads(current['snapshot'])) == _digest(previous), 'SCENE_CHANGED', 409)
+            self._validate_changes(db, scene_id, previous, snapshot, anchored=anchored,
+                                   reject_model_changes=anchored or snapshot['coordinateFrame']['mode'] == 'projected_site')
+            if anchored:
+                self._verify_receipt(db, change['receipt'], self._receipt_context(
+                    actor, access_revision, scene_id, base_revision, previous, snapshot, manifest))
+            _require(self._resource_refs(db, snapshot) == manifest['models'], 'RESOURCE_CHANGED', 409)
             revision, now = 'scene:' + str(uuid4()), datetime.now(timezone.utc).isoformat()
-            self._insert_snapshot(db, scene_id, revision, snapshot, now)
+            self._insert_snapshot(db, scene_id, revision, snapshot, now, refs=manifest['models'], spatial=spatial)
             db.execute('update scenes set display_name=?,head_revision=?,updated_at=?,instance_count=? where id=?',
                        (snapshot['displayName'], revision, now, len(snapshot['instances']), scene_id))
             result = {'sceneId': scene_id, 'sceneRevision': revision, 'headRevision': revision,
-                      'savedAt': now, 'validation': {'scope': 'local_plane_unbound', 'bindingIssues': []}}
+                      'savedAt': now, 'validation': spatial['validation']}
+            if snapshot['coordinateFrame']['mode'] == 'projected_site':
+                result['heightProvenance'] = spatial['heightProvenance']
+                result['terrainRefs'] = spatial['terrainRefs']
             self._finish(db, actor, 'save', request_id, digest, result)
-            validate_resources(json.loads(_json(snapshot)))
+            _require(self._manifest(snapshot, validate_resources, db=db) == manifest, 'RESOURCE_CHANGED', 409)
             validate_engineering(json.loads(_json(snapshot)), [], [])
             authorize()
             return result
@@ -376,12 +702,20 @@ class SceneLibrary:
             db.execute('begin')
             scene = self._scope(db, scene_id)
             row = self._revision(db, scene['id'], scene['head_revision'] if scene_revision is None else scene_revision)
-            snapshot = validate_local_snapshot(json.loads(row['snapshot']))
+            snapshot = validate_snapshot(json.loads(row['snapshot']), geographic=True)
+            stored = db.execute('select * from scene_spatial_validations where revision=?', (row['revision'],)).fetchone()
+            if snapshot['coordinateFrame']['mode'] == 'projected_site':
+                _require(stored is not None, 'SCENE_SCOPE_UNSUPPORTED')
+            spatial = json.loads(stored['validation']) if stored is not None else self._local_spatial()['validation']
+            provenance = json.loads(stored['height_provenance']) if stored is not None else []
+            terrains = [{'terrainVersionId': item['terrain_version_id'], 'contentRevision': item['content_revision'],
+                         'sha256': item['source_sha256'], 'reportSha256': item['report_sha256']}
+                        for item in db.execute('select * from scene_terrain_uses where revision=? order by terrain_version_id', (row['revision'],))]
             result = {'sceneId': scene['id'], 'projectCode': self.project_code,
                       'sceneRevision': row['revision'], 'headRevision': scene['head_revision'],
                       'savedAt': row['saved_at'], 'snapshot': snapshot,
                       'resourceRefs': json.loads(row['resource_refs']),
-                      'validation': {'scope': 'local_plane_unbound', 'bindingIssues': []}}
+                      'validation': spatial, 'heightProvenance': provenance, 'terrainRefs': terrains}
             authorize()
             return result
 
@@ -513,5 +847,15 @@ class SceneLibrary:
         with self.library.connect() as db:
             db.execute('begin')
             _require(db.execute('select 1 from scene_resource_uses where model_version_id=? limit 1',
+                                (version_id,)).fetchone() is None, 'RESOURCE_IN_USE', 409)
+            authorize()
+
+    def assert_terrain_unused(self, terrain_version_id, authorize: Authorize):
+        """Protect both current and retained terrain references from a future cleaner."""
+        _require(callable(authorize)); authorize()
+        version_id = _uuid(terrain_version_id)
+        with self.library.connect() as db:
+            db.execute('begin')
+            _require(db.execute('select 1 from scene_terrain_uses where terrain_version_id=? limit 1',
                                 (version_id,)).fetchone() is None, 'RESOURCE_IN_USE', 409)
             authorize()

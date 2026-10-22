@@ -90,6 +90,20 @@ class ModelUploadTests(unittest.TestCase):
     def test_stale_library_revision_never_replaces_a_model(self):
         stale=self.metadata();self.upload();self.expect('MODEL_LIBRARY_CHANGED',lambda:self.upload(stale))
         self.assertEqual(len(self.library.listing()['items']),1)
+    def test_failed_temporary_cleanup_never_blocks_old_or_project_model_uploads(self):
+        original=Path.unlink
+        def deny_temporary(path,*args,**kwargs):
+            if path.parent==self.library.root/'temporary' and path.name.startswith('upload-'):
+                raise PermissionError('Synthetic cleanup failure')
+            return original(path,*args,**kwargs)
+        with patch.object(self.library,'process',side_effect=PreviewError(422,'INVALID_MODEL')):
+            with patch.object(Path,'unlink',deny_temporary):
+                self.expect('MODEL_STORAGE_UNAVAILABLE',lambda:self.upload())
+        self.assertEqual(self.library.listing()['items'],[])
+        self.assertTrue(self.library.slots.acquire(blocking=False))
+        self.library.slots.release()
+        self.assertEqual(len(list((self.library.root/'temporary').glob('upload-*.glb'))),1)
+        self.assertEqual(self.upload()['state'],'ready')
     def test_reader_or_revoked_membership_cannot_upload(self):
         for role,allowed in [('reader',True),('admin',False)]:
             self.account.role,self.account.allowed=role,allowed

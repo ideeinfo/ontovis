@@ -20,10 +20,12 @@ from apps.api.user_sessions import UserSessions
 from apps.api.session_http import handler_type
 from apps.api.model_assets import ModelAsset
 from apps.api.model_library import ModelLibrary
+from apps.api.project_model_library import ProjectModelLibrary
 from apps.api.model_validation import MAX_BYTES
 from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COORDINATE_M
 from apps.api.terrain_library import TerrainLibrary, MAX_VERSIONS as MAX_TERRAIN_VERSIONS, MAX_TOTAL_BYTES as MAX_TERRAIN_TOTAL_BYTES
 from apps.api.terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES, MAX_PIXELS as MAX_TERRAIN_PIXELS, MAX_TRIANGLES as MAX_TERRAIN_TRIANGLES
+from apps.api.scene_geometry_process import SceneGeometryProcess
 
 
 class WorkbenchSessions(UserSessions):
@@ -34,8 +36,11 @@ class WorkbenchSessions(UserSessions):
         self.context_path = self.prefix + '/installations/' + self.context_id
         self.model = ModelAsset(Path(model_root), project_code, self.context_id) if model_root else None
         self.library = ModelLibrary(Path(library_root),project_code,self.context_id) if library_root else None
-        self.scenes = SceneLibrary(self.library) if self.library else None
+        self.project_models = ProjectModelLibrary(self.library) if self.library else None
+        self.scenes = SceneLibrary(self.library, model_identity=self.project_models.content_identity) if self.library else None
         self.terrains = TerrainLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
+        self.geometry = SceneGeometryProcess(self.library, python_executable=terrain_python,
+            terrain_root=self.terrains.root / 'versions') if self.terrains else None
 
     def scene_access(self, authority):
         """Read project permission without requiring the legacy default installation."""
@@ -46,7 +51,7 @@ class WorkbenchSessions(UserSessions):
             raise PreviewError(403, 'FORBIDDEN')
         return access
 
-    def terrain_authorization(self, sid, payload, *, writing):
+    def project_authorization(self, sid, payload, *, writing, write_code='SCENE_WRITE_FORBIDDEN'):
         with self.lock:
             row = self.current(sid, authenticated=True, touch=True)
             if payload.get('expectedSessionRevision') != row.revision:
@@ -60,7 +65,7 @@ class WorkbenchSessions(UserSessions):
                     self.guard(sid, row)
                     access = self.scene_access(authority)
                     if writing and access.get('role') != 'admin':
-                        raise PreviewError(403, 'SCENE_WRITE_FORBIDDEN')
+                        raise PreviewError(403, write_code)
                     if access['accessRevision'] != baseline['accessRevision']:
                         raise PreviewError(409, 'ACCESS_CHANGED')
                     self.guard(sid, row)
@@ -70,19 +75,83 @@ class WorkbenchSessions(UserSessions):
                     raise
 
             authorize()
-            if self.terrains is None:
-                raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
             return row, authorize, baseline, authority.username
         except PreviewError as error:
             if error.status == 401:
                 self.invalidate(sid, row)
             raise
 
+    def terrain_authorization(self, sid, payload, *, writing):
+        result = self.project_authorization(sid, payload, writing=writing)
+        if self.terrains is None:
+            raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+        return result
+
+    def resource_response(self, value, row, access):
+        value['sessionRevision'] = row.revision
+        value['capabilities'] = {'scope': 'project_static_glb_resources', 'canRead': True,
+            'canUpload': access.get('role') == 'admin', 'canCalibrate': access.get('role') == 'admin',
+            'calibrationRequiredForPlacement': True, 'automaticLegacyAdoption': False}
+        value['limits'] = {'maxUploadBytes': MAX_BYTES, 'maxVersions': 20,
+            'maxLibraryBytes': 200 * 1024 * 1024, 'maxMetadataHeaderBytes': 8192,
+            'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384}
+        return value
+
+    def resource_upload(self, sid, payload, stream, length):
+        row, authorize, access, actor = self.project_authorization(sid, payload,
+            writing=True, write_code='MODEL_WRITE_FORBIDDEN')
+        if self.project_models is None:
+            raise PreviewError(503, 'MODEL_UNAVAILABLE')
+        metadata = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        value = self.project_models.upload(stream, length, metadata, actor, authorize)
+        authorize()
+        return self.resource_response(value, row, access)
+
+    def resource_request(self, sid, path, payload):
+        writing = path == '/api/workbench/resources/model/calibrate'
+        row, authorize, access, actor = self.project_authorization(sid, payload,
+            writing=writing, write_code='MODEL_WRITE_FORBIDDEN')
+        if self.project_models is None or self.scenes is None:
+            raise PreviewError(503, 'MODEL_UNAVAILABLE')
+        body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        if path == '/api/workbench/resources/models' and set(body).issubset(
+                {'q', 'purpose', 'cursor', 'expectedLibraryRevision', 'limit'}):
+            options = dict(body)
+            if 'expectedLibraryRevision' in options:
+                options['expected_library_revision'] = options.pop('expectedLibraryRevision')
+            value = self.project_models.listing(actor, authorize,
+                access_revision=access['accessRevision'], **options)
+        elif path == '/api/workbench/resources/model' and set(body) == {'modelAssetId', 'modelVersionId'}:
+            value = self.project_models.model(body['modelAssetId'], body['modelVersionId'], authorize)
+        elif path == '/api/workbench/resources/model/content' and set(body) == {
+                'modelVersionId', 'expectedContentRevision', 'expectedSha256'}:
+            fingerprint = body['expectedSha256']
+            if (not isinstance(fingerprint, str) or len(fingerprint) != 64
+                    or any(character not in '0123456789abcdef' for character in fingerprint)):
+                raise PreviewError(422, 'INVALID_REQUEST')
+            content = self.project_models.content(body['modelVersionId'],
+                body['expectedContentRevision'], fingerprint, authorize)
+            authorize()
+            return {'content': content, 'sha256': fingerprint, 'sessionRevision': row.revision}
+        elif writing:
+            value = self.project_models.calibrate(body, actor, authorize)
+        elif path == '/api/workbench/resources/uses' and {'resourceKind', 'versionId'} <= set(body) and set(body).issubset(
+                {'resourceKind', 'versionId', 'scope', 'cursor', 'limit'}):
+            if body['resourceKind'] != 'model':
+                raise PreviewError(422, 'SCENE_SCOPE_UNSUPPORTED')
+            value = self.scenes.uses(body['versionId'], actor, authorize,
+                access_revision=access['accessRevision'],
+                **{key: value for key, value in body.items() if key in ('scope', 'cursor', 'limit')})
+        else:
+            raise PreviewError(422, 'INVALID_REQUEST')
+        authorize()
+        return self.resource_response(value, row, access)
+
     def terrain_response(self, value, row, access):
         value['sessionRevision'] = row.revision
         value['capabilities'] = {'scope': 'private_geotiff_processing', 'canRead': True,
             'canUpload': access.get('role') == 'admin', 'canCancel': access.get('role') == 'admin',
-            'sceneTerrainPlacement': False}
+            'sceneTerrainPlacement': self.geometry is not None}
         value['limits'] = {'maxUploadBytes': MAX_TERRAIN_BYTES, 'maxMetadataHeaderBytes': 8192,
             'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384, 'maxPixels': MAX_TERRAIN_PIXELS,
             'maxTriangles': MAX_TERRAIN_TRIANGLES, 'maxVersions': MAX_TERRAIN_VERSIONS,
@@ -147,27 +216,75 @@ class WorkbenchSessions(UserSessions):
                     raise PreviewError(409, 'ACCESS_CHANGED')
                 self.guard(sid, row)
 
-            fixed_shas = {}
+            fixed_models = {}
+            fixed_terrains = {}
 
             def validate_resources(snapshot):
                 for identifier in sorted({item['modelVersionId'] for item in snapshot['instances']}):
                     try:
-                        version = self.library.version(identifier)
-                        if identifier in fixed_shas and fixed_shas[identifier] != version['sha256']:
+                        identity = self.project_models.content_identity(identifier)
+                        content_identity = (identity['sha256'], identity['contentRevision'])
+                        if identifier in fixed_models and fixed_models[identifier] != content_identity:
                             raise PreviewError(409, 'RESOURCE_CHANGED')
-                        self.library.content(version)
-                        fixed_shas[identifier] = version['sha256']
+                        if identity['isProjectResource']:
+                            if not identity['canPlace']:
+                                raise PreviewError(409, 'MODEL_CALIBRATION_REQUIRED')
+                            self.project_models.content(identifier, identity['contentRevision'], identity['sha256'], authorize)
+                        else:
+                            if snapshot['coordinateFrame']['mode'] != 'local_plane':
+                                raise PreviewError(409, 'MODEL_CALIBRATION_REQUIRED')
+                            self.library.content(self.library.version(identifier))
+                        fixed_models[identifier] = content_identity
                     except PreviewError as error:
                         if error.code == 'MODEL_CHANGED':
                             raise PreviewError(409, 'RESOURCE_CHANGED') from None
                         if error.code == 'MODEL_NOT_FOUND':
                             raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN') from None
                         raise
+                terrains = []
+                if snapshot['terrain'] is not None:
+                    if self.terrains is None:
+                        raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+                    version = self.terrains.version(snapshot['terrain']['terrainVersionId'], authorize)
+                    if version['contentRevision'] != snapshot['terrain']['expectedContentRevision']:
+                        raise PreviewError(409, 'RESOURCE_CHANGED')
+                    identity = {'terrainVersionId': version['terrainVersionId'],
+                        'contentRevision': version['contentRevision'], 'sha256': version['sha256'],
+                        'reportSha256': version['expectedReportSha256']}
+                    if version['terrainVersionId'] in fixed_terrains and fixed_terrains[version['terrainVersionId']] != identity:
+                        raise PreviewError(409, 'RESOURCE_CHANGED')
+                    fixed_terrains[version['terrainVersionId']] = identity
+                    terrains.append(identity)
+                return {'terrains': terrains}
 
             def validate_engineering(snapshot, reviewed, changes):
                 if reviewed or changes or any(item['rootBinding'] is not None or item['componentBindings']
                                                for item in snapshot['instances']):
                     raise PreviewError(422, 'SCENE_SCOPE_UNSUPPORTED')
+
+            def geometry_result(snapshot, *, expected_frame=None, preview=False, anchor=None, candidate=None):
+                if self.geometry is None:
+                    raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+                terrain_id = candidate if candidate is not None else snapshot['terrain']['terrainVersionId']
+                terrain = self.terrains.version(terrain_id, authorize)
+                manifest = {'terrainVersionId': terrain['terrainVersionId'], 'contentRevision': terrain['contentRevision'],
+                    'sha256': terrain['sha256'], 'reportSha256': terrain['expectedReportSha256']}
+                request = {'kind': 'anchor' if anchor is not None else 'validate',
+                    'snapshot': snapshot, 'trustedTerrains': [manifest]}
+                if anchor is not None:
+                    request.update(candidateTerrainVersionId=candidate, anchor=anchor)
+                else:
+                    request.update(expectedFrame=expected_frame, resampleGround=preview)
+                return self.geometry.process(request, authorize)
+
+            def preview_geometry(snapshot, *, expected_frame=None):
+                return geometry_result(snapshot, expected_frame=expected_frame, preview=True)
+
+            def validate_geometry(snapshot, *, expected_frame=None):
+                return geometry_result(snapshot, expected_frame=expected_frame)
+
+            def preview_anchor(snapshot, candidate, anchor):
+                return geometry_result(snapshot, candidate=candidate, anchor=anchor)
 
             if path == '/api/workbench/scenes' and set(body).issubset({'q','cursor','limit'}):
                 value = self.scenes.listing(authority.username, authorize,
@@ -176,21 +293,32 @@ class WorkbenchSessions(UserSessions):
                 value = self.scenes.create(body, authority.username, authorize, validate_resources, validate_engineering)
             elif path == '/api/workbench/scenes/open' and set(body) in ({'sceneId'}, {'sceneId','sceneRevision'}):
                 value = self.scenes.open(body['sceneId'], authority.username, authorize, body.get('sceneRevision'))
-                fixed_shas.update({item['modelVersionId']: item['sha256'] for item in value['resourceRefs']})
+                fixed_models.update({item['modelVersionId']: (item['sha256'], item['contentRevision']) for item in value['resourceRefs']})
+                fixed_terrains.update({item['terrainVersionId']: item for item in value.get('terrainRefs', [])})
                 validate_resources(value['snapshot'])
                 authorize()
             elif path == '/api/workbench/scenes/head' and set(body) == {'sceneId','viewingRevision'}:
                 value = self.scenes.head(body['sceneId'], body['viewingRevision'], authority.username, authorize)
             elif path == '/api/workbench/scenes/save':
-                value = self.scenes.save(body, authority.username, authorize, validate_resources, validate_engineering)
+                value = self.scenes.save(body, authority.username, authorize, validate_resources, validate_engineering,
+                    validate_geometry=validate_geometry if self.geometry is not None else None,
+                    access_revision=baseline['accessRevision'])
+            elif path == '/api/workbench/scenes/check':
+                value = self.scenes.check(body, authority.username, authorize, validate_resources, validate_engineering,
+                    preview_geometry if self.geometry is not None else None,
+                    preview_anchor if self.geometry is not None else None,
+                    access_revision=baseline['accessRevision'])
             else:
                 raise PreviewError(422, 'INVALID_REQUEST')
             self.guard(sid, row)
             value['sessionRevision'] = row.revision
-            value['capabilities'] = {**self.scenes.capabilities(), 'scope': 'local_plane_unbound',
+            value['capabilities'] = {**self.scenes.capabilities(geographic=self.geometry is not None),
+                'scope': 'projected_site_unbound' if self.geometry is not None else 'local_plane_unbound',
                 'localPlaneUnbound': True, 'canRead': True, 'canWrite': current_access.get('role') == 'admin',
-                'existingUploadedModelVersionsOnly': True}
+                'existingUploadedModelVersionsOnly': True, 'projectModelResources': True,
+                'canPreflightGeographic': self.geometry is not None}
             value['limits'] = {'maxSaveJsonBytes': MAX_SCENE_BYTES, 'maxReadJsonBytes': 16384,
+                'maxCheckJsonBytes': MAX_SCENE_BYTES,
                 'maxInstances': MAX_INSTANCES, 'maxComponentBindings': 0, 'maxNameCharacters': 200,
                 'maxLocalCoordinateM': MAX_COORDINATE_M}
             return value
@@ -248,8 +376,12 @@ class WorkbenchSessions(UserSessions):
             self.guard(sid,row)
             return {'item':value, 'libraryRevision':revision, 'sessionRevision':row.revision}
         finally:
-            if path: path.unlink(missing_ok=True)
-            self.library.slots.release()
+            try:
+                if path: path.unlink(missing_ok=True)
+            except OSError:
+                raise PreviewError(503, 'MODEL_STORAGE_UNAVAILABLE') from None
+            finally:
+                self.library.slots.release()
 
     def save_binding(self, sid, payload):
         row,context,authorize,authority = self.writer(sid,payload)
