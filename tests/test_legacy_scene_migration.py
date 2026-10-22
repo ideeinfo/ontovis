@@ -7,9 +7,11 @@ import copy
 from contextlib import closing
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -273,6 +275,60 @@ class LegacySceneMigrationTests(unittest.TestCase):
                 self.fixed.joinpath('model.json').write_text(json.dumps({**original,
                     'licenceBasis': 'Synthetic source only', 'sourceModelSha256': 'a'*64, field: 'not accepted'}))
                 self.expect('INVALID_INPUT', lambda: self.prepare(fixed_model_root=self.fixed))
+
+    def test_source_candidate_history_accepts_only_identical_float32_bounds_and_retains_raw_values(self):
+        original = read_json(self.fixed/'model.json')
+        before = self.prepare(fixed_model_root=self.fixed)
+        config = copy.deepcopy(original)
+        row = next(row for row in config['bindings'] if row['componentKey'] == 'CN')
+        row['bounds'] = [[math.nextafter(number, math.inf) for number in point] for point in row['bounds']]
+        self.assertNotEqual(row['bounds'], next(row for row in original['bindings'] if row['componentKey'] == 'CN')['bounds'])
+        self.fixed.joinpath('model.json').write_text(json.dumps(config))
+        state = self.state()
+        result = self.prepare(fixed_model_root=self.fixed)
+        self.assertTrue(verify(self.store, self.version['versionId'], self.inputs, result,
+                               fixed_model_root=self.fixed)['inputsUnchanged'])
+        self.assertEqual(self.state(), state)
+        self.assertEqual(result['roleBindings'], before['roleBindings'])
+        self.assertEqual(result['directorySha256'], before['directorySha256'])
+        self.assertNotEqual(result['historicalSources']['fixedModel']['configSha256'],
+                            before['historicalSources']['fixedModel']['configSha256'])
+        self.assertEqual(next(row for row in result['historicalSources']['fixedModel']['bindingBounds']
+                              if row['role'] == 'CN')['bounds'], row['bounds'])
+        self.assertFalse(result['ready'])
+
+    def test_adjacent_float32_source_candidate_coordinate_is_a_geometry_change(self):
+        config = read_json(self.fixed/'model.json')
+        row = next(row for row in config['bindings'] if row['componentKey'] == 'CN')
+        original = row['bounds'][0][0]
+        bits = struct.unpack('<I', struct.pack('<f', original))[0]
+        row['bounds'][0][0] = struct.unpack('<f', struct.pack('<I', bits+1))[0]
+        self.assertNotEqual(struct.pack('<f', original), struct.pack('<f', row['bounds'][0][0]))
+        self.fixed.joinpath('model.json').write_text(json.dumps(config))
+        self.expect('SOURCE_MISMATCH', lambda: self.prepare(fixed_model_root=self.fixed))
+
+    def test_proxy_historical_bounds_reject_even_same_float32_micro_difference(self):
+        original = read_json(self.fixed/'model.json')
+        for role in ('CT', 'CN1'):
+            with self.subTest(role=role):
+                config = copy.deepcopy(original)
+                row = next(row for row in config['bindings'] if row['componentKey'] == role)
+                number = row['bounds'][0][0]
+                row['bounds'][0][0] = math.nextafter(number, math.inf)
+                self.assertEqual(struct.pack('<f', number), struct.pack('<f', row['bounds'][0][0]))
+                self.fixed.joinpath('model.json').write_text(json.dumps(config))
+                self.expect('SOURCE_MISMATCH', lambda: self.prepare(fixed_model_root=self.fixed))
+
+    def test_historical_source_candidate_rejects_float32_overflow_nonfinite_and_nonnumeric_values(self):
+        original = read_json(self.fixed/'model.json')
+        for value, code in ((1e300, 'SOURCE_MISMATCH'), (10**1000, 'SOURCE_MISMATCH'),
+                (float('inf'), 'INVALID_INPUT'), (float('nan'), 'INVALID_INPUT'),
+                (True, 'SOURCE_MISMATCH'), ('22', 'SOURCE_MISMATCH')):
+            with self.subTest(value=repr(value)):
+                config = copy.deepcopy(original)
+                next(row for row in config['bindings'] if row['componentKey'] == 'CN')['bounds'][0][0] = value
+                self.fixed.joinpath('model.json').write_text(json.dumps(config))
+                self.expect(code, lambda: self.prepare(fixed_model_root=self.fixed))
 
     def test_source_artifact_changed_during_probe_cannot_finish_plan(self):
         original = self.artifact.read_bytes()

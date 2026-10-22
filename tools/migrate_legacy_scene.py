@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
+import struct
 import sys
 from uuid import UUID
 
@@ -278,6 +279,19 @@ def _directory(source, artifact, inputs, bindings):
     return components, report, role_bindings
 
 
+def _same_float32_bounds(left, right):
+    if any(type(box) is not list or len(box) != 2 or any(
+            type(point) is not list or len(point) != 3 for point in box) for box in (left, right)):
+        return False
+    try:
+        return all(type(a) in (int, float) and type(b) in (int, float)
+                   and math.isfinite(a) and math.isfinite(b)
+                   and struct.pack('<f', a) == struct.pack('<f', b)
+                   for lp, rp in zip(left, right) for a, b in zip(lp, rp))
+    except (OverflowError, ValueError, struct.error):
+        return False
+
+
 def _history(path, inputs, source, role_bindings, *, fixed=False):
     if path is None: return None
     config_path = _path(path, directory=True)/'model.json' if fixed else _path(path)
@@ -305,7 +319,12 @@ def _history(path, inputs, source, role_bindings, *, fixed=False):
         _require(role in ROLES and role not in seen, 'AMBIGUOUS_BINDING'); seen.add(role)
         _require(binding['entityUid'] == inputs['cabinetRefs'][role] and binding['geometryQuality'] == QUALITY[role], 'SOURCE_MISMATCH')
         if fixed:
-            _require(binding['entityRevision'] == roles[role]['expectedEntityRevision'] and binding['bounds'] == roles[role]['bounds'], 'SOURCE_MISMATCH')
+            # The source GLB stores float32 coordinates. Legacy JSON can retain
+            # a different decimal spelling of that exact representation.
+            same_bounds = (_same_float32_bounds(binding['bounds'], roles[role]['bounds'])
+                           if role == 'CN' and binding['geometryQuality'] == 'source_candidate'
+                           else binding['bounds'] == roles[role]['bounds'])
+            _require(binding['entityRevision'] == roles[role]['expectedEntityRevision'] and same_bounds, 'SOURCE_MISMATCH')
     if fixed:
         _require(value['sha256'] == source['sha256'], 'SOURCE_MISMATCH')
         artifact = _read(config_path.parent/'model.glb', MAX_BYTES)
@@ -315,7 +334,11 @@ def _history(path, inputs, source, role_bindings, *, fixed=False):
                  and value['derivedModelSha256'] == source['sha256'], 'SOURCE_MISMATCH')
         _sha(value['sourceModelSha256'])
     _require(_read(config_path, MAX_JSON_BYTES) == raw, 'INPUT_CHANGED')
-    return {'configSha256': hashlib.sha256(raw).hexdigest(), 'modelSha256': source['sha256']}
+    result = {'configSha256': hashlib.sha256(raw).hexdigest(), 'modelSha256': source['sha256']}
+    if fixed:
+        result['bindingBounds'] = [{'role': role, 'bounds': next(row['bounds'] for row in value['bindings']
+            if row['componentKey'] == role)} for role in ROLES]
+    return result
 
 
 def _historical_fingerprints(fixed_model_root, session_manifest):
