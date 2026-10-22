@@ -170,7 +170,7 @@ class WorkbenchSessions(UserSessions):
                 access = authority.request('GET', self.access_path)
                 value = {'context':context, 'root':root, 'children':children,
                          'projectName':access.get('projectName', self.project_code)}
-            elif path == '/api/workbench/catalog' and set(body).issubset({'q','cursor','scope'}):
+            elif path == '/api/workbench/catalog' and set(body).issubset({'q','cursor','scope','groupBy','categoryKey','expectedSnapshotRevision'}):
                 q, cursor = body.get('q',''), body.get('cursor')
                 if (not isinstance(q, str) or len(q) > 200 or cursor is not None
                         and (not isinstance(cursor, str) or not 0 < len(cursor) <= 8192)):
@@ -179,8 +179,19 @@ class WorkbenchSessions(UserSessions):
                 if body.get('scope','project') not in ('equipment','project'):
                     raise PreviewError(422, 'INVALID_REQUEST')
                 if body.get('scope') == 'equipment': params['installationContextId'] = self.context_id
+                if 'groupBy' in body:
+                    if body['groupBy'] != 'classification': raise PreviewError(422, 'INVALID_REQUEST')
+                    params['groupBy'] = body['groupBy']
+                if 'categoryKey' in body:
+                    if body.get('groupBy') != 'classification' or not isinstance(body['categoryKey'], str) or not 0 < len(body['categoryKey']) <= 2048:
+                        raise PreviewError(422, 'INVALID_REQUEST')
+                    params['categoryKey'] = body['categoryKey']
+                if 'expectedSnapshotRevision' in body and (not isinstance(body['expectedSnapshotRevision'], str) or not 0 < len(body['expectedSnapshotRevision']) <= 128):
+                    raise PreviewError(422, 'INVALID_REQUEST')
                 if cursor: params['cursor'] = cursor
                 value = authority.request('GET', self.prefix + '/objects?' + urlencode(params))
+                if body.get('expectedSnapshotRevision') and value.get('snapshotRevision') != body['expectedSnapshotRevision']:
+                    raise PreviewError(409, 'SNAPSHOT_EXPIRED')
             elif path == '/api/workbench/children' and set(body).issubset({'parentEntityUid','cursor','expectedHierarchyRevision'}) and 'parentEntityUid' in body:
                 self.object(authority, body['parentEntityUid'])
                 if body.get('expectedHierarchyRevision') != context['hierarchyRevision']:

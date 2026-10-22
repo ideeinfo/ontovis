@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {categoryLabel,objectCategory,recordedObjectPath} from '../src/objectCatalog.ts';
+const object=(uid,name,context='unit')=>({entityUid:uid,displayName:name,installationContextId:context,objectKind:'unknown'});
+test('standard classification uses source code and the selected language without a second type line',()=>{
+ const classification={code:'A1',nameZh:'控制接口',nameEn:'Control interface',reviewState:'unreviewed'};
+ const item={...object('definition','控制定义',null),classification};
+ assert.equal(objectCategory(item,'zh'),'A1 · 控制接口');assert.equal(objectCategory(item,'en'),'A1 · Control interface');
+ assert.equal(item.objectKind,'unknown');assert.equal(item.classification.reviewState,'unreviewed');
+ assert.equal(categoryLabel({...classification,nameEn:null,objectKind:'unknown'},'en'),'A1 · 控制接口');
+});
+test('unclassified objects and recorded equipment kinds have distinct translated categories',()=>{
+ assert.equal(objectCategory(object('a','甲'),'zh'),'未分类');
+ assert.equal(objectCategory({...object('b','乙'),objectKind:'cabinet'},'zh'),'柜体');
+ assert.equal(objectCategory({...object('b','乙'),objectKind:'cabinet'},'en'),'Cabinet');
+});
+test('the object path shows recorded parents from root to selection without mutating the nearest-first response',()=>{
+ const root=object('root','机组'),cabinet=object('CN','信号柜'),child=object('child','控制接口');
+ const detail={item:child,ancestors:{completeness:'complete',path:[{object:cabinet},{object:root}]}};
+ assert.deepEqual(recordedObjectPath(detail).map(row=>row.entityUid),['root','CN','child']);
+ assert.deepEqual(detail.ancestors.path.map(row=>row.object.entityUid),['CN','root']);
+ assert.deepEqual(recordedObjectPath({...detail,item:{...child,installationContextId:null}}),[]);
+ assert.deepEqual(recordedObjectPath({...detail,ancestors:{completeness:'incomplete',path:[{object:cabinet}]}}).map(row=>row.entityUid),['CN','child']);
+});

@@ -130,6 +130,19 @@ class WorkbenchTests(unittest.TestCase):
         account.image=image
         self.assert_error('FORBIDDEN',lambda:self.read('evidence/content',**self.selection(),evidenceRef='fixture-evidence',expectedSourceRevision='a'*64,expectedContentSha256='b'*64))
 
+    def test_grouped_catalog_forwards_category_but_pins_the_snapshot(self):
+        account=self.accounts[0];original=account.request
+        def request(method,path,body=None):
+            if '/objects?' in path:return {'items':[], 'groups':[], 'selectedCategoryKey':'category-A',
+                'snapshotRevision':'catalog:1', 'nextCursor':None, 'query':parse_qs(urlsplit(path).query)}
+            return original(method,path,body)
+        account.request=request
+        result=self.read('catalog',q='接口',scope='project',groupBy='classification',categoryKey='category-A',expectedSnapshotRevision='catalog:1')
+        self.assertEqual(result['query'],{'q':['接口'],'limit':['50'],'groupBy':['classification'],'categoryKey':['category-A']})
+        self.assert_error('SNAPSHOT_EXPIRED',lambda:self.read('catalog',groupBy='classification',expectedSnapshotRevision='catalog:0'))
+        for fields in ({'groupBy':'name'},{'categoryKey':'x'},{'groupBy':'classification','categoryKey':[]},{'expectedSnapshotRevision':1}):
+            self.assert_error('INVALID_REQUEST',lambda:self.read('catalog',**fields))
+
     def test_project_catalog_forwards_only_bounded_search_and_server_cursor(self):
         account=self.accounts[0];original=account.request
         def request(method,path,body=None):

@@ -5,7 +5,9 @@ export interface EngineeringObject {
   installationContextId: string | null; installationPurpose: string | null;
   objectScope: string; hasChildren: boolean;
   sourceTemplateEntityUid: string | null;
+  classification?: ObjectClassification | null;
 }
+export interface ObjectClassification {code:string; nameZh:string|null; nameEn:string|null; reviewState:string|null}
 export interface Installation {
   installationContextId: string; projectCode: string; displayName: string;
   hierarchyRevision: string; rootEntityUid: string | null;
@@ -13,7 +15,9 @@ export interface Installation {
 }
 export interface ContextView { context: Installation; root: EngineeringObject | null; projectName: string; children: ChildrenView | null }
 export interface CatalogView { items: EngineeringObject[]; nextCursor: string | null; snapshotRevision: string }
-export interface Relation { verificationState: string; engineeringUseAllowed: boolean }
+export interface CatalogGroup {key:string; code:string|null; nameZh:string|null; nameEn:string|null; objectKind:string; count:number}
+export interface GroupedCatalogView extends CatalogView {groups:CatalogGroup[]; selectedCategoryKey:string|null}
+export interface Relation { status: string }
 export interface ChildrenView {
   items: {object: EngineeringObject; relation: Relation}[];
   nextCursor: string | null; hierarchyRevision: string;
