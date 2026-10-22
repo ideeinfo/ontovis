@@ -7,7 +7,8 @@ import json
 from urllib.parse import parse_qs, urlsplit
 from .authority import PreviewError
 from .user_sessions import COOKIE, UserSessions
-from tools.model_probe import strict_json
+from .scene_library import decode_scene_request, MAX_SCENE_BYTES
+from tools.model_probe import strict_json, ProbeError
 
 def handler_type(sessions: UserSessions, origin: str, *, development=False):
     parsed = urlsplit(origin)
@@ -63,7 +64,10 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             except (BrokenPipeError, ConnectionResetError): pass
 
         def dispatch(self):
-            if (self.headers.get('Host') != parsed.netloc
+            hosts, origins = self.headers.get_all('Host', []), self.headers.get_all('Origin', [])
+            if (len(hosts) != 1 or len(origins) > 1
+                    or self.command == 'POST' and len(origins) != 1
+                    or self.headers.get('Host') != parsed.netloc
                     or self.headers.get('Origin') not in ((origin,) if self.command == 'POST' else (None,origin))
                     or self.headers.get('Sec-Fetch-Site') not in (None,'none','same-origin')):
                 raise PreviewError(403, 'FORBIDDEN')
@@ -97,21 +101,32 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                     payload = strict_json(data)
                     length = int(self.headers['Content-Length'])
                     if not isinstance(payload,dict): raise ValueError()
-                except (ValueError,UnicodeError): raise PreviewError(422,'INVALID_REQUEST') from None
+                except (ValueError,UnicodeError,ProbeError): raise PreviewError(422,'INVALID_REQUEST') from None
                 return self.reply(200,sessions.upload(sid,payload,self.rfile,length))
             workbench_paths = ('/api/workbench/context','/api/workbench/children','/api/workbench/object','/api/workbench/catalog',
                                '/api/workbench/model','/api/workbench/model/content','/api/workbench/models','/api/workbench/models/binding',
                                '/api/workbench/evidence/resolve','/api/workbench/evidence/content')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths) or query:
+            scene_paths = ('/api/workbench/scenes','/api/workbench/scenes/create','/api/workbench/scenes/open',
+                           '/api/workbench/scenes/head','/api/workbench/scenes/save')
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json':
                 raise PreviewError(415, 'INVALID_REQUEST')
+            if len(self.headers.get_all('Content-Length', [])) != 1:
+                raise PreviewError(422, 'INVALID_REQUEST')
             try: length = int(self.headers.get('Content-Length','0'))
             except ValueError: raise PreviewError(422, 'INVALID_REQUEST') from None
-            if not 0 < length <= (16384 if parts.path in workbench_paths else 4096): raise PreviewError(413, 'INVALID_REQUEST')
-            try: payload = json.loads(self.rfile.read(length))
-            except (ValueError, UnicodeError): raise PreviewError(422, 'INVALID_REQUEST') from None
+            limit = MAX_SCENE_BYTES if parts.path == '/api/workbench/scenes/save' else 16384 if parts.path in (*workbench_paths, *scene_paths) else 4096
+            if not 0 < length <= limit:
+                raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if parts.path == '/api/workbench/scenes/save' else 'INVALID_REQUEST')
+            try:
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    raise PreviewError(422, 'INVALID_REQUEST')
+                payload = decode_scene_request(raw) if parts.path in scene_paths else strict_json(raw)
+            except (ValueError, UnicodeError, ProbeError): raise PreviewError(422, 'INVALID_REQUEST') from None
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
+            if parts.path in scene_paths: return self.reply(200,sessions.scene_request(sid,parts.path,payload))
             if parts.path=='/api/workbench/models/binding': return self.reply(200,sessions.save_binding(sid,payload))
             if parts.path in workbench_paths:
                 value = sessions.read(sid, parts.path, payload)

@@ -21,6 +21,7 @@ from apps.api.session_http import handler_type
 from apps.api.model_assets import ModelAsset
 from apps.api.model_library import ModelLibrary
 from apps.api.model_validation import MAX_BYTES
+from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COORDINATE_M
 
 
 class WorkbenchSessions(UserSessions):
@@ -31,6 +32,94 @@ class WorkbenchSessions(UserSessions):
         self.context_path = self.prefix + '/installations/' + self.context_id
         self.model = ModelAsset(Path(model_root), project_code, self.context_id) if model_root else None
         self.library = ModelLibrary(Path(library_root),project_code,self.context_id) if library_root else None
+        self.scenes = SceneLibrary(self.library) if self.library else None
+
+    def scene_access(self, authority):
+        """Read project permission without requiring the legacy default installation."""
+        access = authority.request('GET', self.access_path)
+        if (access.get('projectCode') != self.project_code
+                or not {'objects.read','objects.resolve','installations.read','hierarchy.read'}.issubset(access.get('capabilities', []))
+                or not isinstance(access.get('accessRevision'), str) or not access['accessRevision']):
+            raise PreviewError(403, 'FORBIDDEN')
+        return access
+
+    def scene_request(self, sid, path, payload):
+        with self.lock:
+            row = self.current(sid, authenticated=True, touch=True)
+            if payload.get('expectedSessionRevision') != row.revision:
+                raise PreviewError(409, 'SESSION_CHANGED')
+            authority = row.authority
+        body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        if self.scenes is None or self.library is None:
+            raise PreviewError(503, 'MODEL_UNAVAILABLE')
+        writing = path in ('/api/workbench/scenes/create', '/api/workbench/scenes/save')
+        try:
+            baseline = self.scene_access(authority)
+            current_access = baseline
+
+            def authorize():
+                nonlocal current_access
+                self.guard(sid, row)
+                current_access = self.scene_access(authority)
+                if writing and current_access.get('role') != 'admin':
+                    raise PreviewError(403, 'SCENE_WRITE_FORBIDDEN')
+                if current_access['accessRevision'] != baseline['accessRevision']:
+                    raise PreviewError(409, 'ACCESS_CHANGED')
+                self.guard(sid, row)
+
+            fixed_shas = {}
+
+            def validate_resources(snapshot):
+                for identifier in sorted({item['modelVersionId'] for item in snapshot['instances']}):
+                    try:
+                        version = self.library.version(identifier)
+                        if identifier in fixed_shas and fixed_shas[identifier] != version['sha256']:
+                            raise PreviewError(409, 'RESOURCE_CHANGED')
+                        self.library.content(version)
+                        fixed_shas[identifier] = version['sha256']
+                    except PreviewError as error:
+                        if error.code == 'MODEL_CHANGED':
+                            raise PreviewError(409, 'RESOURCE_CHANGED') from None
+                        if error.code == 'MODEL_NOT_FOUND':
+                            raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN') from None
+                        raise
+
+            def validate_engineering(snapshot, reviewed, changes):
+                if reviewed or changes or any(item['rootBinding'] is not None or item['componentBindings']
+                                               for item in snapshot['instances']):
+                    raise PreviewError(422, 'SCENE_SCOPE_UNSUPPORTED')
+
+            if path == '/api/workbench/scenes' and set(body).issubset({'q','cursor','limit'}):
+                value = self.scenes.listing(authority.username, authorize,
+                    access_revision=baseline['accessRevision'], **body)
+            elif path == '/api/workbench/scenes/create':
+                with self.lock:
+                    value = self.scenes.create(body, authority.username, authorize, validate_resources, validate_engineering)
+            elif path == '/api/workbench/scenes/open' and set(body) in ({'sceneId'}, {'sceneId','sceneRevision'}):
+                value = self.scenes.open(body['sceneId'], authority.username, authorize, body.get('sceneRevision'))
+                fixed_shas.update({item['modelVersionId']: item['sha256'] for item in value['resourceRefs']})
+                validate_resources(value['snapshot'])
+                authorize()
+            elif path == '/api/workbench/scenes/head' and set(body) == {'sceneId','viewingRevision'}:
+                value = self.scenes.head(body['sceneId'], body['viewingRevision'], authority.username, authorize)
+            elif path == '/api/workbench/scenes/save':
+                with self.lock:
+                    value = self.scenes.save(body, authority.username, authorize, validate_resources, validate_engineering)
+            else:
+                raise PreviewError(422, 'INVALID_REQUEST')
+            self.guard(sid, row)
+            value['sessionRevision'] = row.revision
+            value['capabilities'] = {**self.scenes.capabilities(), 'scope': 'local_plane_unbound',
+                'localPlaneUnbound': True, 'canRead': True, 'canWrite': current_access.get('role') == 'admin',
+                'existingUploadedModelVersionsOnly': True}
+            value['limits'] = {'maxSaveJsonBytes': MAX_SCENE_BYTES, 'maxReadJsonBytes': 16384,
+                'maxInstances': MAX_INSTANCES, 'maxComponentBindings': 0, 'maxNameCharacters': 200,
+                'maxLocalCoordinateM': MAX_COORDINATE_M}
+            return value
+        except PreviewError as error:
+            if error.status == 401:
+                self.invalidate(sid, row)
+            raise
 
     def writer(self, sid, payload):
         row = self.current(sid, authenticated=True, touch=True)
