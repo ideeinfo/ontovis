@@ -16,7 +16,7 @@ from uuid import uuid4
 from apps.api.authority import PreviewError
 from apps.api.model_library import ModelLibrary
 from apps.api.model_validation import validate
-from apps.api.scene_library import SceneLibrary
+from apps.api.scene_library import SceneLibrary, _digest, _receipt_snapshot_digest
 from apps.api.terrain_library import TerrainLibrary
 from tests.test_model_upload import glb
 
@@ -200,6 +200,51 @@ class SceneSpatialTests(unittest.TestCase):
         request = self.body(scene, checked['proposedSnapshot']); request['spatialChange'] = checked['spatialChange']
         self.save(request)
         self.assertEqual(len(self.opened(scene)['snapshot']['instances']), 2)
+
+    def test_anchor_receipt_accepts_browser_equal_integer_and_negative_zero_numbers(self):
+        scene = self.local_scene()
+
+        def preview(local, candidate, anchor):
+            result = self.preview(local, candidate, anchor)
+            snapshot = result['snapshot']
+            snapshot['coordinateFrame']['originHeight'] = 200.0
+            snapshot['coordinateFrame']['anchor']['localAnchor'] = [-0.0, 0.0]
+            snapshot['instances'][0]['placement']['headingDeg'] = 30.0
+            snapshot['initialView']['eye'][1] = 90.0
+            return result
+
+        checked = self.check(self.check_body(scene), preview=preview)
+        request = self.body(scene, checked['proposedSnapshot'])
+        request['spatialChange'] = checked['spatialChange']
+        # These are the number tokens emitted by JSON.stringify(JSON.parse(...)).
+        browser = copy.deepcopy(request)
+        browser['snapshot']['coordinateFrame']['originHeight'] = 200
+        browser['snapshot']['coordinateFrame']['anchor']['localAnchor'] = [0, 0]
+        browser['snapshot']['instances'][0]['placement']['headingDeg'] = 30
+        browser['snapshot']['initialView']['eye'][1] = 90
+        self.assertEqual(request, browser)
+        self.assertNotEqual(_digest(request['snapshot']), _digest(browser['snapshot']))
+        saved = self.save(browser)
+        self.assertEqual(self.opened(scene)['sceneRevision'], saved['sceneRevision'])
+        self.assertEqual(self.opened(scene)['snapshot'], checked['proposedSnapshot'])
+        self.assertEqual(self.save(browser), saved)
+
+    def test_anchor_receipt_preserves_decimal_edits_and_number_types(self):
+        scene = self.local_scene(); request = self.anchored_request(scene)
+        before = self.counts()
+        changed = copy.deepcopy(request)
+        changed['snapshot']['instances'][0]['placement']['headingDeg'] += 1e-12
+        self.expect('SPATIAL_PRECHECK_INVALID', lambda: self.save(changed))
+        changed = copy.deepcopy(request)
+        changed['snapshot']['coordinateFrame']['originHeight'] += 1e-12
+        self.expect('SPATIAL_PRECHECK_INVALID', lambda: self.save(changed))
+        changed = copy.deepcopy(request)
+        changed['snapshot']['instances'][0]['placement']['headingDeg'] = True
+        self.expect('INVALID_REQUEST', lambda: self.save(changed))
+        self.assertEqual(self.counts(), before)
+        self.assertNotEqual(_receipt_snapshot_digest({'number': True}), _receipt_snapshot_digest({'number': 1}))
+        self.assertNotEqual(_receipt_snapshot_digest({'number': 2**53}), _receipt_snapshot_digest({'number': 2**53+1}))
+        self.assertNotEqual(_receipt_snapshot_digest({'number': 2**53+1}), _receipt_snapshot_digest({'number': float(2**53+1)}))
 
     def test_no_receipt_cannot_change_frame_or_adopt_terrain(self):
         scene = self.local_scene(); request = self.anchored_request(scene)

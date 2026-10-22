@@ -249,6 +249,25 @@ def _digest(value):
     return hashlib.sha256(_json(value).encode()).hexdigest()
 
 
+def _receipt_snapshot_digest(value):
+    # Browser JSON round trips turn 200.0/-0.0 into 200/0. Bind equal numeric
+    # values without changing stored snapshots or existing idempotency digests.
+    _json(value)
+
+    def normalize(item):
+        if type(item) is dict:
+            return {key: normalize(child) for key, child in item.items()}
+        if type(item) is list:
+            return [normalize(child) for child in item]
+        if type(item) is float and item.is_integer():
+            integer = int(item)
+            if integer.bit_length() <= 64:
+                return integer
+        return item
+
+    return _digest(normalize(value))
+
+
 class SceneLibrary:
     """A bounded storage slice, not a public service or an authorization layer."""
 
@@ -529,7 +548,7 @@ class SceneLibrary:
     def _receipt_context(self, actor, access_revision, scene_id, base_revision, previous, proposed, manifest):
         return {'kind': 'scene-anchor-precheck-v1', 'project': self.project_code, 'actor': actor,
                 'accessRevision': _text(access_revision), 'sceneId': scene_id, 'baseRevision': base_revision,
-                'oldSnapshotSha256': _digest(previous), 'proposedSnapshotSha256': _digest(proposed),
+                'oldSnapshotSha256': _digest(previous), 'proposedSnapshotSha256': _receipt_snapshot_digest(proposed),
                 'resourceDigest': _digest(manifest)}
 
     def _verify_receipt(self, db, receipt, expected):
