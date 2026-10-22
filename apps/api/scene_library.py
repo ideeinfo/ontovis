@@ -765,7 +765,7 @@ class SceneLibrary:
         _require(self._replacement_receipt(db, receipt) == expected, 'SPATIAL_PRECHECK_INVALID', 409)
 
     @staticmethod
-    def _model_summary(value, identifier, reference):
+    def _model_summary(value, identifier, reference, *, frame_mode='projected_site'):
         _require(type(value) is dict and value.get('modelVersionId') == identifier
                  and value.get('modelAssetId') == reference.get('modelAssetId')
                  and value.get('contentRevision') == reference['contentRevision']
@@ -773,8 +773,13 @@ class SceneLibrary:
         _uuid(value.get('modelAssetId'))
         calibration, report = value.get('calibration'), value.get('report')
         _require(value.get('state') == 'ready' and value.get('canPlace') is True
-                 and value.get('calibrationState') == 'verified' and type(calibration) is dict
-                 and calibration.get('state') == 'verified', 'MODEL_CALIBRATION_REQUIRED', 409)
+                 and value.get('calibrationState') in ('verified', 'legacy_display') and type(calibration) is dict
+                 and calibration.get('state') == value['calibrationState'], 'MODEL_CALIBRATION_REQUIRED', 409)
+        legacy_display = calibration['state'] == 'legacy_display'
+        if legacy_display:
+            _require(frame_mode == 'local_plane', 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED', 409)
+            _require(calibration.get('modelToCalibrated') == [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]
+                     and calibration.get('sourceSha256') == value['sha256'], 'RESOURCE_CHANGED', 409)
         _require(type(report) is dict and type(report.get('bounds')) is dict
                  and type(value.get('components')) is list, 'RESOURCE_CHANGED', 409)
         low, high = _vector(report['bounds'].get('min')), _vector(report['bounds'].get('max'))
@@ -782,7 +787,8 @@ class SceneLibrary:
         return {'modelAssetId': value['modelAssetId'], 'modelVersionId': identifier,
                 'contentRevision': reference['contentRevision'], 'sha256': reference['sha256'],
                 'bounds': [low, high], 'dimensionsM': [b-a for a, b in zip(low, high)],
-                'basePoint': _vector(calibration.get('basePoint')), 'forward': _vector(calibration.get('forward')),
+                'basePoint': None if legacy_display else _vector(calibration.get('basePoint')),
+                'forward': None if legacy_display else _vector(calibration.get('forward')),
                 'componentCount': len(value['components'])}
 
     @staticmethod
@@ -838,8 +844,8 @@ class SceneLibrary:
             new_manifest = self._manifest(proposed, validate_resources)
             old_ref = next(ref for ref in old_manifest['models'] if ref['modelVersionId'] == old_id)
             new_ref = next(ref for ref in new_manifest['models'] if ref['modelVersionId'] == new_id)
-            old_model = self._model_summary(model_details(old_id), old_id, old_ref)
-            new_model = self._model_summary(model_details(new_id), new_id, new_ref)
+            old_model = self._model_summary(model_details(old_id), old_id, old_ref, frame_mode=proposed['coordinateFrame']['mode'])
+            new_model = self._model_summary(model_details(new_id), new_id, new_ref, frame_mode=proposed['coordinateFrame']['mode'])
             if proposed['coordinateFrame']['mode'] == 'projected_site':
                 _require(callable(geometry_check), 'SCENE_SCOPE_UNSUPPORTED')
                 result = geometry_check(json.loads(_json(proposed)), expected_frame=json.loads(_json(previous['coordinateFrame'])))

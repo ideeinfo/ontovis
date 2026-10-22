@@ -141,7 +141,7 @@ class WorkbenchSessions(UserSessions):
         value['sessionRevision'] = row.revision
         value['capabilities'] = {'scope': 'project_static_glb_resources', 'canRead': True,
             'canUpload': access.get('role') == 'admin', 'canCalibrate': access.get('role') == 'admin',
-            'calibrationRequiredForPlacement': True, 'automaticLegacyAdoption': False}
+            'calibrationRequiredForGeographicPlacement': True, 'automaticLegacyAdoption': False}
         value['limits'] = {'maxUploadBytes': MAX_BYTES, 'maxVersions': 20,
             'maxLibraryBytes': 200 * 1024 * 1024, 'maxMetadataHeaderBytes': 8192,
             'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384}
@@ -158,7 +158,8 @@ class WorkbenchSessions(UserSessions):
         return self.resource_response(value, row, access)
 
     def resource_request(self, sid, path, payload):
-        writing = path in ('/api/workbench/resources/model/calibrate', '/api/workbench/resources/model/import-existing')
+        writing = path in ('/api/workbench/resources/model/calibrate', '/api/workbench/resources/model/import-existing',
+                           '/api/workbench/resources/model/preserve-legacy-display')
         row, authorize, access, actor = self.project_authorization(sid, payload,
             writing=writing, write_code='MODEL_WRITE_FORBIDDEN')
         if self.project_models is None or self.scenes is None:
@@ -189,6 +190,8 @@ class WorkbenchSessions(UserSessions):
             value = self.project_models.import_existing(body, actor, authorize)
         elif path == '/api/workbench/resources/model/calibrate':
             value = self.project_models.calibrate(body, actor, authorize)
+        elif path == '/api/workbench/resources/model/preserve-legacy-display':
+            value = self.project_models.preserve_legacy_display(body, actor, authorize)
         elif path == '/api/workbench/resources/uses' and {'resourceKind', 'versionId'} <= set(body) and set(body).issubset(
                 {'resourceKind', 'versionId', 'scope', 'cursor', 'limit'}):
             if body['resourceKind'] != 'model':
@@ -283,6 +286,8 @@ class WorkbenchSessions(UserSessions):
                         if identifier in fixed_models and fixed_models[identifier] != content_identity:
                             raise PreviewError(409, 'RESOURCE_CHANGED')
                         if identity['isProjectResource']:
+                            if identity['calibrationState'] == 'legacy_display' and snapshot['coordinateFrame']['mode'] != 'local_plane':
+                                raise PreviewError(409, 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED')
                             if not identity['canPlace']:
                                 raise PreviewError(409, 'MODEL_CALIBRATION_REQUIRED')
                             self.project_models.content(identifier, identity['contentRevision'], identity['sha256'], authorize)

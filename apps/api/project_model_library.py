@@ -27,6 +27,7 @@ MAX_VERSIONS = 20
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
 PURPOSES = frozenset(('equipment', 'simplified_scene', 'environment'))
 CALIBRATION_METHOD = 'm-y-up-forward-negative-z-v1'
+IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 
 
 def _require(condition, code='INVALID_REQUEST', status=422):
@@ -169,7 +170,8 @@ class ProjectModelLibrary:
                 'contentRevision': row['content_revision'], 'displayName': row['name'],
                 'sourceNote': row['source_note'], 'sha256': row['sha256'], 'bytes': row['bytes'],
                 'createdAt': row['created_at'], 'state': 'ready', 'calibration': calibration,
-                'calibrationState': calibration['state'], 'canPlace': calibration['state'] == 'verified',
+                'calibrationState': calibration['state'], 'canPlace': calibration['state'] in ('verified', 'legacy_display'),
+                'canPlaceGeographic': calibration['state'] == 'verified',
                 'report': json.loads(row['report']), 'components': json.loads(row['components']),
                 'sourceModelVersionId': row['source_version_id']}
 
@@ -186,7 +188,8 @@ class ProjectModelLibrary:
                 'unverified' if row['content_revision'] else 'legacy_unverified')
             return {'modelVersionId': row['id'], 'modelAssetId': row['asset_id'], 'sha256': row['sha256'],
                     'contentRevision': row['content_revision'] or 'sha256:' + row['sha256'],
-                    'calibrationState': state, 'canPlace': state == 'verified',
+                    'calibrationState': state, 'canPlace': state in ('verified', 'legacy_display'),
+                    'canPlaceGeographic': state == 'verified',
                     'isProjectResource': row['content_revision'] is not None}
 
     def _content(self, value):
@@ -414,6 +417,10 @@ class ProjectModelLibrary:
                         source = self._version(db, source_version_id)
                         _require(source['contentRevision'] == metadata['expectedContentRevision'], 'RESOURCE_CHANGED', 409)
                         self._content(source)
+                        if action == 'preserve_legacy_display':
+                            legacy = self._preservation_source(db, source)
+                            _require(calibration['sourceModelVersionId'] == legacy['id']
+                                     and calibration['sourceSha256'] == legacy['sha256'], 'RESOURCE_CHANGED', 409)
                 _require(not target.exists() and not target.parent.is_symlink(), 'RESOURCE_CHANGED', 409)
                 _require(hashlib.sha256(path.read_bytes()).hexdigest() == result['sha256'], 'RESOURCE_CHANGED', 409)
                 os.replace(path, target); published = True
@@ -444,6 +451,10 @@ class ProjectModelLibrary:
                     _require(source['revision'] == metadata['expectedModelRevision']
                              and self._source_rights(db, source), 'RESOURCE_CHANGED', 409)
                     self._content({'modelVersionId': source['id'], 'bytes': source['bytes'], 'sha256': metadata['expectedSha256']})
+                elif action == 'preserve_legacy_display':
+                    legacy = self._preservation_source(db, self._version(db, source_version_id))
+                    _require(calibration['sourceModelVersionId'] == legacy['id']
+                             and calibration['sourceSha256'] == legacy['sha256'], 'RESOURCE_CHANGED', 409)
                 db.commit(); committed = True
                 return value
         except OSError:
@@ -519,6 +530,67 @@ class ProjectModelLibrary:
                 'expectedLibraryRevision': body['expectedLibraryRevision'], 'expectedContentRevision': body['expectedContentRevision']}
             return self._commit(path, metadata, actor, authorize, {'sha256': source['sha256'],
                 'components': source['components'], 'report': report}, action='calibrate', payload_digest=payload_digest,
+                calibration=calibration, source_version_id=source['modelVersionId'])
+        except OSError:
+            raise PreviewError(503, 'MODEL_STORAGE_UNAVAILABLE') from None
+        finally:
+            try:
+                if path: path.unlink(missing_ok=True)
+            except OSError:
+                raise PreviewError(503, 'MODEL_STORAGE_UNAVAILABLE') from None
+            finally:
+                self.library.slots.release()
+
+    def _preservation_source(self, db, source):
+        _require(source['calibration'] == {'state': 'unverified'})
+        identifier = _uuid(source.get('sourceModelVersionId'))
+        legacy = db.execute('''select v.* from versions v left join project_model_versions p on p.version_id=v.id
+            where v.id=? and p.version_id is null''', (identifier,)).fetchone()
+        audit = db.execute('''select 1 from project_model_audit where project_code=?
+            and version_id=? and action='import_existing' ''', (self.project_code, source['modelVersionId'])).fetchone()
+        _require(legacy is not None and audit is not None)
+        _require(self._source_rights(db, legacy), 'MODEL_SOURCE_RIGHTS_REQUIRED')
+        _require(source['sha256'] == legacy['sha256'] and source['bytes'] == legacy['bytes']
+                 and source['components'] == json.loads(legacy['components'])
+                 and source['report'] == json.loads(legacy['report']), 'RESOURCE_CHANGED', 409)
+        self._content(source)
+        self._content({'modelVersionId': legacy['id'], 'bytes': legacy['bytes'], 'sha256': legacy['sha256']})
+        return legacy
+
+    def preserve_legacy_display(self, body, actor, authorize):
+        _fields(body, ('modelVersionId', 'expectedContentRevision', 'expectedLibraryRevision',
+                       'clientRequestId', 'preservationBasis'))
+        actor = _text(actor); _require(callable(authorize)); authorize()
+        _uuid(body['modelVersionId']); _uuid(body['clientRequestId'])
+        _text(body['expectedContentRevision']); _text(body['expectedLibraryRevision'])
+        _fields(body['preservationBasis'], ('mode', 'sourceNote'))
+        _require(body['preservationBasis']['mode'] == 'preserve_legacy_display')
+        note = _text(body['preservationBasis']['sourceNote'], 2000)
+        digest = hashlib.sha256(_canonical(body).encode()).hexdigest()
+        with self.library.connect() as db:
+            prior = self._prior(db, actor, 'preserve_legacy_display', body['clientRequestId'], digest)
+            if prior is None:
+                source = self._version(db, body['modelVersionId'])
+                _require(source['contentRevision'] == body['expectedContentRevision'], 'RESOURCE_CHANGED', 409)
+                legacy = self._preservation_source(db, source)
+                asset = dict(self._asset(db, source['modelAssetId']))
+        if prior is not None:
+            self._content(prior); authorize(); return prior
+        calibration = {'state': 'legacy_display', 'unit': 'm', 'axes': 'Y_UP_RIGHT_HANDED',
+            'modelToCalibrated': list(IDENTITY_MATRIX), 'sourceModelVersionId': legacy['id'],
+            'sourceSha256': legacy['sha256'], 'sourceNote': note, 'preservedBy': actor, 'preservedAt': _now()}
+        if not self.library.slots.acquire(blocking=False): raise PreviewError(429, 'MODEL_BUSY')
+        path = None
+        try:
+            content = self._content(source); authorize()
+            with tempfile.NamedTemporaryFile(dir=self.library.root / 'temporary', prefix='project-calibration-', suffix='.glb', delete=False) as file:
+                path = Path(file.name); file.write(content); file.flush(); os.fsync(file.fileno())
+            report = {**source['report'], 'coordinateVerification': 'legacy_display_preserved'}
+            metadata = {'modelAssetId': asset['id'], 'displayName': asset['name'], 'purpose': asset['purpose'],
+                'sourceNote': source['sourceNote'], 'clientRequestId': body['clientRequestId'],
+                'expectedLibraryRevision': body['expectedLibraryRevision'], 'expectedContentRevision': body['expectedContentRevision']}
+            return self._commit(path, metadata, actor, authorize, {'sha256': source['sha256'],
+                'components': source['components'], 'report': report}, action='preserve_legacy_display', payload_digest=digest,
                 calibration=calibration, source_version_id=source['modelVersionId'])
         except OSError:
             raise PreviewError(503, 'MODEL_STORAGE_UNAVAILABLE') from None

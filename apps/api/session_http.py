@@ -143,6 +143,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                              '/api/workbench/terrains/version', '/api/workbench/terrains/content')
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
                               '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',
+                              '/api/workbench/resources/model/preserve-legacy-display',
                               '/api/workbench/resources/uses', '/api/workbench/resources/models/legacy',
                               '/api/workbench/resources/model/import-existing')
             if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *terrain_paths, *resource_paths) or query:

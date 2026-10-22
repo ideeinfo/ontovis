@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import itertools
 import math
+from uuid import UUID
 
 from .authority import PreviewError
 from .scene_bindings import validate_bindings, validate_expectations, validate_ref
@@ -63,13 +64,28 @@ def _summary(item, scope):
     return result
 
 
-def _matrix(calibration):
-    _require(type(calibration) is dict and calibration.get('state') == 'verified'
+def _matrix(calibration, frame_mode):
+    _require(type(calibration) is dict and calibration.get('state') in ('verified', 'legacy_display')
              and calibration.get('unit') == 'm' and calibration.get('axes') == 'Y_UP_RIGHT_HANDED',
              'RESOURCE_NOT_READY', 409)
     value = calibration.get('modelToCalibrated')
     _require(type(value) is list and len(value) == 16, 'RESOURCE_CHANGED', 409)
     value = [_number(number) for number in value]
+    if calibration['state'] == 'legacy_display':
+        _require(frame_mode == 'local_plane', 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED', 409)
+        _require(set(calibration) == {'state','unit','axes','modelToCalibrated','sourceModelVersionId',
+                 'sourceSha256','sourceNote','preservedBy','preservedAt'}, 'RESOURCE_CHANGED', 409)
+        try:
+            _require(str(UUID(calibration['sourceModelVersionId'])) == calibration['sourceModelVersionId'], 'RESOURCE_CHANGED', 409)
+        except (TypeError, ValueError, AttributeError):
+            raise PreviewError(409, 'RESOURCE_CHANGED') from None
+        sha, note = calibration['sourceSha256'], calibration['sourceNote']
+        _require(type(sha) is str and len(sha) == 64 and all(character in '0123456789abcdef' for character in sha)
+                 and type(note) is str and 0 < len(note.strip()) <= 2000 and all(ord(character) >= 32 for character in note),
+                 'RESOURCE_CHANGED', 409)
+        _text(calibration['preservedBy']); _text(calibration['preservedAt'])
+        _require(value == [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1], 'RESOURCE_CHANGED', 409)
+        return value
     # ProjectModelLibrary verifies a rigid Y rotation and translated base point.
     # Reject malformed resource data rather than turn a scale/shear into accuracy.
     _require(all(abs(value[index]) <= 1e-10 for index in (1, 3, 4, 6, 7, 9, 11))
@@ -234,8 +250,12 @@ class SceneLocationResolver:
                              and fixed is not None and all(model.get(name) == fixed.get(name) for name in ('contentRevision', 'sha256'))
                              and ('modelAssetId' not in fixed or model.get('modelAssetId') == fixed['modelAssetId']), 'RESOURCE_CHANGED', 409)
                     _require(model.get('state') == 'ready' and model.get('canPlace') is True
-                             and model.get('calibrationState') == 'verified', 'RESOURCE_NOT_READY', 409)
-                    matrix = _matrix(model.get('calibration'))
+                             and model.get('calibrationState') in ('verified', 'legacy_display')
+                             and type(model.get('calibration')) is dict
+                             and model['calibration'].get('state') == model['calibrationState'], 'RESOURCE_NOT_READY', 409)
+                    matrix = _matrix(model.get('calibration'), snapshot['coordinateFrame']['mode'])
+                    if model['calibrationState'] == 'legacy_display':
+                        _require(model['calibration']['sourceSha256'] == model['sha256'], 'RESOURCE_CHANGED', 409)
                     if keys:
                         catalog = model.get('components')
                         _require(type(catalog) is list and all(type(row) is dict
@@ -266,6 +286,7 @@ class SceneLocationResolver:
                         'visible': instance['visible'], 'hostObject': _summary(host, scope)}
                     candidates.append((choice, world))
                 except PreviewError as error:
+                    if error.code == 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED': raise
                     if error.status not in (409, 422): raise
                     blocked = True; resource_reason = error.code
             if not candidates and not blocked: continue

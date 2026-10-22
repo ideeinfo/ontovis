@@ -24,6 +24,7 @@ from rasterio.transform import Affine
 from rasterio.warp import transform
 
 from apps.api.session_http import handler_type
+from apps.api.model_validation import validate
 from apps.api.workbench_server import WorkbenchSessions
 import tests.test_project_model_http as model_http
 
@@ -65,6 +66,23 @@ class SceneSpatialHttpTests(unittest.TestCase):
     def lonlat(self, east=500080, north=3699920):
         longitude, latitude = transform('EPSG:32649', 'EPSG:4326', [east], [north])
         return [longitude[0], latitude[0]]
+
+    def legacy_display_version(self):
+        source = self.root/'legacy-display.glb'; source.write_bytes(self.data)
+        old = self.sessions.library.save_upload(source, {'expectedSessionRevision': 'synthetic-source',
+            'expectedLibraryRevision': self.sessions.library.listing()['libraryRevision'], 'clientRequestId': str(uuid4()),
+            'displayName': 'Synthetic legacy display', 'sourceNote': 'Synthetic GIS test source', 'rightsDeclared': True},
+            'synthetic-original', validate(source), lambda: None)
+        status, imported, _ = self.request('/api/workbench/resources/model/import-existing', {
+            'legacyModelVersionId': old['versionId'], 'expectedModelRevision': 1, 'expectedSha256': old['sha256'],
+            'expectedLibraryRevision': self.listing()[1]['libraryRevision'], 'purpose': 'equipment', 'clientRequestId': str(uuid4())})
+        self.assertEqual(status, 200, imported)
+        status, preserved, _ = self.request('/api/workbench/resources/model/preserve-legacy-display', {
+            'modelVersionId': imported['modelVersionId'], 'expectedContentRevision': imported['contentRevision'],
+            'expectedLibraryRevision': self.listing()[1]['libraryRevision'], 'clientRequestId': str(uuid4()),
+            'preservationBasis': {'mode': 'preserve_legacy_display', 'sourceNote': 'Synthetic old display; no geographic direction.'}})
+        self.assertEqual(status, 200, preserved)
+        return preserved
 
     def terrain(self, *, hole=False):
         if self.terrain_version is not None:
@@ -387,6 +405,50 @@ class SceneSpatialHttpTests(unittest.TestCase):
         artifact.write_bytes(original)
         self.assertEqual(self.check(body)[0], 200)
         self.assert_clean_geometry()
+
+    def test_legacy_display_local_anchor_and_all_geographic_write_preflights_are_rejected_without_receipt(self):
+        verified = self.version; preserved = self.legacy_display_version(); self.version = preserved
+        local = self.local_scene(); before = self.counts()
+        result = self.check(self.anchor_body(local))
+        self.expect(result, 409, 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED')
+        self.assertNotIn('spatialChange', result[1]); self.assertEqual(self.counts(), before)
+        self.assertEqual(self.opened(local)['sceneRevision'], local['sceneRevision'])
+        self.assert_clean_geometry()
+        self.version = verified; geographic = self.anchored(); before = self.counts()
+        extra = copy.deepcopy(geographic['snapshot']['instances'][0])
+        extra.update(sceneModelInstanceId=str(uuid4()), modelVersionId=preserved['modelVersionId'])
+        candidate = copy.deepcopy(geographic['snapshot']); candidate['instances'].append(extra)
+        self.expect(self.check({'kind': 'validate', 'sceneId': geographic['sceneId'],
+            'expectedSceneRevision': geographic['sceneRevision'], 'snapshot': candidate}),
+            409, 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED')
+        self.expect(self.save(self.save_body(geographic, candidate)), 409, 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED')
+        self.expect(self.request('/api/workbench/scenes/replacement-check', {'kind': 'model',
+            'sceneId': geographic['sceneId'], 'expectedSceneRevision': geographic['sceneRevision'],
+            'snapshot': geographic['snapshot'], 'sceneModelInstanceId': geographic['snapshot']['instances'][0]['sceneModelInstanceId'],
+            'candidateModelVersionId': preserved['modelVersionId']}), 409, 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED')
+        self.assertEqual(self.counts(), before); self.assert_clean_geometry()
+
+    def test_invalid_persisted_geographic_legacy_display_is_blocked_on_open_and_locate(self):
+        preserved = self.legacy_display_version(); geographic = self.anchored()
+        # Deliberately inject an invalid saved-state fixture into this private DB;
+        # normal scene writes must never create it. Reads still enforce the gate.
+        snapshot = copy.deepcopy(geographic['snapshot'])
+        snapshot['instances'][0]['modelVersionId'] = preserved['modelVersionId']
+        revision = 'scene:'+str(uuid4())
+        with self.sessions.library.connect() as db:
+            db.execute('begin immediate')
+            self.sessions.scenes._insert_snapshot(db, geographic['sceneId'], revision, snapshot, 'synthetic-invalid-state',
+                spatial={'validation': geographic['validation'], 'heightProvenance': geographic['heightProvenance'],
+                         'terrainRefs': geographic['terrainRefs']})
+            db.execute('update scenes set head_revision=? where id=?', (revision, geographic['sceneId']))
+        before = self.counts()
+        self.expect(self.request('/api/workbench/scenes/open', {'sceneId': geographic['sceneId'], 'sceneRevision': revision}),
+            409, 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED')
+        self.expect(self.request('/api/workbench/scenes/locate', {'sceneId': geographic['sceneId'], 'sceneRevision': revision,
+            'selectedObjectRef': {'ontobaseConnectionId': self.sessions.ontobase_connection_id,
+                'projectCode': 'fixture-project', 'entityUid': 'unresolved-selection'}, 'contextEpoch': 'invalid-geo-intent'}),
+            409, 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED')
+        self.assertEqual(self.counts(), before)
 
 
 if __name__ == '__main__': unittest.main()

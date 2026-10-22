@@ -95,6 +95,48 @@ class SceneLocationTests(unittest.TestCase):
         self.assertEqual(root['worldBounds'], [[9, 3, 18], [11, 13, 22]])
         self.assertEqual(root['geometryQuality'], 'source_candidate')
 
+    def legacy_display(self):
+        value = self.models[VERSION]
+        value.update(calibrationState='legacy_display', canPlaceGeographic=False)
+        value['calibration'] = {'state': 'legacy_display', 'unit': 'm', 'axes': 'Y_UP_RIGHT_HANDED',
+            'modelToCalibrated': list(IDENTITY), 'sourceModelVersionId': OTHER_VERSION,
+            'sourceSha256': value['sha256'], 'sourceNote': 'Preserved synthetic display, no surveyed direction.',
+            'preservedBy': 'synthetic-admin', 'preservedAt': '2026-10-22T00:00:00+00:00'}
+        return value
+
+    def test_legacy_display_local_location_keeps_source_boxes_and_proxy_quality(self):
+        scene = self.opened(instance(keys=['signal', 'proxy']))
+        scene['snapshot']['instances'][0]['placement']['headingDeg'] = 90
+        expected = self.locate(scene=scene)
+        self.legacy_display()
+        actual = self.locate(scene=scene)
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual['geometryQuality'], 'proxy_schematic')
+        self.assertEqual(actual['hostObject']['entityUid'], fixture.CABINET)
+        self.assertEqual(actual['selectedObject']['entityUid'], fixture.CHILD)
+
+    def test_legacy_display_requires_identity_transform_source_and_consistent_state(self):
+        original = copy.deepcopy(self.legacy_display())
+        changes = [lambda value: value['calibration']['modelToCalibrated'].__setitem__(12, 2),
+            lambda value: value['calibration'].pop('sourceSha256'),
+            lambda value: value['calibration'].update(sourceSha256='b'*64),
+            lambda value: value['calibration'].update(forward=[0,0,-1]),
+            lambda value: value.update(calibrationState='verified')]
+        for change in changes:
+            with self.subTest(change=change):
+                self.models[VERSION] = copy.deepcopy(original); change(self.models[VERSION])
+                result = self.locate()
+                self.assertEqual(result['status'], 'unavailable'); self.assertIsNone(result['hostObject'])
+                self.assertIn(result['reason'], ('RESOURCE_CHANGED', 'RESOURCE_NOT_READY'))
+
+    def test_legacy_display_geographic_location_is_rejected_without_farther_ancestor_fallback(self):
+        self.legacy_display()
+        scene = copy.deepcopy(self.scene); scene['snapshot']['coordinateFrame']['mode'] = 'projected_site'
+        scene['validation']['displayPlacements'] = [{'sceneModelInstanceId': INSTANCE,
+            'position': [10, 3, 20], 'threeYawRad': 0}]
+        with self.assertRaises(PreviewError) as caught: self.locate(scene=scene)
+        self.assertEqual((caught.exception.status, caught.exception.code), (409, 'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED'))
+
     def test_root_can_itself_have_internal_component_collection(self):
         scene = self.opened(instance(root=fixture.CABINET, bound=fixture.CABINET, keys=['signal', 'proxy']))
         result = self.locate(fixture.CABINET, scene=scene)
