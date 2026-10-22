@@ -1,0 +1,67 @@
+.ov-resource-panel{min-width:0;display:flex;flex-direction:column;min-height:0;color:var(--text);font-size:var(--font-body,13px)}
+.ov-resource-tabs{display:flex;flex:none;border-bottom:1px solid var(--borderSubtle);padding:0 12px;gap:16px}
+.ov-resource-tabs>button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--textSecondary);padding:8px 0;font:inherit;cursor:pointer}
+.ov-resource-tabs>button[aria-selected=true]{border-bottom-color:var(--primary);color:var(--primary);font-weight:600}
+.ov-resource-tab-body{min-width:0;min-height:0;padding:12px;overflow:auto}
+.ov-resource-tab-body[hidden]{display:none}
+.ov-resource-search{display:flex;gap:4px;align-items:center;margin:0 0 8px}
+.ov-resource-search>input{flex:1;min-width:0}
+.ov-resource-toolbar{display:flex;gap:4px;align-items:center;margin-bottom:8px}
+.ov-resource-toolbar>select{min-width:0;flex:1}
+.ov-resource-panel input:not([type=checkbox]),.ov-resource-panel select,.ov-resource-form input:not([type=checkbox]),.ov-resource-form select,.ov-resource-form textarea{box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--borderControl);border-radius:var(--radius,6px);background:var(--surface);color:var(--text);font:inherit;min-height:30px;padding:4px 8px}
+.ov-resource-panel input:focus-visible,.ov-resource-panel select:focus-visible,.ov-resource-form input:focus-visible,.ov-resource-form select:focus-visible,.ov-resource-form textarea:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.ov-resource-form textarea{resize:vertical;line-height:1.5}
+.ov-resource-panel .ov-btn,.ov-resource-form .ov-btn{font-size:13px;min-height:30px;gap:4px;padding:4px 8px;white-space:normal;text-align:center}
+.ov-resource-panel .ov-icon-btn{flex:none;width:30px;height:30px}
+.ov-resource-model-list,.ov-resource-use-list{margin:0;padding:0;list-style:none}
+.ov-resource-row{width:100%;min-height:32px;display:flex;align-items:center;gap:4px;padding:4px;border:0;border-radius:4px;background:transparent;text-align:left;color:var(--text);font:inherit;cursor:pointer}
+.ov-resource-row:hover{background:var(--surfaceRaised)}
+.ov-resource-row[aria-expanded=true]{background:var(--selected);color:var(--onSelected)}
+.ov-resource-row[aria-pressed=true]{background:var(--selected);color:var(--onSelected)}
+.ov-resource-row>svg{flex:none}.ov-resource-row>span{min-width:0;flex:1;overflow-wrap:anywhere;line-height:1.5}
+.ov-resource-row>small{font-size:11px;color:var(--textSecondary);padding:0 4px}
+.ov-resource-version-choice{display:flex;flex-direction:column;gap:8px;padding:8px 4px 12px 20px}
+.ov-resource-version-choice>label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--textSecondary)}
+.ov-resource-version-choice select{font-size:13px;color:var(--text)}
+.ov-resource-version-choice>.ov-btn{align-self:flex-start}
+.ov-resource-details{border-top:1px solid var(--borderSubtle);padding-top:12px;margin-top:12px;min-width:0}
+.ov-resource-title{display:flex;align-items:flex-start;gap:8px;justify-content:space-between;margin-bottom:8px}
+.ov-resource-title>strong{font-size:13px;font-weight:600;overflow-wrap:anywhere;line-height:1.5;min-width:0}
+.ov-resource-title>.ov-badge{flex:none;font-size:11px}
+.ov-resource-panel .ov-badge.success{background:var(--selected);color:var(--statusNormal)}
+.ov-resource-panel .ov-badge.warning{background:var(--warningSurface);color:var(--statusWarning)}
+.ov-resource-panel .ov-badge.critical{background:var(--criticalSurface);color:var(--statusCritical)}
+.ov-resource-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:8px 0}
+.ov-resource-actions.end{justify-content:flex-end;margin:4px 0 0}
+.ov-resource-facts{display:grid;grid-template-columns:minmax(72px,auto) minmax(0,1fr);column-gap:12px;row-gap:4px;margin:12px 0;font-size:11px;line-height:1.6}
+.ov-resource-facts dt{color:var(--textSecondary)}
+.ov-resource-facts dd{margin:0;color:var(--text);overflow-wrap:anywhere}
+.ov-resource-id{font-variant-numeric:tabular-nums;word-break:break-all}
+.ov-resource-disclosure{border-top:1px solid var(--borderSubtle);padding:8px 0;min-width:0}
+.ov-resource-disclosure>summary{font-size:13px;cursor:pointer;color:var(--textSecondary)}
+.ov-resource-disclosure[open]>summary{color:var(--text)}
+.ov-resource-caption{font-size:11px;line-height:1.6;color:var(--textSecondary);margin:4px 0;overflow-wrap:anywhere}
+.ov-resource-empty{font-size:11px;line-height:1.6;color:var(--textSecondary);text-align:center;padding:16px 4px;margin:0}
+.ov-resource-error{font-size:11px;line-height:1.6;color:var(--statusCritical);margin:8px 0;overflow-wrap:anywhere}
+.ov-resource-error p{margin:0 0 4px}
+.ov-resource-readonly{display:flex;align-items:flex-start;gap:8px;font-size:11px;color:var(--textSecondary);line-height:1.6;margin:8px 0}
+.ov-resource-readonly .ov-badge{flex:none}
+.ov-resource-use-list li{display:flex;flex-direction:column;gap:4px;padding:8px 0;border-bottom:1px solid var(--borderSubtle);overflow-wrap:anywhere}
+.ov-resource-use-list small{font-size:11px;color:var(--textSecondary)}
+.ov-resource-terrain-crs{display:block;font-size:11px;color:var(--textSecondary);line-height:1.5}
+.ov-resource-existing-list{list-style:none;margin:8px 0;padding:0}
+.ov-resource-existing-list li{padding:8px 0;border-bottom:1px solid var(--borderSubtle);overflow-wrap:anywhere}
+.ov-resource-existing-list strong{font-size:13px;font-weight:500}
+.ov-resource-form{display:flex;flex-direction:column;gap:12px;color:var(--text);font-size:13px}
+.ov-resource-form>label,.ov-resource-form-grid>label{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ov-resource-form-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.ov-resource-form .ov-resource-check{display:flex;flex-direction:row;align-items:flex-start;gap:8px;line-height:1.5}
+.ov-resource-check>input{flex:none;margin:3px 0 0;accent-color:var(--primary);width:14px;height:14px;min-height:14px;padding:0}
+.ov-resource-form fieldset{border:0;padding:0;margin:0;min-width:0}
+.ov-resource-form legend{padding:0;margin-bottom:4px}
+.ov-resource-vector{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.ov-resource-vector>label{display:flex;flex-direction:row;align-items:center;gap:4px;min-width:0}
+.ov-resource-vector>label>span{font-size:11px;color:var(--textSecondary)}
+.ov-resource-job{border:1px solid var(--borderSubtle);background:var(--surfaceRaised);border-radius:6px;padding:8px;margin:12px 0}
+.ov-resource-job>.ov-resource-title{margin-bottom:4px}
+@media(max-width:600px){.ov-resource-form-grid{grid-template-columns:minmax(0,1fr)}.ov-resource-actions{gap:4px}}

@@ -1,0 +1,84 @@
+import {ApiError, type WorkbenchApi} from './api.ts';
+import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
+  SceneOpen, SceneSave, SceneSaveRequest} from './sceneTypes';
+import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelRequest, LegacyModelCatalog, ModelUses, ModelUsesRequest,
+  ProjectModel, ProjectModelCatalog, ProjectModelsRequest, ProjectModelVersion, ProjectModelWrite,
+  TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
+
+const ROOT = '/api/workbench/';
+
+/** Fixed scene/resource paths over the existing session and cancellation boundary. */
+export class SceneApi {
+  private readonly api: WorkbenchApi;
+  constructor(api: WorkbenchApi) {this.api = api;}
+
+  list(options: SceneListRequest = {}, signal?: AbortSignal) {
+    return this.api.request<SceneList>(ROOT + 'scenes', options, signal);
+  }
+  create(body: SceneCreateRequest, signal?: AbortSignal) {
+    return this.api.request<SceneOpen>(ROOT + 'scenes/create', body, signal);
+  }
+  open(sceneId: string, sceneRevision?: string, signal?: AbortSignal) {
+    return this.api.request<SceneOpen>(ROOT + 'scenes/open',
+      {sceneId, ...(sceneRevision === undefined ? {} : {sceneRevision})}, signal);
+  }
+  head(sceneId: string, viewingRevision: string, signal?: AbortSignal) {
+    return this.api.request<SceneHead>(ROOT + 'scenes/head', {sceneId, viewingRevision}, signal);
+  }
+  check(body: SceneCheckRequest, signal?: AbortSignal) {
+    return this.api.request<SceneCheck>(ROOT + 'scenes/check', body, signal);
+  }
+  save(body: SceneSaveRequest, signal?: AbortSignal) {
+    return this.api.request<SceneSave>(ROOT + 'scenes/save', body, signal);
+  }
+  models(options: ProjectModelsRequest = {}, signal?: AbortSignal) {
+    return this.api.request<ProjectModelCatalog>(ROOT + 'resources/models', options, signal);
+  }
+  legacyModels(signal?: AbortSignal) {
+    return this.api.request<LegacyModelCatalog>(ROOT + 'resources/models/legacy', {}, signal);
+  }
+  importExistingModel(body: ImportExistingModelRequest, signal?: AbortSignal) {
+    return this.api.request<ProjectModelWrite>(ROOT + 'resources/model/import-existing', body, signal);
+  }
+  model(modelAssetId: string, modelVersionId: string, signal?: AbortSignal) {
+    return this.api.request<ProjectModel>(ROOT + 'resources/model', {modelAssetId, modelVersionId}, signal);
+  }
+  modelContent(version: Pick<ProjectModelVersion, 'modelVersionId' | 'contentRevision' | 'sha256' | 'bytes'>, signal?: AbortSignal) {
+    return this.api.content(ROOT + 'resources/model/content', {modelVersionId: version.modelVersionId,
+      expectedContentRevision: version.contentRevision, expectedSha256: version.sha256},
+    {mime:'model/gltf-binary', maxBytes:version.bytes, sha256:version.sha256}, signal);
+  }
+  uploadModel(file: Blob, metadata: UploadModelMetadata, signal?: AbortSignal) {
+    return this.api.uploadModel<ProjectModelWrite>(file, metadata, signal);
+  }
+  calibrateModel(body: CalibrateModelRequest, signal?: AbortSignal) {
+    return this.api.request<ProjectModelWrite>(ROOT + 'resources/model/calibrate', body, signal);
+  }
+  modelUses(body: ModelUsesRequest, signal?: AbortSignal) {
+    return this.api.request<ModelUses>(ROOT + 'resources/uses', {...body, resourceKind:'model'}, signal);
+  }
+  uploadTerrain(file: Blob, metadata: UploadTerrainMetadata, signal?: AbortSignal) {
+    return this.api.uploadTerrain<TerrainJob>(file, metadata, signal);
+  }
+  terrains(options: TerrainsRequest = {}, signal?: AbortSignal) {
+    return this.api.request<TerrainCatalog>(ROOT + 'terrains', options, signal);
+  }
+  job(jobId: string, signal?: AbortSignal) {
+    return this.api.request<TerrainJob>(ROOT + 'terrains/job', {jobId}, signal);
+  }
+  cancelTerrain(body: CancelTerrainRequest, signal?: AbortSignal) {
+    return this.api.request<TerrainJob>(ROOT + 'terrains/job/cancel', body, signal);
+  }
+  version(terrainVersionId: string, signal?: AbortSignal) {
+    return this.api.request<TerrainVersion>(ROOT + 'terrains/version', {terrainVersionId}, signal);
+  }
+  content(terrainVersionId: string, artifact: TerrainArtifact, signal?: AbortSignal) {
+    const maximum = (artifact.artifactId === 'source.tif' ? 256 : 16) * 1024 * 1024;
+    if (!Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0 || artifact.bytes > maximum) {
+      return Promise.reject(new ApiError(413, 'TERRAIN_LIMIT_EXCEEDED'));
+    }
+    return this.api.content(ROOT + 'terrains/content',
+      {terrainVersionId, artifactId: artifact.artifactId, expectedSha256: artifact.sha256},
+      {mime:'application/octet-stream', maxBytes:artifact.bytes, sha256:artifact.sha256}, signal);
+  }
+}
