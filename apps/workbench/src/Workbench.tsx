@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
-import { Boxes, Building2, ChevronDown, ChevronRight, Database, FileClock, Focus, GitBranch, Languages, Layers, Link2, LogOut, PanelLeft, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
+import { Boxes, Building2, ChevronDown, ChevronRight, Database, FileClock, Focus, GitBranch, Languages, Layers, Link2, LogOut, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
 import logo from '../../../assets/brand/ONTOVis.png';
 import { ApiError, cancelled, failureMessage, WorkbenchApi } from './api';
 import type { ContextView, ModelView, ObjectView, SessionView } from './types';
@@ -45,6 +45,7 @@ export function Workbench() {
   const [left, setLeft] = useState(false), [right, setRight] = useState(false);
   const [focusSignal, setFocusSignal] = useState(0);
   const [page, setPage] = useState<Page>('bindings');
+  const [navExpanded, setNavExpanded] = useState(false);
   const [layout, setLayout] = useState('balanced');
   const [modelVersionId,setModelVersionId] = useState<string|null>(null);
   const [modelReload,setModelReload] = useState(0);
@@ -146,7 +147,10 @@ export function Workbench() {
         <Dropdown.Separator/><Dropdown.Item onSelect={() => void logout()}><LogOut size={15}/>{t('signOut')}</Dropdown.Item>
       </Dropdown.Content></Dropdown.Portal></Dropdown.Root> : <Btn onClick={() => {setLoginError(null);setModal('login');}}>{t('signIn')}</Btn>}
     </header>
-    <div className="cw-shell"><nav className="cw-navigation" aria-label={t('projectManagement')}><span className="cw-nav-heading">{t('projectManagement')}</span>{navigation.map(([id,label,Icon]) => <button type="button" key={id} className={page === id ? 'active' : ''} aria-label={t(label)} aria-current={page === id ? 'page' : undefined} disabled={!['project','models','bindings','hierarchy'].includes(id)} title={t(label)} onClick={() => {setPage(id as Page);setLeft(false);setRight(false);}}><Icon size={17} strokeWidth={1.7}/><span>{t(label)}</span></button>)}</nav>
+    <div className="cw-shell"><nav className="cw-navigation" data-expanded={navExpanded} aria-label={t('projectManagement')} onKeyDown={event => {if (event.key === 'Escape' && navExpanded) {setNavExpanded(false);event.currentTarget.querySelector<HTMLButtonElement>('.cw-nav-toggle')?.focus();}}}>
+      <div className="cw-nav-header"><span className="cw-nav-heading">{t('projectManagement')}</span><button type="button" className="cw-nav-toggle" aria-label={t(navExpanded ? 'collapseNavigation' : 'expandNavigation')} title={t(navExpanded ? 'collapseNavigation' : 'expandNavigation')} aria-expanded={navExpanded} aria-controls="cw-navigation-items" onClick={() => setNavExpanded(value => !value)}>{navExpanded ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}</button></div>
+      <div className="cw-nav-items" id="cw-navigation-items">{navigation.map(([id,label,Icon]) => <button type="button" key={id} className={`cw-nav-item ${page === id ? 'active' : ''}`} aria-label={t(label)} aria-current={page === id ? 'page' : undefined} disabled={!['project','models','bindings','hierarchy'].includes(id)} title={t(label)} onClick={() => {setPage(id as Page);setLeft(false);setRight(false);}}><Icon size={17} strokeWidth={1.7}/><span>{t(label)}</span></button>)}</div>
+    </nav>
       <main className="cw-main"><div className="cw-toolbar">{workspace && <IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn>}<div className="cw-page-title"><span className="cw-breadcrumb">{t('projectManagement')}<ChevronRight size={11}/>{t(title)}</span><h1>{t(title)}</h1></div>{workspace && <><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}</>}<span className="cw-grow"/>{workspace && <div className="cw-layout" role="group" aria-label={t('workbenchLayout')}>{(['balanced','modelLayout','drawingLayout'] as const).map(value => <button type="button" key={value} aria-pressed={layout === value} className={layout === value ? 'active' : ''} onClick={() => setLayout(value)}>{t(value)}</button>)}</div>}<IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn>{workspace && <IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn>}</div>
       {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}</div>}
       {!workspace && <div className="cw-page-content">{page==='models' && active ? <ModelLibraryPanel api={api} onPreview={id=>{setModelVersionId(id);setModel(null);setModelReload(v=>v+1);if(context?.root)select(context.root.entityUid);setPage('bindings');}}/> : <section className="cw-panel"><header><strong>{t('access')}</strong></header><div className="cw-page-body"><dl className="cw-kv"><dt>{t('currentProject')}</dt><dd>{context?.projectName || '—'}</dd><dt>{t('username')}</dt><dd>{session?.username || '—'}</dd><dt>{t('access')}</dt><dd>{active ? t('projectReadable') : t('loginPrompt')}</dd></dl><Btn primary onClick={() => active ? setPage('bindings') : setModal('login')}>{t(active ? 'enter' : 'signIn')}</Btn></div></section>}</div>}
