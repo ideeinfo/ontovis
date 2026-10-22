@@ -156,6 +156,7 @@ export class WorkbenchApi {
 
 export function failureMessage(error: unknown, locale = 'zh'): string {
   const modelErrors:Record<string,[string,string]> = {
+    LEGACY_SCENE_ENTRY_UNAVAILABLE:['原模型对应的场景暂不可用，请重新读取。','The scene for this legacy model is unavailable. Reload it.'],
     INVALID_MODEL:['模型结构不完整或已损坏，请检查文件。','The model is incomplete or damaged. Check the file.'],
     UNSUPPORTED_MODEL:['仅支持自包含静态 GLB，当前模型含未支持的资源或扩展。','Only self-contained static GLB is supported. This model uses unsupported resources or extensions.'],
     MODEL_LIMIT_EXCEEDED:['模型超过当前文件、几何或贴图处理限额。','The model exceeds file, geometry or texture limits.'],

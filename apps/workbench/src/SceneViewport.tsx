@@ -6,7 +6,8 @@ import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
 import {usePreferences} from './Preferences';
 import {IconBtn} from './Primitives';
 import {SceneResourceCache,cloneModel} from './sceneResourceCache';
-import {sceneModelHit,type SceneComponentPick} from './sceneComponentPick';
+import {SceneCabinetAppearance} from './sceneCabinetAppearance';
+import {sceneModelRayHit,type SceneComponentPick} from './sceneComponentPick';
 import {toDisplay,trueHeadingToThreeYaw} from './sceneTransforms';
 import {sceneViewportMessage} from './sceneViewportMessages';
 import {componentFocusCurrent,componentFocusKey,componentFocusView,prepareComponentFocus,type ComponentFocusRequest,type ComponentFocusTarget} from './sceneComponentFocus';
@@ -28,7 +29,7 @@ export interface SceneViewportProps {
 }
 type Runtime={sync:()=>void;appearance:()=>void;fit:()=>void;focus:(id:string|null)=>void;
   componentFocus:()=>void;setView:(view:SceneView)=>void;zoom:(factor:number)=>void};
-type Entry={root:THREE.Group;key:string};
+type Entry={root:THREE.Group;key:string;appearance:SceneCabinetAppearance};
 class ViewportInteractionError extends Error {
   readonly messageKey:'moveFailed'|'dropInvalid';
   constructor(key:'moveFailed'|'dropInvalid'){super(key);this.messageKey=key;}
@@ -121,6 +122,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const clearComponentFocus=()=>{
       if(componentTween)tween=null;componentTween=false;
       componentTarget=null;componentPending=null;componentFocused=null;componentBox.visible=false;
+      for(const entry of entries.values())entry.appearance.restore();
     };
     const componentHighlight=()=>{
       const state=current.current,key=componentFocusKey(state.componentFocus);
@@ -140,6 +142,11 @@ export function SceneViewport(props:SceneViewportProps) {
       if(componentFocused&&componentBox.visible){
         componentBox.box.min.fromArray(componentFocused.bounds[0]);componentBox.box.max.fromArray(componentFocused.bounds[1]);
         componentBox.updateMatrixWorld(true);
+      }
+      const color=getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d';
+      for(const value of entries.values()){
+        if(componentFocused&&value===entry&&componentBox.visible)value.appearance.apply(componentFocused.componentKeys??[],color);
+        else value.appearance.restore();
       }
       return componentTarget!==null;
     };
@@ -205,22 +212,23 @@ export function SceneViewport(props:SceneViewportProps) {
         if(restoreView)restoreView=structuredClone(state.snapshot.initialView);else moveView(state.snapshot.initialView);
       }
       const wanted=new Set(state.snapshot.instances.map(item=>item.sceneModelInstanceId));
-      for(const [id,entry] of entries)if(!wanted.has(id)){models.remove(entry.root);entries.delete(id);}
+      for(const [id,entry] of entries)if(!wanted.has(id)){entry.appearance.dispose();models.remove(entry.root);entries.delete(id);}
       const tasks=state.snapshot.instances.map(async item=>{
         const ref=state.modelRefs.find(value=>value.modelVersionId===item.modelVersionId);
         if(!ref){
-          const prior=entries.get(item.sceneModelInstanceId);if(prior){models.remove(prior.root);entries.delete(item.sceneModelInstanceId);}
+          const prior=entries.get(item.sceneModelInstanceId);if(prior){prior.appearance.dispose();models.remove(prior.root);entries.delete(item.sceneModelInstanceId);}
           throw new ApiError(409,'RESOURCE_CHANGED');
         }
         const key=JSON.stringify([ref.modelVersionId,ref.contentRevision,ref.sha256]);
         let entry=entries.get(item.sceneModelInstanceId);
         if(entry?.key!==key){
-          if(entry){models.remove(entry.root);entries.delete(item.sceneModelInstanceId);}
+          if(entry){entry.appearance.dispose();models.remove(entry.root);entries.delete(item.sceneModelInstanceId);}
           const resource=await cache.model(ref,signal);if(stale()||ticket!==generation)return;
-          entry={root:cloneModel(resource,item.sceneModelInstanceId),key};entries.set(item.sceneModelInstanceId,entry);models.add(entry.root);
+          const root=cloneModel(resource,item.sceneModelInstanceId);
+          entry={root,key,appearance:new SceneCabinetAppearance(root,resource.version)};entries.set(item.sceneModelInstanceId,entry);models.add(entry.root);
         }
         try {transform(item,entry.root);}
-        catch(value){models.remove(entry.root);entries.delete(item.sceneModelInstanceId);throw value;}
+        catch(value){entry.appearance.dispose();models.remove(entry.root);entries.delete(item.sceneModelInstanceId);throw value;}
       });
       tasks.push((async()=>{
         const version=state.terrainVersion,reference=state.snapshot.terrain;
@@ -283,11 +291,9 @@ export function SceneViewport(props:SceneViewportProps) {
     const hitModel=(x:number,y:number)=>{
       prepareRay(x,y);
       const active=current.current.componentPickingInstanceId;
-      const target=active?entries.get(active)?.root:models;if(!target)return null;
-      for(const hit of ray.intersectObject(target,true)){
-        const result=sceneModelHit(hit.object,models);if(result)return result;
-      }
-      return null;
+      const entry=active?entries.get(active):undefined,target=active?entry?.root:models;if(!target)return null;
+      return sceneModelRayHit(ray.intersectObject(target,true),models,active&&entry?
+        {instanceId:active,isFadedOccluder:(object,index)=>entry.appearance.isFadedOccluder(object,index)}:undefined);
     };
     const hitId=(x:number,y:number)=>hitModel(x,y)?.sceneModelInstanceId??null;
     const down=(event:PointerEvent)=>{
@@ -369,7 +375,7 @@ export function SceneViewport(props:SceneViewportProps) {
       disposed=true;++generation;loadingAbort?.abort();cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',visible);
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
-      orbit.dispose();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
+      orbit.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
       componentBox.geometry.dispose();disposeMaterial(componentBox.material);
       grid.geometry.dispose();disposeMaterial(grid.material);terrainMaterial.dispose();grass.dispose();scene.clear();
       renderer.dispose();renderer.forceContextLoss();canvas.remove();runtime.current=null;

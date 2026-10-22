@@ -136,6 +136,15 @@ export interface SceneSummary {
 }
 export interface SceneList extends SceneResponse {items: SceneSummary[]; snapshotRevision: string; nextCursor: string | null}
 export interface SceneListRequest {q?: string; cursor?: string | null; limit?: number}
+export interface LegacySceneEntryTarget {
+  sceneId:string;sceneRevision:string;registeredSceneRevision:string;sceneModelInstanceId:string;
+}
+export type LegacySceneEntryRequest = {sourceKind:'fixed_model'|'uploaded_version';sourceKey:string} |
+  {sourceKind?:never;sourceKey?:never};
+export interface LegacySceneEntry {
+  migrated:boolean;legacyReadOnly:boolean;available:boolean;entry:LegacySceneEntryTarget|null;
+  reason:string|null;sessionRevision:string;
+}
 export interface SceneCreateRequest {displayName: string; clientRequestId: string}
 export interface SceneOpen extends SceneResponse {
   sceneId: string; projectCode: string; sceneRevision: string; headRevision: string; savedAt: string;

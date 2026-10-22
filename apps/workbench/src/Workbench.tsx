@@ -16,6 +16,9 @@ import { SourceEvidence } from './SourceEvidence';
 import { ModelLibraryPanel } from './ModelLibraryPanel';
 import { BindingEditor } from './BindingEditor';
 import type {SceneWorkspaceHandle} from './SceneWorkspace';
+import {SceneApi} from './sceneApi';
+import {LegacySceneEntryReader} from './legacySceneEntry';
+import type {LegacySceneEntryTarget} from './sceneTypes';
 
 const api = new WorkbenchApi();
 const ModelViewport = lazy(() => import('./ModelViewport').then(module => ({default:module.ModelViewport})));
@@ -52,16 +55,23 @@ export function Workbench() {
   const [layout, setLayout] = useState('balanced');
   const [modelVersionId,setModelVersionId] = useState<string|null>(null);
   const [modelReload,setModelReload] = useState(0);
+  const [sceneEntry,setSceneEntry] = useState<LegacySceneEntryTarget|null>(null);
+  const [legacyReady,setLegacyReady] = useState<string|null>(null);
+  const entryIdentity=JSON.stringify([session?.sessionRevision,reload,modelVersionId,modelReload]);
+  const legacyEntry=useRef(new LegacySceneEntryReader(new SceneApi(api)));
   const channel = useRef<BroadcastChannel | null>(null);
   const current = useRef(session); current.current = session;
   const lastActivity = useRef(0);
   const sceneWorkspace = useRef<SceneWorkspaceHandle|null>(null);
-  function navigate(next:Page){
-    const change=()=>{setPage(next);setLeft(false);setRight(false);};
-    if(page==='scene'&&next!=='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else change();
+  function navigate(next:Page,legacyVersionId:string|null=null){
+    const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setLegacyReady(null);
+      if(next==='bindings'){setModelVersionId(legacyVersionId);setModel(null);setContext(null);setDetail(null);setModelReload(value=>value+1);}
+      setPage(next);setLeft(false);setRight(false);};
+    if(page==='scene'&&(next!=='scene'||sceneEntry!==null)&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else change();
   }
 
   function clear(state:string, text:MessageKey | null) {
+    legacyEntry.current.cancel();setSceneEntry(null);setLegacyReady(null);
     api.invalidate(); setProjectName('');setContext(null); setSelection({uid:'', scope:'equipment'}); setDetail(null); setModel(null);
     setModelVersionId(null);
     setLoading(false); setSession(previous => previous ? {...previous, state} : null);
@@ -93,17 +103,27 @@ export function Workbench() {
     const visible = () => {if (!document.hidden) void inspect();}; document.addEventListener('visibilitychange',visible);
     return () => {window.clearInterval(poll); channel.current?.close(); api.onDenied=() => {};
       window.removeEventListener('pointerdown',activity); window.removeEventListener('keydown',activity);
-      document.removeEventListener('visibilitychange',visible); api.invalidate();};
+      document.removeEventListener('visibilitychange',visible); legacyEntry.current.cancel();api.invalidate();};
   }, []);
   useEffect(() => {
     if (session?.state !== 'active'||page==='scene') {setLoading(false);if(page==='scene')setError(null);return;}
     const controller = new AbortController(); setLoading(true); setMessage(null); setError(null);
-    api.request<ContextView>('/api/workbench/context', {}, controller.signal)
-      .then(value => {if(!controller.signal.aborted){setContext(value);setProjectName(value.projectName); if (value.root) setSelection({uid:value.root.entityUid, scope:'equipment'});}})
+    const read=async()=>{
+      if(page==='bindings'){
+        setLegacyReady(null);
+        const target=await legacyEntry.current.read(modelVersionId);
+        if(controller.signal.aborted)return;
+        if(target){setSceneEntry(target);setContext(null);setDetail(null);setModel(null);setPage('scene');return;}
+        setLegacyReady(entryIdentity);
+      }
+      const value=await api.request<ContextView>('/api/workbench/context', {}, controller.signal);
+      if(!controller.signal.aborted){setContext(value);setProjectName(value.projectName);if(value.root)setSelection({uid:value.root.entityUid,scope:'equipment'});}
+    };
+    void read()
       .catch(value => {if (!controller.signal.aborted&&!cancelled(value)) {setContext(null); setError(value);}})
       .finally(() => {if (!controller.signal.aborted) setLoading(false);});
-    return () => controller.abort();
-  }, [session?.state, session?.sessionRevision, reload,page==='scene']);
+    return () => {controller.abort();legacyEntry.current.cancel();};
+  }, [session?.state, session?.sessionRevision, reload,page,modelVersionId,modelReload]);
   useEffect(() => {
     setDetail(null);
     if (!selection.uid || !context || session?.state !== 'active'||!['bindings','hierarchy'].includes(page)) return;
@@ -134,7 +154,9 @@ export function Workbench() {
   }
   function closeModal() {setModal(null); setPassword(''); if (signingIn) void logout();}
   function refresh() {
-    const change=()=>{api.invalidate(); setContext(null); setDetail(null); setSelection({uid:'',scope:'equipment'}); setModel(null); setReload(value => value+1);};
+    const change=()=>{legacyEntry.current.cancel();api.invalidate();setLegacyReady(null);
+      if(page==='scene'&&sceneEntry){setSceneEntry(null);setPage('bindings');}
+      setContext(null); setDetail(null); setSelection({uid:'',scope:'equipment'}); setModel(null); setReload(value => value+1);};
     if(page==='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else change();
   }
   function select(uid:string, scope:'equipment' | 'project' = 'equipment') {
@@ -162,10 +184,10 @@ export function Workbench() {
     </nav>
       <main className="cw-main"><div className="cw-toolbar">{workspace && <IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn>}<div className="cw-page-title"><span className="cw-breadcrumb">{t('projectManagement')}<ChevronRight size={11}/>{t(title)}</span><h1>{t(title)}</h1></div>{workspace && <><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}</>}<span className="cw-grow"/>{workspace && <div className="cw-layout" role="group" aria-label={t('workbenchLayout')}>{(['balanced','modelLayout','drawingLayout'] as const).map(value => <button type="button" key={value} aria-pressed={layout === value} className={layout === value ? 'active' : ''} onClick={() => setLayout(value)}>{t(value)}</button>)}</div>}<IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn>{workspace && <IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn>}</div>
       {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}</div>}
-      {page==='scene'&&active&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${reload}`} api={api} ref={sceneWorkspace} onProjectName={setProjectName}/></Suspense>}
-      {!workspace&&page!=='scene' && <div className="cw-page-content">{page==='models' && active ? <ModelLibraryPanel api={api} onPreview={id=>{setModelVersionId(id);setModel(null);setModelReload(v=>v+1);if(context?.root)select(context.root.entityUid);navigate('bindings');}}/> : <section className="cw-panel"><header><strong>{t('access')}</strong></header><div className="cw-page-body"><dl className="cw-kv"><dt>{t('currentProject')}</dt><dd>{projectName || '—'}</dd><dt>{t('username')}</dt><dd>{session?.username || '—'}</dd><dt>{t('access')}</dt><dd>{active ? t('projectReadable') : t('loginPrompt')}</dd></dl><Btn primary onClick={() => active ? navigate('bindings') : setModal('login')}>{t(active ? 'enter' : 'signIn')}</Btn></div></section>}</div>}
+      {page==='scene'&&active&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}`} api={api} ref={sceneWorkspace} initialEntry={sceneEntry} onProjectName={setProjectName}/></Suspense>}
+      {!workspace&&page!=='scene' && <div className="cw-page-content">{page==='models' && active ? <ModelLibraryPanel api={api} onPreview={id=>navigate('bindings',id)}/> : <section className="cw-panel"><header><strong>{t('access')}</strong></header><div className="cw-page-body"><dl className="cw-kv"><dt>{t('currentProject')}</dt><dd>{projectName || '—'}</dd><dt>{t('username')}</dt><dd>{session?.username || '—'}</dd><dt>{t('access')}</dt><dd>{active ? t('projectReadable') : t('loginPrompt')}</dd></dl><Btn primary onClick={() => active ? navigate('bindings') : setModal('login')}>{t(active ? 'enter' : 'signIn')}</Btn></div></section>}</div>}
       {page==='scene'&&!active&&<p className="cw-state">{t('loginPrompt')}</p>}
-      {workspace&&<div className={`cw-workspace layout-${layout}`}>
+      {workspace&&(page==='hierarchy'||!active||legacyReady===entryIdentity)&&<div className={`cw-workspace layout-${layout}`}>
         <ObjectsPanel key={`${session?.sessionRevision}:${reload}:${context?.context.hierarchyRevision}`} api={api} view={context} selected={selection.uid} ancestors={detail?.ancestors.path.map(row=>row.object.entityUid) || []} onSelect={select} className={left ? 'is-open' : ''}/>
         <Suspense fallback={<section className="cw-panel cw-scene"><p className="cw-state" role="status">{t('loading')}</p></section>}>{active&&workspace ? <ModelViewport key={`${session?.sessionRevision}:${reload}:${modelVersionId}:${modelReload}`} api={api} active={active&&workspace} detail={detail} model={model} modelVersionId={modelVersionId} onModel={setModel} onSelect={uid => select(uid)} focusSignal={focusSignal}/> : <section className="cw-panel cw-scene"><header><strong>{t('modelView')}</strong></header><p className="cw-state">{t('loginPrompt')}</p></section>}</Suspense>
         <aside className={`cw-panel cw-inspector ${right ? 'is-open' : ''}`}><header><strong>{detail?.item.displayName || (selection.uid ? t('loading') : t('select'))}</strong>{detail && <Badge tone={detail.item.reviewStatus === 'confirmed' ? 'neutral' : 'amber'}>{detail.item.reviewStatus === 'confirmed' ? t('confirmed') : t('unverified')}</Badge>}</header>

@@ -1,6 +1,6 @@
 import {ApiError, type WorkbenchApi} from './api.ts';
 import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
-  SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest} from './sceneTypes';
+  SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
 import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelRequest, LegacyModelCatalog, ModelUses, ModelUsesRequest,
   ProjectModel, ProjectModelCatalog, ProjectModelsRequest, ProjectModelVersion, ProjectModelWrite,
   TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
@@ -23,6 +23,9 @@ export class SceneApi {
   open(sceneId: string, sceneRevision?: string, signal?: AbortSignal) {
     return this.api.request<SceneOpen>(ROOT + 'scenes/open',
       {sceneId, ...(sceneRevision === undefined ? {} : {sceneRevision})}, signal);
+  }
+  legacyEntry(body:LegacySceneEntryRequest = {}, signal?:AbortSignal) {
+    return this.api.request<LegacySceneEntry>(ROOT+'scenes/legacy-migration/entry',body,signal);
   }
   head(sceneId: string, viewingRevision: string, signal?: AbortSignal) {
     return this.api.request<SceneHead>(ROOT + 'scenes/head', {sceneId, viewingRevision}, signal);

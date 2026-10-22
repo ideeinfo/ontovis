@@ -1,6 +1,6 @@
 import type {Bounds3, EditableSceneSnapshot, ModelResourceRef, SceneView, Vector3} from './sceneTypes';
 
-export interface ComponentFocusRequest {token:number;instanceId:string;bounds:Bounds3}
+export interface ComponentFocusRequest {token:number;instanceId:string;bounds:Bounds3;componentKeys?:string[]}
 export interface ComponentFocusContext {
   snapshot:EditableSceneSnapshot;selectedId:string|null;modelRefs:readonly ModelResourceRef[];
   personalVisibility:Readonly<Record<string,boolean>>;previewActive:boolean;
@@ -16,7 +16,9 @@ function validBounds(value:unknown):value is Bounds3 {
 }
 export function componentFocusKey(request:ComponentFocusRequest|undefined):string|null {
   return request&&Number.isSafeInteger(request.token)&&request.token>=0&&typeof request.instanceId==='string'&&
-    request.instanceId.length>0&&validBounds(request.bounds)?JSON.stringify([request.token,request.instanceId,request.bounds]):null;
+    request.instanceId.length>0&&validBounds(request.bounds)&&(request.componentKeys===undefined||Array.isArray(request.componentKeys)&&
+      request.componentKeys.every(key=>typeof key==='string'&&key.length>0&&key.length<=512)&&
+      new Set(request.componentKeys).size===request.componentKeys.length)?JSON.stringify([request.token,request.instanceId,request.bounds,request.componentKeys??[]]):null;
 }
 /** Capture the exact fixed resource and placement before awaiting its shared GLB. */
 export function prepareComponentFocus(request:ComponentFocusRequest|undefined,context:ComponentFocusContext):ComponentFocusTarget|null {

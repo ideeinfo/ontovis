@@ -31,6 +31,7 @@ export async function load(url,context,next){
 const {bindingReviewPlan,bindingReviewRefKey,readBindingReviewNames,BindingReviewDetails}=await import('../src/SceneBindingReview.tsx');
 const {PreferencesProvider}=await import('../src/Preferences.tsx');
 const {ApiError}=await import('../src/api.ts');
+const {SceneInstanceLinks}=await import('../src/SceneInstanceLinks.tsx');
 
 const ref=(uid)=>({ontobaseConnectionId:'private-connection',projectCode:'private-project',entityUid:uid});
 const old=ref('private-old-root'),next=ref('private-new-root'),removed=ref('private-cabinet');
@@ -154,4 +155,33 @@ test('ready details use the English preference and show a readable unlink empty 
     for(const expected of ['Previous equipment','New equipment','No linked equipment','No internal links to clear'])assert.ok(markup.includes(expected));
     assert.ok(!markup.includes('private-old-root'));
   } finally {globalThis.localStorage=originalStorage;globalThis.matchMedia=originalMedia;}
+});
+
+function linkMarkup(overrides={}){
+  return renderToStaticMarkup(React.createElement(SceneInstanceLinks,{
+    api:apiWith(async()=>{throw Error('Rendering a link status must not read the network');}),
+    instanceId:'instance-A',modelVersionId:'fixed-version',root:null,rootBinding:{objectRef:old},
+    componentBindings:[],components:[],selectedObject:null,internal:false,
+    onChooseRoot:async()=>{},onEnterInternal:()=>{},onReturnToScene:()=>{},onBindComponents:async()=>{},...overrides,
+  }));
+}
+
+test('a pending linked root shows the existing loading line and cannot expose a previous matching root',()=>{
+  const markup=linkMarkup({rootReading:true,root:value(old,'上个实例的设备名称')});
+  assert.ok(markup.includes('<strong>正在读取</strong>'));
+  assert.ok(!markup.includes('关联对象暂不可用'));assert.ok(!markup.includes('上个实例的设备名称'));
+  assert.match(markup,/<button[^>]*disabled=""[^>]*>关联内部构件<\/button>/);
+});
+
+test('a settled root displays its name only when the complete bound reference matches',()=>{
+  assert.ok(linkMarkup({rootReading:false,root:value(old,'当前设备完整名称')}).includes('<strong>当前设备完整名称</strong>'));
+  for(const root of [null,value({...old,entityUid:'other'}),value({...old,projectCode:'other'}),value({...old,ontobaseConnectionId:'other'})]){
+    const markup=linkMarkup({rootReading:false,root});
+    assert.ok(markup.includes('<strong>关联对象暂不可用，请重新读取</strong>'));assert.ok(!markup.includes('<strong>业务设备名称</strong>'));
+  }
+});
+
+test('an instance without a root binding keeps its unbound state rather than implying a pending or failed read',()=>{
+  const markup=linkMarkup({rootBinding:null,rootReading:false});
+  assert.ok(markup.includes('<strong>未关联设备</strong>'));assert.ok(!markup.includes('关联对象暂不可用'));assert.ok(!markup.includes('正在读取'));
 });

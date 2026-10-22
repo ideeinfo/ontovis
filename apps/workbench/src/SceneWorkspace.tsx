@@ -2,6 +2,7 @@ import {forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useMemo, use
 import {ArrowLeft, Check, Copy, Eye, EyeOff, Focus, Layers, LockKeyhole, PanelLeft, PanelRight, Plus, Redo2, Save, Search, Trash2, Undo2, UnlockKeyhole, X} from 'lucide-react';
 import {ApiError, cancelled, failureMessage, type WorkbenchApi} from './api';
 import {SceneApi} from './sceneApi';
+import {legacyEntryInstance} from './legacySceneEntry';
 import {ReplacementImpact} from './ReplacementImpact';
 import {SceneObjectsPanel} from './SceneObjectsPanel';
 import {SceneInstanceLinks} from './SceneInstanceLinks';
@@ -11,13 +12,14 @@ import {sceneEngineeringText} from './sceneEngineeringMessages';
 import {engineeringReviews,reviewSelectedObject,reviewedForSave,rootChangesForSave,changeRootBinding,bindComponentKeys,refKey} from './sceneEngineeringState';
 import type {EngineeringExpectation,SceneObjectContext,SceneLocation,SceneRepresentation} from './sceneEngineeringTypes';
 import type {SceneComponentPick,SceneComponentPickRequest} from './sceneComponentPick';
+import type {ComponentFocusRequest} from './sceneComponentFocus';
 import {Badge, Btn, IconBtn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
 import {sceneText} from './sceneMessages';
 import {cloneSnapshot, commitScene, duplicateAt, isLocalInstance, isLocalScene, moveInstance, placeModel, redoScene, sceneHistory, undoScene, updateInstance, type SceneHistory} from './sceneState';
 import {fromDisplay, toDisplay} from './sceneTransforms';
 import type {ProjectModelVersion, TerrainVersion} from './resourceTypes';
-import type {Bounds3, EditableSceneSnapshot, GeographicAnchor, ModelResourceRef, RootBindingChange, SceneCheck, SceneList, SceneModelInstance, SceneOpen, SceneReplacementCheckRequest, SceneSaveRequest, SceneView, Vector3} from './sceneTypes';
+import type {EditableSceneSnapshot, GeographicAnchor, LegacySceneEntryTarget, ModelResourceRef, RootBindingChange, SceneCheck, SceneList, SceneModelInstance, SceneOpen, SceneReplacementCheckRequest, SceneSaveRequest, SceneView, Vector3} from './sceneTypes';
 import './scenes.css';
 
 const SceneViewport=lazy(()=>import('./SceneViewport').then(module=>({default:module.SceneViewport})));
@@ -27,24 +29,25 @@ const modelRef=(model:ProjectModelVersion):ModelResourceRef=>({modelAssetId:mode
 type ReplacementOperation=Omit<Extract<SceneReplacementCheckRequest,{kind:'model'}>,'sceneId'|'expectedSceneRevision'|'snapshot'>|Omit<Extract<SceneReplacementCheckRequest,{kind:'terrain'}>,'sceneId'|'expectedSceneRevision'|'snapshot'>;
 const finite=(value:string)=>value.trim()!=='' && Number.isFinite(Number(value));
 
-export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;onProjectName?:(name:string)=>void}>(function SceneWorkspace({api,onProjectName},ref) {
+export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;initialEntry?:LegacySceneEntryTarget|null;onProjectName?:(name:string)=>void}>(function SceneWorkspace({api,initialEntry,onProjectName},ref) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof sceneText>[1])=>sceneText(locale,key);
   const et=(key:Parameters<typeof sceneEngineeringText>[1])=>sceneEngineeringText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const modelCatalog=useMemo(()=>new Map<string,ProjectModelVersion>(),[api,api.epoch,api.revision]);
   const [list,setList]=useState<SceneList|null>(null),[search,setSearch]=useState(''),[base,setBase]=useState<SceneOpen|null>(null);
   const [history,setHistory]=useState<SceneHistory|null>(null),[selected,setSelected]=useState<string|null>(null);
+  const [entryPending,setEntryPending]=useState(!!initialEntry);
   const [editing,setEditing]=useState(false),[readOnly,setReadOnly]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null);
   const [left,setLeft]=useState<'content'|'resources'|'objects'>('content'),[side,setSide]=useState<'left'|'right'|null>(null);
   const [modal,setModal]=useState<'create'|'leave'|'conflict'|'anchor'|'replaceTerrain'|'bindingReview'|'engineeringReview'|null>(null),[newName,setNewName]=useState('');
   const [reviewCandidate,setReviewCandidate]=useState<SceneObjectContext|null>(null),[reviewDirty,setReviewDirty]=useState(false);
-  const [internal,setInternal]=useState(false),[rootObject,setRootObject]=useState<SceneObjectContext|null>(null);
+  const [internal,setInternal]=useState(false),[rootRead,setRootRead]=useState<{identity:string;value:SceneObjectContext|null;reading:boolean}|null>(null);
   const [object,setObject]=useState<SceneObjectContext|null>(null),[objectLoading,setObjectLoading]=useState(false);
   const [objectScope,setObjectScope]=useState<'equipment'|'project'>('project');
   const [internalModel,setInternalModel]=useState<ProjectModelVersion|null>(null),[location,setLocation]=useState<SceneLocation|null>(null);
   const [locating,setLocating]=useState(false),[bindingReview,setBindingReview]=useState<SceneCheck|null>(null);
   const [objectTab,setObjectTab]=useState<'links'|'evidence'>('links');
-  const [componentFocus,setComponentFocus]=useState<{token:number;instanceId:string;bounds:Bounds3}|undefined>();
+  const [componentFocus,setComponentFocus]=useState<ComponentFocusRequest|undefined>();
   const [pickedComponent,setPickedComponent]=useState<SceneComponentPickRequest|null>(null);
   const pickIntent=useRef(0);
   const [personal,setPersonal]=useState<Record<string,boolean>>({}),[terrainVisible,setTerrainVisible]=useState(true),[update,setUpdate]=useState(false);
@@ -61,6 +64,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;on
   const leave=useRef<(()=>void)|null>(null),liveView=useRef<SceneView|null>(null),beforeAnchorView=useRef<SceneView|null>(null);
   const saveRequest=useRef<{key:string,body:SceneSaveRequest,models:ModelResourceRef[],terrain:TerrainVersion|null}|null>(null);
   const editRequest=useRef<AbortController|null>(null),saveInFlight=useRef(false);
+  const openRequest=useRef<AbortController|null>(null);
   const acceptedEngineering=useRef(new Map<string,EngineeringExpectation>()),approvedRoots=useRef<RootBindingChange[]>([]);
   const objectRead=useRef<AbortController|null>(null),objectIntent=useRef(0),locationRead=useRef<AbortController|null>(null);
   const retainObject=useRef(false);
@@ -69,7 +73,11 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;on
   const draft=history?.present||null,current=draft?.instances.find(item=>item.sceneModelInstanceId===selected)||null;
   const sceneIdentity=JSON.stringify([base?.sceneId,base?.sceneRevision,draft]);
   const latestSceneIdentity=useRef(sceneIdentity);latestSceneIdentity.current=sceneIdentity;
-  const currentIdentity=JSON.stringify([base?.sceneId,base?.sceneRevision,selected,current?.rootBinding,current?.modelVersionId]);
+  const currentIdentity=JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,selected,current?.rootBinding,current?.modelVersionId]);
+  const latestRootIdentity=useRef(currentIdentity);latestRootIdentity.current=currentIdentity;
+  const rootObject=rootRead?.identity===currentIdentity&&rootRead.value&&current?.rootBinding&&
+    refKey(rootRead.value.objectRef)===refKey(current.rootBinding.objectRef)?rootRead.value:null;
+  const rootReading=!!current?.rootBinding&&(rootRead?.identity!==currentIdentity||rootRead?.reading===true);
   const selectionIdentity=JSON.stringify([base?.sceneId,base?.sceneRevision,selected]);
   const latestIdentity=useRef(selectionIdentity);latestIdentity.current=selectionIdentity;
   const dirty=!!base && !!draft && JSON.stringify(base.snapshot)!==JSON.stringify(draft);
@@ -97,8 +105,8 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;on
     if(value instanceof ApiError && value.status===403 && ['SCENE_WRITE_FORBIDDEN','MODEL_WRITE_FORBIDDEN'].includes(value.code)){setReadOnly(true);setEditing(false);setList(previous=>previous?{...previous,capabilities:{...previous.capabilities,canWrite:false}}:previous);}
     setError(value);
   }
-  function requestLeave(after:()=>void){if(busy)return;if(unsaved){leave.current=after;setModal('leave');}else after();}
-  useImperativeHandle(ref,()=>({requestLeave}),[unsaved,busy]);
+  function requestLeave(after:()=>void){if(busy){if(!entryPending)return;openRequest.current?.abort();sequence.current++;}if(unsaved){leave.current=after;setModal('leave');}else after();}
+  useImperativeHandle(ref,()=>({requestLeave}),[unsaved,busy,entryPending]);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;sequence.current++;listSequence.current++;for(const value of requests.current)value.abort();requests.current.clear();};},[]);
   useEffect(()=>{const handler=(event:BeforeUnloadEvent)=>{if(unsaved){event.preventDefault();event.returnValue='';}};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler);},[unsaved]);
   useEffect(()=>{const handler=(event:KeyboardEvent)=>{if(event.key==='Escape'){const cancelPreflight=!!editRequest.current&&(modal==='anchor'||modal==='replaceTerrain');cancelPlacement();if(cancelPreflight){setModal(null);setCandidate(null);}if(!modal&&anchorResult&&!saveUnknown&&!saveInFlight.current)cancelAnchor();setSide(null);}};window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);},[anchorResult,saveUnknown,modal]);
@@ -107,21 +115,27 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;on
     try{const value=await client.list({q:search,...(cursor?{cursor}:{})},abort.signal);if(mounted.current&&token===listSequence.current){setList(previous=>cursor&&previous?{...value,items:[...previous.items,...value.items]}:value);if(value.projectName)onProjectName?.(value.projectName);}}
     catch(value){if(token===listSequence.current)failed(value);}finally{done(abort);if(mounted.current&&token===listSequence.current)setBusy(false);}
   }
-  useEffect(()=>{void readList();},[]);
-  async function adopt(value:SceneOpen){
-    setBase(value);setHistory(sceneHistory(value.snapshot));setSelected(value.snapshot.instances[0]?.sceneModelInstanceId||null);
-    setPersonal({});setEditing(false);setReadOnly(false);setPending(null);setPreview(null);setAnchorResult(null);setUpdate(false);setHints({});setSide(null);
+  useEffect(()=>{if(initialEntry)void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry);else void readList();},[]);
+  async function adopt(value:SceneOpen,token=sequence.current,instanceId?:string){
+    setBase(value);setHistory(sceneHistory(value.snapshot));setSelected(instanceId||value.snapshot.instances[0]?.sceneModelInstanceId||null);
+    setPersonal({});setEditing(false);setReadOnly(false);setPending(null);setPreview(null);setAnchorResult(null);setUpdate(value.headRevision!==value.sceneRevision);setHints({});setSide(null);
     setSaveUnknown(false);saveRequest.current=null;
     acceptedEngineering.current=engineeringReviews(value.validation);approvedRoots.current=[];setReviewDirty(false);setReviewCandidate(null);
-    setObject(null);setLocation(null);setComponentFocus(undefined);setFocus(undefined);setPickedComponent(null);setInternal(false);internalReturn.current=null;
+    setObject(null);setLocation(null);setComponentFocus(undefined);setFocus(instanceId?{token:Date.now(),instanceId}:undefined);setPickedComponent(null);setInternal(false);internalReturn.current=null;
     liveView.current=value.snapshot.initialView;setViewCommand({token:Date.now(),view:value.snapshot.initialView});
-    if(value.snapshot.terrain){const abort=controller();try{const selectedTerrain=await client.version(value.snapshot.terrain.terrainVersionId,abort.signal);if(mounted.current)setTerrain(selectedTerrain);}catch(error){failed(error);}finally{done(abort);}}
-    else setTerrain(null);
+    if(value.projectName)onProjectName?.(value.projectName);
+    setTerrain(null);
+    if(value.snapshot.terrain){const abort=controller();try{const selectedTerrain=await client.version(value.snapshot.terrain.terrainVersionId,abort.signal);if(mounted.current&&token===sequence.current&&!abort.signal.aborted)setTerrain(selectedTerrain);}catch(error){if(token===sequence.current&&!abort.signal.aborted)failed(error);}finally{done(abort);}}
   }
-  async function open(sceneId:string,revision?:string){
+  async function open(sceneId:string,revision?:string,entry?:LegacySceneEntryTarget){
+    openRequest.current?.abort();objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setFocus(undefined);setComponentFocus(undefined);
     const token=++sequence.current,abort=controller();setBusy(true);setError(null);
-    try{const value=await client.open(sceneId,revision,abort.signal);if(mounted.current&&token===sequence.current)await adopt(value);}
-    catch(value){failed(value);}finally{done(abort);if(mounted.current&&token===sequence.current)setBusy(false);}
+    openRequest.current=abort;
+    try{const value=await client.open(sceneId,revision,abort.signal);if(mounted.current&&token===sequence.current&&!abort.signal.aborted){
+      const required=entry||(base&&initialEntry?.sceneId===sceneId?{...initialEntry,sceneRevision:revision||value.sceneRevision}:undefined);
+      await adopt(value,token,required?legacyEntryInstance(value,required):undefined);if(mounted.current&&token===sequence.current)setEntryPending(false);
+    }}
+    catch(value){if(token===sequence.current&&!abort.signal.aborted)failed(value);}finally{done(abort);if(openRequest.current===abort)openRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   useEffect(()=>{
     if(!base)return;const abort=controller();let running=false;
@@ -139,8 +153,13 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;on
     }catch(value){failed(value);}
   },[selected,current,draft?.coordinateFrame]);
   useEffect(()=>{
-    const abort=controller();setRootObject(null);
-    if(current?.rootBinding)client.objectContext(current.rootBinding.objectRef.entityUid,undefined,abort.signal).then(value=>{if(!abort.signal.aborted)setRootObject(value);}).catch(value=>{if(!abort.signal.aborted)failed(value);});
+    const abort=controller(),identity=currentIdentity,expected=current?.rootBinding?.objectRef;
+    const active=()=>mounted.current&&!abort.signal.aborted&&latestRootIdentity.current===identity;
+    setRootRead({identity,value:null,reading:!!expected});
+    if(expected)client.objectContext(expected.entityUid,undefined,abort.signal).then(value=>{
+      if(!active())return;if(refKey(value.objectRef)!==refKey(expected))throw new ApiError(409,'ENGINEERING_CHANGED');
+      setRootRead({identity,value,reading:false});
+    }).catch(value=>{if(active()){setRootRead({identity,value:null,reading:false});failed(value);}});
     return()=>{abort.abort();done(abort);};
   },[currentIdentity,client,api.epoch,api.revision]);
   useEffect(()=>{
@@ -167,7 +186,9 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;on
     if(!draft||!current||!editable)return;
     const identity=selectionIdentity,next=changeRootBinding(draft,current.sceneModelInstanceId,value?.objectRef||null);
     if(value&&!value.bindingEligible)throw new ApiError(409,'ENGINEERING_CHANGED');
-    if(await commit(next)&&latestIdentity.current===identity){if(value){acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,value);setReviewDirty(true);}approvedRoots.current=[];saveRequest.current=null;setRootObject(value);setObject(value);}
+    if(await commit(next)&&latestIdentity.current===identity){if(value){acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,value);setReviewDirty(true);}approvedRoots.current=[];saveRequest.current=null;
+      const target=next.instances.find(item=>item.sceneModelInstanceId===selected);
+      setRootRead({identity:JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,selected,target?.rootBinding,target?.modelVersionId]),value,reading:false});setObject(value);}
   }
   async function bindComponents(value:SceneObjectContext,keys:string[]){
     if(!draft||!current||!editable)return;
@@ -187,7 +208,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;on
       if(abort.signal.aborted||ticket!==objectIntent.current||value.contextEpoch!==epoch||latestSceneIdentity.current!==fixedScene)return;
       if(value.selectedObject.entityRevision!==object.item.entityRevision)throw new ApiError(409,'ENGINEERING_CHANGED');
       setLocation(value);
-      if(value.status==='located'&&value.sceneModelInstanceId&&value.worldBounds){if(value.sceneModelInstanceId!==selected){retainObject.current=true;setSelected(value.sceneModelInstanceId);}setPersonal(previous=>({...previous,[value.sceneModelInstanceId!]:true}));setComponentFocus({token:Date.now(),instanceId:value.sceneModelInstanceId,bounds:value.worldBounds});}
+      if(value.status==='located'&&value.sceneModelInstanceId&&value.worldBounds){if(value.sceneModelInstanceId!==selected){retainObject.current=true;setSelected(value.sceneModelInstanceId);}setPersonal(previous=>({...previous,[value.sceneModelInstanceId!]:true}));setComponentFocus({token:Date.now(),instanceId:value.sceneModelInstanceId,bounds:value.worldBounds,componentKeys:[...value.componentKeys]});}
     }catch(value){if(ticket===objectIntent.current&&!abort.signal.aborted)failed(value);}finally{done(abort);if(ticket===objectIntent.current&&!abort.signal.aborted)setLocating(false);}
   }
   async function commit(next:EditableSceneSnapshot):Promise<boolean>{
@@ -325,12 +346,12 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;on
   const isAnchor=anchorResult?.spatialChange?.kind==='anchor',viewTerrain=anchorResult?.spatialChange&&anchorResult.spatialChange.kind!=='model'?candidate:terrain;
   const spatialDialog=modal==='anchor'||modal==='replaceTerrain';
   const locationReason=location?.reason==='INCOMPLETE_PHYSICAL_CHAIN'?'chainIncomplete':location?.reason==='NO_REPRESENTATION'?'noRepresentation':location?.reason==='BINDING_NEEDS_REVIEW'?'bindingNeedsReview':'resourceNotReady';
-  const links=current?<><SceneInstanceLinks api={api} instanceId={current.sceneModelInstanceId} modelVersionId={current.modelVersionId} pickedComponent={pickedComponent} root={rootObject} rootBinding={current.rootBinding} componentBindings={current.componentBindings} components={internalModel?.components||[]} selectedObject={object} internal={internal} readOnly={!editable} disabled={busy||!!anchorResult||saveUnknown} onChooseRoot={chooseRoot} onEnterInternal={enterInternal} onReturnToScene={returnInternal} onBindComponents={bindComponents}/>
+  const links=current?<><SceneInstanceLinks api={api} instanceId={current.sceneModelInstanceId} modelVersionId={current.modelVersionId} pickedComponent={pickedComponent} root={rootObject} rootReading={rootReading} rootBinding={current.rootBinding} componentBindings={current.componentBindings} components={internalModel?.components||[]} selectedObject={object} internal={internal} readOnly={!editable} disabled={busy||!!anchorResult||saveUnknown} onChooseRoot={chooseRoot} onEnterInternal={enterInternal} onReturnToScene={returnInternal} onBindComponents={bindComponents}/>
     {editable&&rootObject&&<Btn onClick={()=>void reviewObject(rootObject)}>{et('reviewObject')} · {rootObject.item.displayName}</Btn>}</>:null;
   return <section className="sw-workspace" aria-label={t('scenes')}>
     {saveUnknown&&<div className="sw-notice" role="status"><span>{t('saveUnknown')}</span><Btn disabled={busy||!canWrite} onClick={()=>void save(anchorResult||undefined)}>{t('retry')}</Btn></div>}
-    {errorText&&!spatialDialog&&<div className="sw-notice" role="alert"><span>{errorText}</span><IconBtn label={t('cancel')} onClick={()=>setError(null)}><X size={14}/></IconBtn></div>}
-    {!base?<><div className="sw-list-toolbar"><form onSubmit={event=>{event.preventDefault();void readList();}}><Search size={15}/><input aria-label={t('search')} placeholder={t('search')} value={search} onChange={event=>setSearch(event.target.value)}/><Btn disabled={busy} onClick={()=>void readList()}>{t('search')}</Btn></form><Btn primary disabled={busy||!list?.capabilities.canWrite} onClick={()=>setModal('create')}><Plus size={15}/>{t('create')}</Btn></div>
+    {errorText&&!spatialDialog&&<div className="sw-notice" role="alert"><span>{errorText}</span>{entryPending&&initialEntry&&<Btn disabled={busy} onClick={()=>void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry)}>{t('retry')}</Btn>}<IconBtn label={t('cancel')} onClick={()=>setError(null)}><X size={14}/></IconBtn></div>}
+    {!base&&entryPending?<>{busy&&<p className="cw-state" role="status">{t('loading')}</p>}</>:!base?<><div className="sw-list-toolbar"><form onSubmit={event=>{event.preventDefault();void readList();}}><Search size={15}/><input aria-label={t('search')} placeholder={t('search')} value={search} onChange={event=>setSearch(event.target.value)}/><Btn disabled={busy} onClick={()=>void readList()}>{t('search')}</Btn></form><Btn primary disabled={busy||!list?.capabilities.canWrite} onClick={()=>setModal('create')}><Plus size={15}/>{t('create')}</Btn></div>
       <div className="sw-scene-list">{!list?<p role="status">{t('loading')}</p>:list.items.length===0?<p>{t('empty')}</p>:<table><thead><tr><th>{t('name')}</th><th>{t('count')}</th><th>{t('updated')}</th><th/></tr></thead><tbody>{list.items.map(row=><tr key={row.sceneId}><td><Layers size={15}/><button type="button" onClick={()=>void open(row.sceneId)} disabled={busy}>{row.displayName}</button></td><td>{row.instanceCount}</td><td>{new Date(row.updatedAt).toLocaleString(locale==='zh'?'zh-CN':'en-GB')}</td><td><Btn disabled={busy} onClick={()=>void open(row.sceneId)}>{t('open')}</Btn></td></tr>)}</tbody></table>}{list?.nextCursor&&<Btn disabled={busy} onClick={()=>void readList(list.nextCursor!)}>{t('more')}</Btn>}</div></>:
       <><div className="sw-editor-toolbar"><IconBtn label={t('back')} disabled={busy} onClick={()=>requestLeave(()=>{setBase(null);setHistory(null);setTerrain(null);setPreview(null);setModal(null);void readList();})}><ArrowLeft size={16}/></IconBtn><strong>{draft?.displayName}</strong><Badge>{unsaved?t('unsaved'):t('saved')}</Badge>{!canWrite&&<Badge>{t('readOnly')}</Badge>}<span className="sw-grow"/>{update&&<Btn disabled={busy} onClick={()=>setModal('conflict')}>{t('updateAvailable')}</Btn>}
         <div className="sw-mode" role="group" aria-label={t('scenes')}><button type="button" aria-pressed={!editing} disabled={busy||!!anchorResult} onClick={()=>{setEditing(false);setPending(null);}}>{t('read')}</button><button type="button" aria-pressed={editing} disabled={!canWrite||busy||!!anchorResult} onClick={()=>{setEditing(true);setPreview(null);}}>{t('edit')}</button></div><Btn primary disabled={!canWrite||(!dirty&&!reviewDirty)||busy||!!anchorResult} onClick={()=>void save()}><Save size={14}/>{busy?t('saving'):t('save')}</Btn></div>
@@ -374,7 +395,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;on
     {modal==='leave'&&<Modal title={t('leave')} description={t(saveUnknown?'leaveUnknown':'leaveHint')} onClose={()=>{if(!busy){setModal(null);leave.current=null;}}}><p>{t(saveUnknown?'leaveUnknown':'leaveHint')}</p><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setModal(null);leave.current=null;}}>{t('keepEditing')}</Btn><Btn disabled={busy} onClick={()=>{setModal(null);leave.current?.();leave.current=null;}}>{t('discard')}</Btn><Btn primary disabled={busy||!canWrite} onClick={()=>void save(anchorResult||undefined).then(ok=>{if(ok){leave.current?.();leave.current=null;}})}>{t('saveLeave')}</Btn></div></Modal>}
     {modal==='conflict'&&<Modal title={t('conflict')} description={t('conflictHint')} onClose={()=>setModal(null)}><p>{t('conflictHint')}</p><div className="sw-actions"><Btn onClick={()=>setModal(null)}>{t('keepEditing')}</Btn><Btn primary disabled={busy} onClick={()=>{if(base){setModal(null);void open(base.sceneId);}}}>{t('reload')}</Btn></div></Modal>}
     {modal==='bindingReview'&&bindingReview&&base&&draft&&<SceneBindingReview api={api} check={bindingReview} instances={draft.instances} previousInstances={base.snapshot.instances} busy={busy} onClose={()=>{if(!busy){setModal(null);leave.current=null;}}} onConfirm={()=>{approvedRoots.current=structuredClone(bindingReview.rootBindingChanges||[]);void save(bindingReview).then(ok=>{if(ok&&leave.current){leave.current();leave.current=null;}});}}/>}
-    {modal==='engineeringReview'&&reviewCandidate&&<Modal title={et('reviewObject')} description={et('reviewObjectHint')} onClose={()=>{if(!busy){setModal(null);setReviewCandidate(null);}}}><p>{et('reviewObjectHint')}</p><div className="se-root-review"><strong>{reviewCandidate.item.displayName}</strong><p>{[...reviewCandidate.ancestors.path].reverse().map(row=>row.object.displayName).concat(reviewCandidate.item.displayName).join(' › ')}</p>{reviewCandidate.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setModal(null);setReviewCandidate(null);}}>{et('cancel')}</Btn><Btn primary disabled={busy} onClick={()=>{acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,reviewCandidate);if(object&&refKey(object.objectRef)===refKey(reviewCandidate.objectRef))setObject(reviewCandidate);if(rootObject&&refKey(rootObject.objectRef)===refKey(reviewCandidate.objectRef))setRootObject(reviewCandidate);setReviewDirty(true);saveRequest.current=null;setModal(null);setReviewCandidate(null);setError(null);}}>{et('confirmReview')}</Btn></div></Modal>}
+    {modal==='engineeringReview'&&reviewCandidate&&<Modal title={et('reviewObject')} description={et('reviewObjectHint')} onClose={()=>{if(!busy){setModal(null);setReviewCandidate(null);}}}><p>{et('reviewObjectHint')}</p><div className="se-root-review"><strong>{reviewCandidate.item.displayName}</strong><p>{[...reviewCandidate.ancestors.path].reverse().map(row=>row.object.displayName).concat(reviewCandidate.item.displayName).join(' › ')}</p>{reviewCandidate.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setModal(null);setReviewCandidate(null);}}>{et('cancel')}</Btn><Btn primary disabled={busy} onClick={()=>{acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,reviewCandidate);if(object&&refKey(object.objectRef)===refKey(reviewCandidate.objectRef))setObject(reviewCandidate);if(rootObject&&refKey(rootObject.objectRef)===refKey(reviewCandidate.objectRef))setRootRead({identity:currentIdentity,value:reviewCandidate,reading:false});setReviewDirty(true);saveRequest.current=null;setModal(null);setReviewCandidate(null);setError(null);}}>{et('confirmReview')}</Btn></div></Modal>}
     {modal==='replaceTerrain'&&candidate&&<Modal title={t('replaceTerrain')} description={t('replacementHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><label>{t('terrainStrategy')}<select value={terrainStrategy} onChange={event=>setTerrainStrategy(event.target.value as 'keep_height'|'resample_ground')}><option value="resample_ground">{t('resampleGround')}</option><option value="keep_height">{t('keepHeight')}</option></select></label><Btn primary onClick={()=>void previewReplacement({kind:'terrain',candidateTerrainVersionId:candidate.terrainVersionId,strategy:terrainStrategy})}>{t('previewReplacement')}</Btn></fieldset></Modal>}
     {modal==='anchor'&&candidate&&<Modal title={t('anchor')} description={t('anchorHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><p>{t('anchorHint')}</p><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><div className="sw-field-pair">{(['x','z','longitude','latitude','heading','offset'] as const).map(key=><label key={key}>{t(key==='heading'?'anchorHeading':key==='offset'?'offset':key)}<input type="number" step="any" value={anchor[key]} onChange={event=>setAnchor(value=>({...value,[key]:event.target.value}))}/></label>)}</div><label>{t('height')}<select value={anchor.strategy} onChange={event=>setAnchor(value=>({...value,strategy:event.target.value as GeographicAnchor['heightStrategy']}))}><option value="resample_each_ground">{t('resample')}</option><option value="keep_relative_to_anchor">{t('keepRelative')}</option></select></label><Btn primary onClick={()=>void previewAnchor()}>{t('anchorPreview')}</Btn></fieldset></Modal>}
   </section>;

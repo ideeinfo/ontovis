@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import {WorkbenchApi} from '../src/api.ts';
 import {SceneResourceCache,cloneModel,decodeTerrain} from '../src/sceneResourceCache.ts';
 import {sceneModelHit} from '../src/sceneComponentPick.ts';
+import {SceneCabinetAppearance} from '../src/sceneCabinetAppearance.ts';
 
 const digest=bytes=>createHash('sha256').update(new Uint8Array(bytes)).digest('hex');
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
@@ -75,6 +76,23 @@ test('real-node proxies and empty source-candidate directories never add duplica
   const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref),clone=cloneModel(resource,'instance');
   assert.equal(meshList(resource.scene).length,2);assert.equal(meshList(clone).length,2);
   assert.ok(meshList(clone).every(mesh=>mesh.userData.ontoVisProxySchematic===undefined));cache.dispose();
+});
+
+test('cabinet display uses cache-cleared source tags and leaves shared source and second-instance materials intact',async()=>{
+  const f=modelFixture(glb(document=>{document.nodes[0].extras={component:'tower',ontoVisComponentKey:'CT',ontoVisNodeIndex:1,ontoVisProxySchematic:true};}));
+  f.version.components=[component('source-shell',[0]),component('CN',[1]),proxyComponent('CT',[[-2,0,-1],[-1,2,1]])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref);
+  const first=cloneModel(resource,'instance-A'),second=cloneModel(resource,'instance-B'),meshes=meshList(first);
+  const shell=meshes.find(mesh=>mesh.userData.ontoVisNodeIndex===0),cabinet=meshes.find(mesh=>mesh.userData.ontoVisComponentKey==='CT');
+  const originals=meshes.map(mesh=>mesh.material),sharedSource=meshList(resource.scene).map(mesh=>mesh.material);
+  assert.equal(shell.userData.ontoVisComponentKey,'source-shell');assert.equal(shell.userData.ontoVisProxySchematic,undefined);
+  const appearance=new SceneCabinetAppearance(first,resource.version);appearance.apply(['CT'],'#007e6d');
+  assert.equal(shell.material.opacity,.2);assert.equal(shell.material.depthWrite,false);
+  assert.equal(cabinet.material.emissiveIntensity,.25);assert.notEqual(cabinet.material,originals[2]);
+  assert.ok(meshList(second).every((mesh,index)=>mesh.material===originals[index]));
+  assert.ok(sharedSource.every(material=>material.opacity===1&&material.emissiveIntensity===1));
+  appearance.dispose();assert.ok(meshes.every((mesh,index)=>mesh.material===originals[index]));
+  assert.equal(f.calls.modelContent,1);cache.dispose();
 });
 
 test('invalid schematic bounds reject before attachment and release parsed source resources',async()=>{

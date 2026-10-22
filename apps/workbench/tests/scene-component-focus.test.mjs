@@ -49,6 +49,20 @@ test('clearing, cancelling or superseding the request invalidates an old pending
   assert.equal(componentFocusCurrent(target,{...request(),instanceId:'instance-B'},state),false);
   assert.equal(componentFocusCurrent(target,request(),structuredClone(state)),true);
 });
+test('host component keys travel with the focus and a different key selection invalidates the previous display',()=>{
+  const state=context(),value={...request(),componentKeys:['mapped-CN-host']},target=prepareComponentFocus(value,state);
+  assert.deepEqual(target.componentKeys,['mapped-CN-host']);
+  value.componentKeys.push('later-key');assert.deepEqual(target.componentKeys,['mapped-CN-host']);
+  assert.equal(componentFocusCurrent(target,value,state),false);
+  assert.equal(componentFocusCurrent(target,{...request(),componentKeys:['child-without-geometry']},state),false);
+  assert.notEqual(componentFocusKey({...request(),componentKeys:['mapped-CN-host']}),componentFocusKey({...request(),componentKeys:['mapped-CT']}));
+});
+test('malformed or repeated component keys never create a focus display',()=>{
+  for(const componentKeys of [null,'mapped-CN',[''],['mapped-CN','mapped-CN'],['x'.repeat(513)],[42]]){
+    assert.equal(componentFocusKey({...request(),componentKeys}),null);
+    assert.equal(prepareComponentFocus({...request(),componentKeys},context()),null);
+  }
+});
 test('loading completion cannot reuse bounds after selected instance, model or fixed resource identity changes',()=>{
   const state=context(),target=prepareComponentFocus(request(),state);
   const variants=[];

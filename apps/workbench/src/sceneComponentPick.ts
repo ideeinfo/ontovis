@@ -1,4 +1,4 @@
-import type {Object3D} from 'three';
+import type {Intersection,Object3D} from 'three';
 import type {EngineeringRef,SceneComponentBinding,SceneObjectContext} from './sceneEngineeringTypes';
 import type {ProjectModelComponent} from './resourceTypes';
 
@@ -34,6 +34,17 @@ export function sceneModelHit(object:Object3D,boundary:Object3D):SceneModelHit|n
   if(node!==boundary||!boundary.visible||id===null)return null;
   return {sceneModelInstanceId:id,component:version!==null&&key!==null
     ?{sceneModelInstanceId:id,modelVersionId:version,componentKey:key}:null};
+}
+
+/** Component picking can pass only shells deliberately faded in that exact instance. */
+export function sceneModelRayHit(hits:readonly Pick<Intersection,'object'|'face'>[],boundary:Object3D,
+  picking?:{instanceId:string;isFadedOccluder:(object:Object3D,materialIndex?:number)=>boolean}):SceneModelHit|null {
+  for(const hit of hits){
+    const result=sceneModelHit(hit.object,boundary);if(!result)continue;
+    if(picking&&result.sceneModelInstanceId===picking.instanceId&&picking.isFadedOccluder(hit.object,hit.face?.materialIndex))continue;
+    return result;
+  }
+  return null;
 }
 
 export interface ComponentPickContext {

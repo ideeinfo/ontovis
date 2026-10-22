@@ -13,6 +13,7 @@ import './sceneEngineering.css';
 
 export interface SceneInstanceLinksProps {
   api:WorkbenchApi;instanceId:string;modelVersionId:string;root:SceneObjectContext|null;rootBinding:SceneRootBinding|null;
+  rootReading?:boolean;
   componentBindings:SceneComponentBinding[];components:ProjectModelComponent[];
   selectedObject:SceneObjectContext|null;internal:boolean;readOnly?:boolean;disabled?:boolean;
   pickedComponent?:SceneComponentPickRequest|null;
@@ -39,7 +40,7 @@ function inEquipment(root:SceneObjectContext|null,selected:SceneObjectContext|nu
 
 /** Association callbacks change a parent-owned draft; this component never saves. */
 export function SceneInstanceLinks(props:SceneInstanceLinksProps) {
-  const {api,instanceId,modelVersionId,root,rootBinding,componentBindings,components,selectedObject,internal,readOnly=false,disabled=false,pickedComponent}=props;
+  const {api,instanceId,modelVersionId,root,rootBinding,componentBindings,components,selectedObject,internal,rootReading=false,readOnly=false,disabled=false,pickedComponent}=props;
   const {locale}=usePreferences(),t=(key:Parameters<typeof sceneEngineeringText>[1])=>sceneEngineeringText(locale,key),id=useId();
   const latest=useRef(props);latest.current=props;
   const alive=useRef(true),intent=useRef(0),readAbort=useRef<AbortController|null>(null);
@@ -80,7 +81,7 @@ export function SceneInstanceLinks(props:SceneInstanceLinksProps) {
     catch(value){if(active(ticket,epoch,revision)&&!cancelled(value))setError(value);}
     finally{if(active(ticket,epoch,revision))setWorking(false);}
   }
-  const validRoot=!!root&&!!rootBinding&&sameRef(root.objectRef,rootBinding.objectRef);
+  const validRoot=!rootReading&&!!root&&!!rootBinding&&sameRef(root.objectRef,rootBinding.objectRef);
   const inside=inEquipment(validRoot?root:null,selectedObject);
   const canBind=validRoot&&linkable(root)&&linkable(selectedObject)&&inside;
   useEffect(()=>{
@@ -106,7 +107,7 @@ export function SceneInstanceLinks(props:SceneInstanceLinksProps) {
   const blocked=readOnly||disabled||working;
   return <section className="se-links" aria-label={t('deviceLink')}>
     <div><div className="se-link-title"><span>{t('deviceLink')}</span></div>
-      <strong>{validRoot?root.item.displayName:rootBinding?t('unavailable'):t('unbound')}</strong>
+      <strong>{validRoot?root.item.displayName:rootBinding?t(rootReading?'loading':'unavailable'):t('unbound')}</strong>
       {!internal&&validRoot&&<div className="se-link-status"><Badge>{t(root.item.reviewStatus==='confirmed'?'objectConfirmed':'objectUnreviewed')}</Badge>
         {root.context?.purpose==='demonstration'&&<Badge tone="warning">{t('demonstration')}</Badge>}</div>}
     </div>
