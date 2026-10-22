@@ -19,6 +19,7 @@ import type {SceneWorkspaceHandle} from './SceneWorkspace';
 import {SceneApi} from './sceneApi';
 import {LegacySceneEntryReader} from './legacySceneEntry';
 import type {LegacySceneEntryTarget} from './sceneTypes';
+import {LandingPage} from './LandingPage';
 
 const api = new WorkbenchApi();
 const ModelViewport = lazy(() => import('./ModelViewport').then(module => ({default:module.ModelViewport})));
@@ -43,6 +44,8 @@ export function Workbench() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [signingIn, setSigningIn] = useState(false);
+  const [signingOut,setSigningOut] = useState(false);
+  const [sessionCheck,setSessionCheck] = useState<'loading'|'ready'|'failed'>('loading');
   const [loginError, setLoginError] = useState<unknown>(null);
   const [message, setMessage] = useState<MessageKey | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -61,6 +64,10 @@ export function Workbench() {
   const legacyEntry=useRef(new LegacySceneEntryReader(new SceneApi(api)));
   const channel = useRef<BroadcastChannel | null>(null);
   const current = useRef(session); current.current = session;
+  const mounted=useRef(true),sessionReady=useRef(false),mustSignOut=useRef(false),loginOpen=useRef(false);
+  const authIntent=useRef(0),authBusy=useRef<'login'|'logout'|null>(null),inspectIntent=useRef(0);
+  const inspection=useRef<{controller:AbortController;promise:Promise<SessionView|null>;activity:boolean}|null>(null);
+  const pendingActivity=useRef(false),loginButton=useRef<HTMLButtonElement>(null);
   const lastActivity = useRef(0);
   const sceneWorkspace = useRef<SceneWorkspaceHandle|null>(null);
   function navigate(next:Page,legacyVersionId:string|null=null){
@@ -71,28 +78,51 @@ export function Workbench() {
   }
 
   function clear(state:string, text:MessageKey | null) {
+    sessionReady.current=false;setSessionCheck('loading');
     legacyEntry.current.cancel();setSceneEntry(null);setLegacyReady(null);
     api.invalidate(); setProjectName('');setContext(null); setSelection({uid:'', scope:'equipment'}); setDetail(null); setModel(null);
     setModelVersionId(null);
-    setLoading(false); setSession(previous => previous ? {...previous, state} : null);
-    setMessage(text); setError(null); setPassword('');
+    const value={state,sessionRevision:current.current?.sessionRevision||api.revision};current.current=value;setSession(value);
+    setLoading(false);setModal(previous=>previous==='login'?previous:null);
+    setMessage(text); setError(null);setUsername('');setPassword('');
   }
+  function cancelInspection(){inspectIntent.current++;inspection.current?.controller.abort();inspection.current=null;pendingActivity.current=false;}
   async function inspect(activity = false) {
-    try {
-      const value = await api.request<SessionView>('/api/session' + (activity ? '?activity=1' : ''));
-      if (value.state !== 'active') {
-        clear(value.state, value.state === 'denied' ? 'denied' : value.state === 'expired' ? 'expired' : 'loginPrompt');
-        api.session(value.sessionRevision); setSession(value);
-      } else if (!current.current || current.current.sessionRevision !== value.sessionRevision || current.current.state !== 'active') {
-        clear('active', null); api.session(value.sessionRevision); setSession(value); setReload(value => value+1);
-      }
-    } catch (value) {if (!cancelled(value)) clear('unavailable', 'unavailable');}
+    if(authBusy.current)return null;if(inspection.current){if(activity&&!inspection.current.activity)pendingActivity.current=true;return inspection.current.promise;}
+    const controller=new AbortController(),ticket=++inspectIntent.current;sessionReady.current=false;setSessionCheck('loading');
+    const promise=(async()=>{
+      try {
+        const value=await api.request<SessionView>('/api/session'+(activity?'?activity=1':''),undefined,controller.signal);
+        if(!mounted.current||controller.signal.aborted||ticket!==inspectIntent.current)return null;
+        if(typeof value.sessionRevision!=='string'||!value.sessionRevision||!['active','denied','signedOut','expired'].includes(value.state))throw new ApiError(502,'SOURCE_UNAVAILABLE');
+        if(mustSignOut.current&&['active','denied'].includes(value.state)){
+          clear('signedOut','logoutFailed');api.session(value.sessionRevision);
+          current.current={state:'signedOut',sessionRevision:value.sessionRevision};setSession(current.current);setSessionCheck('failed');
+          loginOpen.current=true;setModal('login');return value;
+        }
+        const changed=!current.current||current.current.sessionRevision!==value.sessionRevision||current.current.state!==value.state;
+        if(changed){const text=value.state==='active'?null:value.state==='denied'?'denied':value.state==='expired'?'expired':'loginPrompt';
+          if(current.current)clear(value.state,text);else setMessage(text);}
+        if(changed||api.revision!==value.sessionRevision)api.session(value.sessionRevision);
+        const safe=value.state==='active'?value:{state:value.state,sessionRevision:value.sessionRevision};
+        current.current=safe;setSession(safe);sessionReady.current=true;setSessionCheck('ready');
+        if(['signedOut','expired'].includes(value.state))mustSignOut.current=false;
+        if(value.state==='active'){loginOpen.current=false;setModal(previous=>previous==='login'?null:previous);if(changed)setReload(value=>value+1);}
+        return value;
+      }catch(value){if(mounted.current&&ticket===inspectIntent.current&&!cancelled(value)){clear('unavailable',mustSignOut.current?'logoutFailed':'unavailable');setSessionCheck('failed');
+        if(mustSignOut.current){loginOpen.current=true;setModal('login');}}return null;}
+      finally{if(ticket===inspectIntent.current){inspection.current=null;const touch=pendingActivity.current;pendingActivity.current=false;
+        if(touch&&mounted.current&&current.current?.state==='active'&&!authBusy.current&&!mustSignOut.current)void inspect(true);}}
+    })();
+    inspection.current={controller,promise,activity};return promise;
   }
   useEffect(() => {
-    api.onDenied = status => clear(status === 401 ? 'expired' : 'denied', status === 401 ? 'expired' : 'denied');
+    mounted.current=true;
+    api.onDenied = status => {const checking=!!inspection.current;cancelInspection();clear(status === 401 ? 'expired' : 'denied', status === 401 ? 'expired' : 'denied');if(checking){setSessionCheck('failed');
+      if(mustSignOut.current){setMessage('logoutFailed');loginOpen.current=true;setModal('login');}}else if(!authBusy.current)void inspect();};
     void inspect();
     channel.current = new BroadcastChannel('ontovis-workbench-session');
-    channel.current.onmessage = () => {clear('signedOut', 'sessionChanged'); void inspect();};
+    channel.current.onmessage = () => {cancelInspection();clear('signedOut', 'sessionChanged');void inspect();};
     const poll = window.setInterval(() => {void inspect();}, 30000);
     const activity = () => {
       if (current.current?.state === 'active' && Date.now()-lastActivity.current > 60000) {
@@ -101,7 +131,7 @@ export function Workbench() {
     };
     window.addEventListener('pointerdown',activity); window.addEventListener('keydown',activity);
     const visible = () => {if (!document.hidden) void inspect();}; document.addEventListener('visibilitychange',visible);
-    return () => {window.clearInterval(poll); channel.current?.close(); api.onDenied=() => {};
+    return () => {mounted.current=false;authIntent.current++;cancelInspection();window.clearInterval(poll); channel.current?.close(); api.onDenied=() => {};
       window.removeEventListener('pointerdown',activity); window.removeEventListener('keydown',activity);
       document.removeEventListener('visibilitychange',visible); legacyEntry.current.cancel();api.invalidate();};
   }, []);
@@ -137,22 +167,36 @@ export function Workbench() {
     return () => controller.abort();
   }, [selection, context, session?.state, session?.sessionRevision,page]);
   async function login() {
-    setSigningIn(true); setLoginError(null);
+    if(authBusy.current||!sessionReady.current||!current.current||!['signedOut','expired'].includes(current.current.state)||
+      !api.revision||current.current.sessionRevision!==api.revision||mustSignOut.current)return;
+    const ticket=++authIntent.current;authBusy.current='login';cancelInspection();setSigningIn(true);setLoginError(null);let accepted=false;
     try {
       const value = await api.request<SessionView>('/api/session/login', {username, password});
-      clear(value.state,null); api.session(value.sessionRevision); setSession(value); setModal(null);
+      if(!mounted.current||ticket!==authIntent.current)return;
+      if(typeof value.sessionRevision!=='string'||!value.sessionRevision||!['active','denied'].includes(value.state))throw new ApiError(502,'SOURCE_UNAVAILABLE');
+      clear(value.state,value.state==='denied'?'denied':null);api.session(value.sessionRevision);
+      current.current=value.state==='active'?value:{state:value.state,sessionRevision:value.sessionRevision};setSession(current.current);
+      sessionReady.current=true;setSessionCheck('ready');accepted=true;
+      loginOpen.current=value.state!=='active';setModal(value.state==='active'?null:'login');
       setReload(value => value+1); channel.current?.postMessage('session-changed');
-    } catch (value) {if (!cancelled(value)) setLoginError(value);}
-    finally {setPassword(''); setSigningIn(false);}
+    } catch (value) {if(mounted.current&&ticket===authIntent.current&&!cancelled(value))setLoginError(value);}
+    finally {if(mounted.current&&ticket===authIntent.current){authBusy.current=null;setPassword('');setSigningIn(false);if(!accepted)void inspect();}}
   }
-  async function logout() {
-    const revision = api.revision; clear('signedOut','loginPrompt'); setModal(null);
+  async function logout(keepLogin=false) {
+    const ticket=++authIntent.current,revision=api.revision;authBusy.current='logout';mustSignOut.current=true;cancelInspection();
+    setSigningIn(false);setSigningOut(true);loginOpen.current=keepLogin;clear('signedOut','loginPrompt');setModal(keepLogin?'login':null);
     channel.current?.postMessage('session-changed');
-    try {await api.request('/api/session/logout', {expectedSessionRevision:revision});}
-    catch (value) {if (!cancelled(value)) setMessage('logoutFailed');}
-    finally {void inspect();}
+    try {if(revision)await api.request('/api/session/logout',{expectedSessionRevision:revision});}
+    catch(value){if(mounted.current&&ticket===authIntent.current&&!cancelled(value))setMessage('logoutFailed');}
+    finally{if(mounted.current&&ticket===authIntent.current){authBusy.current=null;setSigningOut(false);await inspect();}}
   }
-  function closeModal() {setModal(null); setPassword(''); if (signingIn) void logout();}
+  async function openLogin(){
+    loginOpen.current=true;setLoginError(null);setModal('login');if(authBusy.current)return;
+    if(mustSignOut.current||current.current?.state==='denied'){await logout(true);return;}
+    if(!sessionReady.current){const value=await inspect();if(!loginOpen.current)return;
+      if(value?.state==='denied')await logout(true);else if(value?.state==='active'){loginOpen.current=false;setModal(null);}}
+  }
+  function closeModal(){loginOpen.current=false;setModal(null);setPassword('');if(authBusy.current==='login')void logout();}
   function refresh() {
     const change=()=>{legacyEntry.current.cancel();api.invalidate();setLegacyReady(null);
       if(page==='scene'&&sceneEntry){setSceneEntry(null);setPage('bindings');}
@@ -162,12 +206,14 @@ export function Workbench() {
   function select(uid:string, scope:'equipment' | 'project' = 'equipment') {
     setDetail(null); setSelection({uid,scope}); setLeft(false);
   }
-  const active = session?.state === 'active';
+  const active = session?.state === 'active'&&!mustSignOut.current;
+  const canLogin=sessionCheck==='ready'&&sessionReady.current&&!!session?.sessionRevision&&session.sessionRevision===api.revision&&
+    ['signedOut','expired'].includes(session.state)&&!mustSignOut.current&&!signingIn&&!signingOut;
   const location = modelLocation(detail,model);
   const host = bindingNeedsReview(detail,model) ? t('bindingChanged') : location ? location.mode === 'ancestor' ? t('ancestor') : location.binding.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate') : !!model && detail?.item.entityUid === model.rootEntityUid ? t('modelReady') : t('unlocated');
   const title = navigation.find(row => row[0] === page)![1];
   const workspace = page === 'bindings' || page === 'hierarchy';
-  return <div className="ov-app ov-compact">
+  return <>{!active&&<LandingPage onLogin={()=>void openLogin()} suspended={modal==='login'} loginButtonRef={loginButton}/>}{active&&<div className="ov-app ov-compact">
     <header className="cw-header"><a className="cw-brand" href="#project" onClick={event => {event.preventDefault();navigate('project');}} aria-label="ONTOVis"><img src={logo} alt="ONTOVis 本源数智"/></a><span className="cw-divider"/>
       <button className="cw-project" type="button" onClick={() => navigate('project')}><Building2 size={15}/><span>{projectName || t('workbench')}</span><ChevronDown size={12}/></button><span className="cw-grow"/>
       {active ? <Dropdown.Root><Dropdown.Trigger asChild><button type="button" className="cw-avatar" aria-label={t('account')}>{session?.username?.slice(0,2).toUpperCase() || <User size={16}/>}</button></Dropdown.Trigger><Dropdown.Portal><Dropdown.Content className="cw-menu" align="end" sideOffset={8}>
@@ -198,12 +244,15 @@ export function Workbench() {
           </Tabs.Root>}
         </aside>
       </div>}</main>
-    </div>
-    {modal === 'login' && <Modal title={t('signInTitle')} description={t('accountHint')} onClose={closeModal}><form className="ov-simple-login" onSubmit={event => {event.preventDefault();void login();}}>
-      <input aria-label={t('username')} placeholder={t('username')} autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required disabled={signingIn}/><input aria-label={t('password')} placeholder={t('password')} type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={signingIn}/>
-      {loginError ? <p role="alert">{failureMessage(loginError,locale)}</p> : null}<button type="submit" className="ov-btn primary" disabled={signingIn}>{signingIn ? t('signingIn') : t('signIn')}</button>
+    </div></div>}
+    {modal === 'login' && <Modal title={t('signInTitle')} description={t('accountHint')} onClose={closeModal} onCloseAutoFocus={event=>{if(loginButton.current){event.preventDefault();loginButton.current.focus();}}}><form className="ov-simple-login" onSubmit={event => {event.preventDefault();void login();}}>
+      <input aria-label={t('username')} placeholder={t('username')} autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required disabled={signingIn||signingOut}/><input aria-label={t('password')} placeholder={t('password')} type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={signingIn||signingOut}/>
+      {(sessionCheck==='loading'||signingOut)&&!signingIn&&<p role="status">{t('loading')}</p>}
+      {sessionCheck==='failed'&&<p role="alert">{t(mustSignOut.current?'logoutFailed':'unavailable')} <Btn disabled={signingOut} onClick={()=>void openLogin()}>{t('retry')}</Btn></p>}
+      {sessionCheck==='ready'&&session?.state==='denied'&&<p role="alert">{t('denied')} <Btn onClick={()=>void logout(true)}>{t('signOut')}</Btn></p>}
+      {loginError ? <p role="alert">{failureMessage(loginError,locale)}</p> : null}<button type="submit" className="ov-btn primary" disabled={!canLogin}>{signingIn ? t('signingIn') : t('signIn')}</button>
     </form></Modal>}
-    {(modal === 'account' || modal === 'project') && <Modal title={t(modal === 'account' ? 'account' : 'project')} description={t('access')} onClose={closeModal}><dl className="cw-kv"><dt>{t('username')}</dt><dd>{session?.username || '—'}</dd><dt>{t('currentProject')}</dt><dd>{projectName || '—'}</dd><dt>{t('access')}</dt><dd>{active ? t('projectReadable') : t('loginPrompt')}</dd></dl>{!active && <Btn primary onClick={() => setModal('login')}>{t('signIn')}</Btn>}</Modal>}
-    {modal === 'model' && <Modal title={t('models')} description={t('modelView')} onClose={closeModal}><dl className="cw-kv"><dt>{t('modelSource')}</dt><dd>{t('modelName')}</dd><dt>{t('binding')}</dt><dd>{model ? t('modelReady') : t('modelUnavailable')}</dd><dt>{t('location')}</dt><dd>{t('geometryNote')}</dd></dl>{model && <div className="cw-model-links">{model.bindings.map(row => <button type="button" className="cw-list-item" key={row.entityUid} onClick={() => {select(row.entityUid);setModal(null);}}>{row.componentKey}<span className="cw-grow"/><Badge>{row.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate')}</Badge></button>)}</div>}<details className="cw-details"><summary>{t('moreInfo')}</summary><p>{t('reviewNote')}</p><p className="ov-mono">{model?.sha256}</p></details></Modal>}
-  </div>;
+    {active&&(modal === 'account' || modal === 'project') && <Modal title={t(modal === 'account' ? 'account' : 'project')} description={t('access')} onClose={closeModal}><dl className="cw-kv"><dt>{t('username')}</dt><dd>{session?.username || '—'}</dd><dt>{t('currentProject')}</dt><dd>{projectName || '—'}</dd><dt>{t('access')}</dt><dd>{active ? t('projectReadable') : t('loginPrompt')}</dd></dl></Modal>}
+    {active&&modal === 'model' && <Modal title={t('models')} description={t('modelView')} onClose={closeModal}><dl className="cw-kv"><dt>{t('modelSource')}</dt><dd>{t('modelName')}</dd><dt>{t('binding')}</dt><dd>{model ? t('modelReady') : t('modelUnavailable')}</dd><dt>{t('location')}</dt><dd>{t('geometryNote')}</dd></dl>{model && <div className="cw-model-links">{model.bindings.map(row => <button type="button" className="cw-list-item" key={row.entityUid} onClick={() => {select(row.entityUid);setModal(null);}}>{row.componentKey}<span className="cw-grow"/><Badge>{row.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate')}</Badge></button>)}</div>}<details className="cw-details"><summary>{t('moreInfo')}</summary><p>{t('reviewNote')}</p><p className="ov-mono">{model?.sha256}</p></details></Modal>}
+  </>;
 }
