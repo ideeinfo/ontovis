@@ -5,3 +5,5 @@
 - [关联图纸评审与30项交互检查](ontovis-evidence-review-20261021/README.md)
 - [当前图纸受保护预览、真实联调与正式工作台](current-evidence-preview-20261021/README.md)
 - [OntoBase旧读取授权实施与测试](../../OntoBase/output/resource-read-auth-20261021/README.md)
+
+- [场景设备关联、构件拾取及旧库只读迁移准备](q05-scene-bindings-20261022/README.md)
