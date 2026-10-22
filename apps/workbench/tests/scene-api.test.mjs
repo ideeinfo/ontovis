@@ -234,3 +234,36 @@ const frameProof:SpatialChange={kind:'frame',receipt:'signed'};
   const program=ts.createProgram([fixture],options,host),diagnostics=ts.getPreEmitDiagnostics(program);
   assert.deepEqual(diagnostics.map(item=>ts.flattenDiagnosticMessageText(item.messageText,'\n')),[]);
 });
+
+
+test('explicit object reads preserve selected UID, actual context and conditions without a default installation', async () => {
+  const calls=[];
+  const transport=new WorkbenchApi(async(path, options)=>{calls.push({path,body:JSON.parse(options.body),signal:options.signal});return json({sessionRevision:'session:1'});});
+  transport.session('session:1');const api=new SceneApi(transport),abort=new AbortController();
+  const detail={entityUid:'child/B?own=1',installationContextId:'actual-context-B',expectedEntityRevision:'object:B:1',expectedHierarchyRevision:'context:B:7'};
+  await api.objectContext(detail.entityUid,detail.expectedEntityRevision,abort.signal);
+  await api.objectDetail(detail,abort.signal);
+  await api.objectChildren({installationContextId:'actual-context-B',entityUid:'root-B',expectedHierarchyRevision:'context:B:7',cursor:'opaque-page'},abort.signal);
+  await api.objectDetail({installationContextId:null,entityUid:'definition',expectedHierarchyRevision:null});
+  assert.deepEqual(calls.map(x=>({path:x.path,body:x.body})),[
+    {path:'/api/workbench/objects/context',body:{entityUid:detail.entityUid,expectedEntityRevision:detail.expectedEntityRevision,expectedSessionRevision:'session:1'}},
+    {path:'/api/workbench/objects/detail',body:{...detail,expectedSessionRevision:'session:1'}},
+    {path:'/api/workbench/objects/children',body:{installationContextId:'actual-context-B',entityUid:'root-B',expectedHierarchyRevision:'context:B:7',cursor:'opaque-page',expectedSessionRevision:'session:1'}},
+    {path:'/api/workbench/objects/detail',body:{installationContextId:null,entityUid:'definition',expectedHierarchyRevision:null,expectedSessionRevision:'session:1'}}
+  ]);
+  assert.ok(calls.slice(0,3).every(x=>x.signal===abort.signal));
+});
+
+test('scene location preserves the viewed revision and sends an instance only after explicit choice', async () => {
+  const calls=[];
+  const transport=new WorkbenchApi(async(path,options)=>{calls.push({path,body:JSON.parse(options.body),signal:options.signal});return json({sessionRevision:'session:1'});});
+  transport.session('session:1');const api=new SceneApi(transport),abort=new AbortController();
+  const body={sceneId:'scene-A',sceneRevision:'scene:retained',selectedObjectRef:{ontobaseConnectionId:'fixed-connection',projectCode:'project-A',entityUid:'child-B'},contextEpoch:'intent-17'};
+  await api.locate(body,abort.signal);
+  const chosen={...body,representationChoice:{sceneModelInstanceId:'instance-B',modelVersionId:'fixed-model-version'}};
+  await api.locate(chosen,abort.signal);
+  assert.deepEqual(calls.map(call=>call.body),[{...body,expectedSessionRevision:'session:1'},{...chosen,expectedSessionRevision:'session:1'}]);
+  assert.ok(calls.every(call=>call.path==='/api/workbench/scenes/locate'&&call.signal===abort.signal));
+  assert.equal('representationChoice' in calls[0].body,false);
+  assert.equal(body.sceneRevision,'scene:retained');
+});

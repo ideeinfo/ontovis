@@ -5,8 +5,9 @@ import type { EngineeringObject, Evidence, EvidenceList, Installation } from './
 import { Badge, Btn, IconBtn, Modal } from './Primitives';
 import { usePreferences } from './Preferences';
 
-export function SourceEvidence({api, object, context, host}: {
-  api: WorkbenchApi; object: EngineeringObject; context: Installation; host: string;
+export function SourceEvidence({api, object, context, host, endpointPrefix='/api/workbench/evidence'}: {
+  api: WorkbenchApi; object: EngineeringObject; context: Installation|null; host: string;
+  endpointPrefix?:'/api/workbench/evidence'|'/api/workbench/objects/evidence';
 }) {
   const {t, locale} = usePreferences();
   const [list, setList] = useState<EvidenceList | null>(null);
@@ -22,7 +23,7 @@ export function SourceEvidence({api, object, context, host}: {
   const documentAbort = useRef<AbortController | null>(null);
   const imageUrl = useRef('');
   const body = {entityUid: object.entityUid, installationContextId: object.installationContextId,
-    expectedEntityRevision: object.entityRevision, expectedHierarchyRevision: object.installationContextId ? context.hierarchyRevision : null};
+    expectedEntityRevision: object.entityRevision, expectedHierarchyRevision: object.installationContextId ? context?.hierarchyRevision??null : null};
 
   function close() {
     documentAbort.current?.abort(); documentAbort.current = null;
@@ -36,18 +37,18 @@ export function SourceEvidence({api, object, context, host}: {
   }, []);
   useEffect(() => {
     const controller = new AbortController();
-    setList(null); setError(null); setChanged(false);
-    api.request<EvidenceList>('/api/workbench/evidence/resolve', body, controller.signal)
+    close(); setList(null); setError(null); setChanged(false);
+    api.request<EvidenceList>(`${endpointPrefix}/resolve`, body, controller.signal)
       .then(value => {if (!controller.signal.aborted) setList(value);})
-      .catch(error => {if (!cancelled(error)) {setError(error); setChanged(error instanceof ApiError && error.status === 409);}});
-    return () => controller.abort();
-  }, [requestNumber]);
+      .catch(error => {if (!controller.signal.aborted && !cancelled(error)) {setError(error); setChanged(error instanceof ApiError && error.status === 409);}});
+    return () => {controller.abort(); documentAbort.current?.abort();};
+  }, [requestNumber,api,api.epoch,api.revision,object.entityUid,object.entityRevision,object.installationContextId,context?.hierarchyRevision,endpointPrefix]);
 
   async function open(item: Evidence) {
     close(); setChosen(item); setReading(true); setError(null); setZoom(1);
     const controller = new AbortController(); documentAbort.current = controller;
     try {
-      const blob = await api.request<Blob>('/api/workbench/evidence/content', {...body,
+      const blob = await api.request<Blob>(`${endpointPrefix}/content`, {...body,
         evidenceRef: item.evidenceRef, expectedSourceRevision: item.sourceRevision,
         expectedContentSha256: item.contentSha256}, controller.signal, true);
       if (!active.current || controller.signal.aborted) return;

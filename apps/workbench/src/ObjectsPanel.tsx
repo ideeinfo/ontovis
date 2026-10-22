@@ -52,12 +52,14 @@ function Category({api, group, query, scope, snapshot, seed, selected, onSelect,
   const [loading,setLoading] = useState(false), [error,setError] = useState<unknown>(null);
   useEffect(()=>{
     if (!open || loaded.current?.cursor===cursor && loaded.current.attempt===attempt) return;
-    const controller = new AbortController(); setLoading(true); setError(null);
+    const controller = new AbortController(),epoch=api.epoch,revision=api.revision;
+    const active=()=>!controller.signal.aborted&&api.epoch===epoch&&api.revision===revision;
+    setLoading(true); setError(null);
     api.request<GroupedCatalogView>('/api/workbench/catalog', {q:query,scope,groupBy:'classification',categoryKey:group.key,
       expectedSnapshotRevision:snapshot,cursor}, controller.signal)
-      .then(value=>{loaded.current={cursor,attempt};setView(previous=>({...value,items:cursor ? [...(previous?.items||[]),...value.items] : value.items}));})
-      .catch(value=>{if (!cancelled(value)) setError(value);})
-      .finally(()=>{if(!controller.signal.aborted)setLoading(false);});
+      .then(value=>{if(active()){loaded.current={cursor,attempt};setView(previous=>({...value,items:cursor ? [...(previous?.items||[]),...value.items] : value.items}));}})
+      .catch(value=>{if (active()&&!cancelled(value)) setError(value);})
+      .finally(()=>{if(active())setLoading(false);});
     return ()=>controller.abort();
   },[open,cursor,attempt]);
   return <section className="cw-category"><button type="button" className="cw-category-heading" aria-expanded={open} aria-controls={id} onClick={()=>setOpen(value=>!value)}>
@@ -70,7 +72,7 @@ function Category({api, group, query, scope, snapshot, seed, selected, onSelect,
   </div>}</section>;
 }
 
-function Catalog({api, query, scope, selected, onSelect}: {
+export function Catalog({api, query, scope, selected, onSelect}: {
   api: WorkbenchApi; query:string; scope:string; selected:string; onSelect:(uid:string) => void;
 }) {
   const {t, locale} = usePreferences();
@@ -78,11 +80,13 @@ function Catalog({api, query, scope, selected, onSelect}: {
   const [loading, setLoading] = useState(true), [attempt,setAttempt] = useState(0);
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
-    const controller = new AbortController(); setView(null); setLoading(true); setError(null);
+    const controller = new AbortController(),epoch=api.epoch,revision=api.revision;
+    const active=()=>!controller.signal.aborted&&api.epoch===epoch&&api.revision===revision;
+    setView(null); setLoading(true); setError(null);
     api.request<GroupedCatalogView>('/api/workbench/catalog', {q:query,scope,groupBy:'classification'}, controller.signal)
-      .then(value=>{if (!Array.isArray(value.groups)) throw new ApiError(503,'SOURCE_UNAVAILABLE');setView(value);})
-      .catch(value => {if (!cancelled(value)) setError(value);})
-      .finally(() => {if (!controller.signal.aborted) setLoading(false);});
+      .then(value=>{if (!active())return;if (!Array.isArray(value.groups)) throw new ApiError(503,'SOURCE_UNAVAILABLE');setView(value);})
+      .catch(value => {if (active()&&!cancelled(value)) setError(value);})
+      .finally(() => {if (active()) setLoading(false);});
     return () => controller.abort();
   }, [attempt]);
   return <div className="cw-catalog-groups">

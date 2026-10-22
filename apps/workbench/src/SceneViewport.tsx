@@ -6,8 +6,10 @@ import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
 import {usePreferences} from './Preferences';
 import {IconBtn} from './Primitives';
 import {SceneResourceCache,cloneModel} from './sceneResourceCache';
+import {sceneModelHit,type SceneComponentPick} from './sceneComponentPick';
 import {toDisplay,trueHeadingToThreeYaw} from './sceneTransforms';
 import {sceneViewportMessage} from './sceneViewportMessages';
+import {componentFocusCurrent,componentFocusKey,componentFocusView,prepareComponentFocus,type ComponentFocusRequest,type ComponentFocusTarget} from './sceneComponentFocus';
 import type {ProjectModelVersion,TerrainVersion} from './resourceTypes';
 import type {EditableSceneSnapshot,ModelResourceRef,SceneModelInstance,SceneView,Vector3} from './sceneTypes';
 import './sceneViewport.css';
@@ -17,13 +19,15 @@ export interface SceneViewportProps {
   selectedId:string|null;editing:boolean;disabled?:boolean;personalVisibility:Record<string,boolean>;
   terrainVisible:boolean;pendingPlacement:boolean;previewModel?:ProjectModelVersion|null;
   viewCommand?:{token:number;view:SceneView};focusRequest?:{token:number;instanceId:string|null};
+  componentFocus?:ComponentFocusRequest;
+  componentPickingInstanceId?:string|null;onComponentPick?:(pick:SceneComponentPick)=>void;
   onSelect:(id:string|null)=>void;onPoint:(point:Vector3)=>void;
   onMove:(id:string,point:Vector3)=>Promise<boolean>;onViewChange:(view:SceneView)=>void;
   onResourceDrop?:(ref:{modelAssetId:string;modelVersionId:string},point:Vector3)=>void;
   onError?:(error:unknown)=>void;
 }
 type Runtime={sync:()=>void;appearance:()=>void;fit:()=>void;focus:(id:string|null)=>void;
-  setView:(view:SceneView)=>void;zoom:(factor:number)=>void};
+  componentFocus:()=>void;setView:(view:SceneView)=>void;zoom:(factor:number)=>void};
 type Entry={root:THREE.Group;key:string};
 class ViewportInteractionError extends Error {
   readonly messageKey:'moveFailed'|'dropInvalid';
@@ -68,6 +72,9 @@ export function SceneViewport(props:SceneViewportProps) {
     const sun=new THREE.DirectionalLight(0xffe4bd,2.5);sun.position.set(-100,140,80);scene.add(sun);
     const grid=new THREE.GridHelper(2000,40,0x718174,0xa5b29f);grid.position.y=-.02;scene.add(grid);
     const selectedBox=new THREE.Box3Helper(new THREE.Box3(),0x007e6d);selectedBox.visible=false;scene.add(selectedBox);
+    const componentBox=new THREE.Box3Helper(new THREE.Box3(),0x007e6d);componentBox.visible=false;scene.add(componentBox);
+    (componentBox.material as THREE.LineBasicMaterial).depthTest=false;
+    (componentBox.material as THREE.LineBasicMaterial).depthWrite=false;componentBox.renderOrder=1;
     const terrainMaterial=new THREE.MeshStandardMaterial({color:0x859b6c,roughness:1,side:THREE.FrontSide});
     const pixels=new Uint8Array(64*64*4);
     for(let index=0;index<64*64;index++){
@@ -82,6 +89,8 @@ export function SceneViewport(props:SceneViewportProps) {
     let generation=0,frame=0,hiddenAt:number|null=null,loadingAbort:AbortController|null=null;
     let focusPending:string|null|undefined;
     let tween:{start:number;from:SceneView;to:SceneView}|null=null;
+    let componentTween=false,lastComponentRequest:string|null=null;
+    let componentTarget:ComponentFocusTarget|null=null,componentPending:ComponentFocusTarget|null=null,componentFocused:ComponentFocusTarget|null=null;
     let pointer:{x:number;y:number;id:number}|null=null;
     let drag:{id:string;root:THREE.Group;original:THREE.Vector3;offset:THREE.Vector3;pointerId:number}|null=null;
     let movePending=false;
@@ -97,14 +106,42 @@ export function SceneViewport(props:SceneViewportProps) {
         const progress=Math.min(1,(performance.now()-tween.start)/900),ease=progress*progress*(3-2*progress);
         camera.position.lerpVectors(new THREE.Vector3(...tween.from.eye),new THREE.Vector3(...tween.to.eye),ease);
         orbit.target.lerpVectors(new THREE.Vector3(...tween.from.target),new THREE.Vector3(...tween.to.target),ease);orbit.update();
-        if(progress>=1){tween=null;emit();}
+        if(progress>=1){tween=null;componentTween=false;emit();}
       }
       renderer.render(scene,camera);if(tween)request();
     };
-    const moveView=(target:SceneView,animated=true)=>{
+    const moveView=(target:SceneView,animated=true,component=false)=>{
+      componentTween=component;
       if(animated&&!matchMedia('(prefers-reduced-motion: reduce)').matches)tween={start:performance.now(),from:view(camera,orbit),to:structuredClone(target)};
-      else {tween=null;camera.position.fromArray(target.eye);orbit.target.fromArray(target.target);orbit.update();emit();}
+      else {tween=null;componentTween=false;camera.position.fromArray(target.eye);orbit.target.fromArray(target.target);orbit.update();emit();}
       request();
+    };
+    const focusContext=()=>({snapshot:current.current.snapshot,selectedId:current.current.selectedId,
+      modelRefs:current.current.modelRefs,personalVisibility:current.current.personalVisibility,previewActive:!!current.current.previewModel});
+    const clearComponentFocus=()=>{
+      if(componentTween)tween=null;componentTween=false;
+      componentTarget=null;componentPending=null;componentFocused=null;componentBox.visible=false;
+    };
+    const componentHighlight=()=>{
+      const state=current.current,key=componentFocusKey(state.componentFocus);
+      if(key!==lastComponentRequest){
+        clearComponentFocus();lastComponentRequest=key;
+        componentTarget=prepareComponentFocus(state.componentFocus,focusContext());componentPending=componentTarget;
+        if(componentTarget)focusPending=undefined;
+      }
+      if(componentTarget&&!componentFocusCurrent(componentTarget,state.componentFocus,focusContext()))clearComponentFocus();
+      const entry=componentTarget?entries.get(componentTarget.instanceId):undefined;
+      if(componentPending&&!resourcesLoading&&entry?.key===componentPending.modelKey&&entry.root.visible&&!preview){
+        const destination=componentFocusView(componentPending.bounds,view(camera,orbit),camera.fov,camera.aspect);
+        if(destination){componentFocused=componentPending;moveView(destination,true,true);}
+        componentPending=null;
+      }
+      componentBox.visible=!!componentFocused&&!!entry&&entry.key===componentFocused.modelKey&&entry.root.visible&&!preview;
+      if(componentFocused&&componentBox.visible){
+        componentBox.box.min.fromArray(componentFocused.bounds[0]);componentBox.box.max.fromArray(componentFocused.bounds[1]);
+        componentBox.updateMatrixWorld(true);
+      }
+      return componentTarget!==null;
     };
     const bounds=(id?:string|null)=>{
       if(preview)return new THREE.Box3().setFromObject(preview);
@@ -124,7 +161,8 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const highlight=()=>{
       const entry=current.current.selectedId?entries.get(current.current.selectedId):null;
-      selectedBox.visible=!!entry&&entry.root.visible&&!preview;
+      const componentActive=componentHighlight();
+      selectedBox.visible=!componentActive&&!!entry&&entry.root.visible&&!preview;
       if(entry&&selectedBox.visible){entry.root.updateMatrixWorld(true);selectedBox.box.setFromObject(entry.root);selectedBox.updateMatrixWorld(true);}
       request();
     };
@@ -136,6 +174,7 @@ export function SceneViewport(props:SceneViewportProps) {
       if(terrain)terrain.visible=state.terrainVisible&&!preview;
       const color=getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d';
       const material=selectedBox.material as THREE.LineBasicMaterial;material.color.set(color);
+      (componentBox.material as THREE.LineBasicMaterial).color.set(color);
       renderer.domElement.setAttribute('aria-label',sceneViewportMessage(state.locale,'view'));
       const dusk=state.snapshot.defaults.lighting==='dusk';
       sun.color.set(dusk?0xffca93:0xfff4df);sun.intensity=dusk?1.8:2.5;
@@ -160,6 +199,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const sync=async()=>{
       const ticket=++generation;loadingAbort?.abort();loadingAbort=new AbortController();const signal=loadingAbort.signal;
       const state=current.current;cancelDrag();resourcesLoading=true;setReading(true);setError(null);
+      highlight();
       if(state.snapshot.coordinateFrame.frameRevision!==lastFrameRevision){
         lastFrameRevision=state.snapshot.coordinateFrame.frameRevision;
         if(restoreView)restoreView=structuredClone(state.snapshot.initialView);else moveView(state.snapshot.initialView);
@@ -240,18 +280,20 @@ export function SceneViewport(props:SceneViewportProps) {
       }
       return ray.ray.intersectPlane(plane,new THREE.Vector3());
     };
-    const hitId=(x:number,y:number)=>{
+    const hitModel=(x:number,y:number)=>{
       prepareRay(x,y);
-      for(const hit of ray.intersectObject(models,true)){
-        let node:THREE.Object3D|null=hit.object,id:string|null=null,visible=true;
-        while(node&&node!==models){visible&&=node.visible;if(typeof node.userData.sceneModelInstanceId==='string')id=node.userData.sceneModelInstanceId;node=node.parent;}
-        if(visible&&id)return id;
+      const active=current.current.componentPickingInstanceId;
+      const target=active?entries.get(active)?.root:models;if(!target)return null;
+      for(const hit of ray.intersectObject(target,true)){
+        const result=sceneModelHit(hit.object,models);if(result)return result;
       }
       return null;
     };
+    const hitId=(x:number,y:number)=>hitModel(x,y)?.sceneModelInstanceId??null;
     const down=(event:PointerEvent)=>{
-      if(event.button!==0)return;pointer={x:event.clientX,y:event.clientY,id:event.pointerId};
-      const state=current.current;if(state.disabled||state.previewModel||!state.editing||state.pendingPlacement||movePending)return;
+      if(event.button!==0)return;tween=null;componentTween=false;componentPending=null;
+      pointer={x:event.clientX,y:event.clientY,id:event.pointerId};
+      const state=current.current;if(state.disabled||state.previewModel||!state.editing||state.pendingPlacement||movePending||state.componentPickingInstanceId)return;
       const id=hitId(event.clientX,event.clientY),item=state.snapshot.instances.find(value=>value.sceneModelInstanceId===id);
       const entry=id?entries.get(id):null,point=groundPoint(event.clientX,event.clientY);
       if(!id||!item||!entry||item.positionLocked||!point)return;
@@ -284,6 +326,11 @@ export function SceneViewport(props:SceneViewportProps) {
         return;
       }
       const state=current.current;if(!clicked||state.disabled||state.previewModel)return;
+      if(state.componentPickingInstanceId){
+        const hit=hitModel(event.clientX,event.clientY);
+        if(hit?.sceneModelInstanceId===state.componentPickingInstanceId&&hit.component)state.onComponentPick?.(hit.component);
+        return;
+      }
       if(state.editing&&state.pendingPlacement){const point=groundPoint(event.clientX,event.clientY);if(point)state.onPoint(point.toArray() as Vector3);}
       else state.onSelect(hitId(event.clientX,event.clientY));
     };
@@ -307,20 +354,23 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const resize=new ResizeObserver(()=>{const rect=element.getBoundingClientRect();camera.aspect=Math.max(1,rect.width)/Math.max(1,rect.height);
       camera.updateProjectionMatrix();renderer.setSize(Math.max(1,rect.width),Math.max(1,rect.height));request();});resize.observe(element);
-    const orbitStart=()=>{tween=null;};orbit.addEventListener('change',request);orbit.addEventListener('start',orbitStart);orbit.addEventListener('end',emit);
+    const orbitStart=()=>{tween=null;componentTween=false;componentPending=null;};orbit.addEventListener('change',request);orbit.addEventListener('start',orbitStart);orbit.addEventListener('end',emit);
     const canvas=renderer.domElement;
     canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',motion);canvas.addEventListener('pointerup',up);
     canvas.addEventListener('pointercancel',cancelDrag);canvas.addEventListener('keydown',escape);canvas.addEventListener('drop',drop);canvas.addEventListener('dragover',dragover);
     document.addEventListener('visibilitychange',visible);
-    runtime.current={sync:()=>void sync(),appearance,fit:()=>{if(resourcesLoading)focusPending=null;else fit();},focus:id=>{if(resourcesLoading||id&&!entries.has(id))focusPending=id;else fit(id);},
+    runtime.current={sync:()=>void sync(),appearance,componentFocus:highlight,
+      fit:()=>{clearComponentFocus();if(resourcesLoading)focusPending=null;else fit();highlight();},
+      focus:id=>{clearComponentFocus();if(resourcesLoading||id&&!entries.has(id))focusPending=id;else fit(id);highlight();},
       setView:target=>{if(restoreView)restoreView=structuredClone(target);else moveView(target);},
-      zoom:factor=>{tween=null;camera.position.sub(orbit.target).multiplyScalar(factor).add(orbit.target);request();emit();}};
+      zoom:factor=>{tween=null;componentTween=false;componentPending=null;camera.position.sub(orbit.target).multiplyScalar(factor).add(orbit.target);request();emit();}};
     moveView(current.current.snapshot.initialView,false);void sync();
     return ()=>{
       disposed=true;++generation;loadingAbort?.abort();cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',visible);
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
       orbit.dispose();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
+      componentBox.geometry.dispose();disposeMaterial(componentBox.material);
       grid.geometry.dispose();disposeMaterial(grid.material);terrainMaterial.dispose();grass.dispose();scene.clear();
       renderer.dispose();renderer.forceContextLoss();canvas.remove();runtime.current=null;
     };
@@ -329,6 +379,7 @@ export function SceneViewport(props:SceneViewportProps) {
   useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.personalVisibility,props.terrainVisible,props.disabled,props.editing,props.pendingPlacement,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
   useEffect(()=>{if(props.focusRequest)runtime.current?.focus(props.focusRequest.instanceId);},[props.focusRequest?.token]);
+  useEffect(()=>{runtime.current?.componentFocus();},[props.componentFocus,props.snapshot,props.modelRefs,props.selectedId,props.personalVisibility,props.previewModel]);
   return <section className="ov-scene-viewport" aria-label={message('view')}>
     <div className="ov-scene-viewport-stage"><div ref={mount} className="ov-scene-viewport-canvas"/>
       {(reading||!!error) && <div className="ov-scene-viewport-state" role={error?'alert':'status'}>{error?errorMessage:message('loading')}

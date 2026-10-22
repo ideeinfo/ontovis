@@ -1,5 +1,6 @@
 import {usePreferences} from './Preferences';
 import {sceneText, type SceneMessageKey} from './sceneMessages';
+import {sceneEngineeringText} from './sceneEngineeringMessages';
 import type {EditableSceneSnapshot, SceneCheck} from './sceneTypes';
 import './replacementImpact.css';
 
@@ -51,6 +52,7 @@ export function ReplacementImpact({result,snapshot}:Props) {
       <table className="ov-replacement-comparison"><thead><tr><th scope="col">{t('impactProperty')}</th><th scope="col">{t('impactOld')}</th><th scope="col">{t('impactNew')}</th></tr></thead><tbody>
         {metricRows.map(([label,before,after])=><tr key={label}><th scope="row">{t(label)}</th><td>{before}</td><td>{after}</td></tr>)}
       </tbody></table>
+      {result.validation.bindingIssues?.some(issue=>issue.kind==='model_version_changed'&&issue.sceneModelInstanceId===impact?.sceneModelInstanceId)&&<p className="ov-replacement-caption">{sceneEngineeringText(locale,'pendingLinks')} · {result.validation.bindingIssues.filter(issue=>issue.kind==='model_version_changed'&&issue.sceneModelInstanceId===impact?.sceneModelInstanceId).length}</p>}
       <details className="ov-replacement-details"><summary>{t('impactVersions')}</summary><dl className="ov-replacement-facts">
         <dt>{t('impactOldVersion')}</dt><dd className="ov-replacement-identity">{text(old?.modelVersionId)||unknown}</dd>
         <dt>{t('impactNewVersion')}</dt><dd className="ov-replacement-identity">{text(next?.modelVersionId)||unknown}</dd>

@@ -1,10 +1,12 @@
-/** Current scene HTTP slice: unbound placements only; no engineering write API. */
+import type {EngineeringExpectation, EngineeringRef, SceneComponentBinding, SceneRootBinding} from './sceneEngineeringTypes';
+
+/** Scene snapshots carry instance-scoped references; the server verifies engineering facts. */
 export type Vector2 = [number, number];
 export type Vector3 = [number, number, number];
 export type Bounds3 = [Vector3, Vector3];
 export type KnownVerticalDatum = 'EGM2008' | 'EGM96' | 'WGS84_ELLIPSOIDAL';
 export type VerticalDatum = KnownVerticalDatum | 'UNKNOWN_RELATIVE';
-export type SceneScope = 'local_plane_unbound' | 'projected_site_unbound';
+export type SceneScope = 'local_plane_unbound' | 'projected_site_unbound' | 'local_plane_bound' | 'projected_site_bound' | 'project_scenes';
 
 export interface LocalFrame {
   mode: 'local_plane'; frameRevision: string; origin: [0, 0, 0];
@@ -47,7 +49,7 @@ export interface GeographicPlacement {position: GeographicPosition; height: Grou
 interface InstanceBase {
   sceneModelInstanceId: string; displayName: string; modelVersionId: string;
   visible: boolean; positionLocked: boolean;
-  rootBinding: null; componentBindings: never[];
+  rootBinding: SceneRootBinding|null; componentBindings: SceneComponentBinding[];
 }
 export interface LocalSceneModelInstance extends InstanceBase {placement: LocalPlacement}
 export interface GeographicSceneModelInstance extends InstanceBase {placement: GeographicPlacement}
@@ -87,8 +89,20 @@ export interface AnchorImpact {
   kind: 'first_geographic_anchor'; instanceIds: string[]; oldFrameRevision: string;
   newFrameRevision: string; explicitConfirmationRequired: true;
 }
+export interface RootBindingChange {
+  sceneModelInstanceId:string;from:EngineeringRef|null;to:EngineeringRef|null;
+  clearOldComponentBindings:true;reviewedRemovedBindingsDigest:string;
+}
+export interface RootBindingImpact extends RootBindingChange {removedBindings:SceneComponentBinding[]}
+export type BindingIssue={sceneModelInstanceId:string;objectRef:EngineeringRef;installationContextId:string;blocking:true} & (
+  {kind:'model_version_changed';previousModelVersionId:string;previousComponentKeys:string[];sourceSceneRevision:string;
+    code:'COMPONENT_MISSING'|'MIGRATION_REQUIRED'|'SOURCE_ID_AMBIGUOUS'} |
+  {kind:'engineering_changed';expectedEntityRevision:string;expectedHierarchyRevision:string;
+    code:'IDENTITY_CHANGED'|'ENTITY_CHANGED'|'PARENT_CHAIN_CHANGED'}
+);
 export interface GeometryValidation {
-  scope: SceneScope; bindingIssues: never[];
+  scope: SceneScope; bindingIssues: BindingIssue[];
+  engineeringExpectations?:EngineeringExpectation[];rootBindingChanges?:RootBindingChange[];rootBindingImpact?:RootBindingImpact[];
   geometrySummary?: GeometrySummary; displayPlacements?: DisplayPlacement[];
   terrainDisplayTransform?: TerrainDisplayTransform; anchorTransform?: AnchorTransform; impact?: unknown;
 }
@@ -107,14 +121,14 @@ export interface HeightProvenance {
   previousTerrainRef?: unknown; previousAnchorHeight?: unknown;
 }
 export interface SceneCapabilities {
-  storageScope: SceneScope; supportsGeographic: boolean; supportsEngineeringBindings: false;
+  storageScope: SceneScope; supportsGeographic: boolean; supportsEngineeringBindings: boolean;
   maxInstances: number; maxSnapshotBytes: number; maxCheckJsonBytes: number;
   scope: SceneScope; localPlaneUnbound: true; canRead: true; canWrite: boolean;
   existingUploadedModelVersionsOnly: true; projectModelResources: true; canPreflightGeographic: boolean;
 }
 export interface SceneLimits {
   maxSaveJsonBytes: number; maxReadJsonBytes: number; maxCheckJsonBytes: number;
-  maxInstances: number; maxComponentBindings: 0; maxNameCharacters: number; maxLocalCoordinateM: number;
+  maxInstances: number; maxComponentBindings: number; maxNameCharacters: number; maxLocalCoordinateM: number;
 }
 export interface SceneResponse {sessionRevision: string; projectName?: string; capabilities: SceneCapabilities; limits: SceneLimits}
 export interface SceneSummary {
@@ -127,12 +141,13 @@ export interface SceneOpen extends SceneResponse {
   sceneId: string; projectCode: string; sceneRevision: string; headRevision: string; savedAt: string;
   snapshot: EditableSceneSnapshot; resourceRefs: ModelResourceRef[]; validation: GeometryValidation;
   heightProvenance?: HeightProvenance[]; terrainRefs?: TerrainResourceRef[];
+  reviewedEngineering?:EngineeringExpectation[];rootBindingChanges?:RootBindingChange[];rootBindingImpact?:RootBindingImpact[];
 }
 export interface SceneHead extends SceneResponse {sceneId: string; headRevision: string; updateAvailable: boolean}
 export interface SpatialChange {kind: 'anchor' | 'model' | 'terrain'; receipt: string}
 export interface SceneSaveRequest {
   sceneId: string; expectedSceneRevision: string; clientRequestId: string; snapshot: EditableSceneSnapshot;
-  reviewedEngineering: never[]; rootBindingChanges: never[]; spatialChange?: SpatialChange;
+  reviewedEngineering: EngineeringExpectation[]; rootBindingChanges: RootBindingChange[]; spatialChange?: SpatialChange;
 }
 export interface SceneSave extends SceneResponse {
   sceneId: string; sceneRevision: string; headRevision: string; savedAt: string;
@@ -154,4 +169,5 @@ export interface SceneCheck extends SceneResponse {
   sceneId: string; baseSceneRevision: string; proposedSnapshot: EditableSceneSnapshot;
   validation: GeometryValidation; heightProvenance: HeightProvenance[];
   resourceRefs: ResourceRefs; spatialChange: SpatialChange | null;
+  reviewedEngineering?:EngineeringExpectation[];rootBindingChanges?:RootBindingChange[];rootBindingImpact?:RootBindingImpact[];
 }

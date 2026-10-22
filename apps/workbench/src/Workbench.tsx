@@ -96,11 +96,11 @@ export function Workbench() {
       document.removeEventListener('visibilitychange',visible); api.invalidate();};
   }, []);
   useEffect(() => {
-    if (session?.state !== 'active'||page==='scene') {setLoading(false);return;}
+    if (session?.state !== 'active'||page==='scene') {setLoading(false);if(page==='scene')setError(null);return;}
     const controller = new AbortController(); setLoading(true); setMessage(null); setError(null);
     api.request<ContextView>('/api/workbench/context', {}, controller.signal)
-      .then(value => {setContext(value);setProjectName(value.projectName); if (value.root) setSelection({uid:value.root.entityUid, scope:'equipment'});})
-      .catch(value => {if (!cancelled(value)) {setContext(null); setError(value);}})
+      .then(value => {if(!controller.signal.aborted){setContext(value);setProjectName(value.projectName); if (value.root) setSelection({uid:value.root.entityUid, scope:'equipment'});}})
+      .catch(value => {if (!controller.signal.aborted&&!cancelled(value)) {setContext(null); setError(value);}})
       .finally(() => {if (!controller.signal.aborted) setLoading(false);});
     return () => controller.abort();
   }, [session?.state, session?.sessionRevision, reload,page==='scene']);
@@ -110,7 +110,7 @@ export function Workbench() {
     const controller = new AbortController(); setError(null);
     api.request<ObjectView>('/api/workbench/object', {entityUid:selection.uid, scope:selection.scope,
       expectedHierarchyRevision:context.context.hierarchyRevision}, controller.signal)
-      .then(setDetail).catch(value => {if (!cancelled(value)) {
+      .then(value=>{if(!controller.signal.aborted)setDetail(value);}).catch(value => {if (!controller.signal.aborted&&!cancelled(value)) {
         if (value instanceof ApiError && value.status === 409) {setContext(null); setSelection({uid:'',scope:'equipment'});}
         setError(value);
       }});

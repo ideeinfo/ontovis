@@ -22,6 +22,7 @@ const MAX_VERTICES=501*501;
 const MAX_TRIANGLES=500_000;
 const SAMPLING_RULE='mesh-triangle-tr-bl-cell-mask-v2';
 const parsedScenes=new WeakMap<THREE.Object3D,THREE.Group[]>();
+const sourceNodeIndices=new WeakMap<THREE.Object3D,number>();
 const shaValid=(value:unknown):value is string=>typeof value==='string' && /^[a-f0-9]{64}$/.test(value);
 const text=(value:unknown):value is string=>typeof value==='string' && value.length>0 && value.length<=200;
 const integer=(value:unknown):value is number=>typeof value==='number' && Number.isSafeInteger(value);
@@ -61,7 +62,17 @@ function embeddedGlb(bytes:ArrayBuffer) {
 async function parseModel(bytes:ArrayBuffer) {
   const manager=new THREE.LoadingManager();
   manager.setURLModifier(url=>{requireValue(url.startsWith('blob:'),'UNSUPPORTED_MODEL',422);return url;});
-  const gltf=await new GLTFLoader(manager).parseAsync(bytes,'');
+  const loader=new GLTFLoader(manager);
+  loader.register(parser=>({name:'ONTOVisNodeIndexCapture',loadNode(index){
+    return parser.loadNode(index).then(node=>{
+      // loadScene later prunes parser.associations, including nodes from other
+      // scenes. Capture the actual association before that pruning takes place.
+      const actual=parser.associations.get(node)?.nodes;
+      requireValue(integer(actual)&&actual===index,'INVALID_MODEL',422);
+      sourceNodeIndices.set(node,actual);return node;
+    });
+  }}));
+  const gltf=await loader.parseAsync(bytes,'');
   parsedScenes.set(gltf.scene,gltf.scenes);return gltf.scene;
 }
 
@@ -86,10 +97,39 @@ function calibrationMatrix(version:ProjectModelVersion) {
 export function cloneModel(resource:CachedModel,id:string,options:{calibrated?:boolean}={}) {
   requireValue(text(id),'INVALID_REQUEST',422);
   const wrapper=new THREE.Group();wrapper.name=`instance:${id}`;wrapper.userData.sceneModelInstanceId=id;
+  wrapper.userData.ontoVisModelVersionId=resource.version.modelVersionId;
   const coordinate=new THREE.Group();coordinate.name='model-calibration';
   if(options.calibrated!==false) {coordinate.matrix.copy(calibrationMatrix(resource.version));coordinate.matrixAutoUpdate=false;}
   const clone=resource.scene.clone(true);
-  clone.traverse(node=>{node.userData.sceneModelInstanceId=id;});
+  const components=resource.version.components??[],byNode=new Map<number,string>(),keys=new Set<string>();
+  requireValue(Array.isArray(components));
+  for(const component of components){
+    requireValue(component&&typeof component.componentKey==='string'&&component.componentKey.length>0
+      &&component.componentKey.length<=512&&!keys.has(component.componentKey)&&Array.isArray(component.nodeIndices));
+    keys.add(component.componentKey);
+    for(const index of component.nodeIndices){
+      requireValue(integer(index)&&index>=0&&(!byNode.has(index)||byNode.get(index)===component.componentKey));
+      byNode.set(index,component.componentKey);
+    }
+  }
+  const originals:THREE.Object3D[]=[],copies:THREE.Object3D[]=[];
+  resource.scene.traverse(node=>originals.push(node));clone.traverse(node=>copies.push(node));
+  requireValue(originals.length===copies.length);
+  copies.forEach((node,index)=>{
+    node.userData.sceneModelInstanceId=id;node.userData.ontoVisModelVersionId=resource.version.modelVersionId;
+    delete node.userData.ontoVisComponentKey;delete node.userData.ontoVisNodeIndex;
+    let original:THREE.Object3D|null=originals[index];
+    while(original){
+      const sourceIndex=sourceNodeIndices.get(original);
+      if(sourceIndex!==undefined){
+        node.userData.ontoVisNodeIndex=sourceIndex;
+        const key=byNode.get(sourceIndex);
+        if(key!==undefined)node.userData.ontoVisComponentKey=key;
+        break;
+      }
+      original=original.parent;
+    }
+  });
   coordinate.add(clone);wrapper.add(coordinate);return wrapper;
 }
 

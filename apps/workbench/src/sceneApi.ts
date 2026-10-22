@@ -5,6 +5,8 @@ import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelReq
   ProjectModel, ProjectModelCatalog, ProjectModelsRequest, ProjectModelVersion, ProjectModelWrite,
   TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
 
+import type {SceneObjectChildren, SceneObjectContext, SceneObjectDetailRequest, SceneLocation, SceneLocationRequest} from './sceneEngineeringTypes';
+
 const ROOT = '/api/workbench/';
 
 /** Fixed scene/resource paths over the existing session and cancellation boundary. */
@@ -33,6 +35,20 @@ export class SceneApi {
   }
   save(body: SceneSaveRequest, signal?: AbortSignal) {
     return this.api.request<SceneSave>(ROOT + 'scenes/save', body, signal);
+  }
+  locate(body:SceneLocationRequest, signal?:AbortSignal) {
+    return this.api.request<SceneLocation&{sessionRevision:string}>(ROOT+'scenes/locate',body,signal);
+  }
+  objectContext(entityUid:string, expectedEntityRevision?:string, signal?:AbortSignal) {
+    return this.api.request<SceneObjectContext>(ROOT+'objects/context',
+      {entityUid,...(expectedEntityRevision===undefined?{}:{expectedEntityRevision})},signal);
+  }
+  objectDetail(body:SceneObjectDetailRequest, signal?:AbortSignal) {
+    return this.api.request<SceneObjectContext>(ROOT+'objects/detail',body,signal);
+  }
+  objectChildren(body:Omit<SceneObjectDetailRequest,'expectedEntityRevision'|'installationContextId'|'expectedHierarchyRevision'>&
+    {installationContextId:string;expectedHierarchyRevision:string;cursor?:string|null}, signal?:AbortSignal) {
+    return this.api.request<SceneObjectChildren>(ROOT+'objects/children',body,signal);
   }
   models(options: ProjectModelsRequest = {}, signal?: AbortSignal) {
     return this.api.request<ProjectModelCatalog>(ROOT + 'resources/models', options, signal);

@@ -4,6 +4,7 @@ import test from 'node:test';
 import * as THREE from 'three';
 import {WorkbenchApi} from '../src/api.ts';
 import {SceneResourceCache,cloneModel,decodeTerrain} from '../src/sceneResourceCache.ts';
+import {sceneModelHit} from '../src/sceneComponentPick.ts';
 
 const digest=bytes=>createHash('sha256').update(new Uint8Array(bytes)).digest('hex');
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
@@ -37,9 +38,11 @@ function modelFixture(bytes=glb()) {
 }
 const meshList=root=>{const result=[];root.traverse(node=>{if(node instanceof THREE.Mesh)result.push(node);});return result;};
 const rejected=(code,callback)=>assert.rejects(callback,error=>error.code===code);
+const component=(key,nodeIndices)=>({componentKey:key,displayName:key,nodeIndices,geometryQuality:'source_candidate',bounds:[[0,0,0],[1,1,1]]});
 
 test('20 actual GLB instances share one source decode and GPU data but preserve transform/pick identity',async()=>{
   const f=modelFixture(),cache=new SceneResourceCache(f.api,{source:f.source});
+  f.version.components=[component('fixed-A',[0]),component('fixed-B',[1])];
   const resources=await Promise.all(Array.from({length:20},()=>cache.model(f.ref)));
   assert.ok(resources.every(value=>value===resources[0]));assert.equal(f.calls.model,1);assert.equal(f.calls.modelContent,1);
   const instances=resources.map((value,index)=>cloneModel(value,`instance-${index}`));
@@ -48,6 +51,9 @@ test('20 actual GLB instances share one source decode and GPU data but preserve 
   for(let index=0;index<20;index++) {
     assert.equal(instances[index].userData.sceneModelInstanceId,`instance-${index}`);
     assert.equal(meshes[index][0].userData.sceneModelInstanceId,`instance-${index}`);
+    assert.equal(meshes[index][0].userData.ontoVisComponentKey,'fixed-A');
+    assert.equal(meshes[index][1].userData.ontoVisComponentKey,'fixed-B');
+    assert.equal(meshes[index][0].userData.ontoVisModelVersionId,f.version.modelVersionId);
     assert.equal(meshes[index][0].geometry,sourceMeshes[0].geometry);assert.equal(meshes[index][0].material,sourceMeshes[0].material);
     instances[index].position.x=index*5;
   }
@@ -57,6 +63,66 @@ test('20 actual GLB instances share one source decode and GPU data but preserve 
   const actual=new THREE.Vector3(0,0,0).applyMatrix4(meshes[0][0].matrixWorld);
   assert.ok(actual.distanceTo(new THREE.Vector3(103,-2,10))<1e-8,'Calibration must precede independent instance yaw/position');
   cache.dispose();
+});
+
+test('actual node associations distinguish identical names and one mesh used by different GLTF nodes',async()=>{
+  const f=modelFixture(glb(document=>{document.nodes.forEach(node=>node.name='same name');}));
+  f.version.components=[component('fixed-zero',[0]),component('fixed-one',[1])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref),root=cloneModel(resource,'instance-A');
+  const boundary=new THREE.Group();boundary.add(root);const meshes=meshList(root);
+  assert.equal(meshes[0].geometry,meshes[1].geometry);assert.equal(meshes[0].material,meshes[1].material);
+  assert.deepEqual(meshes.map(mesh=>sceneModelHit(mesh,boundary)?.component?.componentKey),['fixed-zero','fixed-one']);
+  assert.ok(meshes.every(mesh=>sceneModelHit(mesh,boundary)?.component?.sceneModelInstanceId==='instance-A'));
+  cache.dispose();
+});
+
+test('multi-scene default scene keeps real associations captured before loader pruning',async()=>{
+  const f=modelFixture(glb(document=>{document.scenes=[{nodes:[0]},{nodes:[1]}];document.scene=0;}));
+  f.version.components=[component('active-first-scene',[0])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref),clone=cloneModel(resource,'first-scene');
+  assert.equal(meshList(clone).length,1);
+  assert.equal(meshList(clone)[0].userData.ontoVisComponentKey,'active-first-scene');
+  assert.equal(meshList(clone)[0].userData.ontoVisNodeIndex,0);
+  cache.dispose();
+});
+
+test('all primitive meshes use their actual containing GLTF node and directory grouping can cover several nodes',async()=>{
+  const f=modelFixture(glb(document=>{document.meshes[0].primitives.push({...document.meshes[0].primitives[0]});}));
+  f.version.components=[component('fixed-group',[0,1])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref),root=cloneModel(resource,'group');
+  const meshes=meshList(root);assert.equal(meshes.length,4);
+  assert.deepEqual(meshes.map(mesh=>mesh.userData.ontoVisNodeIndex),[0,0,1,1]);
+  assert.ok(meshes.every(mesh=>mesh.userData.ontoVisComponentKey==='fixed-group'));cache.dispose();
+});
+
+test('asset extras cannot forge a pick and an explicitly unmapped child never inherits a mapped ancestor',async()=>{
+  const f=modelFixture(glb(document=>{
+    document.scenes=[{nodes:[0]}];document.nodes[0].children=[1];
+    document.nodes.forEach(node=>node.extras={ontoVisComponentKey:'forged-key',ontoVisNodeIndex:0,ontoVisModelVersionId:'forged-version'});
+  }));
+  f.version.components=[component('parent-only',[0])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref),root=cloneModel(resource,'checked');
+  const boundary=new THREE.Group();boundary.add(root);const meshes=meshList(root);
+  assert.equal(sceneModelHit(meshes[0],boundary)?.component?.componentKey,'parent-only');
+  assert.equal(meshes[1].userData.ontoVisNodeIndex,1);
+  assert.equal(meshes[1].userData.ontoVisComponentKey,undefined);
+  assert.equal(sceneModelHit(meshes[1],boundary)?.component,null);cache.dispose();
+});
+
+test('one actual GLTF node cannot be claimed by two directory keys',async()=>{
+  const f=modelFixture();f.version.components=[component('one',[0]),component('two',[0])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref);
+  assert.throws(()=>cloneModel(resource,'ambiguous'),error=>error.code==='RESOURCE_CHANGED');cache.dispose();
+});
+
+test('custom parse injection remains cloneable but cannot manufacture trusted component associations',async()=>{
+  const f=modelFixture();f.version.components=[component('fixed-zero',[0])];
+  const group=new THREE.Group(),mesh=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());group.add(mesh);
+  mesh.userData={ontoVisComponentKey:'fixed-zero',ontoVisNodeIndex:0,ontoVisModelVersionId:f.version.modelVersionId};
+  const cache=new SceneResourceCache(f.api,{source:f.source,parseModel:async()=>group}),resource=await cache.model(f.ref);
+  const root=cloneModel(resource,'custom'),boundary=new THREE.Group();boundary.add(root);
+  const hit=sceneModelHit(meshList(root)[0],boundary);
+  assert.deepEqual(hit,{sceneModelInstanceId:'custom',component:null});cache.dispose();
 });
 
 test('shared geometry/material/texture dispose only once across clones and repeated cache disposal',async()=>{
