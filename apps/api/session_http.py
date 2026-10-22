@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 from .authority import PreviewError
 from .user_sessions import COOKIE, UserSessions
 from .scene_library import decode_scene_request, MAX_SCENE_BYTES
+from .terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES
 from tools.model_probe import strict_json, ProbeError
 
 def handler_type(sessions: UserSessions, origin: str, *, development=False):
@@ -53,12 +54,14 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             try: self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError): pass
 
-        def image(self, data, revision, media_type='image/png'):
+        def image(self, data, revision, media_type='image/png', sha256=None):
             self.send_response(200)
             for key, value in (('Content-Type',media_type), ('Content-Length',str(len(data))),
                                ('Cache-Control','no-store'), ('X-Content-Type-Options','nosniff'),
                                ('X-Session-Revision',revision)):
                 self.send_header(key, value)
+            if sha256 is not None:
+                self.send_header('X-Content-SHA256', sha256)
             self.end_headers()
             try: self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError): pass
@@ -89,6 +92,27 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, value)
             if self.command == 'GET' and parts.path in ('/api/demo/context','/api/demo/locate'):
                 return self.reply(200, sessions.read(sid, parts.path, query))
+            if self.command == 'POST' and parts.path == '/api/workbench/terrains/upload' and not query:
+                if (self.headers.get('Transfer-Encoding') or self.headers.get_all('Transfer-Encoding')
+                        or self.headers.get_all('Content-Type') != ['image/tiff']
+                        or len(self.headers.get_all('Content-Length', [])) != 1
+                        or len(self.headers.get_all('X-Terrain-Metadata', [])) != 1):
+                    raise PreviewError(415, 'INVALID_REQUEST')
+                try:
+                    header = self.headers['X-Terrain-Metadata']
+                    if len(header) > 8192: raise ValueError()
+                    data = base64.b64decode(header, validate=True)
+                    if len(data) > 6144: raise ValueError()
+                    payload = strict_json(data)
+                    text_length = self.headers['Content-Length']
+                    if not text_length.isascii() or not text_length.isdecimal(): raise ValueError()
+                    length = int(text_length)
+                    if not isinstance(payload, dict): raise ValueError()
+                except (ValueError, UnicodeError, ProbeError):
+                    raise PreviewError(422, 'INVALID_REQUEST') from None
+                if not 8 <= length <= MAX_TERRAIN_BYTES:
+                    raise PreviewError(413, 'TERRAIN_LIMIT_EXCEEDED')
+                return self.reply(202, sessions.terrain_upload(sid, payload, self.rfile, length))
             if self.command == 'POST' and parts.path=='/api/workbench/models/upload' and not query:
                 if (self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type')!='model/gltf-binary'
                         or len(self.headers.get_all('Content-Length',[]))!=1
@@ -108,15 +132,18 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                '/api/workbench/evidence/resolve','/api/workbench/evidence/content')
             scene_paths = ('/api/workbench/scenes','/api/workbench/scenes/create','/api/workbench/scenes/open',
                            '/api/workbench/scenes/head','/api/workbench/scenes/save')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths) or query:
+            terrain_paths = ('/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
+                             '/api/workbench/terrains/version', '/api/workbench/terrains/content')
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *terrain_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
-            if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json':
+            if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
+                    or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json'):
                 raise PreviewError(415, 'INVALID_REQUEST')
             if len(self.headers.get_all('Content-Length', [])) != 1:
                 raise PreviewError(422, 'INVALID_REQUEST')
             try: length = int(self.headers.get('Content-Length','0'))
             except ValueError: raise PreviewError(422, 'INVALID_REQUEST') from None
-            limit = MAX_SCENE_BYTES if parts.path == '/api/workbench/scenes/save' else 16384 if parts.path in (*workbench_paths, *scene_paths) else 4096
+            limit = MAX_SCENE_BYTES if parts.path == '/api/workbench/scenes/save' else 16384 if parts.path in (*workbench_paths, *scene_paths, *terrain_paths) else 4096
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if parts.path == '/api/workbench/scenes/save' else 'INVALID_REQUEST')
             try:
@@ -127,6 +154,11 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             except (ValueError, UnicodeError, ProbeError): raise PreviewError(422, 'INVALID_REQUEST') from None
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
             if parts.path in scene_paths: return self.reply(200,sessions.scene_request(sid,parts.path,payload))
+            if parts.path in terrain_paths:
+                value = sessions.terrain_request(sid, parts.path, payload)
+                if parts.path.endswith('/content'):
+                    return self.image(value['content'], value['sessionRevision'], 'application/octet-stream', value['sha256'])
+                return self.reply(200, value)
             if parts.path=='/api/workbench/models/binding': return self.reply(200,sessions.save_binding(sid,payload))
             if parts.path in workbench_paths:
                 value = sessions.read(sid, parts.path, payload)

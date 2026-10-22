@@ -22,10 +22,12 @@ from apps.api.model_assets import ModelAsset
 from apps.api.model_library import ModelLibrary
 from apps.api.model_validation import MAX_BYTES
 from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COORDINATE_M
+from apps.api.terrain_library import TerrainLibrary, MAX_VERSIONS as MAX_TERRAIN_VERSIONS, MAX_TOTAL_BYTES as MAX_TERRAIN_TOTAL_BYTES
+from apps.api.terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES, MAX_PIXELS as MAX_TERRAIN_PIXELS, MAX_TRIANGLES as MAX_TERRAIN_TRIANGLES
 
 
 class WorkbenchSessions(UserSessions):
-    def __init__(self, base_url, project_code, installation_context_id, *, model_root=None, library_root=None, **kwargs):
+    def __init__(self, base_url, project_code, installation_context_id, *, model_root=None, library_root=None, terrain_python=None, **kwargs):
         super().__init__(base_url, project_code, **kwargs)
         self.context_id = str(UUID(installation_context_id))
         self.prefix = '/api/v1/projects/' + quote(project_code, safe='')
@@ -33,6 +35,7 @@ class WorkbenchSessions(UserSessions):
         self.model = ModelAsset(Path(model_root), project_code, self.context_id) if model_root else None
         self.library = ModelLibrary(Path(library_root),project_code,self.context_id) if library_root else None
         self.scenes = SceneLibrary(self.library) if self.library else None
+        self.terrains = TerrainLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
 
     def scene_access(self, authority):
         """Read project permission without requiring the legacy default installation."""
@@ -42,6 +45,83 @@ class WorkbenchSessions(UserSessions):
                 or not isinstance(access.get('accessRevision'), str) or not access['accessRevision']):
             raise PreviewError(403, 'FORBIDDEN')
         return access
+
+    def terrain_authorization(self, sid, payload, *, writing):
+        with self.lock:
+            row = self.current(sid, authenticated=True, touch=True)
+            if payload.get('expectedSessionRevision') != row.revision:
+                raise PreviewError(409, 'SESSION_CHANGED')
+            authority = row.authority
+        try:
+            baseline = self.scene_access(authority)
+
+            def authorize():
+                try:
+                    self.guard(sid, row)
+                    access = self.scene_access(authority)
+                    if writing and access.get('role') != 'admin':
+                        raise PreviewError(403, 'SCENE_WRITE_FORBIDDEN')
+                    if access['accessRevision'] != baseline['accessRevision']:
+                        raise PreviewError(409, 'ACCESS_CHANGED')
+                    self.guard(sid, row)
+                except PreviewError as error:
+                    if error.status == 401:
+                        self.invalidate(sid, row)
+                    raise
+
+            authorize()
+            if self.terrains is None:
+                raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+            return row, authorize, baseline, authority.username
+        except PreviewError as error:
+            if error.status == 401:
+                self.invalidate(sid, row)
+            raise
+
+    def terrain_response(self, value, row, access):
+        value['sessionRevision'] = row.revision
+        value['capabilities'] = {'scope': 'private_geotiff_processing', 'canRead': True,
+            'canUpload': access.get('role') == 'admin', 'canCancel': access.get('role') == 'admin',
+            'sceneTerrainPlacement': False}
+        value['limits'] = {'maxUploadBytes': MAX_TERRAIN_BYTES, 'maxMetadataHeaderBytes': 8192,
+            'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384, 'maxPixels': MAX_TERRAIN_PIXELS,
+            'maxTriangles': MAX_TERRAIN_TRIANGLES, 'maxVersions': MAX_TERRAIN_VERSIONS,
+            'maxLibraryBytes': MAX_TERRAIN_TOTAL_BYTES, 'maxPendingJobs': self.terrains.max_queue,
+            'processingTimeoutSeconds': self.terrains.timeout}
+        return value
+
+    def terrain_upload(self, sid, payload, stream, length):
+        row, authorize, access, actor = self.terrain_authorization(sid, payload, writing=True)
+        metadata = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        # The worker retains this real-session guard in memory only. Never hold
+        # the session mutex across terrain calls: the worker invokes the guard.
+        value = self.terrains.upload(stream, length, metadata, actor, authorize)
+        authorize()
+        return self.terrain_response(value, row, access)
+
+    def terrain_request(self, sid, path, payload):
+        writing = path == '/api/workbench/terrains/job/cancel'
+        row, authorize, access, actor = self.terrain_authorization(sid, payload, writing=writing)
+        body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        if path == '/api/workbench/terrains/job' and set(body) == {'jobId'}:
+            value = self.terrains.job(body['jobId'], authorize)
+        elif writing and set(body) == {'jobId', 'expectedJobRevision', 'clientRequestId'}:
+            value = self.terrains.cancel(body['jobId'], body['expectedJobRevision'],
+                actor, authorize, body['clientRequestId'])
+        elif path == '/api/workbench/terrains/version' and set(body) == {'terrainVersionId'}:
+            value = self.terrains.version(body['terrainVersionId'], authorize)
+        elif path == '/api/workbench/terrains/content' and set(body) == {'terrainVersionId', 'artifactId', 'expectedSha256'}:
+            fingerprint = body['expectedSha256']
+            if (not isinstance(fingerprint, str) or len(fingerprint) != 64
+                    or any(character not in '0123456789abcdef' for character in fingerprint)):
+                raise PreviewError(422, 'INVALID_REQUEST')
+            content = self.terrains.content(body['terrainVersionId'], body['artifactId'], fingerprint, authorize)
+            authorize()
+            return {'content': content, 'sha256': fingerprint, 'sessionRevision': row.revision}
+        else:
+            raise PreviewError(422, 'INVALID_REQUEST')
+        authorize()
+        return self.terrain_response(value, row, access)
 
     def scene_request(self, sid, path, payload):
         with self.lock:
@@ -93,8 +173,7 @@ class WorkbenchSessions(UserSessions):
                 value = self.scenes.listing(authority.username, authorize,
                     access_revision=baseline['accessRevision'], **body)
             elif path == '/api/workbench/scenes/create':
-                with self.lock:
-                    value = self.scenes.create(body, authority.username, authorize, validate_resources, validate_engineering)
+                value = self.scenes.create(body, authority.username, authorize, validate_resources, validate_engineering)
             elif path == '/api/workbench/scenes/open' and set(body) in ({'sceneId'}, {'sceneId','sceneRevision'}):
                 value = self.scenes.open(body['sceneId'], authority.username, authorize, body.get('sceneRevision'))
                 fixed_shas.update({item['modelVersionId']: item['sha256'] for item in value['resourceRefs']})
@@ -103,8 +182,7 @@ class WorkbenchSessions(UserSessions):
             elif path == '/api/workbench/scenes/head' and set(body) == {'sceneId','viewingRevision'}:
                 value = self.scenes.head(body['sceneId'], body['viewingRevision'], authority.username, authorize)
             elif path == '/api/workbench/scenes/save':
-                with self.lock:
-                    value = self.scenes.save(body, authority.username, authorize, validate_resources, validate_engineering)
+                value = self.scenes.save(body, authority.username, authorize, validate_resources, validate_engineering)
             else:
                 raise PreviewError(422, 'INVALID_REQUEST')
             self.guard(sid, row)
@@ -122,10 +200,11 @@ class WorkbenchSessions(UserSessions):
             raise
 
     def writer(self, sid, payload):
-        row = self.current(sid, authenticated=True, touch=True)
-        if payload.get('expectedSessionRevision') != row.revision: raise PreviewError(409,'SESSION_CHANGED')
+        with self.lock:
+            row = self.current(sid, authenticated=True, touch=True)
+            if payload.get('expectedSessionRevision') != row.revision: raise PreviewError(409,'SESSION_CHANGED')
+            authority = row.authority
         if self.library is None or self.model is None: raise PreviewError(503,'MODEL_UNAVAILABLE')
-        authority = row.authority
         self.access(authority)
         access = authority.request('GET',self.access_path)
         context = self.context(authority)
@@ -139,12 +218,13 @@ class WorkbenchSessions(UserSessions):
             if current.get('accessRevision')!=access['accessRevision']: raise PreviewError(409,'ACCESS_CHANGED')
             if self.context(authority)!=context: raise PreviewError(409,'REVISION_CONFLICT')
             self.guard(sid,row)
-        return row,context,authorize
+        self.guard(sid,row)
+        return row,context,authorize,authority
 
     def upload(self, sid, payload, stream, length):
         ModelLibrary.upload_metadata(payload)
         if not 24 <= length <= MAX_BYTES: raise PreviewError(413,'MODEL_LIMIT_EXCEEDED')
-        with self.lock: row,context,authorize = self.writer(sid,payload)
+        row,context,authorize,authority = self.writer(sid,payload)
         if not self.library.slots.acquire(blocking=False): raise PreviewError(429,'MODEL_BUSY')
         path = None
         try:
@@ -162,33 +242,34 @@ class WorkbenchSessions(UserSessions):
                         result['components'].append({'componentKey':'proxy:'+row_binding['componentKey'],
                             'displayName':row_binding['componentKey'], 'nodeIndices':[], 'keyStability':'version_local',
                             'geometryQuality':'proxy_schematic', 'bounds':row_binding['bounds']})
-            with self.lock:
-                self.guard(sid,row)
-                value = self.library.save_upload(path,payload,row.authority.username,result,authorize)
-                return {'item':value, 'libraryRevision':self.library.listing()['libraryRevision'], 'sessionRevision':row.revision}
+            self.guard(sid,row)
+            value = self.library.save_upload(path,payload,authority.username,result,authorize)
+            revision = self.library.listing()['libraryRevision']
+            self.guard(sid,row)
+            return {'item':value, 'libraryRevision':revision, 'sessionRevision':row.revision}
         finally:
             if path: path.unlink(missing_ok=True)
             self.library.slots.release()
 
     def save_binding(self, sid, payload):
-        with self.lock: row,context,authorize = self.writer(sid,payload)
+        row,context,authorize,authority = self.writer(sid,payload)
         body = {key:value for key,value in payload.items() if key!='expectedSessionRevision'}
         uid = body.get('entityUid')
         if not isinstance(uid,str) or uid not in {item['entityUid'] for item in self.model.value['bindings']}: raise PreviewError(422,'INVALID_CABINET')
         def verify():
             authorize()
-            item = self.object(row.authority,uid)
-            ancestors = row.authority.request('GET',self.context_path+'/ancestors?'+urlencode({'entityUid':uid}))
+            item = self.object(authority,uid)
+            ancestors = authority.request('GET',self.context_path+'/ancestors?'+urlencode({'entityUid':uid}))
             if (body.get('expectedHierarchyRevision')!=context['hierarchyRevision']
                     or item['entityRevision']!=body.get('expectedEntityRevision') or item.get('objectKind')!='cabinet'
                     or ancestors.get('hierarchyRevision')!=context['hierarchyRevision'] or ancestors.get('completeness')!='complete'
                     or not any(p.get('object',{}).get('entityUid')==context['rootEntityUid'] for p in ancestors.get('path',[]))):
                 raise PreviewError(409,'MODEL_BINDING_CHANGED')
-        with self.lock:
-            self.guard(sid,row)
-            self.library.bind(body,row.authority.username,verify)
-            self.guard(sid,row)
-            return {'modelRevision':self.library.version(body['modelVersionId'])['modelRevision'], 'sessionRevision':row.revision}
+        self.guard(sid,row)
+        self.library.bind(body,authority.username,verify)
+        revision = self.library.version(body['modelVersionId'])['modelRevision']
+        self.guard(sid,row)
+        return {'modelRevision':revision, 'sessionRevision':row.revision}
 
     def library_model(self, authority, context, identifier):
         if self.library is None: raise PreviewError(503,'MODEL_UNAVAILABLE')
@@ -376,11 +457,17 @@ def main():
     parser.add_argument('--development', action='store_true')
     parser.add_argument('--model-root', type=Path)
     parser.add_argument('--library-root', type=Path)
+    parser.add_argument('--terrain-python', type=Path)
     args = parser.parse_args()
-    sessions = WorkbenchSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root, library_root=args.library_root)
+    sessions = WorkbenchSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root, library_root=args.library_root, terrain_python=args.terrain_python)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin, development=args.development))
     print('ONTOVis evidence workbench ready', flush=True)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        if sessions.terrains:
+            sessions.terrains.close()
 
 
 if __name__ == '__main__': main()
