@@ -4,7 +4,13 @@
 
 共用`authority.py`、`user_sessions.py`和`session_http.py`处理受限回环读取、内存会话及同源HTTP边界。令牌只保留在服务端内存，30分钟无操作或最长8小时失效；每次读取核验当前项目成员，读取/渲染后重查权限和会话。客户端只收到不透明HttpOnly会话Cookie，登录仅用户名、密码。
 
-维护检查：`python3 -m unittest tests.test_workbench_server tests.test_session_server tests.test_installation_preview tests.test_model_assets tests.test_model_upload -v`共76项；Node 22执行`npm --prefix apps/workbench run check`包含严格类型、20项时序/定位/语言检查和构建。上传限额与演示写入见[模型上传首切](../docs/plans/模型上传与演示关联切片.md)。本批服务及素材边界见[紧凑工作台切片](../docs/plans/紧凑工作台与模型接入切片.md)。部署模板为[正式会话服务](../deploy/ontovis-workbench.service)和[正式入口](../deploy/nginx-workbench.conf)；私有设备配置不含凭据，模型与UID映射不进入Git或静态发布目录。
+维护检查：`python3 -m unittest tests.test_workbench_server tests.test_session_server tests.test_installation_preview tests.test_model_assets tests.test_model_upload -v`；Node 22执行`npm --prefix apps/workbench run check`包含严格类型、时序/定位/语言检查和构建。上传限额与演示写入见[模型上传首切](../docs/plans/模型上传与演示关联切片.md)。本批服务及素材边界见[紧凑工作台切片](../docs/plans/紧凑工作台与模型接入切片.md)。部署模板为[正式会话服务](../deploy/ontovis-workbench.service)和[正式入口](../deploy/nginx-workbench.conf)；私有设备配置不含凭据，模型与UID映射不进入Git或静态发布目录。
+
+## 场景与地形开发切片
+
+Q-01已在原MagicPath工作台完成设计/服务基线；本机实现进度见[场景保存与地形服务切片](../docs/plans/场景保存与地形服务切片.md)。场景五个POST当前仅开放局部平面及未关联的已有上传版本，返回实际能力/限额；局部场景尚不支持地形、地理坐标或工程关联，提交这些字段会明确拒绝。场景内核29项、HTTP23项及相关旧接口63项首批合并115项通过；地形HTTP与并发恢复的最新合并结果另列在切片记录，尚未部署。
+
+GIS处理器使用独立的[可选固定依赖](api/requirements-terrain.txt)，不在普通工作台启动时强制导入；处理范围、命令和缺口见[地形验证记录](../docs/plans/地形导入与坐标验证.md)。原界面和旧模型入口继续保留，地形五条私有HTTP已接通；完整场景UI、地理保存、校准和旧库迁移尚未完成。
 
 ## 历史空间演示参考
 
