@@ -31,6 +31,8 @@ from apps.api.scene_evidence import SceneEvidenceReader
 from apps.api.scene_engineering_validation import SceneEngineeringValidator
 from apps.api.scene_bindings import validate_ref
 from apps.api.scene_location import SceneLocationResolver
+from apps.api.legacy_scene_registry import LegacySceneRegistry
+from apps.api.legacy_scene_sources import LegacySceneSources
 
 
 class WorkbenchSessions(UserSessions):
@@ -49,6 +51,7 @@ class WorkbenchSessions(UserSessions):
         self.library = ModelLibrary(Path(library_root),project_code,self.context_id) if library_root else None
         self.project_models = ProjectModelLibrary(self.library) if self.library else None
         self.scenes = SceneLibrary(self.library, model_identity=self.project_models.content_identity) if self.library else None
+        self.legacy_registry = LegacySceneRegistry(self.library) if self.library else None
         self.terrains = TerrainLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
         self.geometry = SceneGeometryProcess(self.library, python_executable=terrain_python,
             terrain_root=self.terrains.root / 'versions') if self.terrains else None
@@ -97,6 +100,54 @@ class WorkbenchSessions(UserSessions):
         if self.terrains is None:
             raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
         return result
+
+    def legacy_migration_request(self, sid, path, payload):
+        prefix = '/api/workbench/scenes/legacy-migration/'
+        action = path.removeprefix(prefix)
+        if not path.startswith(prefix) or action not in ('sources', 'check', 'activate', 'entry'):
+            raise PreviewError(422, 'INVALID_REQUEST')
+        row, authorize, access, actor = self.project_authorization(sid, payload,
+            writing=action != 'entry', write_code='LEGACY_MIGRATION_FORBIDDEN')
+        if self.legacy_registry is None:
+            raise PreviewError(503, 'LEGACY_REGISTRY_UNAVAILABLE')
+        with self.lock:
+            self.guard(sid, row)
+            authority = row.authority
+        body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        try:
+            if action == 'entry':
+                value = self.legacy_registry.entry(body, actor, authorize)
+                if value['available']:
+                    entry = value['entry']
+                    # Resolve only the registered current target through normal
+                    # project resource and current engineering read boundaries.
+                    self.scene_request(sid, '/api/workbench/scenes/open', {
+                        'expectedSessionRevision': row.revision, 'sceneId': entry['sceneId'],
+                        'sceneRevision': entry['sceneRevision']})
+            else:
+                reader = SceneEngineeringReader(authority, self.ontobase_connection_id, self.project_code,
+                    lambda: self.guard(sid, row))
+                sources = LegacySceneSources(self.library, self.model, reader)
+                def authorize_sources():
+                    authorize()
+                    sources.assert_unchanged()
+                    self.guard(sid, row)
+                if action == 'sources':
+                    if body: raise PreviewError(422, 'INVALID_REQUEST')
+                    value = sources.inventory()
+                    authorize_sources()
+                else:
+                    method = self.legacy_registry.check if action == 'check' else self.legacy_registry.activate
+                    value = method(body, actor, authorize_sources, sources, access_revision=access['accessRevision'])
+                # The registry has just completed its full authorization and
+                # final local source check. Do not reopen a network race here.
+            if action == 'entry': authorize()
+            else: self.guard(sid, row)
+            return {**value, 'sessionRevision': row.revision}
+        except PreviewError as error:
+            if error.status == 401:
+                self.invalidate(sid, row)
+            raise
 
     def scene_object_request(self, sid, path, payload):
         row, authorize, access, _ = self.project_authorization(sid, payload, writing=False)
@@ -458,6 +509,7 @@ class WorkbenchSessions(UserSessions):
         if access.get('role')!='admin': raise PreviewError(403,'MODEL_WRITE_FORBIDDEN')
         if context.get('purpose')!='demonstration' or context.get('engineeringUseAllowed') is not False:
             raise PreviewError(409,'MODEL_SCOPE_CHANGED')
+        if not self.library.legacy_writable(): raise PreviewError(409, 'LEGACY_MODEL_READ_ONLY')
         def authorize():
             self.guard(sid,row)
             current = authority.request('GET',self.access_path)
@@ -548,7 +600,7 @@ class WorkbenchSessions(UserSessions):
                   'displayName':value['displayName'],'sha256':value['sha256'], 'rootEntityUid':context['rootEntityUid'],
                   'bindingStatus':'demonstration_draft','engineeringUseAllowed':False,
                   'components':value['components'],'bindings':bindings,'bindingWarnings':warnings,
-                  'canEditBindings':authority.request('GET',self.access_path).get('role')=='admin'}
+                  'canEditBindings':authority.request('GET',self.access_path).get('role')=='admin' and self.library.legacy_writable()}
         result['viewRevision'] = hashlib.sha256(json.dumps([result,context['hierarchyRevision']],sort_keys=True).encode()).hexdigest()
         return result
 
@@ -642,7 +694,7 @@ class WorkbenchSessions(UserSessions):
                 value = self.library.listing(legacy_only=True)
                 value['hasCurrentModel'] = self.model is not None
                 access = authority.request('GET',self.access_path)
-                value['canUpload'] = access.get('role')=='admin' and context.get('purpose')=='demonstration' and context.get('engineeringUseAllowed') is False
+                value['canUpload'] = access.get('role')=='admin' and context.get('purpose')=='demonstration' and context.get('engineeringUseAllowed') is False and self.library.legacy_writable()
             elif path in ('/api/workbench/model','/api/workbench/model/content') and 'modelVersionId' in body:
                 allowed = {'modelVersionId','expectedModelSha256','expectedModelRevision','expectedViewRevision'} if path.endswith('/content') else {'modelVersionId'}
                 if set(body)!=allowed: raise PreviewError(422,'INVALID_REQUEST')

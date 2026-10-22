@@ -139,6 +139,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
                                   '/api/workbench/objects/evidence/content')
+            legacy_migration_paths = tuple('/api/workbench/scenes/legacy-migration/' + action
+                                           for action in ('sources', 'check', 'activate', 'entry'))
             terrain_paths = ('/api/workbench/terrains', '/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
                              '/api/workbench/terrains/version', '/api/workbench/terrains/content')
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
@@ -146,7 +148,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                               '/api/workbench/resources/model/preserve-legacy-display',
                               '/api/workbench/resources/uses', '/api/workbench/resources/models/legacy',
                               '/api/workbench/resources/model/import-existing')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *terrain_paths, *resource_paths) or query:
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
                     or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json'):
@@ -156,8 +158,10 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             try: length = int(self.headers.get('Content-Length','0'))
             except ValueError: raise PreviewError(422, 'INVALID_REQUEST') from None
             large_scene = parts.path in ('/api/workbench/scenes/save', '/api/workbench/scenes/check',
-                                         '/api/workbench/scenes/replacement-check')
-            limit = MAX_SCENE_BYTES if large_scene else 16384 if parts.path in (*workbench_paths, *scene_paths, *scene_object_paths, *terrain_paths, *resource_paths) else 4096
+                                         '/api/workbench/scenes/replacement-check',
+                                         '/api/workbench/scenes/legacy-migration/check',
+                                         '/api/workbench/scenes/legacy-migration/activate')
+            limit = MAX_SCENE_BYTES if large_scene else 16384 if parts.path in (*workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *resource_paths) else 4096
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')
             try:
@@ -168,6 +172,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             except (ValueError, UnicodeError, ProbeError): raise PreviewError(422, 'INVALID_REQUEST') from None
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
             if parts.path in scene_paths: return self.reply(200,sessions.scene_request(sid,parts.path,payload))
+            if parts.path in legacy_migration_paths:
+                return self.reply(200, sessions.legacy_migration_request(sid, parts.path, payload))
             if parts.path in scene_object_paths:
                 value = sessions.scene_object_request(sid, parts.path, payload)
                 if parts.path.endswith('/evidence/content'):

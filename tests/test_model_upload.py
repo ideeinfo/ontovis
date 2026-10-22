@@ -136,6 +136,20 @@ class ModelUploadTests(unittest.TestCase):
     def test_source_declaration_is_required_before_reading_bytes(self):
         self.expect('MODEL_RIGHTS_REQUIRED',lambda:self.upload({**self.metadata(),'rightsDeclared':False}))
         self.assertEqual(list((self.library.root/'temporary').iterdir()),[])
+    def test_activated_registry_disables_old_controls_and_storage_replays_without_blocking_new_resources(self):
+        metadata=self.metadata();item=self.upload(metadata);self.bind(item)
+        before=self.library.listing()
+        with self.library.connect() as db:
+            db.execute("update legacy_scene_registry_state set state='active' where id=1")
+        self.assertFalse(self.request('models')['canUpload'])
+        self.assertFalse(self.request('model',{'modelVersionId':item['versionId']})['canEditBindings'])
+        self.expect('LEGACY_MODEL_READ_ONLY',lambda:self.upload())
+        self.expect('LEGACY_MODEL_READ_ONLY',lambda:self.bind(item))
+        path=self.root/'replay.glb';path.write_bytes(self.path.read_bytes())
+        self.expect('LEGACY_MODEL_READ_ONLY',lambda:self.library.save_upload(path,metadata,self.account.username,validate(path),lambda:None))
+        self.assertTrue(path.exists())
+        self.assertEqual(self.library.listing(),before)
+        self.assertEqual(self.project_upload()['state'],'ready')
     def test_malformed_binding_values_cannot_reach_sqlite_or_create_an_audit(self):
         item=self.upload()
         self.expect('INVALID_CABINET',lambda:self.bind(item,uid=[]))

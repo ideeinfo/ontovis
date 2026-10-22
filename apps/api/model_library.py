@@ -68,6 +68,16 @@ class ModelLibrary:
         exists = db.execute("select 1 from sqlite_master where type='table' and name='project_model_versions'").fetchone()
         return exists is not None and db.execute('select 1 from project_model_versions where version_id=?', (identifier,)).fetchone() is not None
 
+    def legacy_writable(self):
+        from .legacy_scene_registry import LegacySceneRegistry
+        with self.connect() as db:
+            try:
+                LegacySceneRegistry.assert_legacy_writable(db)
+            except PreviewError as error:
+                if error.code == 'LEGACY_MODEL_READ_ONLY': return False
+                raise
+        return True
+
     def listing(self, *, legacy_only=False):
         with self.connect() as db:
             where = ''
@@ -128,6 +138,8 @@ class ModelLibrary:
         identifier = str(uuid4()); target = self.root/'files'/(identifier+'.glb')
         with self.connect() as db:
             db.execute('begin immediate')
+            from .legacy_scene_registry import LegacySceneRegistry
+            LegacySceneRegistry.assert_legacy_writable(db)
             prior = db.execute('select * from versions where request_id=?',(body['clientRequestId'],)).fetchone()
             if prior:
                 if any(prior[key] != value for key,value in (('actor',actor),('sha256',result['sha256']),('name',body['displayName']),('source_note',body['sourceNote']))): raise PreviewError(409,'REQUEST_CONFLICT')
@@ -170,6 +182,8 @@ class ModelLibrary:
         canonical = json.dumps(body,sort_keys=True)
         with self.connect() as db:
             db.execute('begin immediate')
+            from .legacy_scene_registry import LegacySceneRegistry
+            LegacySceneRegistry.assert_legacy_writable(db)
             # Project resource bindings belong only to scene snapshots. Recheck
             # after acquiring the write lock, including idempotent old requests.
             if self._project_version(db, value['versionId']): raise PreviewError(404,'MODEL_NOT_FOUND')
