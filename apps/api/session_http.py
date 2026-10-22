@@ -135,11 +135,12 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                '/api/workbench/evidence/resolve','/api/workbench/evidence/content')
             scene_paths = ('/api/workbench/scenes','/api/workbench/scenes/create','/api/workbench/scenes/open',
                            '/api/workbench/scenes/head','/api/workbench/scenes/save','/api/workbench/scenes/check')
-            terrain_paths = ('/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
+            terrain_paths = ('/api/workbench/terrains', '/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
                              '/api/workbench/terrains/version', '/api/workbench/terrains/content')
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
                               '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',
-                              '/api/workbench/resources/uses')
+                              '/api/workbench/resources/uses', '/api/workbench/resources/models/legacy',
+                              '/api/workbench/resources/model/import-existing')
             if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *terrain_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1

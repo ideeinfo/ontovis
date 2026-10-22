@@ -138,7 +138,12 @@ class TerrainLibraryTests(unittest.TestCase):
         done=self.wait(library,item['jobId'])
         self.assertEqual(done['state'],'failed');self.assertEqual(done['errorCode'],'SCENE_WRITE_FORBIDDEN')
         with self.model.connect() as db:self.assertEqual(db.execute('select count(*) from terrain_versions').fetchone()[0],0)
-        self.assertEqual(list((library.root/'versions').iterdir()),[]);self.assertEqual(list((library.root/'temporary').iterdir()),[])
+        self.assertEqual(list((library.root/'versions').iterdir()),[])
+        # The failed row commits before _release_work removes its private files.
+        # Wait only for that bounded cleanup; a retained directory still fails.
+        deadline=time.monotonic()+2
+        while any((library.root/'temporary').iterdir()) and time.monotonic()<deadline: time.sleep(.01)
+        self.assertEqual(list((library.root/'temporary').iterdir()),[])
 
     def test_failed_validation_never_generates_ready_version(self):
         self.control.write_text(json.dumps({'mode':'fail'}));library=self.library();item=self.upload(library)

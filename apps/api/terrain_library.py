@@ -7,11 +7,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import base64
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
 import selectors
+import secrets
 import sqlite3
 import shutil
 import subprocess
@@ -137,7 +140,10 @@ class TerrainLibrary:
                 create table if not exists terrain_audit (
                     id integer primary key, actor text not null, job_id text not null,
                     action text not null, code text, created_at text not null);
+                create table if not exists terrain_catalog (
+                    id integer primary key check(id=1), cursor_secret text not null);
             ''')
+            db.execute('insert or ignore into terrain_catalog values (1,?)', (secrets.token_hex(32),))
             rows=db.execute("select * from terrain_jobs where state in ('queued','processing')").fetchall()
             for row in rows:
                 db.execute("update terrain_jobs set state='failed',revision=?,updated_at=?,error_code='PROCESSING_INTERRUPTED' where id=?",(_revision(),_now(),row['id']))
@@ -241,6 +247,60 @@ class TerrainLibrary:
         authorize()
         with self.library.connect() as db: result=self._public(self._row(db,job_id))
         authorize(); return result
+
+    def listing(self, actor, authorize, *, access_revision, q='', cursor=None, limit=50):
+        actor, access_revision = _text(actor), _text(access_revision)
+        _require(callable(authorize)); authorize()
+        _require(isinstance(q, str) and len(q) <= 200 and all(ord(character) >= 32 for character in q))
+        _require(type(limit) is int and 1 <= limit <= 100)
+        query = q.strip()
+        try: query.encode('utf-8')
+        except UnicodeError: raise PreviewError(422, 'INVALID_REQUEST') from None
+        with self.library.connect() as db:
+            db.execute('begin')
+            rows = db.execute('select * from terrain_versions order by created_at desc,id').fetchall()
+            digest = hashlib.sha256(_canonical([[row[key] for key in ('id', 'sha256', 'content_revision', 'name',
+                'report_sha256', 'report', 'created_at')] for row in rows]).encode()).hexdigest()
+            revision = 'terrain-list:' + digest
+            secret = bytes.fromhex(db.execute('select cursor_secret from terrain_catalog where id=1').fetchone()[0])
+            context = {'project': self.project_code, 'actor': actor, 'accessRevision': access_revision,
+                'q': query, 'limit': limit}
+            last = None
+            if cursor is not None:
+                _require(isinstance(cursor, str) and 0 < len(cursor) <= 8192)
+                try:
+                    raw = base64.b64decode(cursor, altchars=b'-_', validate=True)
+                    _require(len(raw) > 32 and hmac.compare_digest(raw[-32:], hmac.digest(secret, raw[:-32], 'sha256')))
+                    page = strict_json(raw[:-32])
+                    _require(type(page) is dict and set(page) == set(context) | {'snapshotRevision', 'last'})
+                    _require(all(page[key] == value for key, value in context.items()))
+                    _require(page['snapshotRevision'] == revision, 'SNAPSHOT_EXPIRED', 409)
+                    _require(type(page['last']) is list and len(page['last']) == 2)
+                    last = [_text(page['last'][0]), _uuid(page['last'][1])]
+                except (ValueError, TypeError, UnicodeError):
+                    raise PreviewError(422, 'INVALID_REQUEST') from None
+            matching = db.execute('''select * from terrain_versions where instr(lower(name),lower(?))>0
+                and (? is null or created_at<? or (created_at=? and id>?))
+                order by created_at desc,id limit ?''',
+                (query, last[0] if last else None, last[0] if last else None, last[0] if last else None,
+                 last[1] if last else None, limit + 1)).fetchall()
+            items = []
+            for row in matching[:limit]:
+                try: source = json.loads(row['report'])['source']
+                except (ValueError, TypeError, KeyError):
+                    raise PreviewError(503, 'TERRAIN_STORAGE_UNAVAILABLE') from None
+                _require(type(source) is dict, 'TERRAIN_STORAGE_UNAVAILABLE', 503)
+                items.append({'terrainVersionId': row['id'], 'contentRevision': row['content_revision'],
+                    'displayName': row['name'], 'sha256': row['sha256'], 'createdAt': row['created_at'],
+                    'sourceHorizontalCrs': source.get('horizontalCrs'), 'verticalDatum': source.get('verticalDatum'),
+                    'coverageWgs84': source.get('samplingCentreCoverageWgs84')})
+            next_cursor = None
+            if len(matching) > limit:
+                tail = matching[limit - 1]
+                raw = _canonical({**context, 'snapshotRevision': revision, 'last': [tail['created_at'], tail['id']]}).encode()
+                next_cursor = base64.urlsafe_b64encode(raw + hmac.digest(secret, raw, 'sha256')).decode()
+        authorize()
+        return {'items': items, 'nextCursor': next_cursor, 'snapshotRevision': revision}
 
     def cancel(self,job_id,expected_job_revision,actor,authorize,client_request_id):
         job_id=_uuid(job_id); _uuid(client_request_id); actor=_text(actor); _text(expected_job_revision,128)

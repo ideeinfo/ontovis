@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 
 from .authority import PreviewError
 from .model_validation import MAX_BYTES
+from tools.model_probe import strict_json
 
 MAX_VERSIONS = 20
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
@@ -273,14 +274,84 @@ class ProjectModelLibrary:
     def legacy_candidates(self, authorize):
         _require(callable(authorize)); authorize()
         with self.library.connect() as db:
-            rows = db.execute('''select v.id,v.name,v.sha256,v.bytes,
+            db.execute('begin')
+            rows = db.execute('''select v.*,
                 (select count(*) from bindings b where b.version_id=v.id) as binding_count
                 from versions v left join project_model_versions p on p.version_id=v.id
                 where p.version_id is null order by v.created_at,v.id''').fetchall()
+            items = []
+            for row in rows:
+                imported = self._legacy_import(db, row['id'])
+                rights = self._source_rights(db, row)
+                item = {'modelVersionId': row['id'], 'displayName': row['name'], 'modelRevision': row['revision'],
+                    'sourceNote': row['source_note'], 'sha256': row['sha256'], 'bytes': row['bytes'],
+                    'legacyBindingCount': row['binding_count'], 'calibrationState': 'legacy_unverified',
+                    'canPlace': False, 'sourceRightsDeclared': rights, 'canImport': rights and imported is None}
+                if imported is not None: item['importedResource'] = dict(imported)
+                items.append(item)
+            result = {'adoptionPerformed': False, 'libraryRevision': self.library.revision(db), 'items': items}
         authorize()
-        return {'adoptionPerformed': False, 'items': [{'modelVersionId': row['id'], 'displayName': row['name'],
-            'sha256': row['sha256'], 'bytes': row['bytes'], 'legacyBindingCount': row['binding_count'],
-            'calibrationState': 'legacy_unverified', 'canPlace': False} for row in rows]}
+        return result
+
+    @staticmethod
+    def _source_rights(db, source):
+        audit = db.execute('''select payload from audit where action='model_uploaded'
+            and version_id=? and request_id=? and actor=?''',
+            (source['id'], source['request_id'], source['actor'])).fetchone()
+        if audit is None: return False
+        try: payload = strict_json(audit['payload'].encode('utf-8'))
+        except (ValueError, TypeError, UnicodeError): return False
+        return type(payload) is dict and payload.get('rightsDeclared') is True and payload.get('sha256') == source['sha256']
+
+    @staticmethod
+    def _legacy_import(db, identifier):
+        return db.execute('''select asset_id as modelAssetId,version_id as modelVersionId
+            from project_model_versions where source_version_id=? order by version_id limit 1''', (identifier,)).fetchone()
+
+    def _legacy_source(self, db, metadata):
+        row = db.execute('''select v.* from versions v left join project_model_versions p on p.version_id=v.id
+            where v.id=? and p.version_id is null''', (metadata['legacyModelVersionId'],)).fetchone()
+        _require(row is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
+        _require(self._legacy_import(db, row['id']) is None, 'MODEL_ALREADY_IMPORTED', 409)
+        _require(row['revision'] == metadata['expectedModelRevision'] and row['sha256'] == metadata['expectedSha256'],
+                 'RESOURCE_CHANGED', 409)
+        _require(self._source_rights(db, row), 'MODEL_SOURCE_RIGHTS_REQUIRED', 422)
+        return row
+
+    def import_existing(self, body, actor, authorize):
+        _fields(body, ('legacyModelVersionId', 'expectedModelRevision', 'expectedSha256',
+                       'expectedLibraryRevision', 'purpose', 'clientRequestId'))
+        _require(callable(authorize)); actor = _text(actor); authorize()
+        _uuid(body['legacyModelVersionId']); _uuid(body['clientRequestId']); _text(body['expectedLibraryRevision'])
+        _require(type(body['expectedModelRevision']) is int and body['expectedModelRevision'] >= 1)
+        _require(isinstance(body['expectedSha256'], str) and len(body['expectedSha256']) == 64
+                 and all(character in '0123456789abcdef' for character in body['expectedSha256']))
+        _require(isinstance(body['purpose'], str) and body['purpose'] in PURPOSES)
+        digest = hashlib.sha256(_canonical(body).encode()).hexdigest()
+        with self.library.connect() as db:
+            prior = self._prior(db, actor, 'import_existing', body['clientRequestId'], digest)
+            if prior is None: source = dict(self._legacy_source(db, body))
+        if prior is not None:
+            self._content(prior); authorize(); return prior
+        if not self.library.slots.acquire(blocking=False): raise PreviewError(429, 'MODEL_BUSY')
+        path = None
+        try:
+            content = self._content({'modelVersionId': source['id'], 'bytes': source['bytes'], 'sha256': source['sha256']})
+            authorize()
+            with tempfile.NamedTemporaryFile(dir=self.library.root / 'temporary', prefix='project-upload-', suffix='.glb', delete=False) as file:
+                path = Path(file.name); file.write(content); file.flush(); os.fsync(file.fileno())
+            metadata = {**body, 'displayName': source['name'], 'sourceNote': source['source_note']}
+            result = {'sha256': source['sha256'], 'report': json.loads(source['report']), 'components': json.loads(source['components'])}
+            return self._commit(path, metadata, actor, authorize, result, action='import_existing', payload_digest=digest,
+                source_version_id=source['id'], legacy_source=True)
+        except OSError:
+            raise PreviewError(503, 'MODEL_STORAGE_UNAVAILABLE') from None
+        finally:
+            try:
+                if path: path.unlink(missing_ok=True)
+            except OSError:
+                raise PreviewError(503, 'MODEL_STORAGE_UNAVAILABLE') from None
+            finally: self.library.slots.release()
 
     @staticmethod
     def upload_metadata(value):
@@ -313,7 +384,7 @@ class ProjectModelLibrary:
                  'MODEL_LIBRARY_FULL', 413)
 
     def _commit(self, path, metadata, actor, authorize, result, *, action, payload_digest,
-                calibration=None, source_version_id=None):
+                calibration=None, source_version_id=None, legacy_source=False):
         identifier, asset_id, now = str(uuid4()), metadata.get('modelAssetId') or str(uuid4()), _now()
         target = self.library.root / 'files' / (identifier + '.glb')
         committed = published = False
@@ -324,6 +395,7 @@ class ProjectModelLibrary:
                 if prior is not None:
                     authorize(); self._content(prior)
                     return prior
+                if legacy_source: self._legacy_source(db, metadata)
                 _require(self.library.revision(db) == metadata['expectedLibraryRevision'], 'MODEL_LIBRARY_CHANGED', 409)
                 if 'modelAssetId' in metadata:
                     asset = self._asset(db, asset_id)
@@ -332,9 +404,16 @@ class ProjectModelLibrary:
                 self._capacity(db, path.stat().st_size)
                 authorize()
                 if source_version_id is not None:
-                    source = self._version(db, source_version_id)
-                    _require(source['contentRevision'] == metadata['expectedContentRevision'], 'RESOURCE_CHANGED', 409)
-                    self._content(source)
+                    if legacy_source:
+                        source = self._legacy_source(db, metadata)
+                        _require(source['name'] == metadata['displayName'] and source['source_note'] == metadata['sourceNote']
+                                 and json.loads(source['report']) == result['report']
+                                 and json.loads(source['components']) == result['components'], 'RESOURCE_CHANGED', 409)
+                        self._content({'modelVersionId': source['id'], 'bytes': source['bytes'], 'sha256': source['sha256']})
+                    else:
+                        source = self._version(db, source_version_id)
+                        _require(source['contentRevision'] == metadata['expectedContentRevision'], 'RESOURCE_CHANGED', 409)
+                        self._content(source)
                 _require(not target.exists() and not target.parent.is_symlink(), 'RESOURCE_CHANGED', 409)
                 _require(hashlib.sha256(path.read_bytes()).hexdigest() == result['sha256'], 'RESOURCE_CHANGED', 409)
                 os.replace(path, target); published = True
@@ -359,7 +438,13 @@ class ProjectModelLibrary:
                     (self.project_code, actor, action, metadata['clientRequestId'], payload_digest, _canonical(value)))
                 db.execute('''insert into project_model_audit(project_code,actor,action,request_id,version_id,payload_sha256,created_at)
                     values (?,?,?,?,?,?,?)''', (self.project_code, actor, action, metadata['clientRequestId'], identifier, payload_digest, now))
-                authorize(); self._content(value); db.commit(); committed = True
+                authorize(); self._content(value)
+                if legacy_source:
+                    source = db.execute('select * from versions where id=?', (source_version_id,)).fetchone()
+                    _require(source['revision'] == metadata['expectedModelRevision']
+                             and self._source_rights(db, source), 'RESOURCE_CHANGED', 409)
+                    self._content({'modelVersionId': source['id'], 'bytes': source['bytes'], 'sha256': metadata['expectedSha256']})
+                db.commit(); committed = True
                 return value
         except OSError:
             raise PreviewError(503, 'MODEL_STORAGE_UNAVAILABLE') from None

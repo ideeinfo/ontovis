@@ -108,7 +108,7 @@ class WorkbenchSessions(UserSessions):
         return self.resource_response(value, row, access)
 
     def resource_request(self, sid, path, payload):
-        writing = path == '/api/workbench/resources/model/calibrate'
+        writing = path in ('/api/workbench/resources/model/calibrate', '/api/workbench/resources/model/import-existing')
         row, authorize, access, actor = self.project_authorization(sid, payload,
             writing=writing, write_code='MODEL_WRITE_FORBIDDEN')
         if self.project_models is None or self.scenes is None:
@@ -121,6 +121,8 @@ class WorkbenchSessions(UserSessions):
                 options['expected_library_revision'] = options.pop('expectedLibraryRevision')
             value = self.project_models.listing(actor, authorize,
                 access_revision=access['accessRevision'], **options)
+        elif path == '/api/workbench/resources/models/legacy' and not body:
+            value = self.project_models.legacy_candidates(authorize)
         elif path == '/api/workbench/resources/model' and set(body) == {'modelAssetId', 'modelVersionId'}:
             value = self.project_models.model(body['modelAssetId'], body['modelVersionId'], authorize)
         elif path == '/api/workbench/resources/model/content' and set(body) == {
@@ -133,7 +135,9 @@ class WorkbenchSessions(UserSessions):
                 body['expectedContentRevision'], fingerprint, authorize)
             authorize()
             return {'content': content, 'sha256': fingerprint, 'sessionRevision': row.revision}
-        elif writing:
+        elif path == '/api/workbench/resources/model/import-existing':
+            value = self.project_models.import_existing(body, actor, authorize)
+        elif path == '/api/workbench/resources/model/calibrate':
             value = self.project_models.calibrate(body, actor, authorize)
         elif path == '/api/workbench/resources/uses' and {'resourceKind', 'versionId'} <= set(body) and set(body).issubset(
                 {'resourceKind', 'versionId', 'scope', 'cursor', 'limit'}):
@@ -172,7 +176,9 @@ class WorkbenchSessions(UserSessions):
         writing = path == '/api/workbench/terrains/job/cancel'
         row, authorize, access, actor = self.terrain_authorization(sid, payload, writing=writing)
         body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
-        if path == '/api/workbench/terrains/job' and set(body) == {'jobId'}:
+        if path == '/api/workbench/terrains' and set(body).issubset({'q', 'cursor', 'limit'}):
+            value = self.terrains.listing(actor, authorize, access_revision=access['accessRevision'], **body)
+        elif path == '/api/workbench/terrains/job' and set(body) == {'jobId'}:
             value = self.terrains.job(body['jobId'], authorize)
         elif writing and set(body) == {'jobId', 'expectedJobRevision', 'clientRequestId'}:
             value = self.terrains.cancel(body['jobId'], body['expectedJobRevision'],
@@ -312,6 +318,7 @@ class WorkbenchSessions(UserSessions):
                 raise PreviewError(422, 'INVALID_REQUEST')
             self.guard(sid, row)
             value['sessionRevision'] = row.revision
+            value['projectName'] = current_access.get('projectName', self.project_code)
             value['capabilities'] = {**self.scenes.capabilities(geographic=self.geometry is not None),
                 'scope': 'projected_site_unbound' if self.geometry is not None else 'local_plane_unbound',
                 'localPlaneUnbound': True, 'canRead': True, 'canWrite': current_access.get('role') == 'admin',
