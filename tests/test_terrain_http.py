@@ -33,6 +33,27 @@ from tests.test_model_upload import glb
 PREFIX = '/api/workbench/terrains/'
 
 
+class TerrainUploadConfigurationTests(unittest.TestCase):
+    def test_default_and_exact_boundary_limits_are_valid(self):
+        defaults = WorkbenchSessions('http://127.0.0.1:1234', 'fixture-project', CONTEXT)
+        self.assertEqual(defaults.terrain_max_upload_bytes, MAX_BYTES)
+        for limit in (8, 100_000_000, MAX_BYTES):
+            with self.subTest(limit=limit):
+                sessions = WorkbenchSessions('http://127.0.0.1:1234', 'fixture-project', CONTEXT,
+                    terrain_max_upload_bytes=limit)
+                self.assertEqual(sessions.terrain_max_upload_bytes, limit)
+
+    def test_invalid_limits_fail_before_any_private_storage_is_created(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            library = Path(temporary) / 'must-not-be-created'
+            for limit in (None, True, False, 7, 0, -1, MAX_BYTES + 1, 8.0, '8', float('nan'), float('inf')):
+                with self.subTest(limit=limit), self.assertRaises(ValueError):
+                    WorkbenchSessions('http://127.0.0.1:1234', 'fixture-project', CONTEXT,
+                        library_root=library, terrain_python=Path(temporary) / 'unused-worker',
+                        terrain_max_upload_bytes=limit)
+                self.assertFalse(library.exists())
+
+
 class TerrainHttpTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -165,6 +186,45 @@ class TerrainHttpTests(unittest.TestCase):
             self.assertNotIn('Content-Disposition', headers)
         self.assertTrue(all(path.endswith('/access') or path.startswith('/api/v1/auth/')
                             for _, path in self.account().calls))
+
+    def test_deployment_limit_is_reported_and_rejects_before_reading_or_writing_after_current_authorization(self):
+        limit = 16
+        self.sessions = WorkbenchSessions('http://127.0.0.1:1234', 'fixture-project', CONTEXT,
+            library_root=self.root / 'limited-library', terrain_python=self.executable,
+            terrain_max_upload_bytes=limit, factory=SceneAuthority)
+        self.terrains = self.sessions.terrains
+        self.addCleanup(self.terrains.close)
+        self.server.RequestHandlerClass = handler_type(self.sessions, ORIGIN, development=True)
+        self.admin = self.login('fixture-admin')
+        self.assertEqual(self.request('/api/workbench/terrains')[1]['limits']['maxUploadBytes'], limit)
+        before = sorted(str(path.relative_to(self.terrains.root)) for path in self.terrains.root.rglob('*'))
+        with patch.object(self.terrains, 'upload', side_effect=AssertionError('Oversized upload reached storage')):
+            # No body is sent: a successful response proves the stream is not read.
+            options = {'data': b'', 'headers': {'Content-Length': str(limit + 1)}}
+            self.assertEqual(self.upload(client=False, **options)[0], 401)
+            member = self.login('fixture-member')
+            self.account(member).role = 'member'
+            self.assertEqual(self.upload(client=member, **options)[:2], (403, {'code': 'SCENE_WRITE_FORBIDDEN'}))
+            self.assertEqual(self.upload(self.metadata(expectedSessionRevision='stale'), **options)[:2],
+                (409, {'code': 'SESSION_CHANGED'}))
+            self.assertEqual(self.upload(self.metadata(terrainMaxUploadBytes=MAX_BYTES), **options)[:2],
+                (413, {'code': 'TERRAIN_LIMIT_EXCEEDED'}))
+            self.account().allowed = False
+            self.assertEqual(self.upload(**options)[0], 403)
+            self.account().allowed = True
+        self.assertEqual(sorted(str(path.relative_to(self.terrains.root)) for path in self.terrains.root.rglob('*')), before)
+        with self.sessions.library.connect() as db:
+            self.assertEqual(db.execute('select count(*) from terrain_jobs').fetchone()[0], 0)
+            self.assertEqual(db.execute('select count(*) from terrain_audit').fetchone()[0], 0)
+        self.assertEqual(self.upload(self.metadata(terrainMaxUploadBytes=MAX_BYTES), data=self.data[:limit])[0], 422)
+        status, item, _ = self.upload(data=self.data[:limit])
+        self.assertEqual(status, 202, item)
+        self.assertEqual(item['limits']['maxUploadBytes'], limit)
+        done = self.wait(item)
+        self.assertEqual(done['state'], 'ready')
+        self.assertEqual(done['limits']['maxUploadBytes'], limit)
+        version = self.request(PREFIX + 'version', {'terrainVersionId': done['terrainVersionId']})[1]
+        self.assertEqual(version['limits']['maxUploadBytes'], limit)
 
     def test_anonymous_member_and_revoked_membership_have_no_write_bypass(self):
         self.assertEqual(self.upload(client=False)[0], 401)

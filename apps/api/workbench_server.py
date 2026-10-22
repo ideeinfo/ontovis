@@ -37,8 +37,11 @@ from apps.api.legacy_scene_sources import LegacySceneSources
 
 class WorkbenchSessions(UserSessions):
     def __init__(self, base_url, project_code, installation_context_id, *, model_root=None, library_root=None, terrain_python=None,
-                 ontobase_connection_id='ontobase-primary', **kwargs):
+                 terrain_max_upload_bytes=MAX_TERRAIN_BYTES, ontobase_connection_id='ontobase-primary', **kwargs):
+        if type(terrain_max_upload_bytes) is not int or not 8 <= terrain_max_upload_bytes <= MAX_TERRAIN_BYTES:
+            raise ValueError('Invalid configured terrain upload limit')
         super().__init__(base_url, project_code, **kwargs)
+        self.terrain_max_upload_bytes = terrain_max_upload_bytes
         if (not isinstance(ontobase_connection_id, str) or not 0 < len(ontobase_connection_id) <= 200
                 or ontobase_connection_id != ontobase_connection_id.strip()
                 or any(ord(character) < 32 for character in ontobase_connection_id)):
@@ -260,7 +263,7 @@ class WorkbenchSessions(UserSessions):
         value['capabilities'] = {'scope': 'private_geotiff_processing', 'canRead': True,
             'canUpload': access.get('role') == 'admin', 'canCancel': access.get('role') == 'admin',
             'sceneTerrainPlacement': self.geometry is not None}
-        value['limits'] = {'maxUploadBytes': MAX_TERRAIN_BYTES, 'maxMetadataHeaderBytes': 8192,
+        value['limits'] = {'maxUploadBytes': self.terrain_max_upload_bytes, 'maxMetadataHeaderBytes': 8192,
             'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384, 'maxPixels': MAX_TERRAIN_PIXELS,
             'maxTriangles': MAX_TERRAIN_TRIANGLES, 'maxVersions': MAX_TERRAIN_VERSIONS,
             'maxLibraryBytes': MAX_TERRAIN_TOTAL_BYTES, 'maxPendingJobs': self.terrains.max_queue,
@@ -269,6 +272,8 @@ class WorkbenchSessions(UserSessions):
 
     def terrain_upload(self, sid, payload, stream, length):
         row, authorize, access, actor = self.terrain_authorization(sid, payload, writing=True)
+        if type(length) is not int or not 8 <= length <= self.terrain_max_upload_bytes:
+            raise PreviewError(413, 'TERRAIN_LIMIT_EXCEEDED')
         metadata = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
         # The worker retains this real-session guard in memory only. Never hold
         # the session mutex across terrain calls: the worker invokes the guard.
@@ -763,9 +768,11 @@ def main():
     parser.add_argument('--model-root', type=Path)
     parser.add_argument('--library-root', type=Path)
     parser.add_argument('--terrain-python', type=Path)
+    parser.add_argument('--terrain-max-upload-bytes', type=int, default=MAX_TERRAIN_BYTES)
     args = parser.parse_args()
     sessions = WorkbenchSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root,
-        library_root=args.library_root, terrain_python=args.terrain_python, ontobase_connection_id=args.ontobase_connection_id)
+        library_root=args.library_root, terrain_python=args.terrain_python, terrain_max_upload_bytes=args.terrain_max_upload_bytes,
+        ontobase_connection_id=args.ontobase_connection_id)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin, development=args.development))
     print('ONTOVis evidence workbench ready', flush=True)
     try:

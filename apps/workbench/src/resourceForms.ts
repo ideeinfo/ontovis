@@ -6,7 +6,8 @@ import type {VerticalDatum, Vector3} from './sceneTypes';
 
 export class ResourceFormError extends Error {
   key: ResourceMessageKey;
-  constructor(key: ResourceMessageKey) {super(key); this.key = key;}
+  values: Record<string,string|number>;
+  constructor(key: ResourceMessageKey, values: Record<string,string|number> = {}) {super(key); this.key = key; this.values = values;}
 }
 export function resourceCalibrationKey(state:ProjectModelVersion['calibrationState']) {
   return state==='legacy_display'?'legacyDisplay':state==='verified'?'calibrated':'unverified';
@@ -16,7 +17,7 @@ export function modelPlacementIssue(model:Pick<ProjectModelVersion,'calibrationS
   return geographic&&model.canPlaceGeographic!==true?'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED':null;
 }
 export function resourceFailure(error: unknown, locale: Locale) {
-  if (error instanceof ResourceFormError) return resourceText(locale, error.key);
+  if (error instanceof ResourceFormError) return resourceText(locale, error.key, error.values);
   if (error instanceof ApiError && error.status === 413 && error.code === 'INVALID_REQUEST') return resourceText(locale, 'metadataLimit');
   if (error instanceof ApiError && ['INVALID_CALIBRATION','UNSUPPORTED_CALIBRATION'].includes(error.code)) return resourceText(locale, 'invalidForward');
   if (error instanceof ApiError && error.code === 'MODEL_SOURCE_RIGHTS_REQUIRED') return resourceText(locale, 'sourcePending');
@@ -32,7 +33,8 @@ export function privateDenial(error: unknown) {
 export function validateResourceFile(file: Pick<File,'name'|'size'>, kind: 'model'|'terrain', maximum?: number) {
   const terrain = kind === 'terrain', cap = Math.min(maximum ?? Infinity, (terrain ? 256 : 20) * 1024 * 1024);
   if (!(terrain ? /\.tiff?$/i : /\.glb$/i).test(file.name) || !Number.isSafeInteger(file.size)
-      || file.size < (terrain ? 8 : 24) || file.size > cap) throw new ResourceFormError(terrain ? 'terrainFileInvalid' : 'modelFileInvalid');
+      || file.size < (terrain ? 8 : 24)) throw new ResourceFormError(terrain ? 'terrainFileInvalid' : 'modelFileInvalid');
+  if (file.size > cap) throw new ResourceFormError(terrain ? 'terrainFileTooLarge' : 'modelFileInvalid', {maximum:resourceUploadBytes(cap)});
 }
 function vector(values: readonly string[]): Vector3 {
   const numbers = values.map(value => value.trim() ? Number(value) : NaN);
@@ -96,3 +98,4 @@ export class ResourceRequestGate {
 export const TERRAIN_POLL_MS = 2000;
 export function terrainPending(state:string|undefined) {return state === 'queued' || state === 'processing';}
 export function resourceBytes(bytes:number) {return `${(bytes/1024/1024).toFixed(2)} MiB`;}
+export function resourceUploadBytes(bytes:number) {return `${bytes.toLocaleString('en-US')} B (${resourceBytes(bytes)})`;}

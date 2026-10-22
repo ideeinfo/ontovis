@@ -9,7 +9,7 @@ Group=ontovis
 WorkingDirectory=/data/ontovis/workbench-current/code
 EnvironmentFile=/data/ontovis/private/workbench-scope.env
 Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
-ExecStart=/usr/bin/python3 /data/ontovis/workbench-current/code/apps/api/workbench_server.py --project-code ${ONTOVIS_PROJECT_CODE} --installation-context-id ${ONTOVIS_INSTALLATION_CONTEXT_ID} --model-root /data/ontovis/private/workbench-model --library-root /data/ontovis/private/workbench-library
+ExecStart=/data/ontovis/runtime/gis-current/bin/python /data/ontovis/workbench-current/code/apps/api/workbench_server.py --project-code ${ONTOVIS_PROJECT_CODE} --installation-context-id ${ONTOVIS_INSTALLATION_CONTEXT_ID} --model-root /data/ontovis/private/workbench-model --library-root /data/ontovis/private/workbench-library --terrain-python /data/ontovis/runtime/gis-current/bin/python --terrain-max-upload-bytes 100000000
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
@@ -21,7 +21,7 @@ CapabilityBoundingSet=
 RestrictAddressFamilies=AF_INET AF_UNIX
 IPAddressDeny=any
 IPAddressAllow=localhost
-MemoryMax=256M
+MemoryMax=1536M
 TasksMax=64
 LimitNOFILE=256
 UMask=0077

@@ -6,7 +6,7 @@ import {usePreferences} from './Preferences';
 import type {SceneApi} from './sceneApi';
 import type {TerrainCatalog, TerrainJob, TerrainSummary, TerrainVersion} from './resourceTypes';
 import type {VerticalDatum} from './sceneTypes';
-import {privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure, terrainMetadata, terrainPending, TERRAIN_POLL_MS,
+import {privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure, resourceUploadBytes, terrainMetadata, terrainPending, TERRAIN_POLL_MS,
   validateResourceFile, writeDenial, type TerrainFields} from './resourceForms';
 import {resourceText} from './resourceMessages';
 
@@ -29,7 +29,10 @@ export function TerrainImport({api,writeBlocked,canUse,activeTerrainVersion,onTe
   const versionGate=useMemo(()=>new ResourceRequestGate(),[]),cancelGate=useMemo(()=>new ResourceRequestGate(),[]);
   const catalogGate=useMemo(()=>new ResourceRequestGate(),[]);
   const uploadId=useRef(new ResourceRequestId()),cancelId=useRef(new ResourceRequestId());
-  const canImport=!writeBlocked&&!!(catalog?.capabilities.canUpload??job?.capabilities.canUpload??version?.capabilities.canUpload);
+  const maximum=catalog?.limits.maxUploadBytes??job?.limits.maxUploadBytes??version?.limits.maxUploadBytes;
+  const hasUploadLimit=maximum!==undefined&&Number.isSafeInteger(maximum)&&maximum>=8;
+  const uploadLimitText=hasUploadLimit?resourceText(locale,'tiffLimit',{maximum:resourceUploadBytes(maximum)}):t('loading');
+  const canImport=!writeBlocked&&hasUploadLimit&&!!(catalog?.capabilities.canUpload??job?.capabilities.canUpload??version?.capabilities.canUpload);
   const field=<K extends keyof TerrainFields>(name:K,value:TerrainFields[K])=>setFields(previous=>({...previous,[name]:value}));
   function failed(value:unknown,upload=false) {
     if(cancelled(value))return;
@@ -70,7 +73,7 @@ export function TerrainImport({api,writeBlocked,canUse,activeTerrainVersion,onTe
     if(uploading||!canImport)return;
     try {
       if(!file)throw new ResourceFormError('terrainFileInvalid');
-      validateResourceFile(file,'terrain',catalog?.limits.maxUploadBytes??job?.limits.maxUploadBytes);
+      validateResourceFile(file,'terrain',maximum);
       const draft=terrainMetadata(fields,''),clientRequestId=uploadId.current.forPayload(draft,`${file.name}:${file.size}:${file.lastModified}`);
       const request=uploadGate.start();setUploading(true);setUploadError(null);
       try {
@@ -149,9 +152,12 @@ export function TerrainImport({api,writeBlocked,canUse,activeTerrainVersion,onTe
         <dt>{t('fixedVersion')}</dt><dd className="ov-resource-id">{version.terrainVersionId}</dd>
       </dl></details>
     </section>}
-    {open&&<Modal title={t('importTerrain')} description={t('tiffLimit')} onClose={()=>{if(!uploading)setOpen(false);}}><div className="ov-resource-form">
-      <label>{t('chooseTiff')}<input type="file" accept=".tif,.tiff,image/tiff" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);field('rights',false);setUploadError(null);uploadId.current.reset();}}/></label>
-      <p className="ov-resource-caption">{t('tiffLimit')}</p>
+    {open&&<Modal title={t('importTerrain')} description={uploadLimitText} onClose={()=>{if(!uploading)setOpen(false);}}><div className="ov-resource-form">
+      <label>{t('chooseTiff')}<input type="file" accept=".tif,.tiff,image/tiff" disabled={uploading} onChange={event=>{
+        const selected=event.target.files?.[0]||null;setFile(null);field('rights',false);setUploadError(null);uploadId.current.reset();
+        if(selected)try{validateResourceFile(selected,'terrain',maximum);setFile(selected);}catch(value){event.target.value='';failed(value,true);}
+      }}/></label>
+      <p className="ov-resource-caption">{uploadLimitText}</p>
       <label>{t('displayName')}<input value={fields.name} maxLength={120} disabled={uploading} onChange={event=>field('name',event.target.value)}/></label>
       <label>{t('sourceNote')}<textarea value={fields.source} maxLength={2000} disabled={uploading} rows={2} onChange={event=>field('source',event.target.value)}/></label>
       <label>{t('license')}<textarea value={fields.license} maxLength={2000} disabled={uploading} rows={2} onChange={event=>field('license',event.target.value)}/></label>

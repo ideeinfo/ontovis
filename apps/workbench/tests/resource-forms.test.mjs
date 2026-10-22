@@ -3,7 +3,7 @@ import test from 'node:test';
 import {ApiError, WorkbenchApi} from '../src/api.ts';
 import {SceneApi} from '../src/sceneApi.ts';
 import {calibrationInput, modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId,
-  resourceFailure, terrainMetadata, terrainPending, TERRAIN_POLL_MS, validateResourceFile, writeDenial} from '../src/resourceForms.ts';
+  resourceFailure, resourceUploadBytes, terrainMetadata, terrainPending, TERRAIN_POLL_MS, validateResourceFile, writeDenial} from '../src/resourceForms.ts';
 import {resourceText} from '../src/resourceMessages.ts';
 
 const modelFields={name:'设备模型',purpose:'equipment',source:'项目提供的合成素材',rights:true};
@@ -17,11 +17,29 @@ test('GLB and GeoTIFF file validation rejects wrong formats, truncation and hard
   for(const file of [{name:'model.glb',size:23},{name:'model.gltf',size:200},{name:'model.glb',size:20*1024*1024+1}]){
     assert.throws(()=>validateResourceFile(file,'model'),error=>error instanceof ResourceFormError&&error.key==='modelFileInvalid');
   }
-  for(const file of [{name:'terrain.tif',size:7},{name:'terrain.png',size:200},{name:'terrain.tif',size:256*1024*1024+1}]){
+  for(const file of [{name:'terrain.tif',size:7},{name:'terrain.png',size:200}]){
     assert.throws(()=>validateResourceFile(file,'terrain'),error=>error.key==='terrainFileInvalid');
   }
+  assert.throws(()=>validateResourceFile({name:'terrain.tif',size:256*1024*1024+1},'terrain'),error=>error.key==='terrainFileTooLarge');
   assert.throws(()=>validateResourceFile({name:'small.glb',size:1025},'model',1024));
   assert.throws(()=>validateResourceFile({name:'bad.glb',size:NaN},'model'));
+});
+
+test('terrain selection uses the deployment byte limit at its exact boundary and reports it in both languages',()=>{
+  const maximum=100_000_000,label=resourceUploadBytes(maximum);
+  assert.equal(label,'100,000,000 B (95.37 MiB)');
+  validateResourceFile({name:'terrain.tif',size:maximum},'terrain',maximum);
+  assert.throws(()=>validateResourceFile({name:'terrain.tif',size:maximum+1},'terrain',maximum),error=>{
+    assert.equal(error.key,'terrainFileTooLarge');
+    assert.equal(resourceFailure(error,'zh'),`GeoTIFF 文件不能超过${label}。`);
+    assert.equal(resourceFailure(error,'en'),`The GeoTIFF must not exceed ${label}.`);
+    return true;
+  });
+  for(const locale of ['zh','en']){
+    const text=resourceText(locale,'tiffLimit',{maximum:label});
+    assert.ok(text.includes(label));assert.ok(!text.includes('256'));
+  }
+  assert.throws(()=>validateResourceFile({name:'terrain.tif',size:256*1024*1024+1},'terrain',Number.MAX_SAFE_INTEGER),error=>error.key==='terrainFileTooLarge');
 });
 
 test('append model version keeps existing resource name and purpose and does not invent engineering bindings',()=>{
