@@ -135,7 +135,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                '/api/workbench/evidence/resolve','/api/workbench/evidence/content')
             scene_paths = ('/api/workbench/scenes','/api/workbench/scenes/create','/api/workbench/scenes/open',
                            '/api/workbench/scenes/head','/api/workbench/scenes/save','/api/workbench/scenes/check',
-                           '/api/workbench/scenes/replacement-check')
+                           '/api/workbench/scenes/replacement-check','/api/workbench/scenes/locate')
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
                                   '/api/workbench/objects/evidence/content')

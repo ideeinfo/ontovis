@@ -169,14 +169,15 @@ class SceneHttpTests(unittest.TestCase):
         self.assertIsNone(self.sessions.model)
         status, listed, _ = self.request('/api/workbench/scenes')
         self.assertEqual(status, 200)
-        self.assertEqual(listed['capabilities']['scope'], 'local_plane_unbound')
+        self.assertEqual(listed['capabilities']['scope'], 'project_scenes')
+        self.assertTrue(listed['capabilities']['supportsEngineeringBindings'])
         self.assertTrue(listed['capabilities']['localPlaneUnbound'])
         self.assertTrue(listed['capabilities']['canWrite'])
         self.assertTrue(listed['capabilities']['existingUploadedModelVersionsOnly'])
         self.assertEqual(listed['limits']['maxSaveJsonBytes'], MAX_SCENE_BYTES)
         self.assertEqual(listed['limits']['maxReadJsonBytes'], 16384)
         self.assertEqual(listed['limits']['maxInstances'], 100)
-        self.assertEqual(listed['limits']['maxComponentBindings'], 0)
+        self.assertEqual(listed['limits']['maxComponentBindings'], 1000)
         self.create()
         self.assertFalse(any('/installations/' in path for _, path in self.account().calls))
 
@@ -305,14 +306,14 @@ class SceneHttpTests(unittest.TestCase):
         (self.library.root / 'files' / (self.version['versionId'] + '.glb')).write_bytes(b'changed')
         self.assert_response(self.open(scene), 409, 'RESOURCE_CHANGED')
 
-    def test_geographic_terrain_and_engineering_fields_are_explicitly_unsupported(self):
+    def test_unconfigured_geography_and_malformed_engineering_are_refused(self):
         scene = self.create()
-        for change in [lambda value: value['snapshot'].update(coordinateFrame={'mode': 'projected_site'}),
-                       lambda value: value['snapshot'].update(terrain={'terrainVersionId': str(uuid4())}),
-                       lambda value: value['snapshot']['instances'][0].update(rootBinding={'objectRef': {'entityUid': 'fake'}})]:
+        for change, code in [(lambda value: value['snapshot'].update(coordinateFrame={'mode': 'projected_site'}), 'SCENE_SCOPE_UNSUPPORTED'),
+                       (lambda value: value['snapshot'].update(terrain={'terrainVersionId': str(uuid4())}), 'SCENE_SCOPE_UNSUPPORTED'),
+                       (lambda value: value['snapshot']['instances'][0].update(rootBinding={'objectRef': {'entityUid': 'fake'}}), 'INVALID_REQUEST')]:
             request = self.save_body(scene, [self.item()])
             change(request)
-            self.assert_response(self.save(request), 422, 'SCENE_SCOPE_UNSUPPORTED')
+            self.assert_response(self.save(request), 422, code)
         self.assertEqual(self.open(scene)[1]['snapshot']['instances'], [])
 
     def test_save_accepts_over_16k_within_actual_budget_but_other_routes_do_not(self):
@@ -338,8 +339,9 @@ class SceneHttpTests(unittest.TestCase):
         for changes in ({'Origin': 'https://foreign.invalid'}, {'Origin': None}, {'Host': 'foreign.invalid'},
                         {'Sec-Fetch-Site': 'cross-site'}):
             self.assert_response(self.request('/api/workbench/scenes', headers=changes), 403, 'FORBIDDEN')
-        for path in ('/api/workbench/scenes/delete', '/api/workbench/scenes?project=other', '/api/workbench/scenes/locate'):
+        for path in ('/api/workbench/scenes/delete', '/api/workbench/scenes?project=other'):
             self.assert_response(self.request(path), 404, 'NOT_FOUND')
+        self.assert_response(self.request('/api/workbench/scenes/locate'), 422, 'INVALID_REQUEST')
 
     def test_duplicate_transport_headers_are_rejected_before_reading_body(self):
         for duplicates, expected in [([('Content-Length', '2'), ('Content-Length', '2')], 422),

@@ -22,12 +22,15 @@ from apps.api.model_assets import ModelAsset
 from apps.api.model_library import ModelLibrary
 from apps.api.project_model_library import ProjectModelLibrary
 from apps.api.model_validation import MAX_BYTES
-from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COORDINATE_M
+from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COORDINATE_M, MAX_COMPONENT_BINDINGS
 from apps.api.terrain_library import TerrainLibrary, MAX_VERSIONS as MAX_TERRAIN_VERSIONS, MAX_TOTAL_BYTES as MAX_TERRAIN_TOTAL_BYTES
 from apps.api.terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES, MAX_PIXELS as MAX_TERRAIN_PIXELS, MAX_TRIANGLES as MAX_TERRAIN_TRIANGLES
 from apps.api.scene_geometry_process import SceneGeometryProcess
 from apps.api.scene_engineering import SceneEngineeringReader
 from apps.api.scene_evidence import SceneEvidenceReader
+from apps.api.scene_engineering_validation import SceneEngineeringValidator
+from apps.api.scene_bindings import validate_ref
+from apps.api.scene_location import SceneLocationResolver
 
 
 class WorkbenchSessions(UserSessions):
@@ -350,6 +353,12 @@ class WorkbenchSessions(UserSessions):
                 fixed_models[identifier] = expected
                 return value
 
+            reader = SceneEngineeringReader(authority, self.ontobase_connection_id, self.project_code,
+                lambda: self.guard(sid, row))
+            engineering_check = SceneEngineeringValidator(reader,
+                lambda identifier: model_details(identifier)['components'],
+                self.ontobase_connection_id, self.project_code)
+
             def terrain_replacement(snapshot, candidate, strategy):
                 if self.geometry is None or self.terrains is None:
                     raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
@@ -369,12 +378,30 @@ class WorkbenchSessions(UserSessions):
                 value = self.scenes.listing(authority.username, authorize,
                     access_revision=baseline['accessRevision'], **body)
             elif path == '/api/workbench/scenes/create':
-                value = self.scenes.create(body, authority.username, authorize, validate_resources, validate_engineering)
+                value = self.scenes.create(body, authority.username, authorize, validate_resources, validate_engineering,
+                    engineering_check=engineering_check)
             elif path == '/api/workbench/scenes/open' and set(body) in ({'sceneId'}, {'sceneId','sceneRevision'}):
-                value = self.scenes.open(body['sceneId'], authority.username, authorize, body.get('sceneRevision'))
+                value = self.scenes.open(body['sceneId'], authority.username, authorize, body.get('sceneRevision'),
+                    engineering_check=engineering_check)
                 fixed_models.update({item['modelVersionId']: (item['sha256'], item['contentRevision']) for item in value['resourceRefs']})
                 fixed_terrains.update({item['terrainVersionId']: item for item in value.get('terrainRefs', [])})
                 validate_resources(value['snapshot'])
+                authorize()
+            elif path == '/api/workbench/scenes/locate' and {'sceneId', 'sceneRevision', 'selectedObjectRef', 'contextEpoch'} <= set(body) <= {
+                    'sceneId', 'sceneRevision', 'selectedObjectRef', 'contextEpoch', 'representationChoice'}:
+                if (not isinstance(body['sceneRevision'], str) or not body['sceneRevision']
+                        or 'representationChoice' in body and type(body['representationChoice']) is not dict):
+                    raise PreviewError(422, 'INVALID_REQUEST')
+                selected_ref = validate_ref(body['selectedObjectRef'],
+                    connection_id=self.ontobase_connection_id, project_code=self.project_code)
+                opened = self.scenes.open(body['sceneId'], authority.username, authorize, body['sceneRevision'],
+                    engineering_check=engineering_check)
+                fixed_models.update({item['modelVersionId']: (item['sha256'], item['contentRevision']) for item in opened['resourceRefs']})
+                fixed_terrains.update({item['terrainVersionId']: item for item in opened.get('terrainRefs', [])})
+                validate_resources(opened['snapshot'])
+                selected = reader.context_for_object(selected_ref['entityUid'])
+                value = SceneLocationResolver(model_details).resolve(opened, selected, body['contextEpoch'],
+                    body.get('representationChoice'))
                 authorize()
             elif path == '/api/workbench/scenes/head' and set(body) == {'sceneId','viewingRevision'}:
                 value = self.scenes.head(body['sceneId'], body['viewingRevision'], authority.username, authorize)
@@ -382,31 +409,31 @@ class WorkbenchSessions(UserSessions):
                 value = self.scenes.save(body, authority.username, authorize, validate_resources, validate_engineering,
                     validate_geometry=validate_geometry if self.geometry is not None else None,
                     access_revision=baseline['accessRevision'],
-                    terrain_replacement=terrain_replacement, model_details=model_details)
+                    terrain_replacement=terrain_replacement, model_details=model_details, engineering_check=engineering_check)
             elif path == '/api/workbench/scenes/check':
                 value = self.scenes.check(body, authority.username, authorize, validate_resources, validate_engineering,
                     preview_geometry if self.geometry is not None else None,
                     preview_anchor if self.geometry is not None else None,
-                    access_revision=baseline['accessRevision'])
+                    access_revision=baseline['accessRevision'], engineering_check=engineering_check)
             elif path == '/api/workbench/scenes/replacement-check':
                 value = self.scenes.replacement_check(body, authority.username, authorize,
                     validate_resources, validate_engineering,
                     preview_geometry if self.geometry is not None else None,
                     terrain_replacement if self.geometry is not None else None,
-                    model_details, access_revision=baseline['accessRevision'])
+                    model_details, access_revision=baseline['accessRevision'], engineering_check=engineering_check)
             else:
                 raise PreviewError(422, 'INVALID_REQUEST')
             self.guard(sid, row)
             value['sessionRevision'] = row.revision
             value['projectName'] = current_access.get('projectName', self.project_code)
-            value['capabilities'] = {**self.scenes.capabilities(geographic=self.geometry is not None),
-                'scope': 'projected_site_unbound' if self.geometry is not None else 'local_plane_unbound',
+            value['capabilities'] = {**self.scenes.capabilities(geographic=self.geometry is not None, engineering=True),
+                'scope': 'project_scenes',
                 'localPlaneUnbound': True, 'canRead': True, 'canWrite': current_access.get('role') == 'admin',
                 'existingUploadedModelVersionsOnly': True, 'projectModelResources': True,
                 'canPreflightGeographic': self.geometry is not None}
             value['limits'] = {'maxSaveJsonBytes': MAX_SCENE_BYTES, 'maxReadJsonBytes': 16384,
                 'maxCheckJsonBytes': MAX_SCENE_BYTES,
-                'maxInstances': MAX_INSTANCES, 'maxComponentBindings': 0, 'maxNameCharacters': 200,
+                'maxInstances': MAX_INSTANCES, 'maxComponentBindings': MAX_COMPONENT_BINDINGS, 'maxNameCharacters': 200,
                 'maxLocalCoordinateM': MAX_COORDINATE_M}
             return value
         except PreviewError as error:
