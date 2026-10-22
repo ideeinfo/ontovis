@@ -428,9 +428,9 @@ class ProjectModelLibraryTests(unittest.TestCase):
             self.assertEqual(identity['modelAssetId'], calibrated['modelAssetId'])
             self.assertTrue(identity['canPlace'])
             self.assertTrue(db.in_transaction)
-        self.old.bind({'modelVersionId': calibrated['modelVersionId'], 'entityUid': 'fixture-cabinet', 'componentKey': 'component:0',
+        self.expect('MODEL_NOT_FOUND', lambda: self.old.bind({'modelVersionId': calibrated['modelVersionId'], 'entityUid': 'fixture-cabinet', 'componentKey': 'component:0',
             'expectedEntityRevision': 'engineering:1', 'expectedHierarchyRevision': 'hierarchy:1',
-            'expectedModelRevision': 1, 'clientRequestId': str(uuid4())}, 'fixture-admin', self.guard)
+            'expectedModelRevision': 1, 'clientRequestId': str(uuid4())}, 'fixture-admin', self.guard))
         self.assertEqual(self.models.content_identity(calibrated['modelVersionId']), identity)
         self.assertNotIn('bindings', self.model(calibrated))
         self.assertEqual(self.model(calibrated)['components'], calibrated['components'])
@@ -468,7 +468,9 @@ class ProjectModelLibraryTests(unittest.TestCase):
         self.assertEqual(fixed['snapshot']['instances'][0]['modelVersionId'], calibrated['modelVersionId'])
         self.assertNotEqual(calibrated['modelVersionId'], replacement['modelVersionId'])
         self.expect('RESOURCE_IN_USE', lambda: scenes.assert_model_unused(calibrated['modelVersionId'], self.guard))
-        body['snapshot']['instances'][0]['modelVersionId'] = source['modelVersionId']
+        uncalibrated = copy.deepcopy(body['snapshot']['instances'][0])
+        uncalibrated.update(sceneModelInstanceId=str(uuid4()), modelVersionId=source['modelVersionId'])
+        body['snapshot']['instances'].append(uncalibrated)
         body['clientRequestId'] = str(uuid4()); body['expectedSceneRevision'] = saved['sceneRevision']
         self.expect('MODEL_CALIBRATION_REQUIRED', lambda: scenes.save(body, 'fixture-admin', self.guard, resources, lambda *_: None))
 

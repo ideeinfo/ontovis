@@ -72,6 +72,10 @@ class ModelUploadTests(unittest.TestCase):
     def bind(self,item,uid='CN',component='component:2',**overrides):
         body={'modelVersionId':item['versionId'],'entityUid':uid,'componentKey':component,'expectedEntityRevision':'object:1','expectedHierarchyRevision':self.account.hierarchy,'expectedModelRevision':self.library.version(item['versionId'])['modelRevision'],'clientRequestId':str(uuid4()),**overrides}
         return self.sessions.save_binding(self.sid,{**body,'expectedSessionRevision':self.row.revision})
+    def project_upload(self):
+        metadata={**self.metadata(),'purpose':'equipment'}
+        data=self.path.read_bytes()
+        return self.sessions.resource_upload(self.sid,metadata,io.BytesIO(data),len(data))
     def expect(self,code,fn):
         with self.assertRaises((PreviewError,ProbeError)) as caught:fn()
         self.assertEqual(caught.exception.code,code)
@@ -165,6 +169,66 @@ class ModelUploadTests(unittest.TestCase):
         second=self.bind(item,clientRequestId=request_id,expectedModelRevision=1)
         self.assertEqual(first,second)
         with self.library.connect() as db:self.assertEqual(db.execute("select count(*) from audit where action='binding_saved'").fetchone()[0],1)
+    def test_legacy_reads_work_without_project_schema_and_keep_the_existing_binding_semantics(self):
+        old=ModelLibrary(self.root/'old-schema','fixture',CONTEXT)
+        path=glb(self.root/'old-only.glb')
+        metadata={**self.metadata(),'expectedLibraryRevision':old.listing()['libraryRevision']}
+        item=old.save_upload(path,metadata,'fixture-user',validate(path),lambda:None)
+        self.assertEqual([row['versionId'] for row in old.listing(legacy_only=True)['items']],[item['versionId']])
+        self.assertEqual(old.version(item['versionId'],legacy_only=True)['sha256'],item['sha256'])
+        old.bind({'modelVersionId':item['versionId'],'entityUid':'CN','componentKey':'component:2',
+            'expectedEntityRevision':'object:1','expectedHierarchyRevision':self.account.hierarchy,
+            'expectedModelRevision':1,'clientRequestId':str(uuid4())},'fixture-user',lambda:None)
+        self.assertEqual(old.version(item['versionId'],legacy_only=True)['modelRevision'],2)
+        with old.connect() as db:
+            self.assertIsNone(db.execute("select 1 from sqlite_master where name='project_model_versions'").fetchone())
+    def test_project_versions_never_enter_legacy_catalog_or_store_bindings(self):
+        legacy=self.upload();project=self.project_upload()
+        calibrated=self.sessions.resource_request(self.sid,'/api/workbench/resources/model/calibrate',{
+            'expectedSessionRevision':self.row.revision,'modelVersionId':project['modelVersionId'],
+            'expectedContentRevision':project['contentRevision'],'expectedLibraryRevision':self.library.listing()['libraryRevision'],
+            'calibration':{'unit':'m','axes':'Y_UP_RIGHT_HANDED','basePoint':[0,0,0],'forward':[0,0,-1]},
+            'clientRequestId':str(uuid4())})
+        self.assertEqual(len(self.library.listing()['items']),3)
+        before=self.library.listing()
+        self.assertEqual([row['versionId'] for row in self.library.listing(legacy_only=True)['items']],[legacy['versionId']])
+        for version in (project,calibrated):
+            with self.subTest(calibration=version['calibrationState']):
+                self.expect('MODEL_NOT_FOUND',lambda:self.library.version(version['modelVersionId'],legacy_only=True))
+                self.expect('MODEL_NOT_FOUND',lambda:self.library.bind({'modelVersionId':version['modelVersionId'],
+                    'entityUid':'CN','componentKey':version['components'][0]['componentKey'],
+                    'expectedEntityRevision':'object:1','expectedHierarchyRevision':self.account.hierarchy,
+                    'expectedModelRevision':1,'clientRequestId':str(uuid4())},'fixture-user',lambda:None))
+                current=self.sessions.resource_request(self.sid,'/api/workbench/resources/model',{
+                    'modelAssetId':version['modelAssetId'],'modelVersionId':version['modelVersionId'],
+                    'expectedSessionRevision':self.row.revision})
+                self.assertEqual(current['contentRevision'],version['contentRevision'])
+        self.assertEqual(self.library.listing(),before)
+        with self.library.connect() as db:
+            self.assertEqual(db.execute('select count(*) from bindings').fetchone()[0],0)
+            self.assertEqual(db.execute("select count(*) from audit where action='binding_saved'").fetchone()[0],0)
+        self.bind(legacy)
+        self.assertEqual(self.library.version(legacy['versionId'],legacy_only=True)['bindings'][0]['entity_uid'],'CN')
+    def test_project_scope_is_rechecked_under_the_write_lock_before_old_request_replay(self):
+        legacy=self.upload();request_id=str(uuid4())
+        body={'modelVersionId':legacy['versionId'],'entityUid':'CN','componentKey':'component:2',
+            'expectedEntityRevision':'object:1','expectedHierarchyRevision':self.account.hierarchy,
+            'expectedModelRevision':1,'clientRequestId':request_id}
+        self.library.bind(body,'fixture-user',lambda:None)
+        project=self.project_upload();original=self.library.version
+        before=self.library.listing()
+        def registered(identifier,**options):
+            value=original(identifier,**options)
+            with self.library.connect() as db:
+                db.execute('insert into project_model_versions values (?,?,?,?,?)',
+                    (identifier,project['modelAssetId'],'synthetic-fixed-content',None,None))
+            return value
+        with patch.object(self.library,'version',side_effect=registered):
+            self.expect('MODEL_NOT_FOUND',lambda:self.library.bind(body,'fixture-user',lambda:None))
+        self.assertEqual(self.library.listing(),before)
+        with self.library.connect() as db:
+            self.assertEqual(db.execute('select count(*) from bindings').fetchone()[0],1)
+            self.assertEqual(db.execute("select count(*) from audit where action='binding_saved'").fetchone()[0],1)
     def test_changed_identity_removes_stale_highlight_but_retains_a_reviewable_model(self):
         item=self.upload();self.bind(item);self.account.objects['CN']['entityRevision']='object:2'
         view=self.request('model',{'modelVersionId':item['versionId']})
@@ -197,6 +261,47 @@ class ModelUploadTests(unittest.TestCase):
         self.assertEqual(self.library.listing()['items'],[])
         with self.library.connect() as db:self.assertEqual(db.execute('select count(*) from audit').fetchone()[0],0)
         self.assertEqual(list((self.library.root/'files').iterdir()),[])
+    def test_http_old_model_routes_refuse_project_versions_while_both_legitimate_flows_stay_available(self):
+        legacy=self.upload();project=self.project_upload()
+        server=ThreadingHTTPServer(('127.0.0.1',0),handler_type(self.sessions,'http://127.0.0.1:4180',development=True))
+        thread=Thread(target=server.serve_forever,daemon=True);thread.start()
+        self.addCleanup(server.server_close);self.addCleanup(thread.join);self.addCleanup(server.shutdown)
+        def request(path,body=None):
+            headers={'Host':'127.0.0.1:4180','Origin':'http://127.0.0.1:4180','Content-Type':'application/json',
+                'Cookie':'ontovis_development_session='+self.sid}
+            connection=HTTPConnection(*server.server_address,timeout=5)
+            try:
+                connection.request('POST','/api/workbench/'+path,json.dumps({**(body or {}),'expectedSessionRevision':self.row.revision}),headers)
+                response=connection.getresponse();data=response.read()
+                return response.status,json.loads(data) if response.getheader('Content-Type','').startswith('application/json') else data
+            finally:connection.close()
+        status,listing=request('models')
+        self.assertEqual(status,200);self.assertTrue(listing['canUpload'])
+        self.assertEqual([row['versionId'] for row in listing['items']],[legacy['versionId']])
+        before=self.library.listing()
+        self.assertEqual(request('model',{'modelVersionId':project['modelVersionId']}),(404,{'code':'MODEL_NOT_FOUND'}))
+        self.assertEqual(request('model/content',{'modelVersionId':project['modelVersionId'],
+            'expectedModelSha256':project['sha256'],'expectedModelRevision':1,'expectedViewRevision':'untrusted'}),
+            (404,{'code':'MODEL_NOT_FOUND'}))
+        self.assertEqual(request('models/binding',{'modelVersionId':project['modelVersionId'],'entityUid':'CN',
+            'componentKey':project['components'][0]['componentKey'],'expectedEntityRevision':'object:1',
+            'expectedHierarchyRevision':self.account.hierarchy,'expectedModelRevision':1,'clientRequestId':str(uuid4())}),
+            (404,{'code':'MODEL_NOT_FOUND'}))
+        self.assertEqual(self.library.listing(),before)
+        self.assertEqual(request('resources/model',{'modelAssetId':project['modelAssetId'],
+            'modelVersionId':project['modelVersionId']})[0],200)
+        self.assertEqual(request('resources/model/content',{'modelVersionId':project['modelVersionId'],
+            'expectedContentRevision':project['contentRevision'],'expectedSha256':project['sha256']}),(200,self.path.read_bytes()))
+        self.assertEqual(request('models/binding',{'modelVersionId':legacy['versionId'],'entityUid':'CN',
+            'componentKey':'component:2','expectedEntityRevision':'object:1','expectedHierarchyRevision':self.account.hierarchy,
+            'expectedModelRevision':1,'clientRequestId':str(uuid4())})[0],200)
+        status,view=request('model',{'modelVersionId':legacy['versionId']})
+        self.assertEqual(status,200);self.assertEqual(view['bindings'][0]['entityUid'],'CN')
+        self.assertEqual(request('model/content',{'modelVersionId':legacy['versionId'],'expectedModelSha256':view['sha256'],
+            'expectedModelRevision':view['modelRevision'],'expectedViewRevision':view['viewRevision']}),(200,self.path.read_bytes()))
+        status,fixed=request('model')
+        self.assertEqual(status,200);self.assertEqual(fixed['sha256'],self.sessions.model.value['sha256'])
+        self.assertNotIn('modelVersionId',fixed)
     def test_binary_http_boundary_requires_origin_session_and_bounded_metadata(self):
         server=ThreadingHTTPServer(('127.0.0.1',0),handler_type(self.sessions,'http://127.0.0.1:4180',development=True))
         thread=Thread(target=server.serve_forever,daemon=True);thread.start()

@@ -63,9 +63,17 @@ class ModelLibrary:
     @staticmethod
     def revision(db): return 'library:' + str(db.execute('select revision from library where id=1').fetchone()[0])
 
-    def listing(self):
+    @staticmethod
+    def _project_version(db, identifier):
+        exists = db.execute("select 1 from sqlite_master where type='table' and name='project_model_versions'").fetchone()
+        return exists is not None and db.execute('select 1 from project_model_versions where version_id=?', (identifier,)).fetchone() is not None
+
+    def listing(self, *, legacy_only=False):
         with self.connect() as db:
-            rows = db.execute('select v.*, (select count(*) from bindings b where b.version_id=v.id) as binding_count from versions v order by created_at desc').fetchall()
+            where = ''
+            if legacy_only and db.execute("select 1 from sqlite_master where type='table' and name='project_model_versions'").fetchone():
+                where = ' where not exists (select 1 from project_model_versions p where p.version_id=v.id)'
+            rows = db.execute('select v.*, (select count(*) from bindings b where b.version_id=v.id) as binding_count from versions v'+where+' order by created_at desc').fetchall()
             return {'libraryRevision':self.revision(db), 'items':[self.public(row) for row in rows],
                     'maxBytes':MAX_BYTES, 'maxModels':20}
 
@@ -76,12 +84,12 @@ class ModelLibrary:
                 'modelRevision':row['revision'], 'state':'ready', 'report':json.loads(row['report']),
                 'bindingCount':row['binding_count'] if 'binding_count' in row.keys() else 0}
 
-    def version(self, identifier):
+    def version(self, identifier, *, legacy_only=False):
         try: identifier = str(UUID(identifier))
         except (ValueError, TypeError, AttributeError): raise PreviewError(422,'INVALID_REQUEST') from None
         with self.connect() as db:
             row = db.execute('select * from versions where id=?',(identifier,)).fetchone()
-            if not row: raise PreviewError(404,'MODEL_NOT_FOUND')
+            if not row or legacy_only and self._project_version(db, identifier): raise PreviewError(404,'MODEL_NOT_FOUND')
             value = self.public(row)
             value['components'] = json.loads(row['components'])
             value['bindings'] = [dict(row) for row in db.execute('select * from bindings where version_id=? order by entity_uid',(identifier,))]
@@ -162,6 +170,9 @@ class ModelLibrary:
         canonical = json.dumps(body,sort_keys=True)
         with self.connect() as db:
             db.execute('begin immediate')
+            # Project resource bindings belong only to scene snapshots. Recheck
+            # after acquiring the write lock, including idempotent old requests.
+            if self._project_version(db, value['versionId']): raise PreviewError(404,'MODEL_NOT_FOUND')
             prior = db.execute('select * from audit where request_id=?',(body['clientRequestId'],)).fetchone()
             if prior:
                 if prior['actor']!=actor or prior['action']!='binding_saved' or prior['payload']!=canonical: raise PreviewError(409,'REQUEST_CONFLICT')

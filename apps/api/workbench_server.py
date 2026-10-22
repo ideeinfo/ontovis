@@ -502,6 +502,7 @@ class WorkbenchSessions(UserSessions):
         body = {key:value for key,value in payload.items() if key!='expectedSessionRevision'}
         uid = body.get('entityUid')
         if not isinstance(uid,str) or uid not in {item['entityUid'] for item in self.model.value['bindings']}: raise PreviewError(422,'INVALID_CABINET')
+        self.library.version(body.get('modelVersionId'), legacy_only=True)
         def verify():
             authorize()
             item = self.object(authority,uid)
@@ -519,7 +520,7 @@ class WorkbenchSessions(UserSessions):
 
     def library_model(self, authority, context, identifier):
         if self.library is None: raise PreviewError(503,'MODEL_UNAVAILABLE')
-        value = self.library.version(identifier)
+        value = self.library.version(identifier, legacy_only=True)
         if context.get('purpose')!='demonstration' or context.get('engineeringUseAllowed') is not False: raise PreviewError(409,'MODEL_SCOPE_CHANGED')
         components = {item['componentKey']:item for item in value['components']}
         bindings,warnings = [],[]
@@ -633,7 +634,7 @@ class WorkbenchSessions(UserSessions):
                 value = {'item':item, 'ancestors':ancestors}
             elif path == '/api/workbench/models' and not body:
                 if self.library is None: raise PreviewError(503,'MODEL_UNAVAILABLE')
-                value = self.library.listing()
+                value = self.library.listing(legacy_only=True)
                 value['hasCurrentModel'] = self.model is not None
                 access = authority.request('GET',self.access_path)
                 value['canUpload'] = access.get('role')=='admin' and context.get('purpose')=='demonstration' and context.get('engineeringUseAllowed') is False
