@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {fileURLToPath} from 'node:url';
+import ts from 'typescript';
 import {WorkbenchApi} from '../src/api.ts';
 import {SceneApi} from '../src/sceneApi.ts';
 
@@ -52,7 +54,7 @@ test('resource and terrain methods use only the implemented fixed paths and mode
     await run();assert.deepEqual(calls.at(-1),{path:`/api/workbench/${path}`,body:{...body,expectedSessionRevision:'session:1'}});
   }
   assert.equal(calls.length,checks.length);
-  assert.equal(typeof api.replacementCheck,'undefined');assert.equal(typeof api.bind,'undefined');
+  assert.equal(typeof api.bind,'undefined');
 });
 
 test('resource upload wrappers preserve source declarations and idempotency keys', async () => {
@@ -133,4 +135,102 @@ test('reuse write denial preserves readable resources while directory read denia
   assert.equal(denied,false);assert.equal(transport.epoch,epoch);
   code = 'FORBIDDEN';await assert.rejects(api.terrains(),error=>error.code==='FORBIDDEN');
   assert.equal(denied,true);assert.ok(transport.epoch>epoch);
+});
+
+test('model and terrain replacement previews preserve their distinct saved-head fields and opaque signed result', async () => {
+  const calls=[],controller=new AbortController();
+  const impact={fixtureOnly:true,unknownFutureImpact:{removedGeometry:[]}};
+  const transport=new WorkbenchApi(async(path,options)=>{
+    const body=JSON.parse(options.body);calls.push({path,body,signal:options.signal});
+    return json({sessionRevision:'session:1',sceneId:body.sceneId,baseSceneRevision:body.expectedSceneRevision,
+      proposedSnapshot:body.snapshot,validation:{impact},spatialChange:{kind:body.kind,receipt:`signed-${body.kind}-receipt`}});
+  });transport.session('session:1');const api=new SceneApi(transport);
+  const snapshot={displayName:'合成保存快照'},base={sceneId:'scene-fixed',expectedSceneRevision:'scene:saved',snapshot};
+  const bodies=[{...base,kind:'model',sceneModelInstanceId:'instance-fixed',candidateModelVersionId:'model-candidate'},
+    {...base,kind:'terrain',candidateTerrainVersionId:'terrain-candidate',strategy:'keep_height'},
+    {...base,kind:'terrain',candidateTerrainVersionId:'terrain-candidate',strategy:'resample_ground'}];
+  for(const body of bodies){
+    const result=await api.replacementCheck(body,controller.signal),sent=calls.at(-1);
+    assert.deepEqual(sent,{path:'/api/workbench/scenes/replacement-check',body:{...body,expectedSessionRevision:'session:1'},signal:controller.signal});
+    assert.deepEqual(result.validation.impact,impact);
+    assert.deepEqual(result.spatialChange,{kind:body.kind,receipt:`signed-${body.kind}-receipt`});
+    assert.equal('candidateModelVersionId' in result.spatialChange,false);assert.equal('strategy' in result.spatialChange,false);
+  }
+  assert.equal(calls.length,3);assert.deepEqual(snapshot,{displayName:'合成保存快照'});
+});
+
+test('dirty replacement is a single explicit conflict and never silently saves or changes the expected head', async () => {
+  const calls=[],body={kind:'model',sceneId:'scene-fixed',expectedSceneRevision:'scene:saved',snapshot:{displayName:'本地修改'},
+    sceneModelInstanceId:'instance-fixed',candidateModelVersionId:'candidate'};
+  const unchanged=structuredClone(body),transport=new WorkbenchApi(async(path,options)=>{
+    calls.push({path,body:JSON.parse(options.body)});return new Response('{"code":"SCENE_DRAFT_REQUIRES_SAVE"}',{status:409});
+  });transport.session('session:1');const api=new SceneApi(transport);
+  await assert.rejects(api.replacementCheck(body),error=>error.status===409&&error.code==='SCENE_DRAFT_REQUIRES_SAVE');
+  assert.deepEqual(calls,[{path:'/api/workbench/scenes/replacement-check',body:{...body,expectedSessionRevision:'session:1'}}]);
+  assert.deepEqual(body,unchanged);
+});
+
+test('replacement preview cancellation prevents both pre-aborted transport and a late receipt response', async () => {
+  const calls=[];let complete;
+  const transport=new WorkbenchApi(async(path,options)=>{calls.push({path,options});return new Promise(resolve=>{complete=resolve;});});
+  transport.session('session:1');const api=new SceneApi(transport),body={kind:'terrain',sceneId:'scene-fixed',expectedSceneRevision:'scene:saved',snapshot:{},candidateTerrainVersionId:'terrain-fixed',strategy:'keep_height'};
+  const before=new AbortController();before.abort();
+  await assert.rejects(api.replacementCheck(body,before.signal),error=>error.name==='AbortError');assert.equal(calls.length,0);
+  const during=new AbortController(),pending=api.replacementCheck(body,during.signal);during.abort();
+  complete(json({sessionRevision:'session:1',spatialChange:{kind:'terrain',receipt:'late-private-receipt'}}));
+  await assert.rejects(pending,error=>error.name==='AbortError');assert.equal(calls.length,1);assert.equal(calls[0].options.signal,during.signal);
+});
+
+test('replacement receipts cannot escape their original session when logout or current authorization invalidates it', async () => {
+  let complete;
+  const transport=new WorkbenchApi(async()=>new Promise(resolve=>{complete=resolve;}));transport.session('session:1');const api=new SceneApi(transport);
+  const body={kind:'model',sceneId:'scene-fixed',expectedSceneRevision:'scene:saved',snapshot:{},sceneModelInstanceId:'instance-fixed',candidateModelVersionId:'candidate'};
+  const pending=api.replacementCheck(body);transport.session('session:2');
+  complete(json({sessionRevision:'session:1',proposedSnapshot:{private:'old-user'},spatialChange:{kind:'model',receipt:'old-user-receipt'}}));
+  await assert.rejects(pending,error=>error.name==='AbortError');
+  let denied=false;transport.onDenied=status=>{denied=status===401;};transport.transport=async()=>new Response('{"code":"SESSION_EXPIRED"}',{status:401});
+  const epoch=transport.epoch;await assert.rejects(api.replacementCheck(body),error=>error.status===401&&error.code==='SESSION_EXPIRED');
+  assert.equal(denied,true);assert.ok(transport.epoch>epoch);
+});
+
+test('replacement request union rejects mixed branches and client operation parameters in receipt proofs', () => {
+  const fixture=fileURLToPath(new URL('./replacement-types.fixture.ts',import.meta.url));
+  const source=`import type {EditableSceneSnapshot,SceneReplacementCheckRequest,SpatialChange,AnchorInputHeight,AnchorHeight} from '../src/sceneTypes.ts';
+declare const snapshot:EditableSceneSnapshot;
+const base={sceneId:'scene',expectedSceneRevision:'saved-head',snapshot};
+const model={...base,kind:'model' as const,sceneModelInstanceId:'instance',candidateModelVersionId:'version'};
+const terrain={...base,kind:'terrain' as const,candidateTerrainVersionId:'terrain',strategy:'resample_ground' as const};
+const validModel:SceneReplacementCheckRequest=model;
+const validTerrain:SceneReplacementCheckRequest=terrain;
+const keep:SceneReplacementCheckRequest={...terrain,strategy:'keep_height'};
+const bothModelAndTerrain={...model,candidateTerrainVersionId:'terrain'};
+// @ts-expect-error A variable must not combine the model and terrain branches.
+const mixedModel:SceneReplacementCheckRequest=bothModelAndTerrain;
+const terrainWithInstance={...terrain,sceneModelInstanceId:'instance'};
+// @ts-expect-error Terrain replacement does not target a model instance.
+const mixedTerrain:SceneReplacementCheckRequest=terrainWithInstance;
+// @ts-expect-error Model replacement has no terrain strategy.
+const mixedStrategy:SceneReplacementCheckRequest={...model,strategy:'keep_height'};
+// @ts-expect-error Terrain height strategy is required and restricted.
+const invalidStrategy:SceneReplacementCheckRequest={...terrain,strategy:'automatic'};
+// @ts-expect-error The unchanged saved snapshot is required.
+const missingSnapshot:SceneReplacementCheckRequest={kind:'model',sceneId:'scene',expectedSceneRevision:'head',sceneModelInstanceId:'i',candidateModelVersionId:'v'};
+const storedGround:AnchorHeight={mode:'terrain_ground',terrainVersionId:'fixed',offsetM:-99.9,offsetCompensationM:5e-15};
+const rawAnchor:AnchorInputHeight={mode:'terrain_ground',terrainVersionId:'fixed',offsetM:0};
+// @ts-expect-error Compensations belong to service-derived stored frames, not public anchor requests.
+const injectedCorrection:AnchorInputHeight={mode:'terrain_ground',terrainVersionId:'fixed',offsetM:0,offsetCompensationM:1e-15};
+const anchor:SpatialChange={kind:'anchor',receipt:'signed'};
+const modelProof:SpatialChange={kind:'model',receipt:'signed'};
+const terrainProof:SpatialChange={kind:'terrain',receipt:'signed'};
+// @ts-expect-error A receipt proof is not a client-authored operation request.
+const uncheckedOperation:SpatialChange={kind:'model',receipt:'signed',candidateModelVersionId:'client-value'};
+// @ts-expect-error No implicit frame edits or other unreviewed operation kinds.
+const frameProof:SpatialChange={kind:'frame',receipt:'signed'};
+`;
+  const options={strict:true,noEmit:true,skipLibCheck:true,allowImportingTsExtensions:true,types:[],
+    target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,moduleResolution:ts.ModuleResolutionKind.Bundler};
+  const host=ts.createCompilerHost(options),getSourceFile=host.getSourceFile;
+  host.getSourceFile=(filename,languageVersion,...args)=>filename===fixture?ts.createSourceFile(filename,source,languageVersion,true):getSourceFile(filename,languageVersion,...args);
+  const program=ts.createProgram([fixture],options,host),diagnostics=ts.getPreEmitDiagnostics(program);
+  assert.deepEqual(diagnostics.map(item=>ts.flattenDiagnosticMessageText(item.messageText,'\n')),[]);
 });

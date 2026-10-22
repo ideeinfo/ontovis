@@ -75,7 +75,7 @@ function projectedFrame(frame:ProjectedFrame) {
       'VERTICAL_DATUM_CONFLICT','The absolute anchor and scene vertical datums must match.');
     ensure(Math.abs(finite(anchorHeight.valueM,MAX_HEIGHT_M)-frame.originHeight)<=1e-6,
       'FRAME_CHANGED','The frame height differs from its absolute anchor.');
-  } else finite(anchorHeight.offsetM,MAX_HEIGHT_M);
+  } else {finite(anchorHeight.offsetM,MAX_HEIGHT_M);if(anchorHeight.offsetCompensationM!==undefined)finite(anchorHeight.offsetCompensationM,1e-6);}
   const [east,north]=result.converter.forward(anchor);
   ensure(Math.hypot(east-frame.originEasting,north-frame.originNorthing)<=.02,
     'FRAME_CHANGED','The projected origin differs from the fixed geographic anchor.');

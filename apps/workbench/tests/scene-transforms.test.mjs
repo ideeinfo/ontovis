@@ -122,3 +122,16 @@ test('non-finite, boolean, malformed vectors and missing projected heading coord
   reject('INVALID_COORDINATE',()=>trueHeadingToThreeYaw(frame,0));
   reject('INVALID_COORDINATE',()=>toDisplay(frame,position,{...height,valueM:NaN}));
 });
+
+
+test('server-derived relative-origin compensation survives display/inverse without allowing unbounded corrections',()=>{
+  const {frame,position}=clone(fixture.cases[0]);
+  frame.verticalDatum='UNKNOWN_RELATIVE';frame.relativeReferenceId='relative:compensated';frame.originHeight=.1;
+  frame.anchor.anchorHeight={mode:'terrain_ground',terrainVersionId:'fixture-terrain',offsetM:-99.9,offsetCompensationM:5.689893001203927e-15};
+  const display=toDisplay(frame,position,ground('UNKNOWN_RELATIVE'));
+  assert.equal(display[1],102-.1);assert.equal(fromDisplay(frame,display).heightM,102);
+  for(const correction of [Infinity,NaN,.001]){
+    frame.anchor.anchorHeight.offsetCompensationM=correction;
+    reject('INVALID_COORDINATE',()=>toDisplay(frame,position,ground('UNKNOWN_RELATIVE')));
+  }
+});

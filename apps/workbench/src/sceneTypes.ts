@@ -23,11 +23,15 @@ export interface GroundHeight {
 export interface AbsoluteHeight {
   mode: 'absolute'; valueM: number; verticalDatum: KnownVerticalDatum; sourceNote: string;
 }
-export type AnchorHeight = {mode: 'terrain_ground'; terrainVersionId: string; offsetM: number} | AbsoluteHeight;
+export type AnchorHeight = {mode: 'terrain_ground'; terrainVersionId: string; offsetM: number;
+  /** Service-derived rounding correction for a retained relative frame origin. */
+  offsetCompensationM?:number} | AbsoluteHeight;
+export type AnchorInputHeight = {mode:'terrain_ground';terrainVersionId:string;offsetM:number;offsetCompensationM?:never}|AbsoluteHeight;
 export interface GeographicAnchor {
   localAnchor: Vector2; geographicAnchor: Vector2; trueNorthHeadingDeg: number;
   anchorHeight: AnchorHeight; heightStrategy: 'keep_relative_to_anchor' | 'resample_each_ground';
 }
+export type GeographicAnchorInput=Omit<GeographicAnchor,'anchorHeight'>&{anchorHeight:AnchorInputHeight};
 interface ProjectedFrameBase {
   mode: 'projected_site'; frameRevision: string; horizontalCrs: string; transformId: string;
   originEasting: number; originNorthing: number; originHeight: number;
@@ -86,14 +90,21 @@ export interface AnchorImpact {
 export interface GeometryValidation {
   scope: SceneScope; bindingIssues: never[];
   geometrySummary?: GeometrySummary; displayPlacements?: DisplayPlacement[];
-  terrainDisplayTransform?: TerrainDisplayTransform; anchorTransform?: AnchorTransform; impact?: AnchorImpact;
+  terrainDisplayTransform?: TerrainDisplayTransform; anchorTransform?: AnchorTransform; impact?: unknown;
 }
+export type HeightBasisKind = 'terrain_estimate' | 'declared_absolute' | 'relative_layout_from_anchor' |
+  'terrain_estimate_from_anchor_offset' | 'terrain_estimate_preserved_as_absolute' | 'terrain_estimate_on_replacement';
+export interface HeightBasis {kind:HeightBasisKind;reviewedSceneRevision:string;height:GroundHeight|AbsoluteHeight;terrainRef:TerrainResourceRef|null}
 export interface HeightProvenance {
   sceneModelInstanceId: string;
-  kind: 'terrain_estimate' | 'declared_absolute' | 'relative_layout_from_anchor' | 'terrain_estimate_from_anchor_offset';
+  kind: HeightBasisKind | 'retained_height_basis';
   verticalDatum: VerticalDatum; terrainVersionId?: string; reportSha256?: string;
   sampledHeightM?: number; offsetM?: number; relativeReferenceId?: string;
   sourceNote?: string; anchorSource?: AnchorHeight;
+  basisKind?: HeightBasisKind; basisSceneRevision?: string; heightBasis?:HeightBasis;
+  replacementStrategy?: 'keep_height' | 'resample_ground';
+  previousHeight?: unknown; previousHeightProvenance?: unknown;
+  previousTerrainRef?: unknown; previousAnchorHeight?: unknown;
 }
 export interface SceneCapabilities {
   storageScope: SceneScope; supportsGeographic: boolean; supportsEngineeringBindings: false;
@@ -118,7 +129,7 @@ export interface SceneOpen extends SceneResponse {
   heightProvenance?: HeightProvenance[]; terrainRefs?: TerrainResourceRef[];
 }
 export interface SceneHead extends SceneResponse {sceneId: string; headRevision: string; updateAvailable: boolean}
-export interface SpatialChange {kind: 'anchor'; receipt: string}
+export interface SpatialChange {kind: 'anchor' | 'model' | 'terrain'; receipt: string}
 export interface SceneSaveRequest {
   sceneId: string; expectedSceneRevision: string; clientRequestId: string; snapshot: EditableSceneSnapshot;
   reviewedEngineering: never[]; rootBindingChanges: never[]; spatialChange?: SpatialChange;
@@ -130,7 +141,14 @@ export interface SceneSave extends SceneResponse {
 interface SceneCheckBase {sceneId: string; expectedSceneRevision: string; snapshot: EditableSceneSnapshot}
 export type SceneCheckRequest = (SceneCheckBase & {kind: 'validate'}) | (
   Omit<SceneCheckBase, 'snapshot'> & {kind: 'anchor'; snapshot: LocalSceneSnapshot;
-    candidateTerrainVersionId: string; anchor: GeographicAnchor}
+    candidateTerrainVersionId: string; anchor: GeographicAnchorInput}
+);
+/** Replacement previews compare the supplied unchanged snapshot with its saved head. */
+export type SceneReplacementCheckRequest = SceneCheckBase & (
+  {kind: 'model'; sceneModelInstanceId: string; candidateModelVersionId: string;
+    candidateTerrainVersionId?: never; strategy?: never} |
+  {kind: 'terrain'; candidateTerrainVersionId: string; strategy: 'keep_height' | 'resample_ground';
+    sceneModelInstanceId?: never; candidateModelVersionId?: never}
 );
 export interface SceneCheck extends SceneResponse {
   sceneId: string; baseSceneRevision: string; proposedSnapshot: EditableSceneSnapshot;

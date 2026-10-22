@@ -10,13 +10,13 @@ import {resourceText} from './resourceMessages';
 
 interface Props {
   api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean;
-  onPreview: () => void; onPlace: () => void;
+  onPreview: () => void; onPlace: () => void;canReplace?:boolean;onReplace?:()=>void;
   onUpdated: (version: ProjectModelWrite) => void; onWriteDenied: () => void; onPrivateDenied: () => void;
   onRefreshLibrary: () => Promise<string|null>;
 }
 
 export function ResourceDetails({api, version, libraryRevision, canPlace, canCalibrate,
-    onPreview, onPlace, onUpdated, onWriteDenied, onPrivateDenied, onRefreshLibrary}: Props) {
+    onPreview, onPlace, canReplace, onReplace, onUpdated, onWriteDenied, onPrivateDenied, onRefreshLibrary}: Props) {
   const {locale} = usePreferences(), t = (key: Parameters<typeof resourceText>[1]) => resourceText(locale,key);
   const [uses,setUses] = useState<ModelUses|null>(null), [usesOpen,setUsesOpen] = useState(false);
   const [usesBusy,setUsesBusy] = useState(false), [usesError,setUsesError] = useState<unknown>(null);
@@ -80,6 +80,7 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
           if(!canPlace||!version.canPlace){event.preventDefault();return;}
           event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:version.modelAssetId,modelVersionId:version.modelVersionId}));
         }} onClick={onPlace}><MapPin size={14}/>{t('place')}</Btn>
+      {onReplace&&<Btn disabled={!canReplace||!version.canPlace} onClick={onReplace}>{t('replaceSelected')}</Btn>}
       {canCalibrate&&<Btn onClick={openCalibration}>{t('calibrate')}</Btn>}
     </div>
     <dl className="ov-resource-facts">

@@ -1,6 +1,6 @@
 import {ApiError, type WorkbenchApi} from './api.ts';
 import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
-  SceneOpen, SceneSave, SceneSaveRequest} from './sceneTypes';
+  SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest} from './sceneTypes';
 import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelRequest, LegacyModelCatalog, ModelUses, ModelUsesRequest,
   ProjectModel, ProjectModelCatalog, ProjectModelsRequest, ProjectModelVersion, ProjectModelWrite,
   TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
@@ -27,6 +27,9 @@ export class SceneApi {
   }
   check(body: SceneCheckRequest, signal?: AbortSignal) {
     return this.api.request<SceneCheck>(ROOT + 'scenes/check', body, signal);
+  }
+  replacementCheck(body: SceneReplacementCheckRequest, signal?: AbortSignal) {
+    return this.api.request<SceneCheck>(ROOT + 'scenes/replacement-check', body, signal);
   }
   save(body: SceneSaveRequest, signal?: AbortSignal) {
     return this.api.request<SceneSave>(ROOT + 'scenes/save', body, signal);

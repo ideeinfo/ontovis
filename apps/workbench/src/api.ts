@@ -184,6 +184,7 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     INVALID_COORDINATE:['位置数值无效，请检查坐标和高度。','The position is invalid. Check its coordinates and height.'],
     OUTSIDE_COVERAGE:['该位置超出地形有效范围，请选择其他落点。','This position is outside the terrain coverage. Choose another point.'],
     OUTSIDE_PROJECTION_AREA:['该位置超出当前场景支持范围。','This position is outside the supported scene region.'],
+    SCENE_DRAFT_REQUIRES_SAVE:['请先保存当前修改，再更换资源。','Save your current changes before replacing resources.'],
     NO_DATA:['该位置没有有效地形数据，请选择其他落点。','This position has no valid terrain data. Choose another point.'],
     TERRAIN_SAMPLE_CHANGED:['地面高度需重新核对，请重新预览位置。','The ground height needs checking. Preview the position again.'],
     VERTICAL_DATUM_CONFLICT:['高度基准不一致，请核对地形与场景声明。','Height references differ. Check the terrain and scene declarations.'],

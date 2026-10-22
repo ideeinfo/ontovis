@@ -13,13 +13,13 @@ import type {LegacyModelCandidate, LegacyModelCatalog, ModelPurpose, ProjectMode
 import './resourcePanel.css';
 
 export interface Props {
-  api:WorkbenchApi;canPlace:boolean;onPlace:(version:ProjectModelVersion)=>void;
+  api:WorkbenchApi;canPlace:boolean;canReplace?:boolean;replaceTargetVersion?:string|null;onReplace?:(version:ProjectModelVersion)=>void;onPlace:(version:ProjectModelVersion)=>void;
   onPreview:(version:ProjectModelVersion|null)=>void;onTerrainReady:(version:TerrainVersion)=>void;
   activeTerrainVersion?:TerrainVersion|null;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
 
-export function ResourcePanel({api,canPlace,onPlace,onPreview,onTerrainReady,activeTerrainVersion}:Props) {
+export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
@@ -159,6 +159,7 @@ export function ResourcePanel({api,canPlace,onPlace,onPreview,onTerrainReady,act
       {catalog?.nextCursor&&<Btn disabled={loading} onClick={()=>void readCatalog(catalog.nextCursor!)}>{t(loading?'loading':'more')}</Btn>}
       {detailLoading&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
       {version&&<ResourceDetails key={version.modelVersionId} api={client} version={version} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} canCalibrate={canCalibrate}
+        canReplace={canReplace&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
         onPreview={()=>onPreview(version)}
         onPlace={()=>{if(canPlace&&version.canPlace){onPreview(null);onPlace(version);}}} onUpdated={updated}
         onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/>} 
