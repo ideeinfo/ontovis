@@ -5,12 +5,14 @@ identifiers are persisted. This is a single-process test worker, not a scheduler
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import selectors
+import sqlite3
 import shutil
 import subprocess
 import time
@@ -26,6 +28,9 @@ MAX_VERSIONS = 20
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 DERIVED_RESERVE_BYTES = 16 * 1024 * 1024
 MAX_STDOUT_BYTES = 65536
+WORKER_BUSY_TIMEOUT_MS = 250
+WORKER_RETRY_DELAY_SECONDS = .1
+WORKER_STORAGE_WAIT_SECONDS = 3.0
 TERMINAL = frozenset(('ready','failed','cancelled'))
 BASE_ARTIFACTS = frozenset(('heights.f64','mask.u8','positions.f32','triangles.u32'))
 OPTIONAL_ARTIFACTS = frozenset(('cells.u8','cell-mask.u8'))
@@ -66,6 +71,13 @@ def _hash(path):
 def _canonical(value): return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False)
 
 
+def _sqlite_busy(error):
+    code=getattr(error,'sqlite_errorcode',None)
+    if isinstance(code,int):
+        return code & 255 in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED)
+    return str(error).lower() in ('database is locked','database table is locked','database schema is locked')
+
+
 def _metadata(value):
     required={'clientRequestId','displayName','sourceNote','licenseNote','rightsDeclared','verticalDatum','heightUnit'}
     optional={'expectedSessionRevision','relativeReferenceId','aoi'}
@@ -104,7 +116,7 @@ class TerrainLibrary:
             if path.is_symlink(): raise ValueError('Private terrain paths must not be symlinks')
             path.mkdir(mode=0o700,exist_ok=True)
         self.lock=RLock(); self.condition=Condition(self.lock)
-        self.callbacks={}; self.processes={}; self.receiving=0; self.receiving_bytes=0; self.stopping=False
+        self.callbacks={}; self.processes={}; self.pending_failures={}; self.receiving=0; self.receiving_bytes=0; self.stopping=False
         with library.connect() as db:
             self.project_code=db.execute('select project_code from library where id=1').fetchone()[0]
             db.executescript('''
@@ -256,41 +268,112 @@ class TerrainLibrary:
             self.condition.notify_all()
         return self.job(job_id,authorize)
 
+    @contextmanager
+    def _worker_db(self):
+        # A busy project transaction must not hold the worker mutex for the
+        # normal three-second connection timeout on every retry.
+        with self.library.connect() as db:
+            db.execute('pragma busy_timeout='+str(WORKER_BUSY_TIMEOUT_MS))
+            yield db
+
+    def _wait_for_storage(self):
+        with self.condition:
+            if not self.stopping:
+                self.condition.wait(WORKER_RETRY_DELAY_SECONDS)
+
+    def _retry_storage(self,operation):
+        # Retry only lock contention, never arbitrary disk/schema failures.
+        # The operation's context managers release both SQLite and condition
+        # locks before each interruptible backoff. Completed GIS output stays
+        # private and is reused rather than processing the raster again.
+        deadline=time.monotonic()+WORKER_STORAGE_WAIT_SECONDS
+        while True:
+            with self.condition:
+                _require(not self.stopping,'PROCESSING_INTERRUPTED',503)
+            try:
+                return operation()
+            except sqlite3.OperationalError as error:
+                if not _sqlite_busy(error) or time.monotonic()>=deadline:
+                    raise
+                self._wait_for_storage()
+
+    def _start_processing(self,identifier,authorize):
+        with self.condition:
+            with self._worker_db() as db:
+                db.execute('begin immediate'); current=self._row(db,identifier)
+                if current['state']!='queued': return False
+                authorize()
+                db.execute("update terrain_jobs set state='processing',revision=?,updated_at=? where id=?",(_revision(),_now(),identifier))
+        return True
+
     def _transition_failed(self,job_id,code):
         with self.condition:
-            with self.library.connect() as db:
+            with self._worker_db() as db:
+                db.execute('begin immediate')
                 row=self._row(db,job_id)
                 if row['state'] not in TERMINAL:
                     db.execute("update terrain_jobs set state='failed',revision=?,updated_at=?,error_code=? where id=?",(_revision(),_now(),code,job_id))
                     db.execute('insert into terrain_audit(actor,job_id,action,code,created_at) values (?,?,?,?,?)',(row['actor'],job_id,'failed',code,_now()))
             self.condition.notify_all()
 
+    def _release_work(self,identifier):
+        with self.condition:
+            self.pending_failures.pop(identifier,None)
+            self.processes.pop(identifier,None)
+            self.callbacks.pop(identifier,None)
+            shutil.rmtree(self.root/'temporary'/identifier,ignore_errors=True)
+            self.condition.notify_all()
+
+    def _defer_failure(self,identifier,code):
+        with self.condition:
+            self.processes.pop(identifier,None)
+            self.pending_failures[identifier]=code
+            self.condition.notify_all()
+
     def _run(self):
         while True:
-            with self.condition:
-                if self.stopping: return
-                with self.library.connect() as db: row=db.execute("select * from terrain_jobs where state='queued' order by created_at,id limit 1").fetchone()
-                if row is None:
-                    self.condition.wait(.2); continue
-                identifier=row['id']; guard=self.callbacks.get(identifier)
+            identifier=None
             try:
+                with self.condition:
+                    if self.stopping: return
+                    pending=next(iter(self.pending_failures.items()),None)
+                    if pending:
+                        identifier,code=pending
+                    else:
+                        with self._worker_db() as db:
+                            row=db.execute("select * from terrain_jobs where state='queued' order by created_at,id limit 1").fetchone()
+                        if row is None:
+                            self.condition.wait(.2); continue
+                        identifier=row['id']; guard=self.callbacks.get(identifier)
+                if pending:
+                    # Each attempt is bounded. If the project DB stays busy,
+                    # retain the unfinished row and private work and retry a
+                    # later loop instead of losing the worker or the job.
+                    self._transition_failed(identifier,code)
+                    self._release_work(identifier)
+                    continue
                 _require(guard is not None,'PROCESSING_INTERRUPTED',503); guard()
-                with self.condition:
-                    with self.library.connect() as db:
-                        db.execute('begin immediate'); current=self._row(db,identifier)
-                        if current['state']!='queued': continue
-                        db.execute("update terrain_jobs set state='processing',revision=?,updated_at=? where id=?",(_revision(),_now(),identifier))
+                if not self._retry_storage(lambda:self._start_processing(identifier,guard)):
+                    self._release_work(identifier); continue
                 report=self._process(row)
-                self._commit(row,report,guard)
+                self._retry_storage(lambda:self._commit(row,report,guard))
+                self._release_work(identifier)
+            except sqlite3.OperationalError as error:
+                if identifier is not None:
+                    # This includes commit, terminal-update and exclusive-read
+                    # contention. No optimistic cleanup before a terminal row
+                    # has actually committed.
+                    if identifier not in self.pending_failures:
+                        self._defer_failure(identifier,'TERRAIN_STORAGE_BUSY' if _sqlite_busy(error) else 'TERRAIN_STORAGE_UNAVAILABLE')
+                self._wait_for_storage()
             except PreviewError as error:
-                self._transition_failed(identifier,error.code)
+                if identifier is not None:
+                    self._defer_failure(identifier,error.code)
+                self._wait_for_storage()
             except Exception:
-                self._transition_failed(identifier,'PROCESSING_FAILED')
-            finally:
-                with self.condition:
-                    self.processes.pop(identifier,None); self.callbacks.pop(identifier,None)
-                    shutil.rmtree(self.root/'temporary'/identifier,ignore_errors=True)
-                    self.condition.notify_all()
+                if identifier is not None:
+                    self._defer_failure(identifier,'PROCESSING_FAILED')
+                self._wait_for_storage()
 
     def _process(self,row):
         metadata=json.loads(row['payload']); work=self.root/'temporary'/row['id']
@@ -306,7 +389,7 @@ class TerrainLibrary:
         try:
             with self.condition:
                 self.processes[row['id']]=process
-                with self.library.connect() as db: current=self._row(db,row['id'])
+                with self._worker_db() as db: current=self._row(db,row['id'])
                 if self.stopping or current['state']!='processing': process.terminate()
             os.set_blocking(process.stdout.fileno(),False); selector.register(process.stdout,selectors.EVENT_READ)
             while process.poll() is None or selector.get_map():
@@ -360,7 +443,7 @@ class TerrainLibrary:
         saved,manifest,total,report_sha=self._verify_output(row,report)
         identifier=str(uuid4()); work=self.root/'temporary'/row['id']; target=self.root/'versions'/identifier
         with self.condition:
-            with self.library.connect() as db:
+            with self._worker_db() as db:
                 db.execute('begin immediate'); current=self._row(db,row['id'])
                 if current['state']!='processing': return
                 authorize(); _require(not self.stopping,'PROCESSING_INTERRUPTED',503)
@@ -376,7 +459,13 @@ class TerrainLibrary:
                     authorize(); db.commit()
                 except BaseException:
                     if db.in_transaction:
-                        db.rollback(); shutil.rmtree(target,ignore_errors=True)
+                        db.rollback()
+                        # Keep private work until the failure itself can be
+                        # durably recorded; a long SQLite reader can also make
+                        # COMMIT busy after the rename.
+                        if target.exists() and not work.exists():
+                            os.replace(target,work)
+                            _sync_directory(target.parent); _sync_directory(work.parent)
                     raise
 
     def version(self,version_id,authorize):
@@ -414,8 +503,18 @@ class TerrainLibrary:
             self.condition.notify_all()
         if self.thread: self.thread.join(timeout=self.timeout+4)
         with self.condition:
-            with self.library.connect() as db: pending=[row[0] for row in db.execute("select id from terrain_jobs where state in ('queued','processing')")]
+            try:
+                with self._worker_db() as db:
+                    pending=[row[0] for row in db.execute("select id from terrain_jobs where state in ('queued','processing')")]
+            except sqlite3.OperationalError:
+                pending=[]
             for identifier in pending:
-                self._transition_failed(identifier,'PROCESSING_INTERRUPTED')
-                shutil.rmtree(self.root/'temporary'/identifier,ignore_errors=True)
+                try:
+                    self._transition_failed(identifier,'PROCESSING_INTERRUPTED')
+                except sqlite3.OperationalError:
+                    # Closing cannot claim a failed state it could not write.
+                    # Preserve files plus unfinished DB rows; restart recovery
+                    # will mark them interrupted without reusing the identity.
+                    continue
+                self._release_work(identifier)
             self.callbacks.clear()

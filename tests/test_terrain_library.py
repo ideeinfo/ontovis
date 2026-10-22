@@ -5,10 +5,12 @@ These tests validate queue/storage/auth boundaries, not real GIS processing.
 import hashlib
 import io
 import json
+import sqlite3
 from pathlib import Path
 import sys
 import tempfile
 import time
+from threading import Event, Thread
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -261,6 +263,131 @@ class TerrainLibraryTests(unittest.TestCase):
         self.assertEqual(self.wait(library,first['jobId'])['state'],'ready')
         self.assertEqual(self.wait(library,second['jobId'])['state'],'ready')
         with self.model.connect() as db:self.assertEqual(db.execute('select count(*) from terrain_versions').fetchone()[0],2)
+
+    def test_long_sqlite_writer_cannot_kill_worker_during_commit_and_failure(self):
+        with patch('apps.api.terrain_library.WORKER_BUSY_TIMEOUT_MS',40), patch('apps.api.terrain_library.WORKER_RETRY_DELAY_SECONDS',.02), patch('apps.api.terrain_library.WORKER_STORAGE_WAIT_SECONDS',.08):
+            library,first,gate=self.blocked_worker();second=self.upload(library)
+            failed_busy=Event(); exceptions=[]; original=library._transition_failed
+            def observed(*args):
+                try:return original(*args)
+                except sqlite3.OperationalError:
+                    failed_busy.set();raise
+            with patch.object(library,'_transition_failed',side_effect=observed), patch('threading.excepthook',side_effect=lambda args:exceptions.append(args.exc_value)):
+                with self.model.connect() as db:
+                    db.execute('begin immediate');gate.write_text('release')
+                    self.assertTrue(failed_busy.wait(2),'The real DB lock must cover both commit and failure-update attempts')
+                    self.assertTrue(library.thread.is_alive())
+                    self.assertEqual(db.execute('select state from terrain_jobs where id=?',(first['jobId'],)).fetchone()[0],'processing')
+                    self.assertTrue((library.root/'temporary'/first['jobId']/'derived'/'report.json').exists())
+                    self.assertIn(first['jobId'],library.callbacks)
+                done=self.wait(library,first['jobId'])
+                self.assertEqual(done['state'],'failed');self.assertEqual(done['errorCode'],'TERRAIN_STORAGE_BUSY')
+                self.assertEqual(self.wait(library,second['jobId'])['state'],'ready')
+                self.assertTrue(library.thread.is_alive());self.assertEqual(exceptions,[])
+            self.assertEqual(list((library.root/'temporary').iterdir()),[])
+
+    def test_sqlite_reader_blocking_commit_restores_renamed_private_work(self):
+        with patch('apps.api.terrain_library.WORKER_BUSY_TIMEOUT_MS',40), patch('apps.api.terrain_library.WORKER_RETRY_DELAY_SECONDS',.02), patch('apps.api.terrain_library.WORKER_STORAGE_WAIT_SECONDS',.08):
+            library,first,gate=self.blocked_worker();second=self.upload(library)
+            failed_busy=Event();original=library._transition_failed
+            def observed(*args):
+                try:return original(*args)
+                except sqlite3.OperationalError:
+                    failed_busy.set();raise
+            with patch.object(library,'_transition_failed',side_effect=observed):
+                with self.model.connect() as db:
+                    db.execute('begin');db.execute('select count(*) from terrain_jobs').fetchone()
+                    gate.write_text('release')
+                    self.assertTrue(failed_busy.wait(2))
+                    self.assertTrue((library.root/'temporary'/first['jobId']/'source.tif').exists())
+                    self.assertTrue((library.root/'temporary'/first['jobId']/'derived'/'report.json').exists())
+                    self.assertEqual(list((library.root/'versions').iterdir()),[])
+                    self.assertEqual(db.execute('select count(*) from terrain_versions').fetchone()[0],0)
+                self.assertEqual(self.wait(library,first['jobId'])['errorCode'],'TERRAIN_STORAGE_BUSY')
+                self.assertEqual(self.wait(library,second['jobId'])['state'],'ready')
+
+    def test_exclusive_lock_during_queue_read_does_not_exit_worker(self):
+        with patch('apps.api.terrain_library.WORKER_BUSY_TIMEOUT_MS',30), patch('apps.api.terrain_library.WORKER_RETRY_DELAY_SECONDS',.02), patch('apps.api.terrain_library.WORKER_STORAGE_WAIT_SECONDS',.06):
+            library=self.library(start_worker=False);item=self.upload(library);exceptions=[]
+            with patch('threading.excepthook',side_effect=lambda args:exceptions.append(args.exc_value)):
+                with self.model.connect() as db:
+                    db.execute('begin exclusive')
+                    library.thread=Thread(target=library._run,daemon=True);library.thread.start()
+                    time.sleep(.15)
+                    self.assertTrue(library.thread.is_alive())
+                    self.assertEqual(db.execute('select state from terrain_jobs where id=?',(item['jobId'],)).fetchone()[0],'queued')
+                self.assertEqual(self.wait(library,item['jobId'])['state'],'ready')
+                self.assertTrue(library.thread.is_alive());self.assertEqual(exceptions,[])
+
+    def test_close_under_busy_database_keeps_unfinished_work_for_restart(self):
+        with patch('apps.api.terrain_library.WORKER_BUSY_TIMEOUT_MS',30), patch('apps.api.terrain_library.WORKER_RETRY_DELAY_SECONDS',.02), patch('apps.api.terrain_library.WORKER_STORAGE_WAIT_SECONDS',.06):
+            library,item,gate=self.blocked_worker()
+            with self.model.connect() as db:
+                db.execute('begin immediate');gate.write_text('release')
+                deadline=time.monotonic()+2
+                while not library.pending_failures and time.monotonic()<deadline:time.sleep(.01)
+                self.assertIn(item['jobId'],library.pending_failures)
+                library.close()
+                self.assertFalse(library.thread.is_alive())
+                self.assertEqual(db.execute('select state from terrain_jobs where id=?',(item['jobId'],)).fetchone()[0],'processing')
+                self.assertTrue((library.root/'temporary'/item['jobId']/'source.tif').exists())
+                self.assertEqual(library.callbacks,{})
+            restored=self.library(start_worker=False)
+            done=restored.job(item['jobId'],lambda:None)
+            self.assertEqual(done['state'],'failed');self.assertEqual(done['errorCode'],'PROCESSING_INTERRUPTED')
+            self.assertEqual(list((restored.root/'temporary').iterdir()),[])
+
+    def test_short_same_library_writer_is_retried_without_reprocessing_gis(self):
+        library,item,gate=self.blocked_worker();original=library._process
+        # blocked_worker has already started exactly one controlled process.
+        with patch.object(library,'_process',wraps=original) as process:
+            with self.model.connect() as db:
+                db.execute('begin immediate');gate.write_text('release')
+                time.sleep(.6)
+                self.assertTrue(library.thread.is_alive())
+                self.assertEqual(db.execute('select state from terrain_jobs where id=?',(item['jobId'],)).fetchone()[0],'processing')
+                self.assertTrue((library.root/'temporary'/item['jobId']/'derived'/'report.json').exists())
+            self.assertEqual(self.wait(library,item['jobId'])['state'],'ready')
+            process.assert_not_called() # The first process was not started again.
+        with self.model.connect() as db:
+            self.assertEqual(db.execute('select count(*) from terrain_versions').fetchone()[0],1)
+            self.assertEqual(db.execute("select count(*) from terrain_audit where action='failed'").fetchone()[0],0)
+
+    def test_short_writer_before_start_is_retried_and_authorized_at_actual_start(self):
+        library=self.library(start_worker=False);item=self.upload(library)
+        with self.model.connect() as db:
+            db.execute('begin immediate')
+            library.thread=Thread(target=library._run,daemon=True);library.thread.start()
+            time.sleep(.6)
+            self.assertTrue(library.thread.is_alive())
+            self.assertEqual(db.execute('select state from terrain_jobs where id=?',(item['jobId'],)).fetchone()[0],'queued')
+        self.assertEqual(self.wait(library,item['jobId'])['state'],'ready')
+
+    def test_default_retry_window_expires_under_seven_second_writer_and_worker_continues(self):
+        library,first,gate=self.blocked_worker();second=self.upload(library);exceptions=[]
+        with patch('threading.excepthook',side_effect=lambda args:exceptions.append(args.exc_value)):
+            with self.model.connect() as db:
+                db.execute('begin immediate');gate.write_text('release')
+                deadline=time.monotonic()+7
+                while time.monotonic()<deadline:
+                    time.sleep(.05)
+                    self.assertTrue(library.thread.is_alive())
+                self.assertIn(first['jobId'],library.pending_failures)
+                self.assertTrue((library.root/'temporary'/first['jobId']/'source.tif').exists())
+            done=self.wait(library,first['jobId'])
+            self.assertEqual(done['state'],'failed');self.assertEqual(done['errorCode'],'TERRAIN_STORAGE_BUSY')
+            self.assertEqual(self.wait(library,second['jobId'])['state'],'ready')
+            self.assertTrue(library.thread.is_alive());self.assertEqual(exceptions,[])
+
+    def test_non_lock_operational_failure_is_not_retried_as_busy(self):
+        library=self.library();calls=[]
+        def broken_commit(*_):
+            calls.append('commit');raise sqlite3.OperationalError('synthetic disk I/O error')
+        with patch.object(library,'_commit',side_effect=broken_commit):
+            item=self.upload(library);done=self.wait(library,item['jobId'])
+        self.assertEqual(calls,['commit'])
+        self.assertEqual(done['state'],'failed');self.assertEqual(done['errorCode'],'TERRAIN_STORAGE_UNAVAILABLE')
+        self.assertTrue(library.thread.is_alive())
 
     def test_session_revision_and_auth_closure_are_not_persisted(self):
         library=self.library(start_worker=False);marker='sensitive-in-memory-only-session-revision'
