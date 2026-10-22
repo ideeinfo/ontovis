@@ -67,6 +67,15 @@ test('a visible actual component carries independent fixed instance/version/key 
   assert.deepEqual(sceneModelHit(mesh,boundary),{sceneModelInstanceId:'instance-A',component:{sceneModelInstanceId:'instance-A',modelVersionId:'model-A',componentKey:'part-A'}});
 });
 
+test('cache schematic tags remain pickable without pretending to be GLTF nodes',()=>{
+  const {boundary,root,mesh}=tree();delete mesh.userData.ontoVisNodeIndex;mesh.userData.ontoVisProxySchematic=true;
+  assert.deepEqual(sceneModelHit(mesh,boundary)?.component,{sceneModelInstanceId:'instance-A',modelVersionId:'model-A',componentKey:'part-A'});
+  for(const marker of [false,'true',1,undefined]){
+    mesh.userData.ontoVisProxySchematic=marker;assert.equal(sceneModelHit(mesh,boundary)?.component,null);
+  }
+  mesh.userData.ontoVisProxySchematic=true;root.visible=false;assert.equal(sceneModelHit(mesh,boundary),null);
+});
+
 test('hidden parents, external objects and inconsistent clone tags do not produce a hit',()=>{
   for(const mutate of [value=>{value.root.visible=false;},value=>{value.mesh.visible=false;},value=>{value.boundary.visible=false;},
     value=>{value.mesh.removeFromParent();},value=>{value.mesh.userData.sceneModelInstanceId='different-instance';},

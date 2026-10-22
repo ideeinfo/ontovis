@@ -25,7 +25,8 @@ export function sceneModelHit(object:Object3D,boundary:Object3D):SceneModelHit|n
     if(text(data.ontoVisModelVersionId)){
       if(version!==null&&version!==data.ontoVisModelVersionId)return null;version=data.ontoVisModelVersionId;
     }
-    if(!componentSeen&&Number.isSafeInteger(data.ontoVisNodeIndex)&&data.ontoVisNodeIndex>=0){
+    if(!componentSeen&&(Number.isSafeInteger(data.ontoVisNodeIndex)&&data.ontoVisNodeIndex>=0
+      ||data.ontoVisProxySchematic===true)){
       componentSeen=true;key=text(data.ontoVisComponentKey)?data.ontoVisComponentKey:null;
     }
     node=node.parent;

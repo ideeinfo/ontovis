@@ -1,12 +1,19 @@
 import {ApiError, failureMessage} from './api.ts';
 import {resourceText, type ResourceMessageKey} from './resourceMessages.ts';
 import type {Locale} from './messages';
-import type {ModelCalibrationInput, ModelPurpose, ProjectModelAsset, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
+import type {ModelCalibrationInput, ModelPurpose, ProjectModelAsset, ProjectModelVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
 import type {VerticalDatum, Vector3} from './sceneTypes';
 
 export class ResourceFormError extends Error {
   key: ResourceMessageKey;
   constructor(key: ResourceMessageKey) {super(key); this.key = key;}
+}
+export function resourceCalibrationKey(state:ProjectModelVersion['calibrationState']) {
+  return state==='legacy_display'?'legacyDisplay':state==='verified'?'calibrated':'unverified';
+}
+export function modelPlacementIssue(model:Pick<ProjectModelVersion,'calibrationState'|'calibration'|'canPlace'|'canPlaceGeographic'>,geographic:boolean) {
+  if(!model.canPlace||model.calibration.state!==model.calibrationState||!['verified','legacy_display'].includes(model.calibrationState))return 'MODEL_CALIBRATION_REQUIRED';
+  return geographic&&model.canPlaceGeographic!==true?'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED':null;
 }
 export function resourceFailure(error: unknown, locale: Locale) {
   if (error instanceof ResourceFormError) return resourceText(locale, error.key);

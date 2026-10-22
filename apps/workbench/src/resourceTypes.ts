@@ -9,6 +9,10 @@ export type Matrix4 = [number, number, number, number, number, number, number, n
 export interface VerifiedModelCalibration extends ModelCalibrationInput {
   state: 'verified'; modelToCalibrated: Matrix4; verifiedBy: string; verifiedAt: string;
 }
+export interface LegacyDisplayCalibration {
+  state: 'legacy_display'; unit: 'm'; axes: 'Y_UP_RIGHT_HANDED'; modelToCalibrated: Matrix4;
+  sourceModelVersionId: string; sourceSha256: string; sourceNote: string; preservedBy: string; preservedAt: string;
+}
 export interface ProjectModelComponent {
   componentKey: string; displayName: string; nodeIndices: number[]; keyStability: 'version_local';
   geometryQuality: 'source_candidate' | 'proxy_schematic'; bounds: Bounds3;
@@ -17,14 +21,14 @@ export interface ProjectModelReport {
   bytes: number; nodes: number; activeMeshInstances: number; triangles: number;
   bounds: {min: Vector3; max: Vector3; basis: string}; coordinateConvention: string; animations: 0;
   images: number; texturePixels: number; externalResourcesFetched: 0; sourceIdentityVerified: false;
-  coordinateVerification: 'unverified' | 'operator_calibrated';
+  coordinateVerification: 'unverified' | 'operator_calibrated' | 'legacy_display_preserved';
   calibrationVerification?: {method: 'm-y-up-forward-negative-z-v1'; calibratedBounds: Bounds3};
 }
 export interface ProjectModelVersion {
   modelAssetId: string; modelVersionId: string; contentRevision: string; displayName: string;
   sourceNote: string; sha256: string; bytes: number; createdAt: string; state: 'ready';
-  calibration: {state: 'unverified'} | VerifiedModelCalibration;
-  calibrationState: 'unverified' | 'verified'; canPlace: boolean;
+  calibration: {state: 'unverified'} | VerifiedModelCalibration | LegacyDisplayCalibration;
+  calibrationState: 'unverified' | 'verified' | 'legacy_display'; canPlace: boolean; canPlaceGeographic: boolean;
   report: ProjectModelReport; components: ProjectModelComponent[]; sourceModelVersionId: string | null;
 }
 export type ProjectModelVersionSummary = Omit<ProjectModelVersion, 'report' | 'components' | 'calibration' | 'sourceNote'>;
@@ -34,7 +38,7 @@ export interface ProjectModelAsset {
 }
 export interface ResourceCapabilities {
   scope: 'project_static_glb_resources'; canRead: true; canUpload: boolean; canCalibrate: boolean;
-  calibrationRequiredForPlacement: true; automaticLegacyAdoption: false;
+  calibrationRequiredForGeographicPlacement: true; automaticLegacyAdoption: false;
 }
 export interface ResourceLimits {
   maxUploadBytes: number; maxVersions: number; maxLibraryBytes: number;

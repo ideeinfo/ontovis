@@ -1,4 +1,5 @@
 import {fromDisplay} from './sceneTransforms.ts';
+import {modelPlacementIssue} from './resourceForms.ts';
 import type {ProjectModelVersion, TerrainVersion} from './resourceTypes';
 import type {EditableSceneSnapshot, LocalSceneSnapshot, LocalSceneModelInstance, SceneModelInstance, Vector3} from './sceneTypes';
 
@@ -34,7 +35,8 @@ export function moveInstance(snapshot:EditableSceneSnapshot,id:string,point:Vect
   return updateInstance(snapshot,next);
 }
 export function placeModel(snapshot:EditableSceneSnapshot,model:ProjectModelVersion,point:Vector3,terrain:TerrainVersion|null,id:string,maxInstances:number):EditableSceneSnapshot {
-  if(!model.canPlace || model.calibration.state!=='verified')throw new SceneEditError('MODEL_CALIBRATION_REQUIRED');
+  const issue=modelPlacementIssue(model,!isLocalScene(snapshot));
+  if(issue)throw new SceneEditError(issue);
   if(snapshot.instances.length>=maxInstances)throw new SceneEditError('SCENE_LIMIT_EXCEEDED');
   if(snapshot.instances.some(item=>item.sceneModelInstanceId===id))throw new SceneEditError('INSTANCE_ID_REUSED');
   const next=cloneSnapshot(snapshot),coordinate=fromDisplay(next.coordinateFrame,point);

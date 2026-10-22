@@ -166,6 +166,7 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     COMPONENT_ALREADY_LINKED:['该构件已关联另一个柜体，请选择其他构件。','This component is already linked to another cabinet. Choose a different component.'],
     MODEL_LIBRARY_CHANGED:['模型库已变化，请刷新后重试。','The library changed. Refresh and retry.'],
     MODEL_ASSET_CHANGED:['模型资源信息已变化，请重新读取。','The model resource changed. Reload it.'],
+    MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED:['沿用旧显示的模型仅可用于局部场景；地理布置请先校准。','Legacy display models are limited to local scenes. Calibrate before geographic placement.'],
     MODEL_CALIBRATION_REQUIRED:['请先核对模型单位、基点和正面朝向。','Verify the model units, base point and forward direction first.'],
     MODEL_STORAGE_UNAVAILABLE:['模型暂存或保存失败，请重试；不要重复创建版本。','Model storage failed. Retry the same request.'],
     SCENE_WRITE_FORBIDDEN:['当前仅可查看，未保存的修改仍保留。','You can currently view this scene. Unsaved edits are retained.'],

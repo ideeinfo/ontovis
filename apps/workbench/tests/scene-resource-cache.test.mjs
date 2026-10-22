@@ -39,6 +39,67 @@ function modelFixture(bytes=glb()) {
 const meshList=root=>{const result=[];root.traverse(node=>{if(node instanceof THREE.Mesh)result.push(node);});return result;};
 const rejected=(code,callback)=>assert.rejects(callback,error=>error.code===code);
 const component=(key,nodeIndices)=>({componentKey:key,displayName:key,nodeIndices,geometryQuality:'source_candidate',bounds:[[0,0,0],[1,1,1]]});
+const proxyComponent=(key,bounds)=>({...component(key,[]),geometryQuality:'proxy_schematic',bounds});
+
+test('empty-node schematic cabinets absent from GLB stay visible, pickable and independently transformed in every instance',async()=>{
+  const f=modelFixture();f.version.components=[component('CN',[0]),
+    proxyComponent('CT',[[-2,0,-1],[-1,2,1]]),proxyComponent('CN1',[[4,8,-1],[6,11,1]])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref);
+  assert.equal(meshList(resource.scene).length,4,'The two GLB triangles need two explicit schematic boxes');
+  const first=cloneModel(resource,'instance-A'),second=cloneModel(resource,'instance-B'),boundary=new THREE.Group();
+  boundary.add(first,second);first.position.set(100,5,20);first.rotation.y=Math.PI/2;first.updateMatrixWorld(true);
+  const proxies=root=>meshList(root).filter(mesh=>mesh.userData.ontoVisProxySchematic===true);
+  assert.equal(proxies(first).length,2);assert.equal(proxies(second).length,2);
+  for(const [index,mesh] of proxies(first).entries()){
+    const key=index===0?'CT':'CN1';
+    assert.equal(mesh.visible,true);assert.equal(mesh.material.opacity,1);assert.equal(mesh.material.transparent,false);
+    assert.equal(mesh.material.color.getHex(),0x718275);assert.equal(mesh.material.roughness,.75);
+    assert.equal(mesh.userData.ontoVisNodeIndex,undefined,'Schematic boxes must not forge a GLTF node');
+    assert.deepEqual(sceneModelHit(mesh,boundary)?.component,{sceneModelInstanceId:'instance-A',modelVersionId:f.version.modelVersionId,componentKey:key});
+    assert.equal(mesh.geometry,proxies(second)[index].geometry);assert.equal(mesh.material,proxies(second)[index].material);
+  }
+  assert.ok(proxies(first)[0].getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(103,4,31.5))<1e-8);
+  const preview=cloneModel(resource,'preview',{calibrated:false});preview.updateMatrixWorld(true);
+  const rawBox=new THREE.Box3().setFromObject(proxies(preview)[0]);
+  assert.deepEqual(rawBox.min.toArray(),[-2,0,-1]);assert.deepEqual(rawBox.max.toArray(),[-1,2,1]);
+  assert.equal(f.version.components[1].geometryQuality,'proxy_schematic');assert.deepEqual(f.version.components[1].nodeIndices,[]);
+  first.visible=false;assert.equal(sceneModelHit(proxies(first)[0],boundary),null);
+  assert.equal(sceneModelHit(proxies(second)[0],boundary)?.component?.sceneModelInstanceId,'instance-B');
+  assert.equal(await cache.model(f.ref),resource);assert.equal(meshList(resource.scene).length,4);assert.equal(f.calls.modelContent,1);
+  cache.dispose();
+});
+
+test('real-node proxies and empty source-candidate directories never add duplicate schematic geometry',async()=>{
+  const f=modelFixture();f.version.components=[component('CN',[0]),
+    {...proxyComponent('existing-proxy',[[2,0,0],[3,1,1]]),nodeIndices:[1]},component('empty-source',[])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref),clone=cloneModel(resource,'instance');
+  assert.equal(meshList(resource.scene).length,2);assert.equal(meshList(clone).length,2);
+  assert.ok(meshList(clone).every(mesh=>mesh.userData.ontoVisProxySchematic===undefined));cache.dispose();
+});
+
+test('invalid schematic bounds reject before attachment and release parsed source resources',async()=>{
+  for(const bounds of [[[0,0,0],[Infinity,1,1]],[[0,0,0],[NaN,1,1]],[[1,0,0],[0,1,1]],
+    [[0,0],[1,1,1]],[[0,0,0],[1e6+1,1,1]]]){
+    const f=modelFixture();f.version.components=[proxyComponent('CT',bounds)];
+    const source=new THREE.Group(),mesh=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());source.add(mesh);
+    let geometries=0,materials=0;mesh.geometry.addEventListener('dispose',()=>geometries++);mesh.material.addEventListener('dispose',()=>materials++);
+    const cache=new SceneResourceCache(f.api,{source:f.source,parseModel:async()=>source});
+    await rejected('RESOURCE_CHANGED',()=>cache.model(f.ref));assert.equal(meshList(source).length,1);
+    cache.dispose();assert.equal(geometries,1);assert.equal(materials,1);
+  }
+});
+
+test('cache owns schematic GPU resources once across clones, removal and repeated disposal',async()=>{
+  const f=modelFixture();f.version.components=[proxyComponent('CT',[[-2,0,-1],[-1,2,1]]),proxyComponent('CN1',[[4,8,-1],[6,11,1]])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref);
+  const geometries=new Set(meshList(resource.scene).map(mesh=>mesh.geometry)),materials=new Set(meshList(resource.scene).map(mesh=>mesh.material));
+  const counts=new Map([...geometries,...materials].map(value=>[value,0]));
+  for(const value of counts.keys())value.addEventListener('dispose',()=>counts.set(value,counts.get(value)+1));
+  const clones=Array.from({length:20},(_,index)=>cloneModel(resource,`instance-${index}`));
+  assert.equal(geometries.size,3);assert.equal(materials.size,2);
+  clones.forEach(clone=>clone.removeFromParent());assert.ok([...counts.values()].every(count=>count===0));
+  cache.dispose();cache.dispose();assert.ok([...counts.values()].every(count=>count===1));
+});
 
 test('20 actual GLB instances share one source decode and GPU data but preserve transform/pick identity',async()=>{
   const f=modelFixture(),cache=new SceneResourceCache(f.api,{source:f.source});
@@ -98,7 +159,7 @@ test('all primitive meshes use their actual containing GLTF node and directory g
 test('asset extras cannot forge a pick and an explicitly unmapped child never inherits a mapped ancestor',async()=>{
   const f=modelFixture(glb(document=>{
     document.scenes=[{nodes:[0]}];document.nodes[0].children=[1];
-    document.nodes.forEach(node=>node.extras={ontoVisComponentKey:'forged-key',ontoVisNodeIndex:0,ontoVisModelVersionId:'forged-version'});
+    document.nodes.forEach(node=>node.extras={ontoVisComponentKey:'forged-key',ontoVisNodeIndex:0,ontoVisModelVersionId:'forged-version',ontoVisProxySchematic:true});
   }));
   f.version.components=[component('parent-only',[0])];
   const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref),root=cloneModel(resource,'checked');
@@ -106,6 +167,7 @@ test('asset extras cannot forge a pick and an explicitly unmapped child never in
   assert.equal(sceneModelHit(meshes[0],boundary)?.component?.componentKey,'parent-only');
   assert.equal(meshes[1].userData.ontoVisNodeIndex,1);
   assert.equal(meshes[1].userData.ontoVisComponentKey,undefined);
+  assert.ok(meshes.every(mesh=>mesh.userData.ontoVisProxySchematic===undefined));
   assert.equal(sceneModelHit(meshes[1],boundary)?.component,null);cache.dispose();
 });
 
@@ -118,7 +180,7 @@ test('one actual GLTF node cannot be claimed by two directory keys',async()=>{
 test('custom parse injection remains cloneable but cannot manufacture trusted component associations',async()=>{
   const f=modelFixture();f.version.components=[component('fixed-zero',[0])];
   const group=new THREE.Group(),mesh=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial());group.add(mesh);
-  mesh.userData={ontoVisComponentKey:'fixed-zero',ontoVisNodeIndex:0,ontoVisModelVersionId:f.version.modelVersionId};
+  mesh.userData={ontoVisComponentKey:'fixed-zero',ontoVisNodeIndex:0,ontoVisModelVersionId:f.version.modelVersionId,ontoVisProxySchematic:true};
   const cache=new SceneResourceCache(f.api,{source:f.source,parseModel:async()=>group}),resource=await cache.model(f.ref);
   const root=cloneModel(resource,'custom'),boundary=new THREE.Group();boundary.add(root);
   const hit=sceneModelHit(meshList(root)[0],boundary);
@@ -258,4 +320,32 @@ test('terrain report/source fixed identities cannot be replaced between selected
   const source={async model(){throw Error('unused');},async modelContent(){throw Error('unused');},
     async version(){return {...f.version,expectedReportSha256:'d'.repeat(64)};},async content(){throw Error('Must reject before bytes');}};
   const cache=new SceneResourceCache(api,{source});await rejected('RESOURCE_CHANGED',()=>cache.terrain(f.version));cache.dispose();
+});
+
+test('legacy display clones preserve original coordinates and shared resources without a fabricated forward',async()=>{
+  const f=modelFixture(),cache=new SceneResourceCache(f.api,{source:f.source});
+  f.version.components=[component('CN',[0]),proxyComponent('CT',[[-2,0,-1],[-1,2,1]]),proxyComponent('CN1',[[4,8,-1],[6,11,1]])];
+  Object.assign(f.version,{calibrationState:'legacy_display',canPlaceGeographic:false,
+    calibration:{state:'legacy_display',unit:'m',axes:'Y_UP_RIGHT_HANDED',
+      modelToCalibrated:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],sourceModelVersionId:'legacy-source',sourceSha256:f.version.sha256,
+      sourceNote:'Synthetic previous display coordinates',preservedBy:'fixture',preservedAt:'fixture'}});
+  const resource=await cache.model(f.ref),first=cloneModel(resource,'legacy-A'),second=cloneModel(resource,'legacy-B');
+  first.updateMatrixWorld(true);second.updateMatrixWorld(true);
+  const sourceBox=new THREE.Box3().setFromObject(resource.scene),cloneBox=new THREE.Box3().setFromObject(first);
+  assert.deepEqual(cloneBox.min.toArray(),sourceBox.min.toArray());assert.deepEqual(cloneBox.max.toArray(),sourceBox.max.toArray());
+  assert.equal(meshList(first)[0].geometry,meshList(second)[0].geometry);
+  const proxy=meshList(first).find(mesh=>mesh.userData.ontoVisComponentKey==='CT'),box=new THREE.Box3().setFromObject(proxy);
+  assert.deepEqual(box.min.toArray(),[-2,0,-1]);assert.deepEqual(box.max.toArray(),[-1,2,1]);
+  assert.equal(proxy.userData.ontoVisProxySchematic,true);assert.equal(proxy.userData.ontoVisNodeIndex,undefined);
+  assert.equal(f.version.calibration.basePoint,undefined);assert.equal(f.version.calibration.forward,undefined);
+  assert.equal(f.calls.model,1);assert.equal(f.calls.modelContent,1);cache.dispose();
+});
+test('legacy display cannot smuggle a transform or geographic permission through a shared clone',async()=>{
+  for(const change of [v=>v.calibration.modelToCalibrated[12]=.01,v=>v.calibration.modelToCalibrated[0]=NaN,v=>v.canPlaceGeographic=true]) {
+    const f=modelFixture(),cache=new SceneResourceCache(f.api,{source:f.source});
+    Object.assign(f.version,{calibrationState:'legacy_display',canPlaceGeographic:false,
+      calibration:{state:'legacy_display',unit:'m',axes:'Y_UP_RIGHT_HANDED',modelToCalibrated:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}});
+    change(f.version);const resource=await cache.model(f.ref);
+    assert.throws(()=>cloneModel(resource,'forged-legacy'),error=>error.code==='INVALID_CALIBRATION');cache.dispose();
+  }
 });

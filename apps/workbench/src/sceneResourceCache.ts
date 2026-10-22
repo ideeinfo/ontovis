@@ -23,6 +23,8 @@ const MAX_TRIANGLES=500_000;
 const SAMPLING_RULE='mesh-triangle-tr-bl-cell-mask-v2';
 const parsedScenes=new WeakMap<THREE.Object3D,THREE.Group[]>();
 const sourceNodeIndices=new WeakMap<THREE.Object3D,number>();
+// Only cache-created boxes may provide schematic identities; GLB extras are untrusted.
+const schematicProxyKeys=new WeakMap<THREE.Object3D,string>();
 const shaValid=(value:unknown):value is string=>typeof value==='string' && /^[a-f0-9]{64}$/.test(value);
 const text=(value:unknown):value is string=>typeof value==='string' && value.length>0 && value.length<=200;
 const integer=(value:unknown):value is number=>typeof value==='number' && Number.isSafeInteger(value);
@@ -78,9 +80,14 @@ async function parseModel(bytes:ArrayBuffer) {
 
 function calibrationMatrix(version:ProjectModelVersion) {
   const calibration=version.calibration;
-  requireValue(version.canPlace && version.calibrationState==='verified' && calibration.state==='verified',
+  requireValue(version.canPlace && version.calibrationState===calibration.state && (calibration.state==='verified'||calibration.state==='legacy_display'),
     'MODEL_CALIBRATION_REQUIRED',422);
   requireValue(calibration.unit==='m' && calibration.axes==='Y_UP_RIGHT_HANDED','UNSUPPORTED_CALIBRATION',422);
+  if(calibration.state==='legacy_display') {
+    const identity=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],matrix=calibration.modelToCalibrated;
+    requireValue(version.canPlaceGeographic===false && Array.isArray(matrix) && matrix.length===16 && matrix.every((value,index)=>value===identity[index]),'INVALID_CALIBRATION',422);
+    return new THREE.Matrix4().fromArray(matrix);
+  }
   const base=calibration.basePoint,forward=calibration.forward,matrix=calibration.modelToCalibrated;
   requireValue(Array.isArray(base) && base.length===3 && Array.isArray(forward) && forward.length===3
     && [...base,...forward].every(value=>typeof value==='number' && Number.isFinite(value) && Math.abs(value)<=1e6)
@@ -91,6 +98,26 @@ function calibrationMatrix(version:ProjectModelVersion) {
   requireValue(Array.isArray(matrix) && matrix.length===16 && matrix.every((value,index)=>
     typeof value==='number' && Number.isFinite(value) && Math.abs(value-expected[index])<=1e-8),'INVALID_CALIBRATION',422);
   return new THREE.Matrix4().fromArray(matrix);
+}
+
+function addSchematicProxies(scene:THREE.Group,version:ProjectModelVersion) {
+  const components=version.components??[];requireValue(Array.isArray(components));
+  const proxies=components.filter(component=>component?.geometryQuality==='proxy_schematic'
+    &&Array.isArray(component.nodeIndices)&&component.nodeIndices.length===0).map(component=>{
+    requireValue(typeof component.componentKey==='string'&&component.componentKey.length>0&&component.componentKey.length<=512);
+    const box=component.bounds;
+    requireValue(Array.isArray(box)&&box.length===2&&box.every(point=>Array.isArray(point)&&point.length===3
+      &&point.every(value=>typeof value==='number'&&Number.isFinite(value)&&Math.abs(value)<=1e6))
+      &&box[0].every((value,index)=>value<=box[1][index]));
+    return {key:component.componentKey,box:new THREE.Box3(new THREE.Vector3(...box[0]),new THREE.Vector3(...box[1]))};
+  });
+  if(!proxies.length)return;
+  const material=new THREE.MeshStandardMaterial({color:0x718275,roughness:.75});
+  for(const {key,box} of proxies){
+    const size=box.getSize(new THREE.Vector3()),mesh=new THREE.Mesh(new THREE.BoxGeometry(size.x,size.y,size.z),material);
+    mesh.name=`schematic:${key}`;mesh.position.copy(box.getCenter(new THREE.Vector3()));
+    schematicProxyKeys.set(mesh,key);scene.add(mesh);
+  }
 }
 
 /** Selection helpers/material effects must stay outside this shared clone tree. */
@@ -117,7 +144,9 @@ export function cloneModel(resource:CachedModel,id:string,options:{calibrated?:b
   requireValue(originals.length===copies.length);
   copies.forEach((node,index)=>{
     node.userData.sceneModelInstanceId=id;node.userData.ontoVisModelVersionId=resource.version.modelVersionId;
-    delete node.userData.ontoVisComponentKey;delete node.userData.ontoVisNodeIndex;
+    delete node.userData.ontoVisComponentKey;delete node.userData.ontoVisNodeIndex;delete node.userData.ontoVisProxySchematic;
+    const proxyKey=schematicProxyKeys.get(originals[index]);
+    if(proxyKey!==undefined){node.userData.ontoVisComponentKey=proxyKey;node.userData.ontoVisProxySchematic=true;return;}
     let original:THREE.Object3D|null=originals[index];
     while(original){
       const sourceIndex=sourceNodeIndices.get(original);
@@ -244,7 +273,7 @@ export class SceneResourceCache {
     const bytes=await blob.arrayBuffer();this.guard();
     requireValue(bytes.byteLength===version.bytes && await sha256(bytes)===ref.sha256);this.guard();embeddedGlb(bytes);
     const scene=await this.parse(bytes);
-    try {this.guard();} catch(error) {this.releaseObject(scene);throw error;}
+    try {this.guard();addSchematicProxies(scene,version);} catch(error) {this.releaseObject(scene);throw error;}
     this.roots.add(scene);return {version,scene};
   }
   terrain(version:TerrainVersion,signal?:AbortSignal):Promise<THREE.BufferGeometry> {

@@ -7,19 +7,19 @@ import {SceneApi} from './sceneApi';
 import {ResourceDetails} from './ResourceDetails';
 import {TerrainImport} from './TerrainImport';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
-  validateResourceFile, writeDenial} from './resourceForms';
+  validateResourceFile, writeDenial, modelPlacementIssue, resourceCalibrationKey} from './resourceForms';
 import {resourceText} from './resourceMessages';
 import type {LegacyModelCandidate, LegacyModelCatalog, ModelPurpose, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion} from './resourceTypes';
 import './resourcePanel.css';
 
 export interface Props {
-  api:WorkbenchApi;canPlace:boolean;canReplace?:boolean;replaceTargetVersion?:string|null;onReplace?:(version:ProjectModelVersion)=>void;onPlace:(version:ProjectModelVersion)=>void;
+  api:WorkbenchApi;canPlace:boolean;geographic?:boolean;canReplace?:boolean;replaceTargetVersion?:string|null;onReplace?:(version:ProjectModelVersion)=>void;onPlace:(version:ProjectModelVersion)=>void;
   onPreview:(version:ProjectModelVersion|null)=>void;onTerrainReady:(version:TerrainVersion)=>void;
   activeTerrainVersion?:TerrainVersion|null;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
 
-export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion}:Props) {
+export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,geographic=false}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
@@ -154,14 +154,14 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
       {catalog?.items.length===0&&!loading&&<p className="ov-resource-empty">{t('noModels')}</p>}
       <ul className="ov-resource-model-list">{catalog?.items.map(asset=><li key={asset.modelAssetId}>
         <button className="ov-resource-row" aria-expanded={assetId===asset.modelAssetId} onClick={()=>selectAsset(asset.modelAssetId)}>{assetId===asset.modelAssetId?<ChevronDown size={14}/>:<ChevronRight size={14}/>}<Box size={15}/><span>{asset.displayName}</span><small>{asset.versions.length}</small></button>
-        {assetId===asset.modelAssetId&&<div className="ov-resource-version-choice"><label>{t('chooseVersion')}<select value={versionId} onChange={event=>void selectVersion(asset.modelAssetId,event.target.value)}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(item.canPlace?'calibrated':'unverified')}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div>}
+        {assetId===asset.modelAssetId&&<div className="ov-resource-version-choice"><label>{t('chooseVersion')}<select value={versionId} onChange={event=>void selectVersion(asset.modelAssetId,event.target.value)}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div>}
       </li>)}</ul>
       {catalog?.nextCursor&&<Btn disabled={loading} onClick={()=>void readCatalog(catalog.nextCursor!)}>{t(loading?'loading':'more')}</Btn>}
       {detailLoading&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
-      {version&&<ResourceDetails key={version.modelVersionId} api={client} version={version} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} canCalibrate={canCalibrate}
+      {version&&<ResourceDetails key={version.modelVersionId} api={client} version={version} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
         canReplace={canReplace&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
         onPreview={()=>onPreview(version)}
-        onPlace={()=>{if(canPlace&&version.canPlace){onPreview(null);onPlace(version);}}} onUpdated={updated}
+        onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
         onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/>} 
       {!version&&!detailLoading&&selectedAsset&&<p className="ov-resource-caption">{t('chooseModel')}</p>}
       <details className="ov-resource-disclosure" open={legacyOpen} onToggle={event=>{const value=event.currentTarget.open;setLegacyOpen(value);if(value&&!legacy&&!legacyLoading)void readLegacy();}}><summary>{t('existingModels')}</summary>

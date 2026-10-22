@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {commitScene,duplicateAt,moveInstance,placeModel,redoScene,sceneHistory,undoScene} from '../src/sceneState.ts';
 
 const fixture=JSON.parse(readFileSync(new URL('./fixtures/scene-transforms-gdal.json',import.meta.url)));
-const model={modelVersionId:'fixed-model',displayName:'设备A',canPlace:true,calibration:{state:'verified'}};
+const model={modelVersionId:'fixed-model',displayName:'设备A',canPlace:true,canPlaceGeographic:true,calibrationState:'verified',calibration:{state:'verified'}};
 const local=()=>({displayName:'布置验证',coordinateFrame:{mode:'local_plane',frameRevision:'frame1',origin:[0,0,0],unit:'m',axes:'X_EAST_Y_UP_Z_SOUTH'},terrain:null,instances:[],initialView:{eye:[80,60,90],target:[0,15,0]},defaults:{background:'sky',lighting:'dusk',terrainMaterial:'solid'}});
 const withModel=()=>placeModel(local(),model,[12,0,-8],null,'instance-A',100);
 test('repeated placement shares only the fixed model version and keeps independent instance identities',()=>{
@@ -49,4 +49,20 @@ test('geographic placement pins terrain identity and sampling rule for later ser
   assert.equal(item.placement.position.mode,'geographic');assert.equal(item.placement.height.terrainSha256,terrain.sha256);
   assert.equal(item.placement.height.samplingRule,'fixed-mesh-rule');assert.equal(item.placement.height.offsetM,0);
   assert.throws(()=>placeModel(source,model,[0,5,0],{...terrain,contentRevision:'other'},'new',100),error=>error.code==='RESOURCE_CHANGED');
+});
+
+test('legacy display preserves local coordinates and a fresh identity without inventing calibration',()=>{
+  const legacy={...model,calibrationState:'legacy_display',canPlaceGeographic:false,
+    calibration:{state:'legacy_display',modelToCalibrated:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}};
+  const placed=placeModel(local(),legacy,[15,0,-4],null,'legacy-local',100),item=placed.instances[0];
+  assert.deepEqual(item.placement.position,{mode:'local',xM:15,zM:-4});
+  assert.equal(item.placement.height.relativeHeightM,0);assert.equal(item.placement.headingDeg,0);
+  assert.equal(item.rootBinding,null);assert.deepEqual(item.componentBindings,[]);
+  assert.equal(legacy.calibration.state,'legacy_display');assert.equal(legacy.calibration.forward,undefined);
+});
+test('geographic placement rejects legacy display before adding an instance or requesting terrain data',()=>{
+  const source={...local(),coordinateFrame:fixture.cases[0].frame,terrain:{terrainVersionId:'fixed-terrain',expectedContentRevision:'terrain-r1'}};
+  const before=structuredClone(source),legacy={...model,calibrationState:'legacy_display',canPlaceGeographic:false,calibration:{state:'legacy_display'}};
+  assert.throws(()=>placeModel(source,legacy,[0,5,0],null,'legacy-geographic',100),error=>error.code==='MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED');
+  assert.deepEqual(source,before);
 });

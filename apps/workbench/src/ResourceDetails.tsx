@@ -5,18 +5,18 @@ import {Badge, Btn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
 import type {SceneApi} from './sceneApi';
 import type {ModelUses, ProjectModel, ProjectModelWrite} from './resourceTypes';
-import {calibrationInput, privateDenial, ResourceRequestGate, ResourceRequestId, resourceBytes, resourceFailure, writeDenial} from './resourceForms';
+import {calibrationInput, privateDenial, ResourceRequestGate, ResourceRequestId, resourceBytes, resourceFailure, writeDenial, modelPlacementIssue, resourceCalibrationKey} from './resourceForms';
 import {resourceText} from './resourceMessages';
 
 interface Props {
-  api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean;
+  api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean; geographic?: boolean;
   onPreview: () => void; onPlace: () => void;canReplace?:boolean;onReplace?:()=>void;
   onUpdated: (version: ProjectModelWrite) => void; onWriteDenied: () => void; onPrivateDenied: () => void;
   onRefreshLibrary: () => Promise<string|null>;
 }
 
 export function ResourceDetails({api, version, libraryRevision, canPlace, canCalibrate,
-    onPreview, onPlace, canReplace, onReplace, onUpdated, onWriteDenied, onPrivateDenied, onRefreshLibrary}: Props) {
+    onPreview, onPlace, canReplace, onReplace, geographic=false, onUpdated, onWriteDenied, onPrivateDenied, onRefreshLibrary}: Props) {
   const {locale} = usePreferences(), t = (key: Parameters<typeof resourceText>[1]) => resourceText(locale,key);
   const [uses,setUses] = useState<ModelUses|null>(null), [usesOpen,setUsesOpen] = useState(false);
   const [usesBusy,setUsesBusy] = useState(false), [usesError,setUsesError] = useState<unknown>(null);
@@ -67,37 +67,41 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
     try {const revision=await onRefreshLibrary();if(revision){setExpectedLibrary(revision);setError(null);}}
     finally {setSaving(false);}
   }
+  const placementIssue=modelPlacementIssue(version,geographic),usable=placementIssue===null;
+  const placementHint=placementIssue==='MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED'?t('geographicCalibrationRequired'):t('calibrationRequired');
   const dimensions=version.report.bounds.max.map((maximum,index)=>maximum-version.report.bounds.min[index]);
   const counts=(value:Pick<ModelUses,'currentInstanceCount'|'retainedInstanceCount'|'retainedReferenceCount'>)=>resourceText(locale,'useCounts',{
     current:value.currentInstanceCount,retained:value.retainedInstanceCount,references:value.retainedReferenceCount});
   return <section className="ov-resource-details" aria-label={version.displayName}>
-    <div className="ov-resource-title"><strong>{version.displayName}</strong><Badge tone={version.canPlace?'success':'warning'}>{t(version.canPlace?'calibrated':'unverified')}</Badge></div>
+    <div className="ov-resource-title"><strong>{version.displayName}</strong><Badge tone={version.calibrationState==='verified'?'success':'warning'}>{t(resourceCalibrationKey(version.calibrationState))}</Badge></div>
     {version.components.some(item=>item.geometryQuality==='proxy_schematic')&&<p className="ov-resource-caption">{t('proxyGeometry')}</p>}
     <div className="ov-resource-actions">
       <Btn onClick={onPreview}><Eye size={14}/>{t('preview')}</Btn>
-      <Btn primary disabled={!canPlace||!version.canPlace} title={!version.canPlace?t('calibrationRequired'):!canPlace?t('sceneEditRequired'):t('dragPlace')}
-        draggable={canPlace&&version.canPlace} onDragStart={event=>{
-          if(!canPlace||!version.canPlace){event.preventDefault();return;}
+      <Btn primary disabled={!canPlace||!usable} title={!usable?placementHint:!canPlace?t('sceneEditRequired'):t('dragPlace')}
+        draggable={canPlace&&usable} onDragStart={event=>{
+          if(!canPlace||!usable){event.preventDefault();return;}
           event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:version.modelAssetId,modelVersionId:version.modelVersionId}));
         }} onClick={onPlace}><MapPin size={14}/>{t('place')}</Btn>
-      {onReplace&&<Btn disabled={!canReplace||!version.canPlace} onClick={onReplace}>{t('replaceSelected')}</Btn>}
+      {onReplace&&<Btn disabled={!canReplace||!usable} title={!usable?placementHint:undefined} onClick={onReplace}>{t('replaceSelected')}</Btn>}
       {canCalibrate&&<Btn onClick={openCalibration}>{t('calibrate')}</Btn>}
     </div>
+    {placementIssue==='MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED'&&<p className="ov-resource-caption">{t('geographicCalibrationRequired')}</p>}
     <dl className="ov-resource-facts">
       <dt>{t('components')}</dt><dd>{version.components.length.toLocaleString(locale)}</dd>
       <dt>{t('triangles')}</dt><dd>{version.report.triangles.toLocaleString(locale)}</dd>
       <dt>{t('dimensions')}</dt><dd>{dimensions.map(value=>value.toFixed(2)).join(' × ')} m</dd>
       <dt>{t('size')}</dt><dd>{resourceBytes(version.bytes)}</dd>
-      <dt>{t('basePoint')}</dt><dd>{version.calibration.state==='verified'?version.calibration.basePoint.join(', '):t('unverified')}</dd>
-      <dt>{t('forward')}</dt><dd>{version.calibration.state==='verified'?version.calibration.forward.join(', '):t('unverified')}</dd>
+      <dt>{t('basePoint')}</dt><dd>{version.calibration.state==='verified'?version.calibration.basePoint.join(', '):t('unconfirmed')}</dd>
+      <dt>{t('forward')}</dt><dd>{version.calibration.state==='verified'?version.calibration.forward.join(', '):t('unconfirmed')}</dd>
     </dl>
     {!!error&&!calibrating&&<p className="ov-resource-error" role="alert">{resourceFailure(error,locale)}</p>}
     <details className="ov-resource-disclosure"><summary>{t('report')}</summary><dl className="ov-resource-facts">
       <dt>{t('meshes')}</dt><dd>{version.report.activeMeshInstances.toLocaleString(locale)}</dd>
       <dt>{t('textures')}</dt><dd>{version.report.images.toLocaleString(locale)}</dd>
-    </dl><p className="ov-resource-caption">{t('calibrationNote')}</p></details>
+    </dl><p className="ov-resource-caption">{t(version.calibrationState==='legacy_display'?'legacyDisplayNote':'calibrationNote')}</p></details>
     <details className="ov-resource-disclosure"><summary>{t('source')}</summary><dl className="ov-resource-facts">
       <dt>{t('sourceNote')}</dt><dd>{version.sourceNote}</dd>
+      {version.calibration.state==='legacy_display'&&<><dt>{t('legacyDisplay')}</dt><dd>{version.calibration.sourceNote}</dd></>}
       <dt>{t('createdAt')}</dt><dd>{new Date(version.createdAt).toLocaleString(locale)}</dd>
       <dt>{t('fixedVersion')}</dt><dd className="ov-resource-id">{version.modelVersionId}</dd>
     </dl></details>
