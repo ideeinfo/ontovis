@@ -26,11 +26,19 @@ from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES,
 from apps.api.terrain_library import TerrainLibrary, MAX_VERSIONS as MAX_TERRAIN_VERSIONS, MAX_TOTAL_BYTES as MAX_TERRAIN_TOTAL_BYTES
 from apps.api.terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES, MAX_PIXELS as MAX_TERRAIN_PIXELS, MAX_TRIANGLES as MAX_TERRAIN_TRIANGLES
 from apps.api.scene_geometry_process import SceneGeometryProcess
+from apps.api.scene_engineering import SceneEngineeringReader
+from apps.api.scene_evidence import SceneEvidenceReader
 
 
 class WorkbenchSessions(UserSessions):
-    def __init__(self, base_url, project_code, installation_context_id, *, model_root=None, library_root=None, terrain_python=None, **kwargs):
+    def __init__(self, base_url, project_code, installation_context_id, *, model_root=None, library_root=None, terrain_python=None,
+                 ontobase_connection_id='ontobase-primary', **kwargs):
         super().__init__(base_url, project_code, **kwargs)
+        if (not isinstance(ontobase_connection_id, str) or not 0 < len(ontobase_connection_id) <= 200
+                or ontobase_connection_id != ontobase_connection_id.strip()
+                or any(ord(character) < 32 for character in ontobase_connection_id)):
+            raise ValueError('Invalid configured OntoBase connection identity')
+        self.ontobase_connection_id = ontobase_connection_id
         self.context_id = str(UUID(installation_context_id))
         self.prefix = '/api/v1/projects/' + quote(project_code, safe='')
         self.context_path = self.prefix + '/installations/' + self.context_id
@@ -86,6 +94,45 @@ class WorkbenchSessions(UserSessions):
         if self.terrains is None:
             raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
         return result
+
+    def scene_object_request(self, sid, path, payload):
+        row, authorize, access, _ = self.project_authorization(sid, payload, writing=False)
+        with self.lock:
+            self.guard(sid, row)
+            authority = row.authority
+        # Fixed source APIs check current project membership on every request.
+        # Full grant checks bracket the operation; inner checks keep logout prompt.
+        try:
+            body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+            reader = SceneEngineeringReader(authority, self.ontobase_connection_id, self.project_code, lambda: self.guard(sid, row))
+            if path == '/api/workbench/objects/context':
+                if not {'entityUid'} <= set(body) <= {'entityUid', 'expectedEntityRevision'}:
+                    raise PreviewError(422, 'INVALID_REQUEST')
+                value = reader.context_for_object(body['entityUid'], body.get('expectedEntityRevision'))
+            elif path == '/api/workbench/objects/detail':
+                fields = {'installationContextId', 'entityUid', 'expectedHierarchyRevision'}
+                if not fields <= set(body) <= fields | {'expectedEntityRevision'}:
+                    raise PreviewError(422, 'INVALID_REQUEST')
+                value = reader.detail(body['installationContextId'], body['entityUid'], body['expectedHierarchyRevision'],
+                                      expected_entity_revision=body.get('expectedEntityRevision'))
+            elif path == '/api/workbench/objects/children':
+                fields = {'installationContextId', 'entityUid', 'expectedHierarchyRevision'}
+                if not fields <= set(body) <= fields | {'cursor'}:
+                    raise PreviewError(422, 'INVALID_REQUEST')
+                value = reader.children(body['installationContextId'], body['entityUid'], body['expectedHierarchyRevision'],
+                                        cursor=body.get('cursor'))
+            elif path == '/api/workbench/objects/evidence/resolve':
+                value = SceneEvidenceReader(reader).resolve(body)
+            elif path == '/api/workbench/objects/evidence/content':
+                value = SceneEvidenceReader(reader).content(body)
+            else:
+                raise PreviewError(422, 'INVALID_REQUEST')
+            authorize()
+            return {**value, 'sessionRevision': row.revision, 'projectName': access.get('projectName', self.project_code)}
+        except PreviewError as error:
+            if error.status == 401:
+                self.invalidate(sid, row)
+            raise
 
     def resource_response(self, value, row, access):
         value['sessionRevision'] = row.revision
@@ -623,6 +670,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project-code', required=True)
     parser.add_argument('--installation-context-id', required=True)
+    parser.add_argument('--ontobase-connection-id', default='ontobase-primary')
     parser.add_argument('--source', default='http://127.0.0.1:18001')
     parser.add_argument('--origin', default='https://vis.ontobase.ai')
     parser.add_argument('--port', type=int, default=18084)
@@ -631,7 +679,8 @@ def main():
     parser.add_argument('--library-root', type=Path)
     parser.add_argument('--terrain-python', type=Path)
     args = parser.parse_args()
-    sessions = WorkbenchSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root, library_root=args.library_root, terrain_python=args.terrain_python)
+    sessions = WorkbenchSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root,
+        library_root=args.library_root, terrain_python=args.terrain_python, ontobase_connection_id=args.ontobase_connection_id)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin, development=args.development))
     print('ONTOVis evidence workbench ready', flush=True)
     try:
