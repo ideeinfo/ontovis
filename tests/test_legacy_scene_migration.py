@@ -233,6 +233,47 @@ class LegacySceneMigrationTests(unittest.TestCase):
         self.fixed.joinpath('model.json').write_text(json.dumps(fixed))
         self.expect('SOURCE_MISMATCH', lambda: self.prepare(fixed_model_root=self.fixed))
 
+    def test_modelasset_optional_source_fields_preserve_legacy_and_readonly_plan(self):
+        original = read_json(self.fixed/'model.json')
+        legacy = self.prepare(fixed_model_root=self.fixed, session_manifest=self.manifest)
+        self.assertFalse(legacy['ready'])
+        for optional in ({'licenceBasis': 'Synthetic authorized test source'},
+                         {'sourceModelSha256': 'a'*64},
+                         {'licenceBasis': 'Synthetic authorized test source', 'sourceModelSha256': 'a'*64}):
+            with self.subTest(fields=tuple(optional)):
+                self.fixed.joinpath('model.json').write_text(json.dumps({**original, **optional}))
+                before = self.state()
+                result = self.prepare(fixed_model_root=self.fixed, session_manifest=self.manifest)
+                checked = verify(self.store, self.version['versionId'], self.inputs, result,
+                    fixed_model_root=self.fixed, session_manifest=self.manifest)
+                self.assertTrue(checked['inputsUnchanged']); self.assertEqual(self.state(), before)
+                self.assertFalse(result['ready']); self.assertFalse(result['canPlace'])
+                self.assertEqual(result['currentEngineeringProof'], {'state': 'not_obtained', 'blocking': True})
+                self.assertNotEqual(result['historicalSources']['fixedModel']['configSha256'],
+                                    legacy['historicalSources']['fixedModel']['configSha256'])
+                self.assertNotIn('Synthetic authorized test source', json.dumps(result))
+
+    def test_optional_source_metadata_has_strict_text_and_sha_limits(self):
+        original = read_json(self.fixed/'model.json')
+        for field, values in (
+                ('licenceBasis', (None, True, 7, {}, '', ' ', ' padded ', 'line\nbreak', 'x'*2001)),
+                ('sourceModelSha256', (None, True, 7, {}, '', 'a'*63, 'a'*65, 'A'*64, 'g'*64))):
+            for value in values:
+                with self.subTest(field=field, value=repr(value)):
+                    self.fixed.joinpath('model.json').write_text(json.dumps({**original, field: value}))
+                    self.expect('INVALID_INPUT', lambda: self.prepare(fixed_model_root=self.fixed))
+        self.fixed.joinpath('model.json').write_text(json.dumps({**original, 'licenceBasis': 'x'*2000,
+                                                              'sourceModelSha256': '0'*64}))
+        self.assertFalse(self.prepare(fixed_model_root=self.fixed)['ready'])
+
+    def test_optional_modelasset_fields_do_not_allow_unknown_or_proof_metadata(self):
+        original = read_json(self.fixed/'model.json')
+        for field in ('licenseBasis', 'sourceModelSHA256', 'verifiedBy', 'currentEngineeringProof'):
+            with self.subTest(field=field):
+                self.fixed.joinpath('model.json').write_text(json.dumps({**original,
+                    'licenceBasis': 'Synthetic source only', 'sourceModelSha256': 'a'*64, field: 'not accepted'}))
+                self.expect('INVALID_INPUT', lambda: self.prepare(fixed_model_root=self.fixed))
+
     def test_source_artifact_changed_during_probe_cannot_finish_plan(self):
         original = self.artifact.read_bytes()
         probe = migration.validate

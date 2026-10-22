@@ -287,7 +287,13 @@ def _history(path, inputs, source, role_bindings, *, fixed=False):
     fields = ('schemaVersion', 'projectCode', 'installationContextId', 'rootEntityUid', 'sha256', 'bindings') if fixed else (
         'schemaVersion', 'projectCode', 'installationContextId', 'rootEntityUid', 'childEntityUid',
         'unitLabel', 'sourceModelSha256', 'derivedModelSha256', 'bindings')
-    _fields(value, fields)
+    if fixed:
+        _require(type(value) is dict and set(fields) <= set(value)
+                 <= set(fields) | {'licenceBasis', 'sourceModelSha256'})
+        if 'licenceBasis' in value: _text(value['licenceBasis'], 2000)
+        if 'sourceModelSha256' in value: _sha(value['sourceModelSha256'])
+    else:
+        _fields(value, fields)
     _require(type(value['schemaVersion']) is int and value['schemaVersion'] == 1 and value['projectCode'] == inputs['projectCode']
              and value['installationContextId'] == inputs['installationContextId']
              and value['rootEntityUid'] == inputs['rootEntityUid'], 'SOURCE_MISMATCH')
