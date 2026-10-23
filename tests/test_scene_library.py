@@ -17,6 +17,36 @@ from tests.test_model_upload import glb
 
 
 class SceneLibraryTests(unittest.TestCase):
+    def test_organization_roundtrip_replay_fixed_history_and_permission_conditions(self):
+        from tests.test_scene_organization import organization
+        scene = self.create()
+        body = self.body(scene, [self.item(), self.item()])
+        body['snapshot']['organization'] = organization(
+            [item['sceneModelInstanceId'] for item in body['snapshot']['instances']], self.model['versionId'])
+        saved = self.save(body)
+        self.assertEqual(self.opened(scene)['snapshot'], body['snapshot'])
+        self.assertNotIn('organization', self.opened(scene, scene['sceneRevision'])['snapshot'])
+        counts = self.counts()
+        self.assertEqual(self.save(body)['sceneRevision'], saved['sceneRevision'])
+        self.assertEqual(self.counts(), counts)
+        self.allowed = False
+        self.expect('SCENE_WRITE_FORBIDDEN', lambda: self.save(body))
+        self.assertEqual(self.counts(), counts)
+        self.allowed = True
+        stale = copy.deepcopy(body); stale['clientRequestId'] = str(uuid4())
+        self.expect('SCENE_CHANGED', lambda: self.save(stale))
+        self.assertEqual(self.counts(), counts)
+
+    def test_invalid_organization_does_not_create_partial_revision_or_audit(self):
+        from tests.test_scene_organization import organization
+        scene = self.create(); body = self.body(scene, [self.item(), self.item()])
+        value = organization([item['sceneModelInstanceId'] for item in body['snapshot']['instances']], self.model['versionId'])
+        value['groups'][0]['instanceIds'][0] = str(uuid4())
+        body['snapshot']['organization'] = value; counts = self.counts()
+        self.expect('INVALID_SCENE_ORGANIZATION', lambda: self.save(body))
+        self.assertEqual(self.counts(), counts)
+        self.assertEqual(self.opened(scene)['sceneRevision'], scene['sceneRevision'])
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

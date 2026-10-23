@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 from .authority import PreviewError
 from .model_library import ModelLibrary
 from .scene_bindings import MAX_COMPONENT_BINDINGS, validate_binding_shapes
+from .scene_organization import OrganizationError, validate_organization
 
 MAX_SCENE_BYTES = 1024 * 1024
 MAX_INSTANCES = 100
@@ -37,6 +38,19 @@ def _require(condition, code='INVALID_REQUEST', status=422):
 
 def _fields(value, expected):
     _require(type(value) is dict and set(value) == set(expected))
+
+
+def _snapshot_fields(value):
+    required = {'displayName', 'coordinateFrame', 'terrain', 'instances', 'initialView', 'defaults'}
+    _require(type(value) is dict and required <= set(value) <= required | {'organization'})
+
+
+def _organization(value, identifiers):
+    if 'organization' in value:
+        try:
+            value['organization'] = validate_organization(value['organization'], identifiers)
+        except OrganizationError as error:
+            raise PreviewError(error.status, error.code) from None
 
 
 def _text(value, limit=200):
@@ -121,7 +135,7 @@ def decode_scene_request(raw: bytes) -> dict:
 def validate_local_snapshot(value: dict, *, engineering=False) -> dict:
     """Validate the editable whitelist; reject unsupported scope explicitly."""
     _json(value)
-    _fields(value, ('displayName', 'coordinateFrame', 'terrain', 'instances', 'initialView', 'defaults'))
+    _snapshot_fields(value)
     _text(value['displayName'])
     frame = value['coordinateFrame']
     _require(type(frame) is dict)
@@ -180,13 +194,14 @@ def validate_local_snapshot(value: dict, *, engineering=False) -> dict:
     result['displayName'] = _text(result['displayName'])
     for item in result['instances']:
         item['displayName'] = _text(item['displayName'])
+    _organization(result, identifiers)
     return result
 
 
 def validate_snapshot(value: dict, *, geographic=False, engineering=False) -> dict:
     """Keep the legacy local whitelist; regional geometry needs a trusted callback."""
     _json(value)
-    _fields(value, ('displayName', 'coordinateFrame', 'terrain', 'instances', 'initialView', 'defaults'))
+    _snapshot_fields(value)
     frame = value['coordinateFrame']
     _require(type(frame) is dict)
     if frame.get('mode') == 'local_plane':
@@ -244,6 +259,8 @@ def validate_snapshot(value: dict, *, geographic=False, engineering=False) -> di
                               'headingDeg': placement['headingDeg']}
     normalized = validate_local_snapshot(common, engineering=engineering)
     result['displayName'] = normalized['displayName']
+    if 'organization' in normalized:
+        result['organization'] = normalized['organization']
     for item, normal in zip(result['instances'], normalized['instances']):
         item['displayName'] = normal['displayName']
     return result
@@ -797,6 +814,7 @@ class SceneLibrary:
                  'INVALID_GEOMETRY_RESULT')
         _require(all(previous[key] == proposed[key] for key in ('displayName', 'defaults', 'initialView')),
                  'INVALID_GEOMETRY_RESULT')
+        _require(previous.get('organization') == proposed.get('organization'), 'INVALID_GEOMETRY_RESULT')
         old_frame, new_frame = previous['coordinateFrame'], proposed['coordinateFrame']
         _require({key: value for key, value in old_frame.items() if key not in ('frameRevision', 'anchor')}
                  == {key: value for key, value in new_frame.items() if key not in ('frameRevision', 'anchor')},
@@ -930,6 +948,7 @@ class SceneLibrary:
     def _anchor_result(local, proposed):
         _require(proposed['coordinateFrame']['mode'] == 'projected_site', 'INVALID_GEOMETRY_RESULT')
         _require(all(local[key] == proposed[key] for key in ('displayName', 'defaults')), 'INVALID_GEOMETRY_RESULT')
+        _require(local.get('organization') == proposed.get('organization'), 'INVALID_GEOMETRY_RESULT')
         _require(len(local['instances']) == len(proposed['instances']), 'INVALID_GEOMETRY_RESULT')
         for before, after in zip(local['instances'], proposed['instances']):
             _require(all(before[key] == after[key] for key in before if key != 'placement'), 'INVALID_GEOMETRY_RESULT')

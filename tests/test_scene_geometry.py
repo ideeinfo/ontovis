@@ -26,6 +26,21 @@ from apps.api.terrain_validation import PLACEMENT_SAMPLING_RULE, validate
 
 
 class SceneGeometryTests(unittest.TestCase):
+    def test_organization_survives_geometry_and_anchor_without_retargeting_saved_cameras(self):
+        from tests.test_scene_organization import organization
+        self.snapshot['organization'] = organization([self.instance], self.model)
+        before = copy.deepcopy(self.snapshot['organization'])
+        self.assertEqual(geometry_check(self.snapshot, {})['snapshot']['organization'], before)
+        self.resource()
+        result = self.preview()
+        self.assertEqual(result['snapshot']['organization'], before)
+        self.assertNotEqual(result['snapshot']['coordinateFrame']['frameRevision'],
+                            result['snapshot']['organization']['viewpoints'][0]['frameRevision'])
+        self.assertEqual(geometry_check(result['snapshot'], self.terrains)['snapshot']['organization'], before)
+        invalid = copy.deepcopy(self.snapshot)
+        invalid['organization']['routes'][0]['steps'][0]['dwellSeconds'] = True
+        self.expect('INVALID_SCENE_ORGANIZATION', lambda: geometry_check(invalid, {}))
+
     def setUp(self):
         self.temporary=tempfile.TemporaryDirectory();self.addCleanup(self.temporary.cleanup)
         self.root=Path(self.temporary.name)

@@ -22,6 +22,27 @@ from tests.test_model_upload import glb
 
 
 class SceneSpatialTests(unittest.TestCase):
+    def test_anchor_preserves_organization_and_rejects_callback_retargeting(self):
+        from tests.test_scene_organization import organization
+        scene = self.local_scene(); snapshot = copy.deepcopy(scene['snapshot'])
+        snapshot['organization'] = organization([snapshot['instances'][0]['sceneModelInstanceId']], self.model['versionId'])
+        checked = self.check(self.check_body(scene, snapshot))
+        self.assertEqual(checked['proposedSnapshot']['organization'], snapshot['organization'])
+        request = self.body(scene, checked['proposedSnapshot']); request['spatialChange'] = checked['spatialChange']
+        saved = self.save(request)
+        self.assertEqual(self.opened(saved)['snapshot']['organization'], snapshot['organization'])
+        self.assertNotIn('organization', self.opened(scene, scene['sceneRevision'])['snapshot'])
+        local = self.local_scene()
+        other = copy.deepcopy(local['snapshot']); other['organization'] = copy.deepcopy(snapshot['organization'])
+        other['organization']['viewpoints'][0]['modelTarget']['sceneModelInstanceId'] = other['instances'][0]['sceneModelInstanceId']
+        def tampered(*args):
+            result = self.preview(*args)
+            result['snapshot']['organization']['viewpoints'][0]['displayName'] = 'changed by GIS'
+            return result
+        before = self.counts()
+        self.expect('INVALID_GEOMETRY_RESULT', lambda: self.check(self.check_body(local, other), preview=tampered))
+        self.assertEqual(self.counts(), before)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

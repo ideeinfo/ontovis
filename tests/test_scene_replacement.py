@@ -16,6 +16,22 @@ from tests.test_model_upload import glb
 
 
 class SceneReplacementTests(unittest.TestCase):
+    def test_replacement_preserves_camera_targets_and_metadata_as_repairable_history(self):
+        from tests.test_scene_organization import organization
+        for geographic in (False, True):
+            with self.subTest(geographic=geographic):
+                scene = self.geographic() if geographic else self.local()
+                body = self.f.body(scene); item = body['snapshot']['instances'][0]
+                value = organization([item['sceneModelInstanceId']], item['modelVersionId'])
+                value['viewpoints'][0]['frameRevision'] = body['snapshot']['coordinateFrame']['frameRevision']
+                body['snapshot']['organization'] = value
+                self.save(body); scene = self.f.opened(scene)
+                checked = self.check(self.check_body(scene, 'terrain' if geographic else 'model'))
+                self.assertEqual(checked['proposedSnapshot']['organization'], value)
+                saved = self.save(self.request(scene, checked))
+                self.assertEqual(self.f.opened(saved)['snapshot']['organization'], value)
+                self.assertEqual(self.f.opened(scene, scene['sceneRevision'])['snapshot']['organization'], value)
+
     def setUp(self):
         self.f = spatial_fixture.SceneSpatialTests('test_anchor_check_is_read_only_and_save_retains_fixed_spatial_evidence')
         self.f.setUp()

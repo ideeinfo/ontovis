@@ -50,6 +50,24 @@ class SceneAuthority:
 
 
 class SceneHttpTests(unittest.TestCase):
+    def test_organization_uses_existing_http_permission_revision_and_roundtrip_boundaries(self):
+        from tests.test_scene_organization import organization
+        scene = self.create(); body = self.save_body(scene, [self.item(), self.item()])
+        body['snapshot']['organization'] = organization(
+            [item['sceneModelInstanceId'] for item in body['snapshot']['instances']], self.version['versionId'])
+        status, saved, _ = self.save(body)
+        self.assertEqual(status, 200, saved)
+        self.assertEqual(self.open(scene)[1]['snapshot'], body['snapshot'])
+        self.assertNotIn('organization', self.open(scene, scene['sceneRevision'])[1]['snapshot'])
+        member = self.login('fixture-reader'); self.account(member).role = 'reader'
+        self.assertEqual(self.open(scene, client=member)[1]['snapshot'], body['snapshot'])
+        opened = self.open(scene)[1]
+        denied = self.save_body(opened); denied['snapshot']['organization']['routes'][0]['displayName'] = 'Denied'
+        self.assert_response(self.save(denied, client=member), 403, 'SCENE_WRITE_FORBIDDEN')
+        invalid = self.save_body(opened); invalid['snapshot']['organization']['groups'][0]['instanceIds'][0] = str(uuid4())
+        self.assert_response(self.save(invalid), 422, 'INVALID_SCENE_ORGANIZATION')
+        self.assertEqual(self.open(scene)[1]['sceneRevision'], saved['sceneRevision'])
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

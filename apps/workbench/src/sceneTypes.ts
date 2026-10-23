@@ -55,11 +55,19 @@ export interface LocalSceneModelInstance extends InstanceBase {placement: LocalP
 export interface GeographicSceneModelInstance extends InstanceBase {placement: GeographicPlacement}
 export type SceneModelInstance = LocalSceneModelInstance | GeographicSceneModelInstance;
 export interface SceneView {eye: Vector3; target: Vector3}
+export interface SceneGroup {groupId:string;displayName:string;instanceIds:string[]}
+export interface SceneViewpoint {
+  viewpointId:string;displayName:string;kind:'component'|'overview';view:SceneView;frameRevision:string;
+  modelTarget:{sceneModelInstanceId:string;modelVersionId:string}|null;
+}
+export interface SceneRouteStep {stepId:string;viewpointId:string;flightSeconds:number;dwellSeconds:number}
+export interface SceneRoute {routeId:string;displayName:string;steps:SceneRouteStep[]}
+export interface SceneOrganization {groups:SceneGroup[];viewpoints:SceneViewpoint[];routes:SceneRoute[]}
 export interface SceneDefaults {
   background: 'plain' | 'sky'; lighting: 'neutral' | 'dusk'; terrainMaterial: 'solid' | 'grass';
 }
 export interface SceneTerrainRef {terrainVersionId: string; expectedContentRevision: string}
-interface SnapshotBase {displayName: string; initialView: SceneView; defaults: SceneDefaults}
+interface SnapshotBase {displayName: string; initialView: SceneView; defaults: SceneDefaults;organization?:SceneOrganization}
 export interface LocalSceneSnapshot extends SnapshotBase {
   coordinateFrame: LocalFrame; terrain: null; instances: LocalSceneModelInstance[];
 }

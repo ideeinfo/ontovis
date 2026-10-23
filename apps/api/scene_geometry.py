@@ -19,6 +19,7 @@ from .terrain_coordinates import (ProjectedFrame, LocalPlacement, TerrainHeight,
     CoordinateError, CONVERGENCE_RULE, VERTICAL_DATUMS, normalize_heading, preview_anchor)
 from .terrain_validation import sample_mesh, PLACEMENT_SAMPLING_RULE, TerrainError
 from tools.model_probe import strict_json, ProbeError
+from .scene_organization import OrganizationError, validate_organization
 
 MAX_REQUEST_BYTES=1024*1024
 MAX_OUTPUT_BYTES=2*1024*1024
@@ -171,7 +172,7 @@ def _terrain(terrains,identifier):
 
 def _base_snapshot(snapshot):
     value=_bounded_copy(snapshot)
-    _fields(value,('displayName','coordinateFrame','terrain','instances','initialView','defaults'))
+    _fields(value,('displayName','coordinateFrame','terrain','instances','initialView','defaults'),('organization',))
     _text(value['displayName']);_require(type(value['instances']) is list and len(value['instances'])<=MAX_INSTANCES,'SCENE_LIMIT_EXCEEDED','At most 100 instances are accepted.')
     identifiers=set();bindings=0
     for item in value['instances']:
@@ -191,6 +192,9 @@ def _base_snapshot(snapshot):
     _require(sum((a-b)**2 for a,b in zip(value['initialView']['eye'],value['initialView']['target']))>1e-12,'INVALID_COORDINATE','The camera and target cannot coincide.')
     _fields(value['defaults'],('background','lighting','terrainMaterial'))
     _require(value['defaults']['background'] in ('plain','sky') and value['defaults']['lighting'] in ('neutral','dusk') and value['defaults']['terrainMaterial'] in ('solid','grass'))
+    if 'organization' in value:
+        try:value['organization']=validate_organization(value['organization'],identifiers)
+        except OrganizationError as error:raise GeometryError(error.code,'The scene groups, viewpoints or routes are invalid.') from None
     return value
 
 
