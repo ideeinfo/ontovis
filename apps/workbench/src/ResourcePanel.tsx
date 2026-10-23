@@ -1,3 +1,5 @@
+import {createPortal} from 'react-dom';
+import type {ReactNode} from 'react';
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {Box, Eye, FileUp, MapPin, Plus, RefreshCw, Search} from 'lucide-react';
 import {cancelled, type WorkbenchApi} from './api';
@@ -22,12 +24,13 @@ export interface Props {
   onPreview:(version:ProjectModelVersion|null)=>void;onTerrainReady:(version:TerrainVersion)=>void;
   activeTerrainVersion?:TerrainVersion|null;
   onImageryReady?:(value:ImageryVersion)=>void;
-  canAcquire?:boolean;
+  detailsTarget?:HTMLElement|null;
+  canAcquire?:boolean;modelsOnly?:boolean;onOpenScene?:(sceneId:string)=>void;
   modelSelection?:ModelResourceSelection|null;onModelSelected?:(value:ModelResourceSelection|null)=>void;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
 
-export function ResourcePanel({api,canPlace,canAcquire=canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,onImageryReady,geographic=false,modelSelection,onModelSelected}:Props) {
+export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,onImageryReady,geographic=false,modelSelection,onModelSelected}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
@@ -170,13 +173,13 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,canReplace,repla
   }
   if(privateUnavailable)return <div className="ov-resource-panel"/>;
   return <div className="ov-resource-panel">
-    <div className="ov-resource-tabs" role="tablist" aria-label={t('resources')}>
+    <div hidden={modelsOnly} className="ov-resource-tabs" role="tablist" aria-label={t('resources')}>
       <button id="ov-resource-models-tab" role="tab" aria-selected={tab==='models'} aria-controls="ov-resource-models" onClick={()=>{cardIntent.current++;setTab('models');}}>{t('models')}</button>
       <button id="ov-resource-terrain-tab" role="tab" aria-selected={tab==='terrains'} aria-controls="ov-resource-terrains" onClick={()=>{cardIntent.current++;setTab('terrains');}}>{t('terrains')}</button>
       <button id="ov-resource-imagery-tab" role="tab" aria-selected={tab==='imagery'} aria-controls="ov-resource-imagery" onClick={()=>{cardIntent.current++;setTab('imagery');}}>{imageryText(locale,'imagery')}</button>
     </div>
-    <div className="ov-resource-public-entry"><Btn disabled={!canAcquire||denied} onClick={()=>setPublicAcquisition(true)}>{publicGeoMessages[locale].title}</Btn></div>
-    <section id="ov-resource-models" role="tabpanel" aria-labelledby="ov-resource-models-tab" hidden={tab!=='models'} className="ov-resource-tab-body">
+    <div hidden={modelsOnly} className="ov-resource-public-entry"><Btn disabled={!canAcquire||denied} onClick={()=>setPublicAcquisition(true)}>{publicGeoMessages[locale].title}</Btn></div>
+    <section id="ov-resource-models" role={modelsOnly?undefined:"tabpanel"} aria-label={modelsOnly?t("models"):undefined} aria-labelledby={modelsOnly?undefined:"ov-resource-models-tab"} hidden={tab!=='models'} className="ov-resource-tab-body">
       <form className="ov-resource-search" onSubmit={event=>{event.preventDefault();changeFilters(query,purpose);}}>
         <input aria-label={t('search')} placeholder={t('search')} value={query} maxLength={120} onChange={event=>setQuery(event.target.value)}/>
         <IconBtn label={t('search')} type="submit"><Search size={15}/></IconBtn>
@@ -201,18 +204,18 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,canReplace,repla
           </button>
           <div className="ov-resource-card-actions">
             <Btn disabled={!choice||waiting} onClick={()=>void activateCard(asset,'preview')}><Eye size={14}/>{t('preview')}</Btn>
-            <Btn disabled={!canPlace||!usable||waiting} title={!usable?t(geographic?'geographicCalibrationRequired':'calibrationRequired'):!canPlace?t('sceneEditRequired'):t('dragPlace')}
+            {!modelsOnly&&<Btn disabled={!canPlace||!usable||waiting} title={!usable?t(geographic?'geographicCalibrationRequired':'calibrationRequired'):!canPlace?t('sceneEditRequired'):t('dragPlace')}
               draggable={canPlace&&usable&&!waiting} onDragStart={event=>{
                 if(!canPlace||!usable||!choice||waiting){event.preventDefault();return;}
                 event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:asset.modelAssetId,modelVersionId:choice.modelVersionId}));
-              }} onClick={()=>void activateCard(asset,'place')}><MapPin size={14}/>{t('place')}</Btn>
+              }} onClick={()=>void activateCard(asset,'place')}><MapPin size={14}/>{t('place')}</Btn>}
           </div>
           <details className="ov-resource-disclosure ov-resource-card-history"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><p className="ov-resource-caption">{t('modelVersionHint')}</p><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,event.target.value);}}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>
           {waiting&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
-          {active&&version&&<details className="ov-resource-disclosure ov-resource-card-details"><summary>{t('modelDetails')}</summary><ResourceDetails compact key={version.modelVersionId} api={client} version={version} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
+          {active&&version&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} key={version.modelVersionId} api={client} version={version} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
             canReplace={canReplace&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
-            onPreview={()=>onPreview(version)} onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
-            onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/></details>}
+            onOpenScene={onOpenScene} onPreview={()=>onPreview(version)} onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
+            onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/></ResourceDetailHost>}
         </li>;
       })}</ul>
       {catalog?.nextCursor&&<Btn disabled={loading} onClick={()=>void readCatalog(catalog.nextCursor!)}>{t(loading?'loading':'more')}</Btn>}
@@ -260,4 +263,8 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,canReplace,repla
       <div className="ov-resource-actions end"><Btn disabled={importing} onClick={()=>setExisting(null)}>{t('cancel')}</Btn><Btn primary disabled={importing||!canUpload} onClick={()=>void importExisting()}>{t(importing?'saving':'useExisting')}</Btn></div>
     </div></Modal>}
   </div>;
+}
+
+function ResourceDetailHost({target,title,children}:{target?:HTMLElement|null;title:string;children:ReactNode}) {
+  return target?createPortal(children,target):<details className="ov-resource-disclosure ov-resource-card-details"><summary>{title}</summary>{children}</details>;
 }

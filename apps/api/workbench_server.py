@@ -21,6 +21,7 @@ from apps.api.session_http import handler_type
 from apps.api.model_assets import ModelAsset
 from apps.api.model_library import ModelLibrary
 from apps.api.project_model_library import ProjectModelLibrary
+from apps.api.model_resource_metadata import ModelResourceMetadata, MAX_METADATA_BYTES, MAX_METADATA_REQUEST_BYTES
 from apps.api.model_validation import MAX_BYTES
 from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COORDINATE_M, MAX_COMPONENT_BINDINGS
 from apps.api.terrain_library import TerrainLibrary, MAX_VERSIONS as MAX_TERRAIN_VERSIONS, MAX_TOTAL_BYTES as MAX_TERRAIN_TOTAL_BYTES
@@ -55,6 +56,7 @@ class WorkbenchSessions(UserSessions):
         self.model = ModelAsset(Path(model_root), project_code, self.context_id) if model_root else None
         self.library = ModelLibrary(Path(library_root),project_code,self.context_id) if library_root else None
         self.project_models = ProjectModelLibrary(self.library) if self.library else None
+        self.model_metadata = ModelResourceMetadata(self.project_models) if self.project_models else None
         self.scenes = SceneLibrary(self.library, model_identity=self.project_models.content_identity) if self.library else None
         self.legacy_registry = LegacySceneRegistry(self.library) if self.library else None
         self.terrains = TerrainLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
@@ -199,11 +201,13 @@ class WorkbenchSessions(UserSessions):
         value['sessionRevision'] = row.revision
         value['capabilities'] = {'scope': 'project_static_glb_resources', 'canRead': True,
             'canUpload': access.get('role') == 'admin', 'canCalibrate': access.get('role') == 'admin',
+            'canWriteMetadata': access.get('role') == 'admin',
             'calibrationRequiredForGeographicPlacement': True, 'automaticLegacyAdoption': False}
         limits = ProjectModelLibrary.capabilities()
         value['limits'] = {key: limits[key] for key in ('maxUploadBytes', 'maxVersions', 'maxLibraryBytes')}
         value['limits'].update({'maxMetadataHeaderBytes': 8192,
-            'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384})
+            'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384,
+            'maxResourceMetadataBytes': MAX_METADATA_BYTES, 'maxResourceMetadataRequestBytes': MAX_METADATA_REQUEST_BYTES})
         return value
 
     def resource_upload(self, sid, payload, stream, length):
@@ -218,7 +222,8 @@ class WorkbenchSessions(UserSessions):
 
     def resource_request(self, sid, path, payload):
         writing = path in ('/api/workbench/resources/model/calibrate', '/api/workbench/resources/model/import-existing',
-                           '/api/workbench/resources/model/preserve-legacy-display')
+                           '/api/workbench/resources/model/preserve-legacy-display',
+                           '/api/workbench/resources/model/metadata/save')
         row, authorize, access, actor = self.project_authorization(sid, payload,
             writing=writing, write_code='MODEL_WRITE_FORBIDDEN')
         if self.project_models is None or self.scenes is None:
@@ -235,6 +240,10 @@ class WorkbenchSessions(UserSessions):
             value = self.project_models.legacy_candidates(authorize)
         elif path == '/api/workbench/resources/model' and set(body) == {'modelAssetId', 'modelVersionId'}:
             value = self.project_models.model(body['modelAssetId'], body['modelVersionId'], authorize)
+        elif path == '/api/workbench/resources/model/metadata':
+            value = self.model_metadata.read(body, authorize)
+        elif path == '/api/workbench/resources/model/metadata/save':
+            value = self.model_metadata.save(body, actor, authorize)
         elif path == '/api/workbench/resources/model/content' and set(body) == {
                 'modelVersionId', 'expectedContentRevision', 'expectedSha256'}:
             fingerprint = body['expectedSha256']

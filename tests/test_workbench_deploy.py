@@ -43,7 +43,8 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         for path in routes:
             with self.subTest(path=path):
                 body = location_for(path)
-                self.assertIn('client_max_body_size ' + ('1m' if path in large else '16k') + ';', body)
+                limit = '1m' if path in large else '72k' if path.endswith('/model/metadata/save') else '16k'
+                self.assertIn('client_max_body_size ' + limit + ';', body)
                 self.assertIn('proxy_buffering off;', body)
                 if path.startswith('/api/workbench/scenes'):
                     self.assertIn('proxy_read_timeout 120s;', body)
@@ -54,9 +55,20 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         for path in ('/api/workbench/scenes/delete', '/api/workbench/resources/secret',
                      '/api/workbench/terrains/upload/extra', '/api/workbench/scenes/open/',
                      '/api/workbench/imagery/delete', '/api/workbench/imagery/upload/extra',
-                     '/api/workbench/imagery/content/'):
+                     '/api/workbench/imagery/content/', '/api/workbench/resources/model/metadata/extra',
+                     '/api/workbench/resources/model/metadata/save/extra', '/api/workbench/resources/model/metadata/save/'):
             with self.subTest(path=path), self.assertRaises(AssertionError):
                 location_for(path)
+
+    def test_metadata_save_has_its_own_exact_json_limit_without_expanding_model_uploads(self):
+        from apps.api.model_resource_metadata import MAX_METADATA_REQUEST_BYTES
+        read = location_for('/api/workbench/resources/model/metadata')
+        save = location_for('/api/workbench/resources/model/metadata/save')
+        self.assertIn('client_max_body_size 16k;', read)
+        self.assertEqual(MAX_METADATA_REQUEST_BYTES, 72 * 1024)
+        self.assertIn('client_max_body_size 72k;', save)
+        self.assertIn('proxy_buffering off;', save)
+        self.assertIn('client_max_body_size 20m;', location_for('/api/workbench/resources/model/upload'))
 
     def test_public_acquisition_routes_are_exact_short_json_requests(self):
         for action in ('start', 'job', 'cancel'):

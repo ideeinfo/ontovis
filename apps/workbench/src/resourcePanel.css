@@ -85,3 +85,7 @@
 .ov-resource-card .ov-resource-actions{gap:6px}.ov-resource-card .ov-resource-actions>.ov-btn{white-space:normal;overflow-wrap:normal;word-break:normal}
 
 .ov-resource-public-entry{padding:8px 10px;border-bottom:1px solid var(--border)}.ov-resource-public-entry .ov-btn{width:100%;white-space:normal;line-height:1.5}
+
+.ov-resource-panel [hidden]{display:none!important}
+
+.pm-metadata{display:block}.pm-metadata>div{display:grid;grid-template-columns:minmax(72px,auto) minmax(0,1fr);gap:8px;padding:8px 0;border-bottom:1px solid var(--borderSubtle)}.pm-metadata dd>div+div{margin-top:8px}.pm-metadata summary{font-size:11px;cursor:pointer;color:var(--textSecondary)}.pm-metadata a{color:var(--primary)}

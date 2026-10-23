@@ -1,3 +1,4 @@
+import {ModelResourceMetadata} from './ModelMetadataDetails';
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {Eye, MapPin} from 'lucide-react';
 import {cancelled} from './api';
@@ -9,14 +10,15 @@ import {calibrationInput, privateDenial, ResourceRequestGate, ResourceRequestId,
 import {resourceText} from './resourceMessages';
 
 interface Props {
-  api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean; geographic?: boolean; compact?:boolean;
+  api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean; geographic?: boolean; compact?:boolean;hidePlacement?:boolean;
   onPreview: () => void; onPlace: () => void;canReplace?:boolean;onReplace?:()=>void;
   onUpdated: (version: ProjectModelWrite) => void; onWriteDenied: () => void; onPrivateDenied: () => void;
+  onOpenScene?:(sceneId:string)=>void;
   onRefreshLibrary: () => Promise<string|null>;
 }
 
 export function ResourceDetails({api, version, libraryRevision, canPlace, canCalibrate,
-    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, onUpdated, onWriteDenied, onPrivateDenied, onRefreshLibrary}: Props) {
+    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary}: Props) {
   const {locale} = usePreferences(), t = (key: Parameters<typeof resourceText>[1]) => resourceText(locale,key);
   const [uses,setUses] = useState<ModelUses|null>(null), [usesOpen,setUsesOpen] = useState(false);
   const [usesBusy,setUsesBusy] = useState(false), [usesError,setUsesError] = useState<unknown>(null);
@@ -77,11 +79,11 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
     {version.components.some(item=>item.geometryQuality==='proxy_schematic')&&<p className="ov-resource-caption">{t('proxyGeometry')}</p>}
     <div className="ov-resource-actions">
       {!compact&&<><Btn onClick={onPreview}><Eye size={14}/>{t('preview')}</Btn>
-      <Btn primary disabled={!canPlace||!usable} title={!usable?placementHint:!canPlace?t('sceneEditRequired'):t('dragPlace')}
+      {!hidePlacement&&<Btn primary disabled={!canPlace||!usable} title={!usable?placementHint:!canPlace?t('sceneEditRequired'):t('dragPlace')}
         draggable={canPlace&&usable} onDragStart={event=>{
           if(!canPlace||!usable){event.preventDefault();return;}
           event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:version.modelAssetId,modelVersionId:version.modelVersionId}));
-        }} onClick={onPlace}><MapPin size={14}/>{t('place')}</Btn></>}
+        }} onClick={onPlace}><MapPin size={14}/>{t('place')}</Btn>}</>}
       {onReplace&&<Btn disabled={!canReplace||!usable} title={!usable?placementHint:undefined} onClick={onReplace}>{t('replaceSelected')}</Btn>}
       {canCalibrate&&<Btn onClick={openCalibration}>{t('calibrate')}</Btn>}
     </div>
@@ -105,10 +107,11 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
       <dt>{t('createdAt')}</dt><dd>{new Date(version.createdAt).toLocaleString(locale)}</dd>
       <dt>{t('fixedVersion')}</dt><dd className="ov-resource-id">{version.modelVersionId}</dd>
     </dl></details>
+    <ModelResourceMetadata key={version.modelVersionId} api={api} version={version} onPrivateDenied={onPrivateDenied}/>
     <details className="ov-resource-disclosure" open={usesOpen} onToggle={event=>{
       const open=event.currentTarget.open;setUsesOpen(open);if(open&&!uses&&!usesBusy)void readUses();
     }}><summary>{t('uses')}</summary>
-      {uses&&<><p className="ov-resource-caption">{counts(uses)}</p>{uses.items.length===0?<p className="ov-resource-caption">{t('noUses')}</p>:<ul className="ov-resource-use-list">{uses.items.map(item=><li key={item.sceneId}><span>{item.displayName}</span><small>{counts(item)}</small></li>)}</ul>}</>}
+      {uses&&<><p className="ov-resource-caption">{counts(uses)}</p>{uses.items.length===0?<p className="ov-resource-caption">{t('noUses')}</p>:<ul className="ov-resource-use-list">{uses.items.map(item=><li key={item.sceneId}><span>{item.displayName}</span><small>{counts(item)}</small>{onOpenScene&&<Btn onClick={()=>onOpenScene(item.sceneId)}>{locale==='zh'?'打开场景':'Open scene'}</Btn>}</li>)}</ul>}</>}
       {!!usesError&&<p className="ov-resource-error" role="alert">{resourceFailure(usesError,locale)}</p>}
       {usesBusy&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
       <div className="ov-resource-actions"><Btn disabled={usesBusy} onClick={()=>void readUses()}>{t('reloadUses')}</Btn>{uses?.nextCursor&&<Btn disabled={usesBusy} onClick={()=>void readUses(uses.nextCursor!)}>{t('more')}</Btn>}</div>

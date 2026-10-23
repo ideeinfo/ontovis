@@ -143,7 +143,7 @@ class ProjectModelHttpTests(unittest.TestCase):
         self.assertNotIn(str(self.root), json.dumps(listed))
 
     def test_resource_limits_follow_project_library_for_catalog_and_writes(self):
-        self.assertEqual(self.listing()[1]['limits']['maxVersions'], 50)
+        self.assertEqual(self.listing()[1]['limits']['maxVersions'], 100)
         self.assertEqual(self.listing()[1]['limits']['maxLibraryBytes'], 200 * 1024 * 1024)
         with patch('apps.api.project_model_library.MAX_VERSIONS', 47):
             first = self.new_version()

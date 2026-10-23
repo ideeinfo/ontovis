@@ -376,16 +376,16 @@ class ProjectModelLibraryTests(unittest.TestCase):
         self.assertNotEqual(next_version['modelVersionId'], recovered['modelVersionId'])
         self.assertEqual(self.counts(), (3, 1, 3, 3, 3))
 
-    def test_fifty_retained_versions_allow_paging_and_full_library_replay(self):
-        self.assertEqual(self.models.capabilities()['maxVersions'], 50)
+    def test_hundred_retained_versions_allow_paging_and_full_library_replay(self):
+        self.assertEqual(self.models.capabilities()['maxVersions'], 100)
         source = self.upload()
-        self.retain_synthetic_versions(source, 48, legacy_versions=1)
+        self.retain_synthetic_versions(source, 98, legacy_versions=1)
         metadata = self.metadata()
         uploaded = self.upload(metadata)
         body = self.calibration(uploaded)
         calibrated = self.calibrate(uploaded, body)
         before = self.counts()
-        self.assertEqual(before[:3], (50, 48, 49))
+        self.assertEqual(before[:3], (100, 98, 99))
 
         items, cursor = [], None
         while True:
@@ -393,27 +393,27 @@ class ProjectModelLibraryTests(unittest.TestCase):
             items.extend(page['items'])
             cursor = page['nextCursor']
             if cursor is None: break
-        self.assertEqual(len(items), 48)
-        self.assertEqual(len({item['modelAssetId'] for item in items}), 48)
-        self.assertEqual(sum(len(item['versions']) for item in items), 49)
+        self.assertEqual(len(items), 98)
+        self.assertEqual(len({item['modelAssetId'] for item in items}), 98)
+        self.assertEqual(sum(len(item['versions']) for item in items), 99)
 
         self.expect('MODEL_LIBRARY_FULL', lambda: self.upload())
         self.expect('MODEL_LIBRARY_FULL', lambda: self.calibrate(uploaded))
         self.assertEqual(self.upload(metadata), uploaded)
         self.assertEqual(self.calibrate(uploaded, body), calibrated)
         self.assertEqual(self.counts(), before)
-        self.assertEqual(len(list((self.old.root / 'files').glob('*.glb'))), 50)
+        self.assertEqual(len(list((self.old.root / 'files').glob('*.glb'))), 100)
         self.assertEqual(list((self.old.root / 'temporary').iterdir()), [])
 
-    def test_byte_budget_still_blocks_upload_and_calibration_above_twenty_versions(self):
+    def test_byte_budget_still_blocks_upload_and_calibration_above_fifty_versions(self):
         source = self.upload()
-        self.retain_synthetic_versions(source, 21)
+        self.retain_synthetic_versions(source, 51)
         before = self.counts()
-        with patch('apps.api.project_model_library.MAX_TOTAL_BYTES', len(self.data) * 22 - 1):
+        with patch('apps.api.project_model_library.MAX_TOTAL_BYTES', len(self.data) * 52 - 1):
             self.expect('MODEL_LIBRARY_FULL', lambda: self.upload())
             self.expect('MODEL_LIBRARY_FULL', lambda: self.calibrate(source))
         self.assertEqual(self.counts(), before)
-        self.assertEqual(len(list((self.old.root / 'files').glob('*.glb'))), 21)
+        self.assertEqual(len(list((self.old.root / 'files').glob('*.glb'))), 51)
         self.assertEqual(list((self.old.root / 'temporary').iterdir()), [])
 
     def test_changed_output_after_publication_is_not_registered_as_ready(self):

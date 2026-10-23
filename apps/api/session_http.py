@@ -10,6 +10,7 @@ from .user_sessions import COOKIE, UserSessions
 from .scene_library import decode_scene_request, MAX_SCENE_BYTES
 from .terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES
 from .imagery_validation import MAX_BYTES as MAX_IMAGERY_BYTES
+from .model_resource_metadata import MAX_METADATA_REQUEST_BYTES
 from tools.model_probe import strict_json, ProbeError
 
 def handler_type(sessions: UserSessions, origin: str, *, development=False):
@@ -153,7 +154,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                               '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',
                               '/api/workbench/resources/model/preserve-legacy-display',
                               '/api/workbench/resources/uses', '/api/workbench/resources/models/legacy',
-                              '/api/workbench/resources/model/import-existing')
+                              '/api/workbench/resources/model/import-existing',
+                              '/api/workbench/resources/model/metadata', '/api/workbench/resources/model/metadata/save')
             if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
@@ -167,7 +169,9 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                          '/api/workbench/scenes/replacement-check',
                                          '/api/workbench/scenes/legacy-migration/check',
                                          '/api/workbench/scenes/legacy-migration/activate')
-            limit = MAX_SCENE_BYTES if large_scene else 16384 if parts.path in (*workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *resource_paths) else 4096
+            metadata_save = parts.path == '/api/workbench/resources/model/metadata/save'
+            limit = (MAX_SCENE_BYTES if large_scene else MAX_METADATA_REQUEST_BYTES if metadata_save else
+                     16384 if parts.path in (*workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')
             try:

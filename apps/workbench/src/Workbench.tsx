@@ -13,7 +13,7 @@ import { ObjectHierarchy } from './ObjectHierarchy';
 import { objectCategory } from './objectCatalog';
 import { bindingNeedsReview, modelLocation } from './modelLocation';
 import { SourceEvidence } from './SourceEvidence';
-import { ModelLibraryPanel } from './ModelLibraryPanel';
+import {ProjectModelCenter} from './ProjectModelCenter';
 import { BindingEditor } from './BindingEditor';
 import type {SceneWorkspaceHandle} from './SceneWorkspace';
 import {SceneApi} from './sceneApi';
@@ -58,6 +58,7 @@ export function Workbench() {
   const [layout, setLayout] = useState('balanced');
   const [modelVersionId,setModelVersionId] = useState<string|null>(null);
   const [modelReload,setModelReload] = useState(0);
+  const [resourceSceneId,setResourceSceneId]=useState<string|undefined>();
   const [sceneEntry,setSceneEntry] = useState<LegacySceneEntryTarget|null>(null);
   const [legacyReady,setLegacyReady] = useState<string|null>(null);
   const entryIdentity=JSON.stringify([session?.sessionRevision,reload,modelVersionId,modelReload]);
@@ -71,7 +72,7 @@ export function Workbench() {
   const lastActivity = useRef(0);
   const sceneWorkspace = useRef<SceneWorkspaceHandle|null>(null);
   function navigate(next:Page,legacyVersionId:string|null=null){
-    const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setLegacyReady(null);
+    const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setResourceSceneId(undefined);setLegacyReady(null);
       if(next==='bindings'){setModelVersionId(legacyVersionId);setModel(null);setContext(null);setDetail(null);setModelReload(value=>value+1);}
       setPage(next);setLeft(false);setRight(false);};
     if(page==='scene'&&(next!=='scene'||sceneEntry!==null)&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else change();
@@ -79,7 +80,7 @@ export function Workbench() {
 
   function clear(state:string, text:MessageKey | null) {
     sessionReady.current=false;setSessionCheck('loading');
-    legacyEntry.current.cancel();setSceneEntry(null);setLegacyReady(null);
+    legacyEntry.current.cancel();setSceneEntry(null);setResourceSceneId(undefined);setLegacyReady(null);
     api.invalidate(); setProjectName('');setContext(null); setSelection({uid:'', scope:'equipment'}); setDetail(null); setModel(null);
     setModelVersionId(null);
     const value={state,sessionRevision:current.current?.sessionRevision||api.revision};current.current=value;setSession(value);
@@ -230,8 +231,8 @@ export function Workbench() {
     </nav>
       <main className="cw-main"><div className="cw-toolbar">{workspace && <IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn>}<div className="cw-page-title"><span className="cw-breadcrumb">{t('projectManagement')}<ChevronRight size={11}/>{t(title)}</span><h1>{t(title)}</h1></div>{workspace && <><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}</>}<span className="cw-grow"/>{workspace && <div className="cw-layout" role="group" aria-label={t('workbenchLayout')}>{(['balanced','modelLayout','drawingLayout'] as const).map(value => <button type="button" key={value} aria-pressed={layout === value} className={layout === value ? 'active' : ''} onClick={() => setLayout(value)}>{t(value)}</button>)}</div>}<IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn>{workspace && <IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn>}</div>
       {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}</div>}
-      {page==='scene'&&active&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}`} api={api} ref={sceneWorkspace} initialEntry={sceneEntry} onProjectName={setProjectName}/></Suspense>}
-      {!workspace&&page!=='scene' && <div className="cw-page-content">{page==='models' && active ? <ModelLibraryPanel api={api} onPreview={id=>navigate('bindings',id)}/> : <section className="cw-panel"><header><strong>{t('access')}</strong></header><div className="cw-page-body"><dl className="cw-kv"><dt>{t('currentProject')}</dt><dd>{projectName || '—'}</dd><dt>{t('username')}</dt><dd>{session?.username || '—'}</dd><dt>{t('access')}</dt><dd>{active ? t('projectReadable') : t('loginPrompt')}</dd></dl><Btn primary onClick={() => active ? navigate('bindings') : setModal('login')}>{t(active ? 'enter' : 'signIn')}</Btn></div></section>}</div>}
+      {page==='scene'&&active&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceSceneId||''}`} api={api} ref={sceneWorkspace} initialEntry={sceneEntry} initialSceneId={resourceSceneId} onProjectName={setProjectName}/></Suspense>}
+      {!workspace&&page!=='scene' && <div className="cw-page-content">{page==='models' && active ? <ProjectModelCenter api={api} onLegacyPreview={id=>navigate('bindings',id)} onOpenScene={sceneId=>{navigate('scene');setResourceSceneId(sceneId);}}/> : <section className="cw-panel"><header><strong>{t('access')}</strong></header><div className="cw-page-body"><dl className="cw-kv"><dt>{t('currentProject')}</dt><dd>{projectName || '—'}</dd><dt>{t('username')}</dt><dd>{session?.username || '—'}</dd><dt>{t('access')}</dt><dd>{active ? t('projectReadable') : t('loginPrompt')}</dd></dl><Btn primary onClick={() => active ? navigate('bindings') : setModal('login')}>{t(active ? 'enter' : 'signIn')}</Btn></div></section>}</div>}
       {page==='scene'&&!active&&<p className="cw-state">{t('loginPrompt')}</p>}
       {workspace&&(page==='hierarchy'||!active||legacyReady===entryIdentity)&&<div className={`cw-workspace layout-${layout}`}>
         <ObjectsPanel key={`${session?.sessionRevision}:${reload}:${context?.context.hierarchyRevision}`} api={api} view={context} selected={selection.uid} ancestors={detail?.ancestors.path.map(row=>row.object.entityUid) || []} onSelect={select} className={left ? 'is-open' : ''}/>

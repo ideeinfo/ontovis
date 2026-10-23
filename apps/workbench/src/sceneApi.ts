@@ -1,3 +1,4 @@
+import type {ModelResourceMetadata} from './modelResourceMetadata';
 import {ApiError, type WorkbenchApi} from './api.ts';
 import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
   SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
@@ -85,6 +86,10 @@ export class SceneApi {
   }
   calibrateModel(body: CalibrateModelRequest, signal?: AbortSignal) {
     return this.api.request<ProjectModelWrite>(ROOT + 'resources/model/calibrate', body, signal);
+  }
+  modelMetadata(modelAssetId:string,modelVersionId:string,signal?:AbortSignal) {
+    return this.api.request<{item:ModelResourceMetadata|null;sessionRevision:string}>(ROOT+'resources/model/metadata',
+      {modelAssetId,modelVersionId},signal);
   }
   modelUses(body: ModelUsesRequest, signal?: AbortSignal) {
     return this.api.request<ModelUses>(ROOT + 'resources/uses', {...body, resourceKind:'model'}, signal);
