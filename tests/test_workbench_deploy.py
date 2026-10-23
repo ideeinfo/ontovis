@@ -33,9 +33,9 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                 name = node.targets[0].id
-                if name in ('workbench_paths', 'scene_paths', 'scene_object_paths', 'terrain_paths', 'resource_paths'):
+                if name in ('workbench_paths', 'scene_paths', 'scene_object_paths', 'terrain_paths', 'imagery_paths', 'resource_paths'):
                     groups[name] = ast.literal_eval(node.value)
-        self.assertEqual(len(groups), 5)
+        self.assertEqual(len(groups), 6)
         legacy = tuple('/api/workbench/scenes/legacy-migration/' + action for action in ('sources', 'check', 'activate', 'entry'))
         large = {'/api/workbench/scenes/' + action for action in ('save', 'check', 'replacement-check')}
         large.update('/api/workbench/scenes/legacy-migration/' + action for action in ('check', 'activate'))
@@ -52,9 +52,20 @@ class WorkbenchDeploymentTests(unittest.TestCase):
             self.assertIn('client_max_body_size 20m;', body)
             self.assertIn('proxy_request_buffering off;', body)
         for path in ('/api/workbench/scenes/delete', '/api/workbench/resources/secret',
-                     '/api/workbench/terrains/upload/extra', '/api/workbench/scenes/open/'):
+                     '/api/workbench/terrains/upload/extra', '/api/workbench/scenes/open/',
+                     '/api/workbench/imagery/delete', '/api/workbench/imagery/upload/extra',
+                     '/api/workbench/imagery/content/'):
             with self.subTest(path=path), self.assertRaises(AssertionError):
                 location_for(path)
+
+    def test_imagery_upload_has_the_same_bounded_limit_as_its_processor(self):
+        from apps.api.imagery_validation import MAX_BYTES
+        body = location_for('/api/workbench/imagery/upload')
+        self.assertIn(f'client_max_body_size {MAX_BYTES};', body)
+        self.assertIn('client_body_timeout 30s;', body)
+        self.assertIn('proxy_read_timeout 60s;', body)
+        self.assertIn('proxy_request_buffering off;', body)
+        self.assertIn('proxy_buffering off;', body)
 
     def test_terrain_service_and_proxy_share_exact_deployment_limit_and_trusted_runtime(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
