@@ -8,6 +8,7 @@ import { IconBtn } from './Primitives';
 import { usePreferences } from './Preferences';
 import { bindingNeedsReview, modelLocation, modelNavigation } from './modelLocation';
 import { createSceneControls } from './sceneControls';
+import { prepareSceneRenderer } from './sceneRenderer';
 import type { ModelView, ObjectView } from './types';
 
 type Controls = {fit:() => void; locate:() => void; zoom:(factor:number) => void};
@@ -57,7 +58,7 @@ export function ModelViewport({api, active, detail, model, modelVersionId, onMod
       if (stale()) {disposeObject(gltf.scene); return;}
       scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(42, 1, .05, 3000);
-      renderer = new THREE.WebGLRenderer({antialias:true, powerPreference:'high-performance'});
+      renderer = prepareSceneRenderer(new THREE.WebGLRenderer({antialias:true, powerPreference:'high-performance'}));
       renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.domElement.setAttribute('aria-label', t('modelView')); renderer.domElement.setAttribute('role','img');

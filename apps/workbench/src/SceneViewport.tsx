@@ -7,6 +7,7 @@ import {usePreferences} from './Preferences';
 import {IconBtn} from './Primitives';
 import {SceneResourceCache,cloneModel} from './sceneResourceCache';
 import {createSceneControls} from './sceneControls';
+import {prepareSceneRenderer} from './sceneRenderer';
 import {SceneCabinetAppearance} from './sceneCabinetAppearance';
 import {sceneModelRayHit,type SceneComponentPick} from './sceneComponentPick';
 import {toDisplay,trueHeadingToThreeYaw} from './sceneTransforms';
@@ -61,7 +62,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const element=mount.current;if(!element)return;
     const api=props.api,epoch=api.epoch,revision=api.revision;
     let disposed=false,renderer:THREE.WebGLRenderer;
-    try {renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});webglFailure.current=false;}
+    try {renderer=prepareSceneRenderer(new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'}));webglFailure.current=false;}
     catch(value){webglFailure.current=true;setError(value);props.onError?.(value);return;}
     const cache=new SceneResourceCache(api),scene=new THREE.Scene();
     const camera=new THREE.PerspectiveCamera(42,1,.05,2_000_000);
