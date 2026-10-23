@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 import numpy as np
@@ -22,7 +23,7 @@ from rasterio.warp import transform
 from apps.api.scene_geometry import (GeometryError, TrustedTerrain, anchor_preview,
     geometry_check)
 from apps.api.terrain_coordinates import ProjectedFrame
-from apps.api.terrain_validation import PLACEMENT_SAMPLING_RULE, validate
+from apps.api.terrain_validation import PLACEMENT_SAMPLING_RULE, prepare_mesh, validate
 
 
 class SceneGeometryTests(unittest.TestCase):
@@ -295,6 +296,23 @@ print(json.dumps(geometry_check(json.loads(sys.argv[1]),{})['geometrySummary']))
         snapshot['terrain']['expectedContentRevision']='changed'
         self.expect('RESOURCE_CHANGED',lambda:geometry_check(snapshot,self.terrains))
         snapshot=self.preview()['snapshot'];snapshot['instances'][0]['placement']['height']['terrainSha256']='0'*64
+        self.expect('RESOURCE_CHANGED',lambda:geometry_check(snapshot,self.terrains))
+
+    def test_distinct_samples_prepare_one_grid_per_check_and_never_reuse_it_across_operations(self):
+        self.resource();snapshot=self.preview()['snapshot'];template=snapshot['instances'][0];snapshot['instances']=[]
+        longitudes,latitudes=transform('EPSG:32649','EPSG:4326',
+            [500060+(i%10)*15 for i in range(100)],[3699940-(i//10)*15 for i in range(100)])
+        for longitude,latitude in zip(longitudes,latitudes):
+            item=copy.deepcopy(template);item['sceneModelInstanceId']=str(uuid4())
+            item['placement']['position'].update(longitude=longitude,latitude=latitude)
+            item['placement']['height'].update(sampleLongitude=longitude,sampleLatitude=latitude)
+            snapshot['instances'].append(item)
+        with patch('apps.api.scene_geometry.prepare_mesh',wraps=prepare_mesh) as prepared:
+            first=geometry_check(snapshot,self.terrains)
+            self.assertEqual(len(first['heightProvenance']),100);self.assertEqual(prepared.call_count,1)
+            self.assertTrue(all(note['sampledHeightM']==100 for note in first['heightProvenance']))
+            self.assertEqual(geometry_check(snapshot,self.terrains),first);self.assertEqual(prepared.call_count,2)
+        target=self.trusted.directory/'positions.f32';raw=bytearray(target.read_bytes());raw[0]^=1;target.write_bytes(raw)
         self.expect('RESOURCE_CHANGED',lambda:geometry_check(snapshot,self.terrains))
 
     def test_fixed_report_and_artifacts_cannot_change_under_trusted_sha(self):

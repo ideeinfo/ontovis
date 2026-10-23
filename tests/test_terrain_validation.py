@@ -17,7 +17,7 @@ from rasterio.warp import transform
 
 from apps.api.terrain_coordinates import sample_bilinear
 from apps.api.terrain_validation import (MAX_TRIANGLES, PLACEMENT_SAMPLING_RULE,
-    TerrainError, sample_mesh, validate)
+    TerrainError, prepare_mesh, sample_mesh, validate)
 
 
 class TerrainValidationTests(unittest.TestCase):
@@ -272,6 +272,27 @@ class TerrainValidationTests(unittest.TestCase):
         (output/'heights.f64').write_bytes(b'\x00'*(output/'heights.f64').stat().st_size)
         grid=report['mesh']
         self.expect('RESOURCE_CHANGED',lambda:sample_mesh(output,grid['eastingMinM'],grid['northingMaxM']))
+
+    def test_prepared_mesh_owns_read_only_hashed_bytes_and_samples_without_reopening_files(self):
+        output,report=self.run_validation()
+        digest=hashlib.sha256((output/'report.json').read_bytes()).hexdigest()
+        prepared=prepare_mesh(output,expected_report_sha256=digest)
+        self.assertFalse(prepared.positions.flags.writeable);self.assertFalse(prepared.cells.flags.writeable)
+        with self.assertRaises(ValueError):prepared.positions.setflags(write=True)
+        with self.assertRaises(ValueError):prepared.cells.setflags(write=True)
+        point=(report['mesh']['eastingMinM']+50,report['mesh']['northingMaxM']-50)
+        expected=sample_mesh(output,*point,expected_report_sha256=digest)
+        with patch.object(Path,'open',side_effect=AssertionError('Prepared samples must not reopen a resource')):
+            for _ in range(20):self.assertEqual(prepared.sample(*point),expected)
+
+    def test_prepared_view_cannot_follow_disk_changes_and_next_independent_sample_rejects_them(self):
+        output,report=self.run_validation();digest=hashlib.sha256((output/'report.json').read_bytes()).hexdigest()
+        point=(report['mesh']['eastingMinM']+50,report['mesh']['northingMaxM']-50)
+        prepared=prepare_mesh(output,expected_report_sha256=digest);expected=prepared.sample(*point)
+        target=output/'positions.f32';raw=bytearray(target.read_bytes());raw[0]^=1;target.write_bytes(raw)
+        self.assertEqual(prepared.sample(*point),expected,'An operation owns its already-verified immutable bytes')
+        self.expect('RESOURCE_CHANGED',lambda:sample_mesh(output,*point,expected_report_sha256=digest))
+        self.expect('RESOURCE_CHANGED',lambda:prepare_mesh(output,expected_report_sha256=digest))
 
     def test_outside_mesh_and_nonfinite_coordinates_do_not_return_zero(self):
         output,report=self.run_validation()

@@ -84,3 +84,89 @@ test('read-only imagery upload refusal preserves the reading session',async()=>{
   await assert.rejects(new SceneApi(api).uploadImagery(new Blob([new Uint8Array(8)]),{}),e=>e.code==='IMAGERY_WRITE_FORBIDDEN');
   assert.equal(api.epoch,epoch);assert.equal(api.revision,'session:1');assert.equal(denied,0);
 });
+
+const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
+test('matching projected CRS uses exact grid coordinates for a rotated affine and keeps coverage outside intact',()=>{
+  const r={...report,pixelCornerAffine:[10,2,500000,3,-10,3700000]};
+  const uv=imageryUvs(points([24,0,14,48,0,28,-12,0,-7]),frame,r);
+  assert.deepEqual([...uv],[.5,.5,1,0,-.25,1.25]);
+});
+test('image preparation begins before terrain is ready, shares one authorized read/decode, and attaches only during sync',async()=>{
+  const previous=globalThis.createImageBitmap,gate=deferred();let reads=0,decoded=0,closed=0;
+  globalThis.createImageBitmap=async()=>{decoded++;return {width:4,height:4,close(){closed++;}};};
+  const terrain=mesh(),layer=new SceneImageryLayer({async imageryContent(){reads++;return gate.promise;}});
+  try{
+    const first=layer.prepare(imagery,ref),second=layer.prepare(imagery,ref);
+    assert.equal(reads,1);assert.equal(terrain.children.length,0);gate.resolve(new Blob());
+    assert.equal(await first,await second);assert.equal(decoded,1);assert.equal(terrain.children.length,0);
+    await layer.sync(terrain,terrainVersion,imagery,ref,new AbortController().signal);
+    assert.equal(reads,1);assert.equal(decoded,1);assert.equal(terrain.children.length,1);
+    layer.dispose();assert.equal(closed,1);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();terrain.geometry.dispose();terrain.material.dispose();}
+});
+test('snapshot cancellation does not restart the same fixed image or let a cancelled consumer attach it',async()=>{
+  const previous=globalThis.createImageBitmap,gate=deferred();let reads=0,decoded=0,closed=0,requestSignal;
+  globalThis.createImageBitmap=async()=>{decoded++;return {width:4,height:4,close(){closed++;}};};
+  const terrain=mesh(),layer=new SceneImageryLayer({async imageryContent(_value,signal){reads++;requestSignal=signal;return gate.promise;}}),abort=new AbortController();
+  try{
+    const cancelled=layer.sync(terrain,terrainVersion,imagery,ref,abort.signal);abort.abort();
+    await assert.rejects(cancelled,e=>e.name==='AbortError');assert.equal(requestSignal.aborted,false);
+    const current=layer.sync(terrain,terrainVersion,imagery,ref,new AbortController().signal);gate.resolve(new Blob());await current;
+    assert.equal(reads,1);assert.equal(decoded,1);assert.equal(terrain.children.length,1);layer.dispose();assert.equal(closed,1);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();terrain.geometry.dispose();terrain.material.dispose();}
+});
+test('changing image during decode closes the old bitmap, preserves the new layer and aborts only the old source read',async()=>{
+  const previous=globalThis.createImageBitmap,gate=deferred(),started=deferred();let decoded=0,closed=0;const signals=[];
+  globalThis.createImageBitmap=async()=>{const id=++decoded;if(id===1){started.resolve();await gate.promise;}return {width:4,height:4,close(){closed++;}};};
+  const terrain=mesh(),layer=new SceneImageryLayer({async imageryContent(_value,signal){signals.push(signal);return new Blob();}}),signal=new AbortController().signal;
+  try{
+    const old=layer.prepare(imagery,ref);await started.promise;
+    const changed={...imagery,imageryVersionId:'image-2'},changedRef={...ref,imageryVersionId:changed.imageryVersionId};
+    await layer.sync(terrain,terrainVersion,changed,changedRef,signal);const attached=terrain.children[0];
+    gate.resolve();await assert.rejects(old,e=>e.name==='AbortError');
+    assert.equal(signals[0].aborted,true);assert.equal(signals[1].aborted,false);assert.equal(closed,1);
+    assert.equal(terrain.children[0],attached);layer.dispose();assert.equal(closed,2);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();terrain.geometry.dispose();terrain.material.dispose();}
+});
+test('failed prepared reads can retry and invalid decoded dimensions never attach or remain owned',async()=>{
+  const previous=globalThis.createImageBitmap;let reads=0,closed=0;
+  globalThis.createImageBitmap=async()=>({width:reads===2?5:4,height:4,close(){closed++;}});
+  const terrain=mesh(),layer=new SceneImageryLayer({async imageryContent(){if(++reads===1)throw new Error('Synthetic unavailable');return new Blob();}}),signal=new AbortController().signal;
+  try{
+    await assert.rejects(layer.prepare(imagery,ref),/Synthetic unavailable/);
+    await assert.rejects(layer.sync(terrain,terrainVersion,imagery,ref,signal),e=>e.code==='RESOURCE_CHANGED');
+    assert.equal(terrain.children.length,0);assert.equal(closed,1);
+    await layer.sync(terrain,terrainVersion,imagery,ref,signal);assert.equal(reads,3);assert.equal(terrain.children.length,1);
+    layer.dispose();assert.equal(closed,2);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();terrain.geometry.dispose();terrain.material.dispose();}
+});
+test('viewport disposal during preparation aborts its read and refuses a late blob before decoding',async()=>{
+  const previous=globalThis.createImageBitmap,gate=deferred();let decoded=0,signal;
+  globalThis.createImageBitmap=async()=>{decoded++;throw new Error('must not decode');};
+  const layer=new SceneImageryLayer({async imageryContent(_value,value){signal=value;return gate.promise;}});
+  try{
+    const prepared=layer.prepare(imagery,ref);layer.dispose();assert.equal(signal.aborted,true);gate.resolve(new Blob());
+    await assert.rejects(prepared,e=>e.name==='AbortError');assert.equal(decoded,0);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();}
+});
+test('a prepared bitmap cleared between readiness and attachment is never displayed',async()=>{
+  const previous=globalThis.createImageBitmap;let closed=0;
+  globalThis.createImageBitmap=async()=>({width:4,height:4,close(){closed++;}});
+  const terrain=mesh(),layer=new SceneImageryLayer({async imageryContent(){return new Blob();}}),signal=new AbortController().signal;
+  try{
+    await layer.prepare(imagery,ref);const pending=layer.sync(terrain,terrainVersion,imagery,ref,signal);
+    await layer.prepare(null,null);await assert.rejects(pending,e=>e.name==='AbortError');
+    assert.equal(terrain.children.length,0);assert.equal(closed,1);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();terrain.geometry.dispose();terrain.material.dispose();}
+});
+test('prepared private reads keep the real API session guard and refuse a late response after logout',async()=>{
+  const previous=globalThis.createImageBitmap,gate=deferred();let reads=0,decoded=0;
+  globalThis.createImageBitmap=async()=>{decoded++;throw Error('must not decode');};
+  const api=new WorkbenchApi(async()=>{reads++;return gate.promise;});api.session('session:1');
+  const layer=new SceneImageryLayer(new SceneApi(api));
+  try{
+    const pending=layer.prepare({...imagery,texture:{...imagery.texture,bytes:32}},ref);assert.equal(reads,1);
+    api.session('');gate.resolve(new Response('private',{headers:{'Content-Type':'image/png'}}));
+    await assert.rejects(pending,e=>e.name==='AbortError');assert.equal(decoded,0);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();}
+});

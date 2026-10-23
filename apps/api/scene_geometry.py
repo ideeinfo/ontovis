@@ -17,7 +17,7 @@ from uuid import UUID
 
 from .terrain_coordinates import (ProjectedFrame, LocalPlacement, TerrainHeight,
     CoordinateError, CONVERGENCE_RULE, VERTICAL_DATUMS, normalize_heading, preview_anchor)
-from .terrain_validation import sample_mesh, PLACEMENT_SAMPLING_RULE, TerrainError
+from .terrain_validation import prepare_mesh, PLACEMENT_SAMPLING_RULE, TerrainError
 from tools.model_probe import strict_json, ProbeError
 from .scene_organization import OrganizationError, validate_organization
 
@@ -148,13 +148,14 @@ class _Terrain:
         _require(all(actual.get(key)==record[key] for key in ('horizontalCrs','verticalDatum','transformId','convergenceRuleId'))
                  and abs(actual['originEasting']-record['originEasting'])<=1e-6 and abs(actual['originNorthing']-record['originNorthing'])<=1e-6,
                  'TRANSFORM_UNAVAILABLE','The terrain transformation runtime does not match its fixed report.')
-        self.directory=directory;self.report=report;self.samples={}
+        self.directory=directory;self.report=report;self.samples={};self.mesh=None
 
     def sample(self,longitude,latitude):
         key=(float(longitude),float(latitude))
         if key not in self.samples:
             east,north=self.frame.project(*key)
-            self.samples[key]=sample_mesh(self.directory,east,north,expected_report_sha256=self.trusted.report_sha256)
+            if self.mesh is None:self.mesh=prepare_mesh(self.directory,expected_report_sha256=self.trusted.report_sha256)
+            self.samples[key]=self.mesh.sample(east,north)
         return self.samples[key]
 
     def reference(self):

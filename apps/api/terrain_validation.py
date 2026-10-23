@@ -6,6 +6,8 @@ candidate process limits; the ordinary workbench does not import GIS libraries.
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
+from dataclasses import dataclass
 import hashlib
 import json
 import math
@@ -14,7 +16,11 @@ from pathlib import Path
 import shutil
 import stat
 import sys
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from .terrain_coordinates import ProjectedFrame, CoordinateError, SAMPLING_RULE, VERTICAL_DATUMS
 
@@ -349,11 +355,43 @@ def validate(path: Path, output_dir: Path, *, vertical_datum: str, source_note: 
             shutil.rmtree(temporary)
 
 
-def sample_mesh(output_dir: Path, easting_m: float, northing_m: float, *, expected_report_sha256: str | None = None) -> float:
-    """Sample the displayed diagonal and reject omitted cells or changed artifacts.
+@dataclass(frozen=True)
+class _PreparedMesh:
+    """Owned immutable bytes for one authorized geometry operation, never a process cache."""
+    positions: np.ndarray
+    cells: np.ndarray
+    xs: tuple[float, ...]
+    zs: tuple[float, ...]
+    origin_easting: float
+    origin_northing: float
+    origin_height: float
 
-    The resource library must supply its trusted report digest. Without it this
-    standalone helper checks internal consistency, not the report's provenance.
+    def sample(self, easting_m: float, northing_m: float) -> float:
+        require(all(isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x) for x in (easting_m,northing_m)), 'INVALID_COORDINATE', 'The sample coordinate is non-finite.')
+        positions,cells,xs,zs=self.positions,self.cells,self.xs,self.zs
+        rows,columns=len(zs),len(xs)
+        x=easting_m-self.origin_easting; z=self.origin_northing-northing_m
+        require(xs[0]-1e-7<=x<=xs[-1]+1e-7 and zs[0]-1e-7<=z<=zs[-1]+1e-7, 'OUTSIDE_COVERAGE', 'The point is outside the fixed displayed mesh.')
+        x,z=min(xs[-1],max(xs[0],float(x))),min(zs[-1],max(zs[0],float(z)))
+        # Sample the very same float32 XY/Y vertices sent to the renderer.
+        # Using ideal float64 grid coordinates on steep cells would otherwise
+        # turn horizontal rounding into an unreported contact-height error.
+        column=min(columns-2,max(0,bisect_right(xs,x+1e-8)-1))
+        row=min(rows-2,max(0,bisect_right(zs,z+1e-8)-1))
+        tx=(x-xs[column])/(xs[column+1]-xs[column]); ty=(z-zs[row])/(zs[row+1]-zs[row])
+        tx,ty=min(1.,max(0.,tx)),min(1.,max(0.,ty))
+        require(bool(cells[row,column]), 'NO_DATA', 'The displayed quad is omitted because its source coverage is missing.')
+        a,b,c,d=(float(v)+self.origin_height for v in (positions[row,column,1],positions[row,column+1,1],positions[row+1,column,1],positions[row+1,column+1,1]))
+        value=a+tx*(b-a)+ty*(c-a) if tx+ty<=1 else d+(1-tx)*(c-d)+(1-ty)*(b-d)
+        require(math.isfinite(value), 'INVALID_TERRAIN', 'The fixed mesh height is non-finite.')
+        return float(value)
+
+
+def prepare_mesh(output_dir: Path, *, expected_report_sha256: str | None = None) -> _PreparedMesh:
+    """Read, hash and validate a fixed grid once for the current bounded operation.
+
+    Arrays borrow only the exact immutable bytes that were hashed. Callers must
+    not persist this view across resource authorization or geometry operations.
     """
     np, *_ = _runtime()
     try:
@@ -361,11 +399,14 @@ def sample_mesh(output_dir: Path, easting_m: float, northing_m: float, *, expect
         require(not root.is_symlink(), 'INVALID_TERRAIN', 'A private mesh directory is required.')
         report_file=root/'report.json'
         require(not report_file.is_symlink() and report_file.stat().st_size <= 65536, 'INVALID_TERRAIN', 'The fixed report is invalid.')
+        with report_file.open('rb') as source:
+            report_bytes=source.read(65537)
+        require(len(report_bytes)<=65536, 'INVALID_TERRAIN', 'The fixed report is invalid.')
         if expected_report_sha256 is not None:
             require(isinstance(expected_report_sha256,str) and len(expected_report_sha256)==64
                     and all(c in '0123456789abcdef' for c in expected_report_sha256), 'INVALID_REQUEST', 'A trusted report SHA256 is required.')
-            require(_hash(report_file)==expected_report_sha256, 'RESOURCE_CHANGED', 'The fixed mesh report changed.')
-        report=json.loads(report_file.read_text())
+            require(hashlib.sha256(report_bytes).hexdigest()==expected_report_sha256, 'RESOURCE_CHANGED', 'The fixed mesh report changed.')
+        report=json.loads(report_bytes)
         require(report.get('state')=='ready' and report.get('schemaVersion')==1, 'INVALID_TERRAIN', 'A ready fixed mesh is required.')
         grid=report['mesh']; rows,columns=grid['rows'],grid['columns']
         for key in ('eastingMinM','northingMaxM','stepEastingM','stepNorthingM'):
@@ -388,10 +429,12 @@ def sample_mesh(output_dir: Path, easting_m: float, northing_m: float, *, expect
                                ('cells.u8','uint8',(rows-1)*(columns-1)),('positions.f32','<f4',rows*columns*3*4),
                                ('triangles.u32','<u4',triangle_count*3*4)):
             target=root/name
-            require(not target.is_symlink() and target.stat().st_size==size and artifacts[name]['bytes']==size and _hash(target)==artifacts[name]['sha256'], 'RESOURCE_CHANGED', 'The fixed mesh artifact changed.')
+            require(not target.is_symlink() and target.stat().st_size==size and artifacts[name]['bytes']==size, 'RESOURCE_CHANGED', 'The fixed mesh artifact changed.')
+            with target.open('rb') as source:
+                raw=source.read(size+1)
+            require(len(raw)==size and hashlib.sha256(raw).hexdigest()==artifacts[name]['sha256'], 'RESOURCE_CHANGED', 'The fixed mesh artifact changed.')
             shape=(rows,columns,3) if name=='positions.f32' else (rows-1,columns-1) if name=='cells.u8' else (triangle_count,3) if name=='triangles.u32' else (rows,columns)
-            arrays[name]=np.fromfile(target,dtype=dtype).reshape(shape)
-        require(all(isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x) for x in (easting_m,northing_m)), 'INVALID_COORDINATE', 'The sample coordinate is non-finite.')
+            arrays[name]=np.frombuffer(raw,dtype=dtype).reshape(shape)
         positions=arrays['positions.f32']; frame=grid['frame']
         mask,cells=arrays['mask.u8'],arrays['cells.u8']
         require(bool(np.isin(mask,(0,1)).all()) and bool(np.isin(cells,(0,1)).all()), 'INVALID_TERRAIN', 'The fixed validity masks are invalid.')
@@ -412,21 +455,21 @@ def sample_mesh(output_dir: Path, easting_m: float, northing_m: float, *, expect
         require(bool(np.allclose(positions[:,:,0],expected_x[None,:],rtol=0,atol=tolerance))
                 and bool(np.allclose(positions[:,:,2],expected_z[:,None],rtol=0,atol=tolerance)),
                 'INVALID_TERRAIN', 'The displayed coordinates and fixed spacing/origin disagree.')
-        x=easting_m-frame['originEasting']; z=frame['originNorthing']-northing_m
-        require(xs[0]-1e-7<=x<=xs[-1]+1e-7 and zs[0]-1e-7<=z<=zs[-1]+1e-7, 'OUTSIDE_COVERAGE', 'The point is outside the fixed displayed mesh.')
-        x,z=float(np.clip(x,xs[0],xs[-1])),float(np.clip(z,zs[0],zs[-1]))
-        # Sample the very same float32 XY/Y vertices sent to the renderer.
-        # Using ideal float64 grid coordinates on steep cells would otherwise
-        # turn horizontal rounding into an unreported contact-height error.
-        column=min(columns-2,max(0,int(np.searchsorted(xs,x+1e-8,side='right'))-1))
-        row=min(rows-2,max(0,int(np.searchsorted(zs,z+1e-8,side='right'))-1))
-        tx=(x-xs[column])/(xs[column+1]-xs[column]); ty=(z-zs[row])/(zs[row+1]-zs[row])
-        tx,ty=min(1.,max(0.,tx)),min(1.,max(0.,ty))
-        require(bool(cells[row,column]), 'NO_DATA', 'The displayed quad is omitted because its source coverage is missing.')
-        a,b,c,d=(float(v)+frame['originHeight'] for v in (positions[row,column,1],positions[row,column+1,1],positions[row+1,column,1],positions[row+1,column+1,1]))
-        value=a+tx*(b-a)+ty*(c-a) if tx+ty<=1 else d+(1-tx)*(c-d)+(1-ty)*(b-d)
-        require(math.isfinite(value), 'INVALID_TERRAIN', 'The fixed mesh height is non-finite.')
-        return float(value)
+        return _PreparedMesh(positions,cells,tuple(map(float,xs)),tuple(map(float,zs)),float(frame['originEasting']),float(frame['originNorthing']),float(frame['originHeight']))
+    except TerrainError:
+        raise
+    except (OSError,ValueError,KeyError,TypeError,OverflowError) as error:
+        raise TerrainError('INVALID_TERRAIN','The fixed mesh cannot be sampled.') from error
+
+
+def sample_mesh(output_dir: Path, easting_m: float, northing_m: float, *, expected_report_sha256: str | None = None) -> float:
+    """Independently revalidate and sample the displayed diagonal at one point.
+
+    The resource library must supply its trusted report digest. Without it this
+    standalone helper checks internal consistency, not the report's provenance.
+    """
+    try:
+        return prepare_mesh(output_dir,expected_report_sha256=expected_report_sha256).sample(easting_m,northing_m)
     except TerrainError:
         raise
     except (OSError,ValueError,KeyError,TypeError,OverflowError) as error:

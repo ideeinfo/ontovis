@@ -27,7 +27,7 @@ export interface SceneViewportProps {
   api:WorkbenchApi;snapshot:EditableSceneSnapshot;modelRefs:ModelResourceRef[];terrainVersion:TerrainVersion|null;
   selectedId:string|null;editing:boolean;disabled?:boolean;personalVisibility:Record<string,boolean>;
   selectedIds?:string[];gridSnap?:number;cameraControl?:{current:SceneCameraControl|null};onCameraInteraction?:()=>void;
-  terrainVisible:boolean;pendingPlacement:boolean;previewModel?:ProjectModelVersion|null;
+  terrainVisible:boolean;pendingPlacement:boolean;placementModel?:ProjectModelVersion|null;previewModel?:ProjectModelVersion|null;
   imageryVersion?:ImageryRecord|null;imageryVisible?:boolean;
   viewCommand?:{token:number;view:SceneView};focusRequest?:{token:number;instanceId:string|null};
   componentFocus?:ComponentFocusRequest;
@@ -37,7 +37,7 @@ export interface SceneViewportProps {
   onResourceDrop?:(ref:{modelAssetId:string;modelVersionId:string},point:Vector3)=>void;
   onError?:(error:unknown)=>void;
 }
-type Runtime={sync:()=>void;appearance:()=>void;fit:()=>void;focus:(id:string|null)=>void;
+type Runtime={sync:()=>void;preload:()=>void;appearance:()=>void;fit:()=>void;focus:(id:string|null)=>void;
   componentFocus:()=>void;setView:(view:SceneView)=>void;zoom:(factor:number)=>void};
 type Entry={root:THREE.Group;key:string;appearance:SceneCabinetAppearance};
 class ViewportInteractionError extends Error {
@@ -218,10 +218,19 @@ export function SceneViewport(props:SceneViewportProps) {
       }
       pointer=null;
     };
+    const preload=()=>{
+      const version=current.current.placementModel;if(!version)return;
+      void cache.model(version).catch(value=>{
+        if(current.current.placementModel?.modelVersionId===version.modelVersionId)report(value);
+      });
+    };
     const sync=async()=>{
       const ticket=++generation;loadingAbort?.abort();loadingAbort=new AbortController();const signal=loadingAbort.signal;
       const state=current.current;cancelDrag();resourcesLoading=true;setReading(true);setError(null);
       highlight();
+      const imageryPreparation=imageryLayer.prepare(state.imageryVersion??null,state.snapshot.imagery,signal);
+      // Observe immediately: a model may load more slowly than a failed image read.
+      void imageryPreparation.catch(()=>undefined);
       if(state.snapshot.coordinateFrame.frameRevision!==lastFrameRevision){
         lastFrameRevision=state.snapshot.coordinateFrame.frameRevision;
         if(restoreView)restoreView=structuredClone(state.snapshot.initialView);else moveView(state.snapshot.initialView);
@@ -245,7 +254,7 @@ export function SceneViewport(props:SceneViewportProps) {
         try {transform(item,entry.root);}
         catch(value){entry.appearance.dispose();models.remove(entry.root);entries.delete(item.sceneModelInstanceId);throw value;}
       });
-      tasks.push((async()=>{
+      const terrainTask=(async()=>{
         const version=state.terrainVersion,reference=state.snapshot.terrain;
         const clearTerrain=()=>{if(terrain){scene.remove(terrain);terrain=null;}terrainKey='';};
         if(!reference){clearTerrain();return;}
@@ -270,6 +279,13 @@ export function SceneViewport(props:SceneViewportProps) {
         }
         terrain?.position.set(resource.originEasting-frameData.originEasting,resource.originHeight-frameData.originHeight,
           frameData.originNorthing-resource.originNorthing);terrain?.updateMatrixWorld(true);
+      })();
+      tasks.push(terrainTask);
+      tasks.push((async()=>{
+        await Promise.all([terrainTask,imageryPreparation]);if(stale()||ticket!==generation)return;
+        await imageryLayer.sync(terrain,state.terrainVersion,state.imageryVersion??null,state.snapshot.imagery,signal);
+        if(stale()||ticket!==generation)return;
+        setImageryPartial(imageryLayer.partial());appearance();
       })());
       tasks.push((async()=>{
         const version=state.previewModel;
@@ -288,10 +304,6 @@ export function SceneViewport(props:SceneViewportProps) {
       })());
       const results=await Promise.allSettled(tasks);if(stale()||ticket!==generation)return;
       const failed=results.find(value=>value.status==='rejected');if(failed?.status==='rejected')report(failed.reason);
-      try{await imageryLayer.sync(terrain,state.terrainVersion,state.imageryVersion??null,state.snapshot.imagery,signal);}
-      catch(value){if(!stale()&&ticket===generation)report(value);}
-      if(stale()||ticket!==generation)return;
-      setImageryPartial(imageryLayer.partial());
       resourcesLoading=!!state.snapshot.terrain&&!state.terrainVersion||!!state.snapshot.imagery&&!state.imageryVersion;setReading(resourcesLoading);appearance();
       if(focusPending!==undefined){const id=focusPending;focusPending=undefined;fit(id);}
     };
@@ -385,7 +397,7 @@ export function SceneViewport(props:SceneViewportProps) {
     canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',motion);canvas.addEventListener('pointerup',up);
     canvas.addEventListener('pointercancel',cancelDrag);canvas.addEventListener('keydown',escape);canvas.addEventListener('drop',drop);canvas.addEventListener('dragover',dragover);
     document.addEventListener('visibilitychange',visible);
-    runtime.current={sync:()=>void sync(),appearance,componentFocus:highlight,
+    runtime.current={sync:()=>void sync(),preload,appearance,componentFocus:highlight,
       fit:()=>{clearComponentFocus();if(resourcesLoading)focusPending=null;else fit();highlight();},
       focus:id=>{clearComponentFocus();if(resourcesLoading||id&&!entries.has(id))focusPending=id;else fit(id);highlight();},
       setView:target=>{if(restoreView)restoreView=structuredClone(target);else moveView(target);},
@@ -406,6 +418,7 @@ export function SceneViewport(props:SceneViewportProps) {
       renderer.dispose();renderer.forceContextLoss();canvas.remove();runtime.current=null;
     };
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
+  useEffect(()=>{runtime.current?.preload();},[props.placementModel]);
   useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,attempt]);
   useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
