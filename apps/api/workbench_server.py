@@ -34,6 +34,7 @@ from apps.api.scene_location import SceneLocationResolver
 from apps.api.legacy_scene_registry import LegacySceneRegistry
 from apps.api.legacy_scene_sources import LegacySceneSources
 from apps.api.imagery_library import ImageryLibrary, MAX_BYTES as MAX_IMAGERY_BYTES, MAX_VERSIONS as MAX_IMAGERY_VERSIONS, MAX_TOTAL_BYTES as MAX_IMAGERY_TOTAL_BYTES
+from apps.api.public_geodata import PublicGeoData
 
 
 class WorkbenchSessions(UserSessions):
@@ -58,6 +59,7 @@ class WorkbenchSessions(UserSessions):
         self.legacy_registry = LegacySceneRegistry(self.library) if self.library else None
         self.terrains = TerrainLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
         self.imagery = ImageryLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
+        self.public_geodata = PublicGeoData(self.library, self.terrains, self.imagery) if self.terrains and self.imagery else None
         self.geometry = SceneGeometryProcess(self.library, python_executable=terrain_python,
             terrain_root=self.terrains.root / 'versions') if self.terrains else None
 
@@ -338,6 +340,26 @@ class WorkbenchSessions(UserSessions):
         else: raise PreviewError(422, 'INVALID_REQUEST')
         authorize()
         return self.imagery_response(value, row, access)
+
+    def public_geodata_request(self, sid, path, payload):
+        action = path.removeprefix('/api/workbench/public-geodata/')
+        if action not in ('start', 'job', 'cancel'):
+            raise PreviewError(422, 'INVALID_REQUEST')
+        row, authorize, access, actor = self.project_authorization(sid, payload,
+            writing=action in ('start', 'cancel'), write_code='SCENE_WRITE_FORBIDDEN')
+        if self.public_geodata is None:
+            raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+        body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        if action == 'start':
+            result = self.public_geodata.start(body, actor, authorize)
+        elif action == 'job' and set(body) <= {'jobId'}:
+            result = self.public_geodata.job(body.get('jobId'), actor, authorize)
+        elif action == 'cancel' and set(body) == {'jobId', 'expectedJobRevision'}:
+            result = self.public_geodata.cancel(body['jobId'], body['expectedJobRevision'], actor, authorize)
+        else:
+            raise PreviewError(422, 'INVALID_REQUEST')
+        authorize()
+        return {**result, 'sessionRevision': row.revision, 'capabilities': {'canAcquire': access.get('role') == 'admin'}}
 
     def scene_request(self, sid, path, payload):
         with self.lock:
@@ -815,6 +837,8 @@ def main():
         server.serve_forever()
     finally:
         server.server_close()
+        if sessions.public_geodata:
+            sessions.public_geodata.close()
         if sessions.terrains:
             sessions.terrains.close()
 

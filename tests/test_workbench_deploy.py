@@ -58,6 +58,17 @@ class WorkbenchDeploymentTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(AssertionError):
                 location_for(path)
 
+    def test_public_acquisition_routes_are_exact_short_json_requests(self):
+        for action in ('start', 'job', 'cancel'):
+            body = location_for('/api/workbench/public-geodata/' + action)
+            self.assertIn('client_max_body_size 16k;', body)
+            self.assertIn('proxy_read_timeout 30s;', body)
+            self.assertIn('proxy_buffering off;', body)
+        for path in ('/api/workbench/public-geodata', '/api/workbench/public-geodata/download',
+                     '/api/workbench/public-geodata/job/extra', '/api/workbench/public-geodata/start/'):
+            with self.subTest(path=path), self.assertRaises(AssertionError):
+                location_for(path)
+
     def test_imagery_upload_has_the_same_bounded_limit_as_its_processor(self):
         from apps.api.imagery_validation import MAX_BYTES
         body = location_for('/api/workbench/imagery/upload')

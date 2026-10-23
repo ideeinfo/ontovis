@@ -148,12 +148,13 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             terrain_paths = ('/api/workbench/terrains', '/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
                              '/api/workbench/terrains/version', '/api/workbench/terrains/content')
             imagery_paths = ('/api/workbench/imagery', '/api/workbench/imagery/version', '/api/workbench/imagery/content')
+            public_geo_paths = tuple('/api/workbench/public-geodata/' + action for action in ('start', 'job', 'cancel'))
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
                               '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',
                               '/api/workbench/resources/model/preserve-legacy-display',
                               '/api/workbench/resources/uses', '/api/workbench/resources/models/legacy',
                               '/api/workbench/resources/model/import-existing')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) or query:
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
                     or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json'):
@@ -194,6 +195,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 if parts.path.endswith('/content'):
                     return self.image(value['content'], value['sessionRevision'], 'application/octet-stream', value['sha256'])
                 return self.reply(200, value)
+            if parts.path in public_geo_paths:
+                return self.reply(202 if parts.path.endswith('/start') else 200, sessions.public_geodata_request(sid, parts.path, payload))
             if parts.path in imagery_paths:
                 value = sessions.imagery_request(sid, parts.path, payload)
                 if parts.path.endswith('/content'):

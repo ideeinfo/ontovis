@@ -17,7 +17,8 @@ const writeOnlyDenials: Record<string, readonly string[]> = {
     '/api/workbench/resources/model/upload', '/api/workbench/resources/model/calibrate',
     '/api/workbench/resources/model/import-existing'],
   SCENE_WRITE_FORBIDDEN: ['/api/workbench/scenes/create', '/api/workbench/scenes/save',
-    '/api/workbench/terrains/upload', '/api/workbench/terrains/job/cancel'],
+    '/api/workbench/terrains/upload', '/api/workbench/terrains/job/cancel',
+    '/api/workbench/public-geodata/start', '/api/workbench/public-geodata/cancel'],
 };
 
 async function binaryResponse(response: Response, descriptor: BinaryDescriptor, revision: string, guard: () => void) {
