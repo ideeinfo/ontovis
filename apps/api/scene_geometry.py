@@ -19,6 +19,8 @@ from .terrain_coordinates import (ProjectedFrame, LocalPlacement, TerrainHeight,
     CoordinateError, CONVERGENCE_RULE, VERTICAL_DATUMS, normalize_heading, preview_anchor)
 from .terrain_validation import prepare_mesh, PLACEMENT_SAMPLING_RULE, TerrainError
 from tools.model_probe import strict_json, ProbeError
+from .scene_environment import validate_environment
+from .authority import PreviewError
 from .scene_organization import OrganizationError, validate_organization
 
 MAX_REQUEST_BYTES=1024*1024
@@ -173,7 +175,9 @@ def _terrain(terrains,identifier):
 
 def _base_snapshot(snapshot):
     value=_bounded_copy(snapshot)
-    _fields(value,('displayName','coordinateFrame','terrain','instances','initialView','defaults'),('organization','imagery'))
+    _fields(value,('displayName','coordinateFrame','terrain','instances','initialView','defaults'),('organization','imagery','environment'))
+    try:validate_environment(value)
+    except PreviewError as error:raise GeometryError(error.code,'The environment is unsupported or invalid.') from None
     image=value.get('imagery')
     if image is not None:
         _fields(image,('imageryVersionId','expectedContentRevision','expectedReportSha256','visible'))
@@ -276,6 +280,12 @@ def _geometry_check(snapshot,trusted_terrains,expected_frame,resample_ground):
     _fields(value['terrain'],('terrainVersionId','expectedContentRevision'))
     terrain=_terrain(trusted_terrains,value['terrain']['terrainVersionId'])
     _require(value['terrain']['expectedContentRevision']==terrain.trusted.content_revision,'RESOURCE_CHANGED','The expected terrain content revision changed.')
+    if value.get('environment', {}) and value['environment']['water']['enabled']:
+        import struct
+        mask=(terrain.directory/'mask.u8').read_bytes()
+        heights=[row[0] for i,row in enumerate(struct.iter_unpack('<d',(terrain.directory/'heights.f64').read_bytes())) if mask[i]]
+        _require(bool(heights) and all(math.isfinite(h) for h in heights) and max(heights)-min(heights)<=.0001,
+                 'WATER_SURFACE_NOT_SUPPORTED','Water needs the active flat relative positioning surface.')
     frame_data=value['coordinateFrame']
     _fields(frame_data,('mode','frameRevision','horizontalCrs','verticalDatum','transformId','originEasting','originNorthing','originHeight','convergenceRuleId','anchor'),('relativeReferenceId',))
     for key in ('originEasting','originNorthing','originHeight'):_number(frame_data[key],20000000)

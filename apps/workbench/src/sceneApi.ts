@@ -42,13 +42,13 @@ export class SceneApi {
     return this.api.request<SceneHead>(ROOT + 'scenes/head', {sceneId, viewingRevision}, signal);
   }
   check(body: SceneCheckRequest, signal?: AbortSignal) {
-    return this.api.request<SceneCheck>(ROOT + 'scenes/check', body, signal);
+    return this.api.request<SceneCheck>(ROOT + 'scenes/check', {...body,environmentWriteVersion:1}, signal);
   }
   replacementCheck(body: SceneReplacementCheckRequest, signal?: AbortSignal) {
-    return this.api.request<SceneCheck>(ROOT + 'scenes/replacement-check', body, signal);
+    return this.api.request<SceneCheck>(ROOT + 'scenes/replacement-check', {...body,environmentWriteVersion:1}, signal);
   }
   save(body: SceneSaveRequest, signal?: AbortSignal) {
-    return this.api.request<SceneSave>(ROOT + 'scenes/save', body, signal);
+    return this.api.request<SceneSave>(ROOT + 'scenes/save', {...body,environmentWriteVersion:1}, signal);
   }
   locate(body:SceneLocationRequest, signal?:AbortSignal) {
     return this.api.request<SceneLocation&{sessionRevision:string}>(ROOT+'scenes/locate',body,signal);

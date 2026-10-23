@@ -1,3 +1,4 @@
+import type {SceneEnvironmentV1} from './sceneEnvironment';
 import type {EngineeringExpectation, EngineeringRef, SceneComponentBinding, SceneRootBinding} from './sceneEngineeringTypes';
 
 /** Scene snapshots carry instance-scoped references; the server verifies engineering facts. */
@@ -68,7 +69,7 @@ export interface SceneDefaults {
 }
 export interface SceneTerrainRef {terrainVersionId: string; expectedContentRevision: string}
 export interface SceneImageryRef {imageryVersionId:string;expectedContentRevision:string;expectedReportSha256:string;visible:boolean}
-interface SnapshotBase {displayName: string; initialView: SceneView; defaults: SceneDefaults;organization?:SceneOrganization;imagery?:SceneImageryRef|null}
+interface SnapshotBase {environment?:SceneEnvironmentV1|null;displayName: string; initialView: SceneView; defaults: SceneDefaults;organization?:SceneOrganization;imagery?:SceneImageryRef|null}
 export interface LocalSceneSnapshot extends SnapshotBase {
   imagery?:null;
   coordinateFrame: LocalFrame; terrain: null; instances: LocalSceneModelInstance[];
@@ -131,6 +132,7 @@ export interface HeightProvenance {
   previousTerrainRef?: unknown; previousAnchorHeight?: unknown;
 }
 export interface SceneCapabilities {
+  environmentSchemaVersions?:number[];waterModes?:string[];
   storageScope: SceneScope; supportsGeographic: boolean; supportsEngineeringBindings: boolean;
   maxInstances: number; maxSnapshotBytes: number; maxCheckJsonBytes: number;
   scope: SceneScope; localPlaneUnbound: true; canRead: true; canWrite: boolean;
@@ -165,6 +167,7 @@ export interface SceneOpen extends SceneResponse {
 export interface SceneHead extends SceneResponse {sceneId: string; headRevision: string; updateAvailable: boolean}
 export interface SpatialChange {kind: 'anchor' | 'model' | 'terrain'; receipt: string}
 export interface SceneSaveRequest {
+  environmentWriteVersion?:1;
   sceneId: string; expectedSceneRevision: string; clientRequestId: string; snapshot: EditableSceneSnapshot;
   reviewedEngineering: EngineeringExpectation[]; rootBindingChanges: RootBindingChange[]; spatialChange?: SpatialChange;
 }
@@ -172,7 +175,7 @@ export interface SceneSave extends SceneResponse {
   sceneId: string; sceneRevision: string; headRevision: string; savedAt: string;
   validation: GeometryValidation; heightProvenance?: HeightProvenance[]; terrainRefs?: TerrainResourceRef[];
 }
-interface SceneCheckBase {sceneId: string; expectedSceneRevision: string; snapshot: EditableSceneSnapshot}
+interface SceneCheckBase {environmentWriteVersion?:1;sceneId: string; expectedSceneRevision: string; snapshot: EditableSceneSnapshot}
 export type SceneCheckRequest = (SceneCheckBase & {kind: 'validate'}) | (
   Omit<SceneCheckBase, 'snapshot'> & {kind: 'anchor'; snapshot: LocalSceneSnapshot;
     candidateTerrainVersionId: string; anchor: GeographicAnchorInput}

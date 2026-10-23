@@ -29,7 +29,7 @@ test('scene methods preserve exact request revisions, IDs and anchor receipt wit
     await run();const sent = calls.at(-1);
     assert.equal(sent.path, `/api/workbench/${path}`);assert.equal(sent.options.method,'POST');
     assert.equal(sent.options.signal,controller.signal);
-    assert.deepEqual(JSON.parse(sent.options.body),{...body,expectedSessionRevision:'session:1'});
+    assert.deepEqual(JSON.parse(sent.options.body),{...body,...(['scenes/check','scenes/save'].includes(path)?{environmentWriteVersion:1}:{}),expectedSessionRevision:'session:1'});
   }
   assert.equal(calls.length,checks.length);assert.equal(save.clientRequestId,'request-id');
 });
@@ -151,7 +151,7 @@ test('model and terrain replacement previews preserve their distinct saved-head 
     {...base,kind:'terrain',candidateTerrainVersionId:'terrain-candidate',strategy:'resample_ground'}];
   for(const body of bodies){
     const result=await api.replacementCheck(body,controller.signal),sent=calls.at(-1);
-    assert.deepEqual(sent,{path:'/api/workbench/scenes/replacement-check',body:{...body,expectedSessionRevision:'session:1'},signal:controller.signal});
+    assert.deepEqual(sent,{path:'/api/workbench/scenes/replacement-check',body:{...body,environmentWriteVersion:1,expectedSessionRevision:'session:1'},signal:controller.signal});
     assert.deepEqual(result.validation.impact,impact);
     assert.deepEqual(result.spatialChange,{kind:body.kind,receipt:`signed-${body.kind}-receipt`});
     assert.equal('candidateModelVersionId' in result.spatialChange,false);assert.equal('strategy' in result.spatialChange,false);
@@ -166,7 +166,7 @@ test('dirty replacement is a single explicit conflict and never silently saves o
     calls.push({path,body:JSON.parse(options.body)});return new Response('{"code":"SCENE_DRAFT_REQUIRES_SAVE"}',{status:409});
   });transport.session('session:1');const api=new SceneApi(transport);
   await assert.rejects(api.replacementCheck(body),error=>error.status===409&&error.code==='SCENE_DRAFT_REQUIRES_SAVE');
-  assert.deepEqual(calls,[{path:'/api/workbench/scenes/replacement-check',body:{...body,expectedSessionRevision:'session:1'}}]);
+  assert.deepEqual(calls,[{path:'/api/workbench/scenes/replacement-check',body:{...body,environmentWriteVersion:1,expectedSessionRevision:'session:1'}}]);
   assert.deepEqual(body,unchanged);
 });
 

@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 from .authority import PreviewError
 from .model_library import ModelLibrary
 from .scene_bindings import MAX_COMPONENT_BINDINGS, validate_binding_shapes
+from .scene_environment import validate_environment, environment_write, preserve_environment
 from .scene_organization import OrganizationError, validate_organization
 
 MAX_SCENE_BYTES = 1024 * 1024
@@ -42,7 +43,8 @@ def _fields(value, expected):
 
 def _snapshot_fields(value):
     required = {'displayName', 'coordinateFrame', 'terrain', 'instances', 'initialView', 'defaults'}
-    _require(type(value) is dict and required <= set(value) <= required | {'organization','imagery'})
+    _require(type(value) is dict and required <= set(value) <= required | {'organization','imagery','environment'})
+    validate_environment(value)
     image = value.get('imagery')
     if image is not None:
         _fields(image, ('imageryVersionId','expectedContentRevision','expectedReportSha256','visible'))
@@ -234,6 +236,7 @@ def validate_snapshot(value: dict, *, geographic=False, engineering=False) -> di
     # Reuse the existing common instance/name/camera/default whitelist without
     # asking the local-plane validator to interpret geographic height fields.
     common = json.loads(_json(value))
+    common.pop('environment', None)
     common['coordinateFrame'] = {'mode': 'local_plane', 'frameRevision': 'schema-check',
                                  'origin': [0, 0, 0], 'unit': 'm', 'axes': 'X_EAST_Y_UP_Z_SOUTH'}
     common['terrain'] = None
@@ -368,6 +371,7 @@ class SceneLibrary:
     def capabilities(*, geographic=False, engineering=False):
         return {'storageScope': 'project_scenes' if engineering else 'projected_site_unbound' if geographic else 'local_plane_unbound', 'supportsGeographic': geographic,
                 'supportsEngineeringBindings': engineering, 'maxInstances': MAX_INSTANCES,
+                'environmentSchemaVersions': [1], 'waterModes': ['normal-waves'],
                 'maxSnapshotBytes': MAX_SCENE_BYTES, 'maxCheckJsonBytes': MAX_SCENE_BYTES}
 
     @staticmethod
@@ -837,6 +841,7 @@ class SceneLibrary:
                  'INVALID_GEOMETRY_RESULT')
         _require(all(previous[key] == proposed[key] for key in ('displayName', 'defaults', 'initialView')),
                  'INVALID_GEOMETRY_RESULT')
+        preserve_environment(previous, proposed)
         _require(previous.get('organization') == proposed.get('organization'), 'INVALID_GEOMETRY_RESULT')
         old_frame, new_frame = previous['coordinateFrame'], proposed['coordinateFrame']
         _require({key: value for key, value in old_frame.items() if key not in ('frameRevision', 'anchor')}
@@ -923,8 +928,9 @@ class SceneLibrary:
         authorize(); _json(body)
         _require(type(body) is dict and body.get('kind') in ('model', 'terrain'))
         common = {'sceneId', 'expectedSceneRevision', 'snapshot'}
-        operation = self._replacement_operation({key: value for key, value in body.items() if key not in common})
-        _fields(body, common | set(operation))
+        optional_environment = {'environmentWriteVersion'} if 'environmentWriteVersion' in body else set()
+        operation = self._replacement_operation({key: value for key, value in body.items() if key not in common | optional_environment})
+        _fields(body, common | set(operation) | optional_environment)
         actor, access_revision = _text(actor), _text(access_revision)
         scene_id, base_revision = _uuid(body['sceneId']), _text(body['expectedSceneRevision'])
         validate_snapshot(body['snapshot'], geographic=callable(geometry_check) or callable(terrain_replacement), engineering=callable(engineering_check))
@@ -933,6 +939,7 @@ class SceneLibrary:
             _require(self._scope(db, scene_id)['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
             row = self._revision(db, scene_id, base_revision)
             previous, previous_refs = validate_snapshot(json.loads(row['snapshot']), geographic=True, engineering=callable(engineering_check)), json.loads(row['resource_refs'])
+            environment_write(body, previous)
             previous_provenance = self._height_provenance(db, base_revision)
             previous_validation = self._stored_validation(db, base_revision)
         _require(_receipt_snapshot_digest(body['snapshot']) == _receipt_snapshot_digest(previous), 'SCENE_DRAFT_REQUIRES_SAVE', 409)
@@ -971,6 +978,7 @@ class SceneLibrary:
     def _anchor_result(local, proposed):
         _require(proposed['coordinateFrame']['mode'] == 'projected_site', 'INVALID_GEOMETRY_RESULT')
         _require(all(local[key] == proposed[key] for key in ('displayName', 'defaults')), 'INVALID_GEOMETRY_RESULT')
+        preserve_environment(local, proposed)
         _require(local.get('organization') == proposed.get('organization'), 'INVALID_GEOMETRY_RESULT')
         _require(len(local['instances']) == len(proposed['instances']), 'INVALID_GEOMETRY_RESULT')
         for before, after in zip(local['instances'], proposed['instances']):
@@ -983,7 +991,7 @@ class SceneLibrary:
         authorize(); _json(body)
         base = {'kind', 'sceneId', 'expectedSceneRevision', 'snapshot'}
         _require(type(body) is dict and body.get('kind') in ('validate', 'anchor'))
-        _fields(body, base | ({'candidateTerrainVersionId', 'anchor'} if body['kind'] == 'anchor' else set()))
+        _fields(body, base | ({'candidateTerrainVersionId', 'anchor'} if body['kind'] == 'anchor' else set()) | ({'environmentWriteVersion'} if 'environmentWriteVersion' in body else set()))
         actor, access_revision = _text(actor), _text(access_revision)
         scene_id, base_revision = _uuid(body['sceneId']), _text(body['expectedSceneRevision'])
         is_anchor = body['kind'] == 'anchor'
@@ -994,6 +1002,7 @@ class SceneLibrary:
             _require(scene['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
             row = self._revision(db, scene_id, base_revision)
             previous = validate_snapshot(json.loads(row['snapshot']), geographic=True, engineering=callable(engineering_check))
+            environment_write(body, previous)
             previous_refs = json.loads(row['resource_refs'])
             previous_provenance = self._height_provenance(db, base_revision)
             previous_validation = self._stored_validation(db, base_revision)
@@ -1055,7 +1064,7 @@ class SceneLibrary:
         authorize(); _json(body)
         required = {'sceneId', 'expectedSceneRevision', 'clientRequestId', 'snapshot',
                     'reviewedEngineering', 'rootBindingChanges'}
-        _require(type(body) is dict and required <= set(body) <= required | {'spatialChange'})
+        _require(type(body) is dict and required <= set(body) <= required | {'spatialChange','environmentWriteVersion'})
         actor, request_id, scene_id = _text(actor), _uuid(body['clientRequestId']), _uuid(body['sceneId'])
         base_revision = _text(body['expectedSceneRevision'])
         if not callable(engineering_check):
@@ -1087,6 +1096,7 @@ class SceneLibrary:
             _require(scene['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
             row = self._revision(db, scene_id, base_revision)
             previous = validate_snapshot(json.loads(row['snapshot']), geographic=True, engineering=callable(engineering_check))
+            environment_write(body, previous)
             previous_refs = json.loads(row['resource_refs'])
             previous_provenance = self._height_provenance(db, base_revision)
             previous_validation = self._stored_validation(db, base_revision)

@@ -17,6 +17,8 @@ import type {ProjectModelVersion,TerrainVersion} from './resourceTypes';
 import type {EditableSceneSnapshot,ModelResourceRef,SceneModelInstance,SceneView,Vector3} from './sceneTypes';
 import {snapPoint} from './sceneOrganization';
 import {SceneApi} from './sceneApi';
+import {SceneEnvironmentRuntime} from './sceneEnvironmentRuntime';
+import type {SceneEnvironmentV1} from './sceneEnvironment';
 import {SceneImageryLayer} from './sceneImagery';
 import {imageryFailure,imageryText} from './imageryMessages';
 import type {ImageryRecord} from './resourceTypes';
@@ -24,6 +26,7 @@ import './sceneViewport.css';
 
 export interface SceneCameraControl {getView:()=>SceneView;setView:(value:SceneView)=>void;ready:()=>boolean}
 export interface SceneViewportProps {
+  environmentPreview?:{value:SceneEnvironmentV1|null}|null;
   api:WorkbenchApi;snapshot:EditableSceneSnapshot;modelRefs:ModelResourceRef[];terrainVersion:TerrainVersion|null;
   selectedId:string|null;editing:boolean;disabled?:boolean;personalVisibility:Record<string,boolean>;
   selectedIds?:string[];gridSnap?:number;cameraControl?:{current:SceneCameraControl|null};onCameraInteraction?:()=>void;
@@ -59,6 +62,13 @@ export function SceneViewport(props:SceneViewportProps) {
   const current=useRef({...props,locale,resolved});current.current={...props,locale,resolved};
   const mount=useRef<HTMLDivElement>(null),runtime=useRef<Runtime|null>(null);
   const [reading,setReading]=useState(false),[error,setError]=useState<unknown>(null),[moving,setMoving]=useState(false);
+  const [waterOverride,setWaterOverride]=useState<boolean|null>(null),[reduced,setReduced]=useState(()=>matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [environmentStatus,setEnvironmentStatus]=useState({water:false,casters:0,phase:0,fallback:false,textureBudgetBytes:0});
+  const motionState=useRef({waterOverride,reduced});motionState.current={waterOverride,reduced};
+  const previewMotion=useRef<{override:boolean|null}|null>(null);
+  useEffect(()=>{if(props.environmentPreview&&!previewMotion.current)previewMotion.current={override:waterOverride};
+    else if(!props.environmentPreview&&previewMotion.current){setWaterOverride(previewMotion.current.override);previewMotion.current=null;}},[props.environmentPreview]);
+  useEffect(()=>{const media=matchMedia('(prefers-reduced-motion: reduce)'),change=()=>{setReduced(media.matches);setWaterOverride(null);};media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
   const [imageryPartial,setImageryPartial]=useState(false);
   const latestError=useRef(error);latestError.current=error;
   const [attempt,setAttempt]=useState(0),[rendererAttempt,setRendererAttempt]=useState(0);
@@ -97,6 +107,7 @@ export function SceneViewport(props:SceneViewportProps) {
     }
     const grass=new THREE.DataTexture(pixels,64,64);grass.wrapS=grass.wrapT=THREE.RepeatWrapping;
     grass.colorSpace=THREE.SRGBColorSpace;grass.needsUpdate=true;
+    const environment=new SceneEnvironmentRuntime(scene,renderer,sun,light,terrainMaterial,grass);
     const entries=new Map<string,Entry>();
     let terrain:THREE.Mesh<THREE.BufferGeometry,THREE.MeshStandardMaterial>|null=null,terrainKey='';
     let preview:THREE.Group|null=null,previewKey='',restoreView:SceneView|null=null;
@@ -112,9 +123,11 @@ export function SceneViewport(props:SceneViewportProps) {
     const stale=()=>disposed||api.epoch!==epoch||api.revision!==revision;
     const report=(value:unknown)=>{if(!stale()&&!cancelled(value)){setError(value);current.current.onError?.(value);}};
     const emit=()=>{if(!stale())current.current.onViewChange(view(camera,orbit));};
-    const request=()=>{if(!disposed&&!document.hidden&&!frame)frame=requestAnimationFrame(render);};
+    let dirtyFrame=true;
+    const schedule=()=>{if(!disposed&&!document.hidden&&!frame)frame=requestAnimationFrame(render);};
+    const request=()=>{dirtyFrame=true;schedule();};
     const render=()=>{
-      frame=0;if(disposed)return;
+      frame=0;if(disposed||document.hidden)return;
       if(stale()){renderer.clear();return;}
       if(tween){
         const progress=Math.min(1,(performance.now()-tween.start)/900),ease=progress*progress*(3-2*progress);
@@ -122,7 +135,10 @@ export function SceneViewport(props:SceneViewportProps) {
         orbit.target.lerpVectors(new THREE.Vector3(...tween.from.target),new THREE.Vector3(...tween.to.target),ease);orbit.update();
         if(progress>=1){tween=null;componentTween=false;emit();}
       }
-      renderer.render(scene,camera);if(tween)request();
+      const motion=motionState.current,playing=environment.playing(motion.waterOverride,motion.reduced);
+      const wave=environment.beforeRender(performance.now(),orbit.target,playing);
+      if(dirtyFrame||tween||wave){renderer.render(scene,camera);dirtyFrame=false;}
+      if(tween||playing)schedule();
     };
     const moveView=(target:SceneView,animated=true,component=false)=>{
       componentTween=component;
@@ -202,7 +218,14 @@ export function SceneViewport(props:SceneViewportProps) {
       sun.color.set(dusk?0xffca93:0xfff4df);sun.intensity=dusk?1.8:2.5;
       sun.position.set(dusk?-180:-100,dusk?65:140,80);light.intensity=dusk?1.7:2.2;
       scene.background=new THREE.Color(state.snapshot.defaults.background==='sky'?(dusk?0xcdd4c6:0xb8d1da):0xd8e0d4);
-      terrainMaterial.map=state.snapshot.defaults.terrainMaterial==='grass'?grass:null;terrainMaterial.needsUpdate=true;
+      const effective=state.previewModel?null:state.environmentPreview?state.environmentPreview.value:state.snapshot.environment??null;
+      environment.preview(!!state.environmentPreview);
+      const water=environment.configure(effective,state.snapshot.coordinateFrame,terrain,[...entries.values()].map(e=>e.root),state.selectedId?entries.get(state.selectedId)?.root??null:null,state.terrainVisible&&!preview);
+      if(terrain)terrain.visible=state.terrainVisible&&!preview&&!water;
+      imageryLayer.shading(effective?.surface.imageryShading??'source-color',!!effective);
+      imageryLayer.visible(state.terrainVisible&&!!state.imageryVisible&&!preview&&!water);
+      const status=environment.status();setEnvironmentStatus(previous=>previous.water===status.water&&previous.casters===status.casters&&previous.fallback===status.fallback?previous:status);
+      const groundMap=state.snapshot.defaults.terrainMaterial==='grass'?grass:null;if(terrainMaterial.map!==groundMap){terrainMaterial.map=groundMap;terrainMaterial.needsUpdate=true;}
       orbit.enabled=!state.disabled&&!drag;highlight();
     };
     const transform=(item:SceneModelInstance,root:THREE.Group)=>{
@@ -387,8 +410,8 @@ export function SceneViewport(props:SceneViewportProps) {
     const dragover=(event:DragEvent)=>{const state=current.current;if(state.editing&&!state.disabled&&!state.previewModel&&state.onResourceDrop
       &&event.dataTransfer?.types.includes(DROP_MIME)){event.preventDefault();event.dataTransfer.dropEffect='copy';}};
     const visible=()=>{
-      if(document.hidden){hiddenAt=performance.now();cancelAnimationFrame(frame);frame=0;}
-      else {if(tween&&hiddenAt!==null)tween.start+=performance.now()-hiddenAt;hiddenAt=null;request();}
+      if(document.hidden){environment.suspend();hiddenAt=performance.now();cancelAnimationFrame(frame);frame=0;}
+      else {if(tween&&hiddenAt!==null)tween.start+=performance.now()-hiddenAt;hiddenAt=null;appearance();request();}
     };
     const resize=new ResizeObserver(()=>{const rect=element.getBoundingClientRect();camera.aspect=Math.max(1,rect.width)/Math.max(1,rect.height);
       camera.updateProjectionMatrix();renderer.setSize(Math.max(1,rect.width),Math.max(1,rect.height));request();});resize.observe(element);
@@ -412,7 +435,7 @@ export function SceneViewport(props:SceneViewportProps) {
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
       orbit.removeEventListener('change',request);orbit.removeEventListener('start',orbitStart);orbit.removeEventListener('end',emit);
-      sceneControls.dispose();imageryLayer.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
+      sceneControls.dispose();environment.dispose();imageryLayer.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
       componentBox.geometry.dispose();disposeMaterial(componentBox.material);
       grid.geometry.dispose();disposeMaterial(grid.material);terrainMaterial.dispose();grass.dispose();scene.clear();
       renderer.dispose();renderer.forceContextLoss();canvas.remove();runtime.current=null;
@@ -420,7 +443,7 @@ export function SceneViewport(props:SceneViewportProps) {
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
   useEffect(()=>{runtime.current?.preload();},[props.placementModel]);
   useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,attempt]);
-  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,locale,resolved]);
+  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,waterOverride,reduced,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
   useEffect(()=>{if(props.focusRequest)runtime.current?.focus(props.focusRequest.instanceId);},[props.focusRequest?.token]);
   useEffect(()=>{runtime.current?.componentFocus();},[props.componentFocus,props.snapshot,props.modelRefs,props.selectedId,props.personalVisibility,props.previewModel]);
@@ -432,10 +455,11 @@ export function SceneViewport(props:SceneViewportProps) {
         <IconBtn label={message('zoomOut')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(1.25);}}><ZoomOut size={16}/></IconBtn>
         <IconBtn label={message('fit')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.fit();}}><Maximize size={16}/></IconBtn>
         <IconBtn label={message('focus')} disabled={!props.selectedId||!!props.previewModel} onClick={()=>{props.onCameraInteraction?.();runtime.current?.focus(props.selectedId);}}><Focus size={16}/></IconBtn></div>
-      {props.imageryVersion&&props.snapshot.imagery&&props.imageryVisible&&props.terrainVisible&&!props.previewModel&&<div className="ov-scene-imagery-attribution">
+      {props.imageryVersion&&props.snapshot.imagery&&props.imageryVisible&&props.terrainVisible&&!props.previewModel&&!environmentStatus.water&&<div className="ov-scene-imagery-attribution">
         <span>{props.imageryVersion.displayName} · {props.imageryVersion.metadata.acquiredAt} · {props.imageryVersion.report.pixelSize.map(v=>Number(v.toPrecision(3))).join(' × ')} {props.imageryVersion.report.horizontalCrs==='EPSG:4326'?'°':'m'} · {imageryText(locale,'precision')}</span>
         <span>{props.imageryVersion.metadata.attribution}</span>{imageryPartial&&<span>{imageryText(locale,'partial')}</span>}
       </div>}
+      {(environmentStatus.water||environmentStatus.fallback)&&<div className="ev-status"><span>{environmentStatus.water?(locale==='en'?'Visual water; placement uses the positioning surface':'视觉水面 按原定位基准面放置'):(locale==='en'?'Static environment fallback':'静态环境回退')}</span>{environmentStatus.water&&!environmentStatus.fallback&&<button className="ov-btn" type="button" onClick={()=>setWaterOverride(previous=>!(previous??(!reduced&&(props.environmentPreview?props.environmentPreview.value:props.snapshot.environment)?.animation.defaultPlayback==='playing')))}>{(waterOverride??(!reduced&&(props.environmentPreview?props.environmentPreview.value:props.snapshot.environment)?.animation.defaultPlayback==='playing'))?(locale==='en'?'Pause ripples':'暂停水纹'):(locale==='en'?'Play ripples':'播放水纹')}</button>}{environmentStatus.fallback&&<span>{locale==='en'?'Environment allocation unavailable; shadows and animation are off':'环境资源不可用，已关闭阴影和动画'}</span>}{reduced&&<span>{locale==='en'?'Reduced motion':'减少动画'}</span>}</div>}
     </div><footer className="ov-scene-viewport-foot"><span>{props.previewModel?`${message('preview')} · ${props.previewModel.displayName}`:
       moving?message('moving'):props.editing?props.pendingPlacement?message('place'):message('drag'):message('browse')}</span>
       {props.previewModel?.calibration.state==='unverified'?<span>{message('unverified')}</span>:null}</footer>

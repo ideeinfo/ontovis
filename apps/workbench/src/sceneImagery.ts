@@ -29,7 +29,7 @@ export function imageryUvs(positions:THREE.BufferAttribute|THREE.InterleavedBuff
   return uv;
 }
 
-type Layer={key:string;mesh:THREE.Mesh<THREE.BufferGeometry,THREE.MeshBasicMaterial>;texture:THREE.Texture;partial:boolean};
+type Layer={key:string;mesh:THREE.Mesh<THREE.BufferGeometry,THREE.MeshBasicMaterial|THREE.MeshStandardMaterial>;source:THREE.MeshBasicMaterial;lit:THREE.MeshStandardMaterial|null;texture:THREE.Texture;partial:boolean};
 type PreparedImage={key:string;abort:AbortController;promise:Promise<ImageBitmap>;bitmap:ImageBitmap|null};
 export class SceneImageryLayer {
   private layer:Layer|null=null;
@@ -38,7 +38,7 @@ export class SceneImageryLayer {
   private disposed=false;
   private api:SceneApi;
   constructor(api:SceneApi){this.api=api;}
-  private releaseLayer(){const value=this.layer;this.layer=null;if(value){value.mesh.removeFromParent();value.mesh.geometry.dispose();value.mesh.material.dispose();value.texture.dispose();}}
+  private releaseLayer(){const value=this.layer;this.layer=null;if(value){value.mesh.removeFromParent();value.mesh.geometry.dispose();value.source.dispose();value.lit?.dispose();value.texture.dispose();}}
   private release(){this.releaseLayer();const prepared=this.prepared;this.prepared=null;if(prepared){prepared.abort.abort();prepared.bitmap?.close();prepared.bitmap=null;}}
   private cancelled(){return new DOMException('Imagery changed','AbortError');}
   private consume(prepared:PreparedImage,signal?:AbortSignal):Promise<ImageBitmap>{
@@ -52,6 +52,15 @@ export class SceneImageryLayer {
     });
   }
   visible(value:boolean){if(this.layer)this.layer.mesh.visible=value;}
+  shading(mode:'source-color'|'lit',environment=false){
+    const layer=this.layer;if(!layer)return;
+    if(mode==='lit'&&!layer.lit){
+      layer.lit=new THREE.MeshStandardMaterial({map:layer.texture,roughness:1,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1});
+      layer.lit.onBeforeCompile=layer.source.onBeforeCompile;layer.lit.customProgramCacheKey=()=> 'ontovis-imagery-lit-clip-v1';
+    }
+    const toneMapped=!environment;if(layer.source.toneMapped!==toneMapped){layer.source.toneMapped=toneMapped;layer.source.needsUpdate=true;}
+    layer.source.fog=!environment;layer.mesh.material=mode==='lit'?layer.lit!:layer.source;layer.mesh.receiveShadow=mode==='lit';
+  }
   partial(){return this.layer?.partial??false;}
   /** Start the fixed private read alongside model/terrain loading; only sync may attach it. */
   prepare(imagery:ImageryRecord|null,reference:SceneImageryRef|null|undefined,signal?:AbortSignal):Promise<ImageBitmap|null>{
@@ -96,7 +105,7 @@ export class SceneImageryLayer {
       material.onBeforeCompile=shader=>{shader.fragmentShader=shader.fragmentShader.replace('#include <map_fragment>','if (vMapUv.x < 0.0 || vMapUv.x > 1.0 || vMapUv.y < 0.0 || vMapUv.y > 1.0) discard;\n#include <map_fragment>');};
       material.customProgramCacheKey=()=> 'ontovis-imagery-clip-v1';
       const mesh=new THREE.Mesh(geometry,material);mesh.name='overview-imagery';mesh.renderOrder=1;terrain.add(mesh);
-      this.layer={key,mesh,texture,partial};
+      this.layer={key,mesh,texture,partial,source:material,lit:null};
     }catch(error){geometry?.dispose();material?.dispose();texture?.dispose();throw error;}
   }
   dispose(){this.disposed=true;++this.sequence;this.release();}
