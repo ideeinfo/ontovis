@@ -23,7 +23,7 @@ from .authority import PreviewError
 from .model_validation import MAX_BYTES
 from tools.model_probe import strict_json
 
-MAX_VERSIONS = 20
+MAX_VERSIONS = 50
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
 PURPOSES = frozenset(('equipment', 'simplified_scene', 'environment'))
 CALIBRATION_METHOD = 'm-y-up-forward-negative-z-v1'

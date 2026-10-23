@@ -200,9 +200,10 @@ class WorkbenchSessions(UserSessions):
         value['capabilities'] = {'scope': 'project_static_glb_resources', 'canRead': True,
             'canUpload': access.get('role') == 'admin', 'canCalibrate': access.get('role') == 'admin',
             'calibrationRequiredForGeographicPlacement': True, 'automaticLegacyAdoption': False}
-        value['limits'] = {'maxUploadBytes': MAX_BYTES, 'maxVersions': 20,
-            'maxLibraryBytes': 200 * 1024 * 1024, 'maxMetadataHeaderBytes': 8192,
-            'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384}
+        limits = ProjectModelLibrary.capabilities()
+        value['limits'] = {key: limits[key] for key in ('maxUploadBytes', 'maxVersions', 'maxLibraryBytes')}
+        value['limits'].update({'maxMetadataHeaderBytes': 8192,
+            'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384})
         return value
 
     def resource_upload(self, sid, payload, stream, length):

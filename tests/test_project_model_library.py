@@ -70,6 +70,22 @@ class ProjectModelLibraryTests(unittest.TestCase):
             return tuple(db.execute('select count(*) from ' + table).fetchone()[0] for table in (
                 'versions', 'project_model_assets', 'project_model_versions', 'project_model_requests', 'project_model_audit'))
 
+    def retain_synthetic_versions(self, source, total, *, legacy_versions=0):
+        # Populate retained rows/files without rerunning the GLB worker per row.
+        with self.old.connect() as db:
+            existing = db.execute('select count(*) from versions').fetchone()[0]
+            for index in range(total - existing):
+                identifier, asset_id = str(uuid4()), str(uuid4())
+                (self.old.root / 'files' / (identifier + '.glb')).write_bytes(self.data)
+                db.execute('insert into versions select ?,?,actor,name,source_note,sha256,bytes,created_at,revision,components,report from versions where id=?',
+                           (identifier, str(uuid4()), source['modelVersionId']))
+                if index < legacy_versions: continue
+                db.execute('insert into project_model_assets select ?,project_code,name,purpose,revision,created_at from project_model_assets where id=?',
+                           (asset_id, source['modelAssetId']))
+                db.execute('insert into project_model_versions select ?,?,content_revision,calibration,null from project_model_versions where version_id=?',
+                           (identifier, asset_id, source['modelVersionId']))
+            db.execute('update library set revision=revision+? where id=1', (total - existing,))
+
     def expect(self, code, callback):
         with self.assertRaises(PreviewError) as caught: callback()
         self.assertEqual(caught.exception.code, code)
@@ -359,6 +375,46 @@ class ProjectModelLibraryTests(unittest.TestCase):
         next_version = self.calibrate(recovered)
         self.assertNotEqual(next_version['modelVersionId'], recovered['modelVersionId'])
         self.assertEqual(self.counts(), (3, 1, 3, 3, 3))
+
+    def test_fifty_retained_versions_allow_paging_and_full_library_replay(self):
+        self.assertEqual(self.models.capabilities()['maxVersions'], 50)
+        source = self.upload()
+        self.retain_synthetic_versions(source, 48, legacy_versions=1)
+        metadata = self.metadata()
+        uploaded = self.upload(metadata)
+        body = self.calibration(uploaded)
+        calibrated = self.calibrate(uploaded, body)
+        before = self.counts()
+        self.assertEqual(before[:3], (50, 48, 49))
+
+        items, cursor = [], None
+        while True:
+            page = self.listing(limit=7, **({'cursor': cursor} if cursor else {}))
+            items.extend(page['items'])
+            cursor = page['nextCursor']
+            if cursor is None: break
+        self.assertEqual(len(items), 48)
+        self.assertEqual(len({item['modelAssetId'] for item in items}), 48)
+        self.assertEqual(sum(len(item['versions']) for item in items), 49)
+
+        self.expect('MODEL_LIBRARY_FULL', lambda: self.upload())
+        self.expect('MODEL_LIBRARY_FULL', lambda: self.calibrate(uploaded))
+        self.assertEqual(self.upload(metadata), uploaded)
+        self.assertEqual(self.calibrate(uploaded, body), calibrated)
+        self.assertEqual(self.counts(), before)
+        self.assertEqual(len(list((self.old.root / 'files').glob('*.glb'))), 50)
+        self.assertEqual(list((self.old.root / 'temporary').iterdir()), [])
+
+    def test_byte_budget_still_blocks_upload_and_calibration_above_twenty_versions(self):
+        source = self.upload()
+        self.retain_synthetic_versions(source, 21)
+        before = self.counts()
+        with patch('apps.api.project_model_library.MAX_TOTAL_BYTES', len(self.data) * 22 - 1):
+            self.expect('MODEL_LIBRARY_FULL', lambda: self.upload())
+            self.expect('MODEL_LIBRARY_FULL', lambda: self.calibrate(source))
+        self.assertEqual(self.counts(), before)
+        self.assertEqual(len(list((self.old.root / 'files').glob('*.glb'))), 21)
+        self.assertEqual(list((self.old.root / 'temporary').iterdir()), [])
 
     def test_changed_output_after_publication_is_not_registered_as_ready(self):
         def mutate_published_artifact():

@@ -142,6 +142,18 @@ class ProjectModelHttpTests(unittest.TestCase):
         self.assertFalse(any('/installations/' in path for _, path in self.authority().calls))
         self.assertNotIn(str(self.root), json.dumps(listed))
 
+    def test_resource_limits_follow_project_library_for_catalog_and_writes(self):
+        self.assertEqual(self.listing()[1]['limits']['maxVersions'], 50)
+        self.assertEqual(self.listing()[1]['limits']['maxLibraryBytes'], 200 * 1024 * 1024)
+        with patch('apps.api.project_model_library.MAX_VERSIONS', 47):
+            first = self.new_version()
+            status, calibrated, _ = self.calibrate(self.calibration(first))
+            self.assertEqual(status, 200, calibrated)
+            for value in (self.listing()[1], first, calibrated, self.model(calibrated)[1]):
+                self.assertEqual(value['limits']['maxVersions'], 47)
+                self.assertEqual(value['limits']['maxUploadBytes'], MAX_BYTES)
+                self.assertEqual(value['limits']['maxLibraryBytes'], 200 * 1024 * 1024)
+
     def test_anonymous_member_and_revoked_project_cannot_write(self):
         version = self.new_version()
         member = self.login('fixture-reader'); self.authority(member).role = 'reader'
