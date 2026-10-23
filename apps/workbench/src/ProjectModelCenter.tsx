@@ -28,7 +28,7 @@ export function ProjectModelCenter({api,onLegacyPreview,onOpenScene}:{api:Workbe
       <Btn onClick={()=>onOpenScene()}><Layers size={15}/>{text('进入场景布置','Open scene placement')}</Btn></header>
     <div className="pm-grid"><ResourcePanel api={api} modelsOnly detailsTarget={detailsTarget} canPlace={false} canAcquire={false}
       onPlace={ignore} onPreview={show} onTerrainReady={ignore} onOpenScene={onOpenScene}/>
-      <div className="pm-preview"><div className="pm-resource-details" ref={setDetailsTarget}/>{preview?<><header><strong>{preview.displayName}</strong><Btn onClick={()=>show(null)}>{text('关闭预览','Close preview')}</Btn></header>
+      <div className="pm-preview">{preview?<><header><strong>{preview.displayName}</strong><Btn onClick={()=>show(null)}>{text('关闭预览','Close preview')}</Btn></header>
         <div className="pm-canvas"><Suspense fallback={<p role="status">{text('正在读取模型…','Loading model…')}</p>}>
           <SceneViewport key={preview.modelVersionId} api={api} snapshot={previewScene} modelRefs={[]} terrainVersion={null}
             selectedId={null} editing={false} personalVisibility={{}} terrainVisible={false} pendingPlacement={false}
@@ -38,6 +38,9 @@ export function ProjectModelCenter({api,onLegacyPreview,onOpenScene}:{api:Workbe
       </>:<div className="pm-empty"><Box size={32}/><strong>{text('选择模型资源查看或预览','Select a model resource to inspect or preview')}</strong>
         <p>{text('模型资源保存可复用的几何与来源；实例保存本次安装的位置、名称和设备关联。','Resources hold reusable geometry and provenance. Instances hold placement, name and equipment links.')}</p>
         <p>{text('固定版本只在上传或校准时增加。场景保存和型号属性分别记录修订。','Fixed versions increase only on upload or calibration. Scene saves and model metadata have separate revisions.')}</p></div>}</div>
+      <aside className="pm-inspector" aria-label={text('模型属性','Model properties')}><header><strong>{text('模型属性','Model properties')}</strong></header>
+        <div className="pm-resource-details" ref={setDetailsTarget}/><p className="pm-properties-empty">{text('选择模型资源查看属性','Select a model resource to view its properties')}</p>
+      </aside>
     </div>
     <details className="pm-legacy"><summary>{text('原有构件绑定兼容入口','Original component-binding compatibility')}</summary>
       <ModelLibraryPanel api={api} onPreview={onLegacyPreview}/></details>
