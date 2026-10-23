@@ -12,6 +12,14 @@ export class ResourceFormError extends Error {
 export function resourceCalibrationKey(state:ProjectModelVersion['calibrationState']) {
   return state==='legacy_display'?'legacyDisplay':state==='verified'?'calibrated':'unverified';
 }
+export type ModelResourceSelection = Pick<ProjectModelVersion,'modelAssetId'|'modelVersionId'>;
+export function placementModelVersion(asset:ProjectModelAsset,geographic:boolean,selectedVersionId?:string) {
+  const versions=[...asset.versions].sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt));
+  const usable=(value:typeof versions[number])=>value.canPlace&&(!geographic||value.canPlaceGeographic);
+  return versions.find(value=>value.modelVersionId===selectedVersionId)
+    ?? versions.find(value=>value.calibrationState==='verified'&&usable(value))
+    ?? versions.find(usable) ?? versions[0] ?? null;
+}
 export function modelPlacementIssue(model:Pick<ProjectModelVersion,'calibrationState'|'calibration'|'canPlace'|'canPlaceGeographic'>,geographic:boolean) {
   if(!model.canPlace||model.calibration.state!==model.calibrationState||!['verified','legacy_display'].includes(model.calibrationState))return 'MODEL_CALIBRATION_REQUIRED';
   return geographic&&model.canPlaceGeographic!==true?'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED':null;

@@ -14,6 +14,12 @@ test('repeated placement shares only the fixed model version and keeps independe
   const moved=moveInstance(second,'instance-B',[52,0,8]);
   assert.deepEqual(moved.instances[0].placement.position,{mode:'local',xM:12,zM:-8});
   assert.deepEqual(second.instances[1].placement.position,{mode:'local',xM:32,zM:6});
+  let many=second;const unchangedModel=structuredClone(model);
+  for(let index=3;index<=20;index++)many=placeModel(many,model,[index*10,0,index],null,`instance-${index}`,100);
+  assert.equal(many.instances.length,20);assert.equal(new Set(many.instances.map(item=>item.sceneModelInstanceId)).size,20);
+  assert.deepEqual([...new Set(many.instances.map(item=>item.modelVersionId))],['fixed-model']);
+  assert.ok(many.instances.every(item=>item.rootBinding===null&&item.componentBindings.length===0));
+  assert.deepEqual(model,unchangedModel);
 });
 test('a copy is unlocked and clears engineering identity instead of copying equipment links',()=>{
   const source=withModel();source.instances[0].positionLocked=true;

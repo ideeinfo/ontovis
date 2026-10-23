@@ -3,13 +3,36 @@ import test from 'node:test';
 import {ApiError, WorkbenchApi} from '../src/api.ts';
 import {SceneApi} from '../src/sceneApi.ts';
 import {calibrationInput, modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId,
-  resourceFailure, resourceUploadBytes, terrainMetadata, terrainPending, TERRAIN_POLL_MS, validateResourceFile, writeDenial} from '../src/resourceForms.ts';
+  resourceFailure, resourceUploadBytes, terrainMetadata, terrainPending, TERRAIN_POLL_MS, validateResourceFile, writeDenial, placementModelVersion} from '../src/resourceForms.ts';
 import {resourceText} from '../src/resourceMessages.ts';
 
 const modelFields={name:'设备模型',purpose:'equipment',source:'项目提供的合成素材',rights:true};
 const terrainFields={name:'地形',source:'公开源合成测试',license:'测试用途',rights:true,datum:'EGM2008',relativeReference:'',crop:false,bounds:['','','','']};
 const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
 const delayed=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
+
+const versionSummary=(id,time,state='verified')=>({modelVersionId:id,createdAt:time,calibrationState:state,
+  canPlace:state!=='unverified',canPlaceGeographic:state==='verified'});
+test('model selection defaults to the newest calibrated placement version without mutating the catalog',()=>{
+  const versions=[versionSummary('older','2026-10-21'),versionSummary('new-upload','2026-10-23','unverified'),
+    versionSummary('calibrated','2026-10-22'),versionSummary('legacy','2026-10-24','legacy_display')];
+  const asset={versions},before=structuredClone(asset);
+  for(const geographic of [true,false])assert.equal(placementModelVersion(asset,geographic).modelVersionId,'calibrated');
+  assert.deepEqual(asset,before);
+});
+test('an explicitly selected fixed version stays selected even when newer versions appear',()=>{
+  const asset={versions:[versionSummary('latest','2026-10-23'),versionSummary('chosen','2026-10-21'),versionSummary('local-only','2026-10-22','legacy_display')]};
+  assert.equal(placementModelVersion(asset,true,'chosen').modelVersionId,'chosen');
+  assert.equal(placementModelVersion(asset,true,'local-only').canPlaceGeographic,false);
+  assert.equal(placementModelVersion(asset,true,'removed').modelVersionId,'latest');
+});
+test('a model without a usable calibrated version exposes its real state for calibration',()=>{
+  const asset={versions:[versionSummary('unverified','2026-10-23','unverified'),versionSummary('legacy','2026-10-22','legacy_display')]};
+  assert.equal(placementModelVersion(asset,false).modelVersionId,'legacy');
+  const geographic=placementModelVersion(asset,true);
+  assert.equal(geographic.modelVersionId,'unverified');assert.equal(geographic.canPlace,false);
+  assert.equal(placementModelVersion({versions:[]},true),null);
+});
 
 test('GLB and GeoTIFF file validation rejects wrong formats, truncation and hard or server limits before upload',()=>{
   validateResourceFile({name:'asset.GLB',size:24},'model');

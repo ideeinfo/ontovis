@@ -10,7 +10,7 @@ import {ImageryPanel} from './ImageryPanel';
 import {imageryText} from './imageryMessages';
 import type {ImageryVersion} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
-  validateResourceFile, writeDenial, modelPlacementIssue, resourceCalibrationKey} from './resourceForms';
+  validateResourceFile, writeDenial, modelPlacementIssue, placementModelVersion, resourceCalibrationKey, type ModelResourceSelection} from './resourceForms';
 import {resourceText} from './resourceMessages';
 import type {LegacyModelCandidate, LegacyModelCatalog, ModelPurpose, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion} from './resourceTypes';
 import './resourcePanel.css';
@@ -20,10 +20,11 @@ export interface Props {
   onPreview:(version:ProjectModelVersion|null)=>void;onTerrainReady:(version:TerrainVersion)=>void;
   activeTerrainVersion?:TerrainVersion|null;
   onImageryReady?:(value:ImageryVersion)=>void;
+  modelSelection?:ModelResourceSelection|null;onModelSelected?:(value:ModelResourceSelection|null)=>void;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
 
-export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,onImageryReady,geographic=false}:Props) {
+export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,onImageryReady,geographic=false,modelSelection,onModelSelected}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
@@ -44,6 +45,7 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
   const catalogGate=useMemo(()=>new ResourceRequestGate(),[]),detailGate=useMemo(()=>new ResourceRequestGate(),[]),uploadGate=useMemo(()=>new ResourceRequestGate(),[]);
   const legacyGate=useMemo(()=>new ResourceRequestGate(),[]),importGate=useMemo(()=>new ResourceRequestGate(),[]),importId=useRef(new ResourceRequestId());
   const requestId=useRef(new ResourceRequestId()),previewCallback=useRef(onPreview);previewCallback.current=onPreview;
+  const initialSelection=useRef(modelSelection);
   const canUpload=!!catalog?.capabilities.canUpload&&!denied;
   const canCalibrate=!!catalog?.capabilities.canCalibrate&&!!version?.capabilities.canCalibrate&&!denied;
   const selectedAsset=catalog?.items.find(item=>item.modelAssetId===assetId);
@@ -52,6 +54,7 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
     previewCallback.current(null);setUpload(null);setFile(null);setName('');setSource('');setRights(false);setError(null);setUploadError(null);
     setLoading(false);setDetailLoading(false);setUploading(false);setPrivacyEpoch(previous=>previous+1);
     setPrivateUnavailable(true);
+    initialSelection.current=null;onModelSelected?.(null);
     setLegacy(null);setLegacyError(null);setLegacyOpen(false);setExisting(null);setImportError(null);setImporting(false);setLegacyLoading(false);
   }
   function failed(value:unknown,inUpload=false) {
@@ -71,7 +74,10 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
     }catch(value){if(request.isCurrent())failed(value);return null;}
     finally{if(request.isCurrent())setLoading(false);}
   }
-  useEffect(()=>{void readCatalog(undefined,{q:'',purpose:''});return()=>{
+  useEffect(()=>{void readCatalog(undefined,{q:'',purpose:''}).then(revision=>{
+    const selected=initialSelection.current;
+    if(revision&&selected){setAssetId(selected.modelAssetId);void selectVersion(selected.modelAssetId,selected.modelVersionId);}
+  });return()=>{
     catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();previewCallback.current(null);
   };},[client,catalogGate,detailGate,uploadGate,legacyGate,importGate]);
   function changeFilters(q:string,nextPurpose:ModelPurpose|'') {
@@ -80,12 +86,15 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
   }
   function selectAsset(value:string) {
     detailGate.cancel();setDetailLoading(false);setAssetId(value===assetId?null:value);setVersionId('');setVersion(null);onPreview(null);setError(null);
+    const asset=value!==assetId?catalog?.items.find(item=>item.modelAssetId===value):null;
+    if(asset){const selected=placementModelVersion(asset,geographic,modelSelection?.modelAssetId===value?modelSelection.modelVersionId:undefined);
+      if(selected)void selectVersion(value,selected.modelVersionId);}
   }
   async function selectVersion(asset:string,id:string) {
     const request=detailGate.start();setVersionId(id);setVersion(null);onPreview(null);setError(null);
     if(!id){setDetailLoading(false);return;}
     setDetailLoading(true);
-    try {const value=await client.model(asset,id,request.signal);if(request.isCurrent())setVersion(value);}
+    try {const value=await client.model(asset,id,request.signal);if(request.isCurrent()){setVersion(value);onModelSelected?.({modelAssetId:value.modelAssetId,modelVersionId:value.modelVersionId});}}
     catch(value){if(request.isCurrent())failed(value);}
     finally{if(request.isCurrent())setDetailLoading(false);}
   }
@@ -111,6 +120,7 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
   }
   function updated(value:ProjectModelWrite) {
     detailGate.cancel();setAssetId(value.modelAssetId);setVersionId(value.modelVersionId);setVersion(value);onPreview(null);
+    onModelSelected?.({modelAssetId:value.modelAssetId,modelVersionId:value.modelVersionId});
     setCatalog(previous=>previous?{...previous,libraryRevision:value.libraryRevision}:previous);void readCatalog();
   }
   async function updateFormLibrary() {
@@ -158,8 +168,8 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
       {loading&&!catalog&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
       {catalog?.items.length===0&&!loading&&<p className="ov-resource-empty">{t('noModels')}</p>}
       <ul className="ov-resource-model-list">{catalog?.items.map(asset=><li key={asset.modelAssetId}>
-        <button className="ov-resource-row" aria-expanded={assetId===asset.modelAssetId} onClick={()=>selectAsset(asset.modelAssetId)}>{assetId===asset.modelAssetId?<ChevronDown size={14}/>:<ChevronRight size={14}/>}<Box size={15}/><span>{asset.displayName}</span><small>{asset.versions.length}</small></button>
-        {assetId===asset.modelAssetId&&<div className="ov-resource-version-choice"><label>{t('chooseVersion')}<select value={versionId} onChange={event=>void selectVersion(asset.modelAssetId,event.target.value)}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div>}
+        <button className="ov-resource-row" aria-expanded={assetId===asset.modelAssetId} onClick={()=>selectAsset(asset.modelAssetId)}>{assetId===asset.modelAssetId?<ChevronDown size={14}/>:<ChevronRight size={14}/>}<Box size={15}/><span>{asset.displayName}</span></button>
+        {assetId===asset.modelAssetId&&<details className="ov-resource-disclosure"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><p className="ov-resource-caption">{t('modelVersionHint')}</p><label>{t('chooseVersion')}<select value={versionId} onChange={event=>void selectVersion(asset.modelAssetId,event.target.value)}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>}
       </li>)}</ul>
       {catalog?.nextCursor&&<Btn disabled={loading} onClick={()=>void readCatalog(catalog.nextCursor!)}>{t(loading?'loading':'more')}</Btn>}
       {detailLoading&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
