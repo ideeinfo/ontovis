@@ -90,6 +90,12 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         self.assertIn('--terrain-python /data/ontovis/runtime/gis-current/bin/python', service)
         self.assertIn('--terrain-max-upload-bytes 100000000', service)
         self.assertIn('MemoryMax=1536M', service)
+        self.assertNotIn('IPAddressDeny=', service)
+        self.assertNotIn('IPAddressAllow=', service)
+        for restriction in ('User=ontovis', 'NoNewPrivileges=true', 'ProtectSystem=strict',
+                            'ProtectHome=true', 'PrivateTmp=true', 'CapabilityBoundingSet=',
+                            'RestrictAddressFamilies=AF_INET AF_UNIX', 'TasksMax=64', 'LimitNOFILE=256'):
+            self.assertIn(restriction, service)
         self.assertIn('location ^~ /api/demo/ { default_type application/json; return 410', nginx)
         for path in ('data', 'sources', 'models', 'textures'):
             self.assertIn('location /' + path + '/ { return 404; }', nginx)
