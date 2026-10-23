@@ -5,6 +5,7 @@ import {usePreferences} from './Preferences';
 import {Btn,IconBtn} from './Primitives';
 import {PublicGeoWrite,cancelPublicGeo,mapCoordinate,mapPixel,readPublicGeo,startPublicGeo,validPublicGeo,type PublicGeoJob,type PublicGeoResult} from './publicGeoApi';
 import {publicGeoFailure,publicGeoMessages} from './publicGeoMessages';
+import {tileLoadResult,visibleTileFailures} from './mapTileState';
 import './publicGeoData.css';
 
 const pendingJobs=new WeakMap<WorkbenchApi,{revision:string;id:string}>();
@@ -16,18 +17,21 @@ function QueryMap({longitude,latitude,radius,onPick,disabled}:{longitude:number;
  const {locale}=usePreferences(),t=publicGeoMessages[locale];
  const [view,setView]=useState({longitude:Number.isFinite(longitude)&&longitude>-180&&longitude<180?longitude:105,latitude:Number.isFinite(latitude)&&latitude>=-79.8&&latitude<=83.8?latitude:35,zoom:6});
  const [width,setWidth]=useState(400);const box=useRef<HTMLDivElement>(null),height=230;
- const [mapFailed,setMapFailed]=useState(false);
- useEffect(()=>setMapFailed(false),[view.longitude,view.latitude,view.zoom]);
+ const [failedTiles,setFailedTiles]=useState<ReadonlySet<string>>(()=>new Set());
  useEffect(()=>{if(!box.current)return;const observer=new ResizeObserver(entries=>setWidth(entries[0].contentRect.width));observer.observe(box.current);return()=>observer.disconnect();},[]);
  const [cx,cy]=mapPixel(view.longitude,view.latitude,view.zoom),tiles=[];
  const nx=2**view.zoom;
- for(let y=Math.floor((cy-height/2)/256);y<=Math.floor((cy+height/2)/256);y++)for(let x=Math.floor((cx-width/2)/256);x<=Math.floor((cx+width/2)/256);x++)if(y>=0&&y<nx)tiles.push({x,y,urlX:((x%nx)+nx)%nx});
+ for(let y=Math.floor((cy-height/2)/256);y<=Math.floor((cy+height/2)/256);y++)for(let x=Math.floor((cx-width/2)/256);x<=Math.floor((cx+width/2)/256);x++)if(y>=0&&y<nx)tiles.push({x,y,url:`https://tile.openstreetmap.org/${view.zoom}/${((x%nx)+nx)%nx}/${y}.png`});
+ const visibleTiles=new Set(tiles.map(tile=>tile.url)),visibleKey=[...visibleTiles].sort().join('\n'),visibleTilesRef=useRef<ReadonlySet<string>>(visibleTiles);
+ visibleTilesRef.current=visibleTiles;
+ useEffect(()=>setFailedTiles(failures=>visibleTileFailures(failures,visibleTilesRef.current)),[visibleKey]);
+ const mapFailed=[...failedTiles].some(url=>visibleTiles.has(url));
  const marker=Number.isFinite(longitude)&&Number.isFinite(latitude)&&longitude>-180&&longitude<180&&latitude>=-79.8&&latitude<=83.8?mapPixel(longitude,latitude,view.zoom):null;
  const metersPerPixel=156543.03392*Math.cos(view.latitude*Math.PI/180)/2**view.zoom;
  const move=(dx:number,dy:number)=>{const [lon,lat]=mapCoordinate(cx+dx,cy+dy,view.zoom);setView(v=>({...v,longitude:Math.max(-179.9,Math.min(179.9,lon)),latitude:Math.max(-79.8,Math.min(83.8,lat))}));};
  useEffect(()=>{if(Number.isFinite(longitude)&&Number.isFinite(latitude)&&longitude>-180&&longitude<180&&latitude>=-79.8&&latitude<=83.8)setView(v=>({...v,longitude,latitude}));},[longitude,latitude]);
  return <div className="ov-public-map" ref={box} role="application" aria-label={t.map} tabIndex={0} onKeyDown={e=>{if(disabled)return;const keys:Record<string,[number,number]>={ArrowLeft:[-100,0],ArrowRight:[100,0],ArrowUp:[0,-100],ArrowDown:[0,100]};if(keys[e.key]){e.preventDefault();move(...keys[e.key]);}}} onClick={e=>{if(disabled)return;const rect=e.currentTarget.getBoundingClientRect();const [lon,lat]=mapCoordinate(cx+e.clientX-rect.left-width/2,cy+e.clientY-rect.top-height/2,view.zoom);if(lon>-180&&lon<180&&lat>=-79.8&&lat<=83.8)onPick(lon,lat);}}>
-  {tiles.map(tile=><img key={`${view.zoom}/${tile.x}/${tile.y}`} src={`https://tile.openstreetmap.org/${view.zoom}/${tile.urlX}/${tile.y}.png`} referrerPolicy="strict-origin-when-cross-origin" width="256" height="256" alt="" draggable={false} onError={()=>setMapFailed(true)} style={{left:tile.x*256-cx+width/2,top:tile.y*256-cy+height/2}}/>)}
+  {tiles.map(tile=><img key={`${view.zoom}/${tile.x}/${tile.y}`} src={tile.url} referrerPolicy="strict-origin-when-cross-origin" width="256" height="256" alt="" draggable={false} onError={()=>setFailedTiles(failures=>tileLoadResult(failures,visibleTilesRef.current,tile.url,false))} onLoad={()=>setFailedTiles(failures=>tileLoadResult(failures,visibleTilesRef.current,tile.url,true))} style={{left:tile.x*256-cx+width/2,top:tile.y*256-cy+height/2}}/>)}
   {marker&&<div className="ov-public-map-radius" style={{left:marker[0]-cx+width/2,top:marker[1]-cy+height/2,width:Math.max(4,radius*2000/metersPerPixel),height:Math.max(4,radius*2000/metersPerPixel)}}><span/></div>}
   {mapFailed&&<span className="ov-public-map-failure" role="status">{locale==='zh'?'底图暂不可用，仍可输入经纬度。':'Map unavailable. You can still enter coordinates.'}</span>}
   <div className="ov-public-map-controls" onClick={e=>e.stopPropagation()}><IconBtn label={t.zoomIn} disabled={disabled||view.zoom>=15} onClick={()=>setView(v=>({...v,zoom:v.zoom+1}))}><Plus size={15}/></IconBtn><IconBtn label={t.zoomOut} disabled={disabled||view.zoom<=2} onClick={()=>setView(v=>({...v,zoom:v.zoom-1}))}><Minus size={15}/></IconBtn><IconBtn label={locale==='zh'?'向西移动':'Move west'} disabled={disabled} onClick={()=>move(-150,0)}><ArrowLeft size={15}/></IconBtn><IconBtn label={locale==='zh'?'向东移动':'Move east'} disabled={disabled} onClick={()=>move(150,0)}><ArrowRight size={15}/></IconBtn><IconBtn label={locale==='zh'?'向北移动':'Move north'} disabled={disabled} onClick={()=>move(0,-100)}><ArrowUp size={15}/></IconBtn><IconBtn label={locale==='zh'?'向南移动':'Move south'} disabled={disabled} onClick={()=>move(0,100)}><ArrowDown size={15}/></IconBtn></div>
