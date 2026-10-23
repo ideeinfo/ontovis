@@ -30,6 +30,20 @@ const imagery={imageryVersionId:'image-1',contentRevision:'revision-1',expectedR
 const ref={imageryVersionId:imagery.imageryVersionId,expectedContentRevision:imagery.contentRevision,expectedReportSha256:imagery.expectedReportSha256,visible:true};
 const terrainVersion={terrainVersionId:'terrain-1',expectedReportSha256:'c'.repeat(64),report:{mesh:{frame}}};
 function mesh(){const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',points([0,2,0,40,2,0,0,2,40]));geometry.setIndex([0,2,1]);return new THREE.Mesh(geometry,new THREE.MeshBasicMaterial());}
+test('pending terrain or imagery metadata waits without content reads and attaches when both arrive',async()=>{
+  const previous=globalThis.createImageBitmap;let reads=0,closed=0;
+  globalThis.createImageBitmap=async()=>({width:4,height:4,close(){closed++;}});
+  const terrain=mesh(),layer=new SceneImageryLayer({async imageryContent(){reads++;return new Blob();}}),signal=new AbortController().signal;
+  try{
+    await layer.sync(null,null,imagery,ref,signal);
+    await layer.sync(terrain,null,imagery,ref,signal);
+    await layer.sync(terrain,terrainVersion,null,ref,signal);
+    assert.equal(reads,0);assert.equal(terrain.children.length,0);
+    await layer.sync(terrain,terrainVersion,imagery,ref,signal);
+    assert.equal(reads,1);assert.equal(terrain.children.length,1);
+    layer.dispose();assert.equal(closed,1);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();terrain.geometry.dispose();terrain.material.dispose();}
+});
 test('real Three overlay reuses fixed vertex values, preserves base geometry and disposes owned material/texture/bitmap once',async()=>{
   let closed=0,reads=0;const previous=globalThis.createImageBitmap;globalThis.createImageBitmap=async()=>({width:4,height:4,close(){closed++;}});
   const terrain=mesh(),base=terrain.geometry.getAttribute('position');let baseDisposed=0;terrain.geometry.addEventListener('dispose',()=>baseDisposed++);

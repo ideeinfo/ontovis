@@ -249,7 +249,7 @@ export function SceneViewport(props:SceneViewportProps) {
         const version=state.terrainVersion,reference=state.snapshot.terrain;
         const clearTerrain=()=>{if(terrain){scene.remove(terrain);terrain=null;}terrainKey='';};
         if(!reference){clearTerrain();return;}
-        if(!version){clearTerrain();throw new ApiError(503,'PROCESSING_UNAVAILABLE');}
+        if(!version){clearTerrain();return;}
         if(state.snapshot.coordinateFrame.mode!=='projected_site'||reference.terrainVersionId!==version.terrainVersionId
           ||reference.expectedContentRevision!==version.contentRevision){clearTerrain();throw new ApiError(409,'RESOURCE_CHANGED');}
         const key=JSON.stringify([version.terrainVersionId,version.contentRevision,version.expectedReportSha256]);
@@ -292,7 +292,7 @@ export function SceneViewport(props:SceneViewportProps) {
       catch(value){if(!stale()&&ticket===generation)report(value);}
       if(stale()||ticket!==generation)return;
       setImageryPartial(imageryLayer.partial());
-      resourcesLoading=!!state.snapshot.imagery&&!state.imageryVersion;setReading(resourcesLoading);appearance();
+      resourcesLoading=!!state.snapshot.terrain&&!state.terrainVersion||!!state.snapshot.imagery&&!state.imageryVersion;setReading(resourcesLoading);appearance();
       if(focusPending!==undefined){const id=focusPending;focusPending=undefined;fit(id);}
     };
     const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
