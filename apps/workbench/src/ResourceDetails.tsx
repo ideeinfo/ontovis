@@ -9,14 +9,14 @@ import {calibrationInput, privateDenial, ResourceRequestGate, ResourceRequestId,
 import {resourceText} from './resourceMessages';
 
 interface Props {
-  api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean; geographic?: boolean;
+  api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean; geographic?: boolean; compact?:boolean;
   onPreview: () => void; onPlace: () => void;canReplace?:boolean;onReplace?:()=>void;
   onUpdated: (version: ProjectModelWrite) => void; onWriteDenied: () => void; onPrivateDenied: () => void;
   onRefreshLibrary: () => Promise<string|null>;
 }
 
 export function ResourceDetails({api, version, libraryRevision, canPlace, canCalibrate,
-    onPreview, onPlace, canReplace, onReplace, geographic=false, onUpdated, onWriteDenied, onPrivateDenied, onRefreshLibrary}: Props) {
+    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, onUpdated, onWriteDenied, onPrivateDenied, onRefreshLibrary}: Props) {
   const {locale} = usePreferences(), t = (key: Parameters<typeof resourceText>[1]) => resourceText(locale,key);
   const [uses,setUses] = useState<ModelUses|null>(null), [usesOpen,setUsesOpen] = useState(false);
   const [usesBusy,setUsesBusy] = useState(false), [usesError,setUsesError] = useState<unknown>(null);
@@ -73,15 +73,15 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
   const counts=(value:Pick<ModelUses,'currentInstanceCount'|'retainedInstanceCount'|'retainedReferenceCount'>)=>resourceText(locale,'useCounts',{
     current:value.currentInstanceCount,retained:value.retainedInstanceCount,references:value.retainedReferenceCount});
   return <section className="ov-resource-details" aria-label={version.displayName}>
-    <div className="ov-resource-title"><strong>{version.displayName}</strong><Badge tone={version.calibrationState==='verified'?'success':'warning'}>{t(resourceCalibrationKey(version.calibrationState))}</Badge></div>
+    {!compact&&<div className="ov-resource-title"><strong>{version.displayName}</strong><Badge tone={version.calibrationState==='verified'?'success':'warning'}>{t(resourceCalibrationKey(version.calibrationState))}</Badge></div>}
     {version.components.some(item=>item.geometryQuality==='proxy_schematic')&&<p className="ov-resource-caption">{t('proxyGeometry')}</p>}
     <div className="ov-resource-actions">
-      <Btn onClick={onPreview}><Eye size={14}/>{t('preview')}</Btn>
+      {!compact&&<><Btn onClick={onPreview}><Eye size={14}/>{t('preview')}</Btn>
       <Btn primary disabled={!canPlace||!usable} title={!usable?placementHint:!canPlace?t('sceneEditRequired'):t('dragPlace')}
         draggable={canPlace&&usable} onDragStart={event=>{
           if(!canPlace||!usable){event.preventDefault();return;}
           event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:version.modelAssetId,modelVersionId:version.modelVersionId}));
-        }} onClick={onPlace}><MapPin size={14}/>{t('place')}</Btn>
+        }} onClick={onPlace}><MapPin size={14}/>{t('place')}</Btn></>}
       {onReplace&&<Btn disabled={!canReplace||!usable} title={!usable?placementHint:undefined} onClick={onReplace}>{t('replaceSelected')}</Btn>}
       {canCalibrate&&<Btn onClick={openCalibration}>{t('calibrate')}</Btn>}
     </div>

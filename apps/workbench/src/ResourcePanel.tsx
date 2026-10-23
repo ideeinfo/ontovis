@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
-import {Box, ChevronDown, ChevronRight, FileUp, Plus, RefreshCw, Search} from 'lucide-react';
+import {Box, Eye, FileUp, MapPin, Plus, RefreshCw, Search} from 'lucide-react';
 import {cancelled, type WorkbenchApi} from './api';
 import {Badge, Btn, IconBtn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
@@ -7,6 +7,8 @@ import {SceneApi} from './sceneApi';
 import {ResourceDetails} from './ResourceDetails';
 import {TerrainImport} from './TerrainImport';
 import {ImageryPanel} from './ImageryPanel';
+import {PublicGeoDataPanel} from './PublicGeoDataPanel';
+import {publicGeoMessages} from './publicGeoMessages';
 import {imageryText} from './imageryMessages';
 import type {ImageryVersion} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
@@ -20,14 +22,16 @@ export interface Props {
   onPreview:(version:ProjectModelVersion|null)=>void;onTerrainReady:(version:TerrainVersion)=>void;
   activeTerrainVersion?:TerrainVersion|null;
   onImageryReady?:(value:ImageryVersion)=>void;
+  canAcquire?:boolean;
   modelSelection?:ModelResourceSelection|null;onModelSelected?:(value:ModelResourceSelection|null)=>void;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
 
-export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,onImageryReady,geographic=false,modelSelection,onModelSelected}:Props) {
+export function ResourcePanel({api,canPlace,canAcquire=canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,onImageryReady,geographic=false,modelSelection,onModelSelected}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
+  const [publicAcquisition,setPublicAcquisition]=useState(false),[resourceRefresh,setResourceRefresh]=useState(0);
   const [query,setQuery]=useState(''),[purpose,setPurpose]=useState<ModelPurpose|''>('');
   const [filters,setFilters]=useState<{q:string;purpose:ModelPurpose|''}>({q:'',purpose:''});
   const [loading,setLoading]=useState(false),[error,setError]=useState<unknown>(null),[denied,setDenied]=useState(false);
@@ -45,11 +49,14 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
   const catalogGate=useMemo(()=>new ResourceRequestGate(),[]),detailGate=useMemo(()=>new ResourceRequestGate(),[]),uploadGate=useMemo(()=>new ResourceRequestGate(),[]);
   const legacyGate=useMemo(()=>new ResourceRequestGate(),[]),importGate=useMemo(()=>new ResourceRequestGate(),[]),importId=useRef(new ResourceRequestId());
   const requestId=useRef(new ResourceRequestId()),previewCallback=useRef(onPreview);previewCallback.current=onPreview;
-  const initialSelection=useRef(modelSelection);
+  const initialSelection=useRef(modelSelection),cardIntent=useRef(0);
+  const cardCallbacks=useRef({canPlace,onPreview,onPlace});cardCallbacks.current={canPlace,onPreview,onPlace};
   const canUpload=!!catalog?.capabilities.canUpload&&!denied;
   const canCalibrate=!!catalog?.capabilities.canCalibrate&&!!version?.capabilities.canCalibrate&&!denied;
   const selectedAsset=catalog?.items.find(item=>item.modelAssetId===assetId);
   function clearPrivate() {
+    cardIntent.current++;
+    setPublicAcquisition(false);setResourceRefresh(0);
     catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();setCatalog(null);setVersion(null);setAssetId(null);setVersionId('');
     previewCallback.current(null);setUpload(null);setFile(null);setName('');setSource('');setRights(false);setError(null);setUploadError(null);
     setLoading(false);setDetailLoading(false);setUploading(false);setPrivacyEpoch(previous=>previous+1);
@@ -78,25 +85,39 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
     const selected=initialSelection.current;
     if(revision&&selected){setAssetId(selected.modelAssetId);void selectVersion(selected.modelAssetId,selected.modelVersionId);}
   });return()=>{
-    catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();previewCallback.current(null);
+    cardIntent.current++;catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();previewCallback.current(null);
   };},[client,catalogGate,detailGate,uploadGate,legacyGate,importGate]);
   function changeFilters(q:string,nextPurpose:ModelPurpose|'') {
+    cardIntent.current++;
     const next={q:q.trim(),purpose:nextPurpose};setFilters(next);setVersion(null);setVersionId('');setAssetId(null);
     detailGate.cancel();setDetailLoading(false);onPreview(null);void readCatalog(undefined,next);
   }
   function selectAsset(value:string) {
+    cardIntent.current++;
     detailGate.cancel();setDetailLoading(false);setAssetId(value===assetId?null:value);setVersionId('');setVersion(null);onPreview(null);setError(null);
     const asset=value!==assetId?catalog?.items.find(item=>item.modelAssetId===value):null;
     if(asset){const selected=placementModelVersion(asset,geographic,modelSelection?.modelAssetId===value?modelSelection.modelVersionId:undefined);
       if(selected)void selectVersion(value,selected.modelVersionId);}
   }
-  async function selectVersion(asset:string,id:string) {
+  async function selectVersion(asset:string,id:string):Promise<ProjectModel|null> {
     const request=detailGate.start();setVersionId(id);setVersion(null);onPreview(null);setError(null);
-    if(!id){setDetailLoading(false);return;}
+    if(!id){setDetailLoading(false);return null;}
     setDetailLoading(true);
-    try {const value=await client.model(asset,id,request.signal);if(request.isCurrent()){setVersion(value);onModelSelected?.({modelAssetId:value.modelAssetId,modelVersionId:value.modelVersionId});}}
+    try {const value=await client.model(asset,id,request.signal);if(request.isCurrent()){setVersion(value);onModelSelected?.({modelAssetId:value.modelAssetId,modelVersionId:value.modelVersionId});return value;}}
     catch(value){if(request.isCurrent())failed(value);}
     finally{if(request.isCurrent())setDetailLoading(false);}
+    return null;
+  }
+  async function activateCard(asset:ProjectModelAsset,action:'preview'|'place') {
+    const choice=placementModelVersion(asset,geographic,assetId===asset.modelAssetId?versionId:
+      modelSelection?.modelAssetId===asset.modelAssetId?modelSelection.modelVersionId:undefined);
+    if(!choice)return;
+    const ticket=++cardIntent.current;setAssetId(asset.modelAssetId);
+    const value=version?.modelVersionId===choice.modelVersionId?version:await selectVersion(asset.modelAssetId,choice.modelVersionId);
+    if(!value||ticket!==cardIntent.current)return;
+    const callbacks=cardCallbacks.current;
+    if(action==='preview')callbacks.onPreview(value);
+    else if(callbacks.canPlace&&!modelPlacementIssue(value,geographic)){callbacks.onPreview(null);callbacks.onPlace(value);}
   }
   function openUpload(asset?:ProjectModelAsset) {
     if(!catalog||!canUpload)return;
@@ -150,10 +171,11 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
   if(privateUnavailable)return <div className="ov-resource-panel"/>;
   return <div className="ov-resource-panel">
     <div className="ov-resource-tabs" role="tablist" aria-label={t('resources')}>
-      <button id="ov-resource-models-tab" role="tab" aria-selected={tab==='models'} aria-controls="ov-resource-models" onClick={()=>setTab('models')}>{t('models')}</button>
-      <button id="ov-resource-terrain-tab" role="tab" aria-selected={tab==='terrains'} aria-controls="ov-resource-terrains" onClick={()=>setTab('terrains')}>{t('terrains')}</button>
-      <button id="ov-resource-imagery-tab" role="tab" aria-selected={tab==='imagery'} aria-controls="ov-resource-imagery" onClick={()=>setTab('imagery')}>{imageryText(locale,'imagery')}</button>
+      <button id="ov-resource-models-tab" role="tab" aria-selected={tab==='models'} aria-controls="ov-resource-models" onClick={()=>{cardIntent.current++;setTab('models');}}>{t('models')}</button>
+      <button id="ov-resource-terrain-tab" role="tab" aria-selected={tab==='terrains'} aria-controls="ov-resource-terrains" onClick={()=>{cardIntent.current++;setTab('terrains');}}>{t('terrains')}</button>
+      <button id="ov-resource-imagery-tab" role="tab" aria-selected={tab==='imagery'} aria-controls="ov-resource-imagery" onClick={()=>{cardIntent.current++;setTab('imagery');}}>{imageryText(locale,'imagery')}</button>
     </div>
+    <div className="ov-resource-public-entry"><Btn disabled={!canAcquire||denied} onClick={()=>setPublicAcquisition(true)}>{publicGeoMessages[locale].title}</Btn></div>
     <section id="ov-resource-models" role="tabpanel" aria-labelledby="ov-resource-models-tab" hidden={tab!=='models'} className="ov-resource-tab-body">
       <form className="ov-resource-search" onSubmit={event=>{event.preventDefault();changeFilters(query,purpose);}}>
         <input aria-label={t('search')} placeholder={t('search')} value={query} maxLength={120} onChange={event=>setQuery(event.target.value)}/>
@@ -167,17 +189,33 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
       {!!error&&<p className="ov-resource-error" role="alert">{resourceFailure(error,locale)}</p>}
       {loading&&!catalog&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
       {catalog?.items.length===0&&!loading&&<p className="ov-resource-empty">{t('noModels')}</p>}
-      <ul className="ov-resource-model-list">{catalog?.items.map(asset=><li key={asset.modelAssetId}>
-        <button className="ov-resource-row" aria-expanded={assetId===asset.modelAssetId} onClick={()=>selectAsset(asset.modelAssetId)}>{assetId===asset.modelAssetId?<ChevronDown size={14}/>:<ChevronRight size={14}/>}<Box size={15}/><span>{asset.displayName}</span></button>
-        {assetId===asset.modelAssetId&&<details className="ov-resource-disclosure"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><p className="ov-resource-caption">{t('modelVersionHint')}</p><label>{t('chooseVersion')}<select value={versionId} onChange={event=>void selectVersion(asset.modelAssetId,event.target.value)}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>}
-      </li>)}</ul>
+      <ul className="ov-resource-model-list">{catalog?.items.map(asset=>{
+        const active=assetId===asset.modelAssetId,choice=placementModelVersion(asset,geographic,active?versionId:
+          modelSelection?.modelAssetId===asset.modelAssetId?modelSelection.modelVersionId:undefined);
+        const usable=!!choice&&choice.canPlace&&(!geographic||choice.canPlaceGeographic);
+        const waiting=active&&detailLoading;
+        return <li className={`ov-resource-card ${active?'selected':''}`} key={asset.modelAssetId} aria-label={asset.displayName}>
+          <button type="button" className="ov-resource-card-heading" aria-expanded={active} onClick={()=>selectAsset(asset.modelAssetId)}>
+            <span className="ov-resource-card-icon" title={t('genericModelIcon')}><Box size={30} aria-hidden="true"/><span>{t('genericIcon')}</span></span>
+            <span className="ov-resource-card-label"><strong>{asset.displayName}</strong><span className={`ov-resource-card-state ${choice?.calibrationState==='verified'?'verified':'pending'}`}>{choice?t(resourceCalibrationKey(choice.calibrationState)):t('noModelVersion')}</span></span>
+          </button>
+          <div className="ov-resource-card-actions">
+            <Btn disabled={!choice||waiting} onClick={()=>void activateCard(asset,'preview')}><Eye size={14}/>{t('preview')}</Btn>
+            <Btn disabled={!canPlace||!usable||waiting} title={!usable?t(geographic?'geographicCalibrationRequired':'calibrationRequired'):!canPlace?t('sceneEditRequired'):t('dragPlace')}
+              draggable={canPlace&&usable&&!waiting} onDragStart={event=>{
+                if(!canPlace||!usable||!choice||waiting){event.preventDefault();return;}
+                event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:asset.modelAssetId,modelVersionId:choice.modelVersionId}));
+              }} onClick={()=>void activateCard(asset,'place')}><MapPin size={14}/>{t('place')}</Btn>
+          </div>
+          <details className="ov-resource-disclosure ov-resource-card-history"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><p className="ov-resource-caption">{t('modelVersionHint')}</p><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,event.target.value);}}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>
+          {waiting&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
+          {active&&version&&<details className="ov-resource-disclosure ov-resource-card-details"><summary>{t('modelDetails')}</summary><ResourceDetails compact key={version.modelVersionId} api={client} version={version} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
+            canReplace={canReplace&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
+            onPreview={()=>onPreview(version)} onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
+            onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/></details>}
+        </li>;
+      })}</ul>
       {catalog?.nextCursor&&<Btn disabled={loading} onClick={()=>void readCatalog(catalog.nextCursor!)}>{t(loading?'loading':'more')}</Btn>}
-      {detailLoading&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
-      {version&&<ResourceDetails key={version.modelVersionId} api={client} version={version} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
-        canReplace={canReplace&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
-        onPreview={()=>onPreview(version)}
-        onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
-        onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/>} 
       {!version&&!detailLoading&&selectedAsset&&<p className="ov-resource-caption">{t('chooseModel')}</p>}
       <details className="ov-resource-disclosure" open={legacyOpen} onToggle={event=>{const value=event.currentTarget.open;setLegacyOpen(value);if(value&&!legacy&&!legacyLoading)void readLegacy();}}><summary>{t('existingModels')}</summary>
         {legacyLoading&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
@@ -190,11 +228,16 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
       </details>
     </section>
     <section id="ov-resource-terrains" role="tabpanel" aria-labelledby="ov-resource-terrain-tab" hidden={tab!=='terrains'} className="ov-resource-tab-body">
-      <TerrainImport key={privacyEpoch} api={client} writeBlocked={denied} canUse={canPlace} activeTerrainVersion={activeTerrainVersion} onTerrainReady={onTerrainReady} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>
+      <TerrainImport key={`${privacyEpoch}:${resourceRefresh}`} api={client} writeBlocked={denied} canUse={canPlace} activeTerrainVersion={activeTerrainVersion} onTerrainReady={onTerrainReady} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>
     </section>
     <section id="ov-resource-imagery" role="tabpanel" aria-labelledby="ov-resource-imagery-tab" hidden={tab!=='imagery'} className="ov-resource-tab-body">
-      {tab==='imagery'&&<ImageryPanel api={client} writeBlocked={denied} canUse={canPlace&&geographic&&!!onImageryReady} onUse={value=>onImageryReady?.(value)} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>}
+      {tab==='imagery'&&<ImageryPanel key={resourceRefresh} api={client} writeBlocked={denied} canUse={canPlace&&geographic&&!!onImageryReady} onUse={value=>onImageryReady?.(value)} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>}
     </section>
+    {publicAcquisition&&<Modal title={publicGeoMessages[locale].title} description={publicGeoMessages[locale].hint} onClose={()=>setPublicAcquisition(false)}>
+      <PublicGeoDataPanel api={api} canWrite={canAcquire&&!denied} onClose={()=>setPublicAcquisition(false)}
+        initialCenter={activeTerrainVersion?{longitude:(activeTerrainVersion.report.source.samplingCentreCoverageWgs84[0]+activeTerrainVersion.report.source.samplingCentreCoverageWgs84[2])/2,latitude:(activeTerrainVersion.report.source.samplingCentreCoverageWgs84[1]+activeTerrainVersion.report.source.samplingCentreCoverageWgs84[3])/2}:undefined}
+        onImported={result=>{setResourceRefresh(value=>value+1);setTab(result.terrainVersionId?'terrains':'imagery');}}/>
+    </Modal>}
     {upload&&<Modal title={t(upload.asset?'appendVersion':'uploadModel')} description={t('glbLimit')} onClose={()=>{if(!uploading)setUpload(null);}}><div className="ov-resource-form">
       <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);setRights(false);setUploadError(null);requestId.current.reset();}}/></label>
       <p className="ov-resource-caption">{t('glbLimit')}</p>

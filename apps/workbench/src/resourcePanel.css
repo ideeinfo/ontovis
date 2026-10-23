@@ -65,3 +65,23 @@
 .ov-resource-job{border:1px solid var(--borderSubtle);background:var(--surfaceRaised);border-radius:6px;padding:8px;margin:12px 0}
 .ov-resource-job>.ov-resource-title{margin-bottom:4px}
 @media(max-width:600px){.ov-resource-form-grid{grid-template-columns:minmax(0,1fr)}.ov-resource-actions{gap:4px}}
+
+.ov-resource-model-list{display:flex;flex-direction:column;gap:10px}
+.ov-resource-card{border:1px solid var(--borderSubtle);border-radius:var(--radius,6px);padding:10px;background:var(--surface);min-width:0}
+.ov-resource-card.selected{border-color:var(--borderControl);box-shadow:inset 0 0 0 1px var(--selected)}
+.ov-resource-card-heading{display:flex;align-items:center;gap:8px;width:100%;padding:0;border:0;background:transparent;text-align:left;color:var(--text);font:inherit;cursor:pointer;min-width:0}
+.ov-resource-card-icon{width:56px;height:62px;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:var(--surfaceRaised);color:var(--textSecondary);border-radius:4px}
+.ov-resource-card-icon>span{font-size:11px;line-height:1.2}
+.ov-resource-card-label{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1;line-height:1.5}
+.ov-resource-card-label>strong{font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.ov-resource-card-state{font-size:11px;color:var(--textSecondary)}.ov-resource-card-state.verified{color:var(--statusNormal)}.ov-resource-card-state.pending{color:var(--statusWarning)}
+.ov-resource-card-actions{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0}
+.ov-resource-panel .ov-resource-card-actions>.ov-btn{padding:4px 0;border:0;background:transparent;color:var(--primary);font-size:13px;white-space:nowrap;flex:0 1 auto}
+.ov-resource-panel .ov-resource-card-actions>.ov-btn:disabled{color:var(--textSecondary);opacity:.55}
+.ov-resource-card-history,.ov-resource-card-details{padding:7px 0 0;margin:0}
+.ov-resource-card-history>summary,.ov-resource-card-details>summary{font-size:11px;min-height:20px;line-height:20px}
+.ov-resource-card-details{margin-top:6px}.ov-resource-card .ov-resource-version-choice{padding:8px 0}
+.ov-resource-card .ov-resource-details{border:0;padding:0;margin:8px 0 0}
+.ov-resource-card .ov-resource-actions{gap:6px}.ov-resource-card .ov-resource-actions>.ov-btn{white-space:normal;overflow-wrap:normal;word-break:normal}
+
+.ov-resource-public-entry{padding:8px 10px;border-bottom:1px solid var(--border)}.ov-resource-public-entry .ov-btn{width:100%;white-space:normal;line-height:1.5}
