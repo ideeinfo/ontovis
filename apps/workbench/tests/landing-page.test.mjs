@@ -78,9 +78,9 @@ function assertPublicBoundary(html){
 
 test('the Chinese public entry contains the three introductions and local assets without engineering or credential surfaces',()=>{
   const html=renderPage(),visible=text(html);
-  assert.match(visible,/从全局， 到每一个构件。/);
-  assert.ok(visible.includes('连接场景、设备与工程资料，让现场信息在空间中清晰呈现。'));
-  assert.deepEqual(featureTitles(html),['搭建场景，布置模型','找到设备，深入构件','关联资料，查阅图纸']);
+  assert.match(visible,/看清现场， 让协作更有依据。/);
+  assert.ok(visible.includes('将工业资产放回真实空间，让团队更快理解现场、找到问题所在，并从同一份工程依据开始协作。'));
+  assert.deepEqual(featureTitles(html),['更快理解现场','减少查找与沟通','让判断有据可查']);
   assert.match(html,/<button\b[^>]*>登录<svg\b/);
   assert.match(html,/<nav\b[^>]*aria-label="首页导航"/);
   assertPoster(html);assertPublicBoundary(html);
@@ -89,15 +89,15 @@ test('the Chinese public entry contains the three introductions and local assets
 
 test('the English preference renders the actual translated introduction and all three capability descriptions',()=>{
   const html=renderPage({locale:'en'}),visible=text(html);
-  assert.ok(visible.includes('From the big picture. To every component.'));
-  assert.ok(visible.includes('Connect scenes, equipment and engineering documents. See site information in its spatial context.'));
-  assert.deepEqual(featureTitles(html),['Build scenes. Place models.','Find equipment. Explore components.','Connect documents. Read drawings.']);
-  for(const description of ['Import terrain and model resources, then arrange equipment instances in a scene.',
-    'Browse the equipment hierarchy and locate devices and their components in the model.',
-    'Open associated drawings from an object and relate engineering documents to spatial locations.'])assert.ok(visible.includes(description));
+  assert.ok(visible.includes('See the site clearly. Collaborate with context.'));
+  assert.ok(visible.includes('Put industrial assets in their spatial context so teams can understand the site, locate issues and work from shared engineering evidence.'));
+  assert.deepEqual(featureTitles(html),['Understand the site sooner','Spend less time searching and explaining','Keep decisions connected to evidence']);
+  for(const description of ['See terrain, asset locations and spatial relationships together so remote teams can build a shared understanding.',
+    'Move from the site to equipment and components, reducing repeated searches across catalogs, models and documents.',
+    'Check drawings and sources around the same engineering object, connecting spatial observations with the evidence behind them.'])assert.ok(visible.includes(description));
   assert.match(html,/<button\b[^>]*>Sign in<svg\b/);
   assert.match(html,/<nav\b[^>]*aria-label="Homepage navigation"/);
-  assert.doesNotMatch(visible,/搭建场景，布置模型|找到设备，深入构件|关联资料，查阅图纸/);
+  assert.doesNotMatch(visible,/更快理解现场|减少查找与沟通|让判断有据可查/);
   assertPoster(html);assertPublicBoundary(html);
 });
 

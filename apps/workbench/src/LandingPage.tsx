@@ -7,39 +7,38 @@ import './landing.css';
 
 const copy = {
   zh: {
-    navigation:'首页导航', overview:'功能概览', signIn:'登录', language:'切换为 English', theme:'主题',
+    navigation:'首页导航', overview:'应用价值', signIn:'登录', language:'切换为 English', theme:'主题',
     light:'浅色', dark:'深色', system:'跟随系统', eyebrow:'工业资产可视化',
-    title:<>从全局，<br/>到每一个构件。</>,
-    intro:'连接场景、设备与工程资料，让现场信息在空间中清晰呈现。',
+    title:<>看清现场，<br/>让协作更有依据。</>,
+    intro:'将工业资产放回真实空间，让团队更快理解现场、找到问题所在，并从同一份工程依据开始协作。',
     discover:'了解 ONTOVis', scene:'风电运维场景',
-    sectionTitle:<>在同一空间中，<br/>理解设备与现场。</>,
-    sectionIntro:'从场景搭建到构件定位，再到图纸查阅，让分散的信息彼此关联。',
+    sectionTitle:<>减少信息断点，<br/>缩短理解与响应的距离。</>,
+    sectionIntro:'为规划、运维与工程协同提供共同的现场语境，让分散在不同人员和资料中的信息更容易被理解和核对。',
     features:[
-      {title:'搭建场景，布置模型', description:'导入地形与模型资源，在场景中布置设备实例。'},
-      {title:'找到设备，深入构件', description:'沿设备层级浏览对象，在模型中定位设备与内部构件。'},
-      {title:'关联资料，查阅图纸', description:'从当前对象查看关联图纸，让空间位置与工程资料相互印证。'},
+      {title:'更快理解现场', description:'把地形、设备位置与空间关系放在一起，帮助远程团队形成一致的现场认知。'},
+      {title:'减少查找与沟通', description:'从场站走到设备、从设备深入构件，减少在目录、模型和资料之间反复寻找与解释。'},
+      {title:'让判断有据可查', description:'围绕同一工程对象核对图纸与来源，把空间观察与工程依据联系起来，让协作过程更清晰。'},
     ],
     footer:'工业资产可视化与工程协同', top:'返回顶部', pause:'暂停背景视频', play:'播放背景视频',
   },
   en: {
-    navigation:'Homepage navigation', overview:'Capabilities', signIn:'Sign in', language:'切换为简体中文', theme:'Theme',
+    navigation:'Homepage navigation', overview:'Value', signIn:'Sign in', language:'切换为简体中文', theme:'Theme',
     light:'Light', dark:'Dark', system:'System', eyebrow:'Industrial asset visualization',
-    title:<>From the big picture.<br/>To every component.</>,
-    intro:'Connect scenes, equipment and engineering documents. See site information in its spatial context.',
+    title:<>See the site clearly.<br/>Collaborate with context.</>,
+    intro:'Put industrial assets in their spatial context so teams can understand the site, locate issues and work from shared engineering evidence.',
     discover:'Explore ONTOVis', scene:'Wind operations',
-    sectionTitle:<>Understand your equipment.<br/>In its real context.</>,
-    sectionIntro:'Bring scene layout, component navigation and drawings into one connected workspace.',
+    sectionTitle:<>Close information gaps.<br/>Bring understanding closer to action.</>,
+    sectionIntro:'Give planning, operations and engineering teams shared site context, making scattered knowledge easier to understand and verify.',
     features:[
-      {title:'Build scenes. Place models.', description:'Import terrain and model resources, then arrange equipment instances in a scene.'},
-      {title:'Find equipment. Explore components.', description:'Browse the equipment hierarchy and locate devices and their components in the model.'},
-      {title:'Connect documents. Read drawings.', description:'Open associated drawings from an object and relate engineering documents to spatial locations.'},
+      {title:'Understand the site sooner', description:'See terrain, asset locations and spatial relationships together so remote teams can build a shared understanding.'},
+      {title:'Spend less time searching and explaining', description:'Move from the site to equipment and components, reducing repeated searches across catalogs, models and documents.'},
+      {title:'Keep decisions connected to evidence', description:'Check drawings and sources around the same engineering object, connecting spatial observations with the evidence behind them.'},
     ],
     footer:'Industrial asset visualization & engineering collaboration', top:'Back to top', pause:'Pause background video', play:'Play background video',
   },
 };
 
-/** Video is optional until an approved public asset is available; the poster is always usable. */
-export function LandingPage({onLogin, videoSrc, suspended=false, loginButtonRef}: {onLogin:()=>void; videoSrc?:string; suspended?:boolean; loginButtonRef?:Ref<HTMLButtonElement>}) {
+export function LandingPage({onLogin, videoSrc, posterSrc=poster, suspended=false, loginButtonRef}: {onLogin:()=>void; videoSrc?:string; posterSrc?:string; suspended?:boolean; loginButtonRef?:Ref<HTMLButtonElement>}) {
   const {locale,theme,setLocale,setTheme} = usePreferences();
   const c = copy[locale];
   const video = useRef<HTMLVideoElement>(null);
@@ -77,8 +76,8 @@ export function LandingPage({onLogin, videoSrc, suspended=false, loginButtonRef}
   const icons=[Boxes,Focus,FileText];
   return <div className="ov-app ov-entry" ref={scroll}>
     <div className="ov-entry-backdrop" aria-hidden="true">
-      <img src={poster} alt="" fetchPriority="high"/>
-      {showVideo && <video ref={video} src={videoSrc} poster={poster} muted loop playsInline preload="none"
+      <img src={posterSrc} alt="" fetchPriority="high"/>
+      {showVideo && <video ref={video} src={videoSrc} poster={posterSrc} muted loop playsInline preload="none"
         onPlaying={()=>{setPlaying(true);setVideoReady(true);}} onPause={()=>setPlaying(false)} onError={()=>{setVideoFailed(true);setPlaying(false);}} data-ready={videoReady}/>}
     </div>
     <a className="ov-entry-skip" href="#ov-entry-features" onClick={event=>{event.preventDefault();goTo('ov-entry-features');}}>{c.overview}</a>

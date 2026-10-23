@@ -213,7 +213,7 @@ export function Workbench() {
   const host = bindingNeedsReview(detail,model) ? t('bindingChanged') : location ? location.mode === 'ancestor' ? t('ancestor') : location.binding.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate') : !!model && detail?.item.entityUid === model.rootEntityUid ? t('modelReady') : t('unlocated');
   const title = navigation.find(row => row[0] === page)![1];
   const workspace = page === 'bindings' || page === 'hierarchy';
-  return <>{!active&&<LandingPage onLogin={()=>void openLogin()} suspended={modal==='login'} loginButtonRef={loginButton}/>}{active&&<div className="ov-app ov-compact">
+  return <>{!active&&<LandingPage onLogin={()=>void openLogin()} videoSrc={import.meta.env.VITE_LOGIN_VIDEO_SRC} posterSrc={import.meta.env.VITE_LOGIN_POSTER_SRC} suspended={modal==='login'} loginButtonRef={loginButton}/>}{active&&<div className="ov-app ov-compact">
     <header className="cw-header"><a className="cw-brand" href="#project" onClick={event => {event.preventDefault();navigate('project');}} aria-label="ONTOVis"><img src={logo} alt="ONTOVis 本源数智"/></a><span className="cw-divider"/>
       <button className="cw-project" type="button" onClick={() => navigate('project')}><Building2 size={15}/><span>{projectName || t('workbench')}</span><ChevronDown size={12}/></button><span className="cw-grow"/>
       {active ? <Dropdown.Root><Dropdown.Trigger asChild><button type="button" className="cw-avatar" aria-label={t('account')}>{session?.username?.slice(0,2).toUpperCase() || <User size={16}/>}</button></Dropdown.Trigger><Dropdown.Portal><Dropdown.Content className="cw-menu" align="end" sideOffset={8}>
