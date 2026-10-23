@@ -15,16 +15,19 @@ import {sceneViewportMessage} from './sceneViewportMessages';
 import {componentFocusCurrent,componentFocusKey,componentFocusView,prepareComponentFocus,type ComponentFocusRequest,type ComponentFocusTarget} from './sceneComponentFocus';
 import type {ProjectModelVersion,TerrainVersion} from './resourceTypes';
 import type {EditableSceneSnapshot,ModelResourceRef,SceneModelInstance,SceneView,Vector3} from './sceneTypes';
+import {snapPoint} from './sceneOrganization';
 import './sceneViewport.css';
 
+export interface SceneCameraControl {getView:()=>SceneView;setView:(value:SceneView)=>void;ready:()=>boolean}
 export interface SceneViewportProps {
   api:WorkbenchApi;snapshot:EditableSceneSnapshot;modelRefs:ModelResourceRef[];terrainVersion:TerrainVersion|null;
   selectedId:string|null;editing:boolean;disabled?:boolean;personalVisibility:Record<string,boolean>;
+  selectedIds?:string[];gridSnap?:number;cameraControl?:{current:SceneCameraControl|null};onCameraInteraction?:()=>void;
   terrainVisible:boolean;pendingPlacement:boolean;previewModel?:ProjectModelVersion|null;
   viewCommand?:{token:number;view:SceneView};focusRequest?:{token:number;instanceId:string|null};
   componentFocus?:ComponentFocusRequest;
   componentPickingInstanceId?:string|null;onComponentPick?:(pick:SceneComponentPick)=>void;
-  onSelect:(id:string|null)=>void;onPoint:(point:Vector3)=>void;
+  onSelect:(id:string|null,additive?:boolean)=>void;onPoint:(point:Vector3)=>void;
   onMove:(id:string,point:Vector3)=>Promise<boolean>;onViewChange:(view:SceneView)=>void;
   onResourceDrop?:(ref:{modelAssetId:string;modelVersionId:string},point:Vector3)=>void;
   onError?:(error:unknown)=>void;
@@ -51,6 +54,7 @@ export function SceneViewport(props:SceneViewportProps) {
   const current=useRef({...props,locale,resolved});current.current={...props,locale,resolved};
   const mount=useRef<HTMLDivElement>(null),runtime=useRef<Runtime|null>(null);
   const [reading,setReading]=useState(false),[error,setError]=useState<unknown>(null),[moving,setMoving]=useState(false);
+  const latestError=useRef(error);latestError.current=error;
   const [attempt,setAttempt]=useState(0),[rendererAttempt,setRendererAttempt]=useState(0);
   const webglFailure=useRef(false);
   const message=(key:Parameters<typeof sceneViewportMessage>[1])=>sceneViewportMessage(locale,key);
@@ -170,10 +174,11 @@ export function SceneViewport(props:SceneViewportProps) {
         target:center.toArray() as Vector3});
     };
     const highlight=()=>{
-      const entry=current.current.selectedId?entries.get(current.current.selectedId):null;
+      const state=current.current,ids=state.selectedIds??(state.selectedId?[state.selectedId]:[]);
+      const selectedEntries=ids.flatMap(id=>{const entry=entries.get(id);return entry?.root.visible?[entry]:[];});
       const componentActive=componentHighlight();
-      selectedBox.visible=!componentActive&&!!entry&&entry.root.visible&&!preview;
-      if(entry&&selectedBox.visible){entry.root.updateMatrixWorld(true);selectedBox.box.setFromObject(entry.root);selectedBox.updateMatrixWorld(true);}
+      selectedBox.visible=!componentActive&&selectedEntries.length>0&&!preview;
+      if(selectedBox.visible){selectedBox.box.makeEmpty();for(const entry of selectedEntries){entry.root.updateMatrixWorld(true);selectedBox.box.union(new THREE.Box3().setFromObject(entry.root));}selectedBox.updateMatrixWorld(true);}
       request();
     };
     const appearance=()=>{
@@ -300,12 +305,13 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const hitId=(x:number,y:number)=>hitModel(x,y)?.sceneModelInstanceId??null;
     const down=(event:PointerEvent)=>{
-      if(event.button!==0)return;tween=null;componentTween=false;componentPending=null;
+      if(event.button!==0)return;current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;
       pointer={x:event.clientX,y:event.clientY,id:event.pointerId};
       const state=current.current;if(state.disabled||state.previewModel||!state.editing||state.pendingPlacement||movePending||state.componentPickingInstanceId)return;
       const id=hitId(event.clientX,event.clientY),item=state.snapshot.instances.find(value=>value.sceneModelInstanceId===id);
       const entry=id?entries.get(id):null,point=groundPoint(event.clientX,event.clientY);
-      if(!id||!item||!entry||item.positionLocked||!point)return;
+      if(!id||!item||!entry||item.positionLocked||!point||event.shiftKey)return;
+      if((state.selectedIds?.length??0)>1||state.snapshot.organization?.groups.some(group=>group.instanceIds.includes(id)))return;
       tween=null;current.current.onSelect(id);drag={id,root:entry.root,original:entry.root.position.clone(),
         offset:entry.root.position.clone().sub(point),pointerId:event.pointerId};
       orbit.enabled=false;renderer.domElement.setPointerCapture(event.pointerId);
@@ -313,7 +319,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const motion=(event:PointerEvent)=>{
       if(!drag||event.pointerId!==drag.pointerId)return;
       const point=groundPoint(event.clientX,event.clientY);if(!point)return;
-      drag.root.position.set(point.x+drag.offset.x,drag.original.y,point.z+drag.offset.z);drag.root.updateMatrixWorld(true);highlight();
+      drag.root.position.fromArray(snapPoint([point.x+drag.offset.x,drag.original.y,point.z+drag.offset.z],current.current.gridSnap??0));drag.root.updateMatrixWorld(true);highlight();
     };
     const up=(event:PointerEvent)=>{
       const clicked=pointer&&pointer.id===event.pointerId&&Math.hypot(pointer.x-event.clientX,pointer.y-event.clientY)<=4;
@@ -323,7 +329,7 @@ export function SceneViewport(props:SceneViewportProps) {
         if(renderer.domElement.hasPointerCapture(event.pointerId))renderer.domElement.releasePointerCapture(event.pointerId);
         const releasePoint=groundPoint(event.clientX,event.clientY);
         if(!releasePoint){movement.root.position.copy(movement.original);report(new ApiError(422,'NO_DATA'));highlight();return;}
-        movement.root.position.set(releasePoint.x+movement.offset.x,movement.original.y,releasePoint.z+movement.offset.z);
+        movement.root.position.fromArray(snapPoint([releasePoint.x+movement.offset.x,movement.original.y,releasePoint.z+movement.offset.z],current.current.gridSnap??0));
         movement.root.updateMatrixWorld(true);
         if(movement.root.position.distanceTo(movement.original)<1e-6){highlight();return;}
         movePending=true;setMoving(true);const destination=movement.root.position.toArray() as Vector3;
@@ -341,9 +347,9 @@ export function SceneViewport(props:SceneViewportProps) {
         return;
       }
       if(state.editing&&state.pendingPlacement){const point=groundPoint(event.clientX,event.clientY);if(point)state.onPoint(point.toArray() as Vector3);}
-      else state.onSelect(hitId(event.clientX,event.clientY));
+      else state.onSelect(hitId(event.clientX,event.clientY),event.shiftKey);
     };
-    const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&drag){event.preventDefault();cancelDrag();}};
+    const escape=(event:KeyboardEvent)=>{if(event.key.startsWith('Arrow'))current.current.onCameraInteraction?.();if(event.key==='Escape'&&drag){event.preventDefault();cancelDrag();}};
     const drop=(event:DragEvent)=>{
       const state=current.current;if(!state.editing||state.disabled||state.previewModel||!state.onResourceDrop)return;
       const raw=event.dataTransfer?.getData(DROP_MIME);if(!raw)return;event.preventDefault();
@@ -363,7 +369,7 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const resize=new ResizeObserver(()=>{const rect=element.getBoundingClientRect();camera.aspect=Math.max(1,rect.width)/Math.max(1,rect.height);
       camera.updateProjectionMatrix();renderer.setSize(Math.max(1,rect.width),Math.max(1,rect.height));request();});resize.observe(element);
-    const orbitStart=()=>{tween=null;componentTween=false;componentPending=null;};orbit.addEventListener('change',request);orbit.addEventListener('start',orbitStart);orbit.addEventListener('end',emit);
+    const orbitStart=()=>{current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;};orbit.addEventListener('change',request);orbit.addEventListener('start',orbitStart);orbit.addEventListener('end',emit);
     const canvas=renderer.domElement;
     canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',motion);canvas.addEventListener('pointerup',up);
     canvas.addEventListener('pointercancel',cancelDrag);canvas.addEventListener('keydown',escape);canvas.addEventListener('drop',drop);canvas.addEventListener('dragover',dragover);
@@ -373,8 +379,12 @@ export function SceneViewport(props:SceneViewportProps) {
       focus:id=>{clearComponentFocus();if(resourcesLoading||id&&!entries.has(id))focusPending=id;else fit(id);highlight();},
       setView:target=>{if(restoreView)restoreView=structuredClone(target);else moveView(target);},
       zoom:factor=>{tween=null;componentTween=false;componentPending=null;camera.position.sub(orbit.target).multiplyScalar(factor).add(orbit.target);request();emit();}};
+    const cameraControl:SceneCameraControl={getView:()=>view(camera,orbit),ready:()=>!disposed&&!stale()&&!resourcesLoading&&!preview&&!latestError.current,
+      setView:target=>{if(disposed||stale())return;if(componentTarget||componentFocused)clearComponentFocus();moveView(target,false);}};
+    if(current.current.cameraControl)current.current.cameraControl.current=cameraControl;
     moveView(current.current.snapshot.initialView,false);void sync();
     return ()=>{
+      if(current.current.cameraControl?.current===cameraControl)current.current.cameraControl.current=null;
       disposed=true;++generation;loadingAbort?.abort();cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',visible);
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
@@ -386,7 +396,7 @@ export function SceneViewport(props:SceneViewportProps) {
     };
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
   useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.previewModel,attempt]);
-  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.personalVisibility,props.terrainVisible,props.disabled,props.editing,props.pendingPlacement,locale,resolved]);
+  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.disabled,props.editing,props.pendingPlacement,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
   useEffect(()=>{if(props.focusRequest)runtime.current?.focus(props.focusRequest.instanceId);},[props.focusRequest?.token]);
   useEffect(()=>{runtime.current?.componentFocus();},[props.componentFocus,props.snapshot,props.modelRefs,props.selectedId,props.personalVisibility,props.previewModel]);
@@ -394,10 +404,10 @@ export function SceneViewport(props:SceneViewportProps) {
     <div className="ov-scene-viewport-stage"><div ref={mount} className="ov-scene-viewport-canvas"/>
       {(reading||!!error) && <div className="ov-scene-viewport-state" role={error?'alert':'status'}>{error?errorMessage:message('loading')}
         {error?<button className="ov-btn" onClick={()=>webglFailure.current?setRendererAttempt(value=>value+1):setAttempt(value=>value+1)}>{message('retry')}</button>:null}</div>}
-      <div className="ov-scene-viewport-tools"><IconBtn label={message('zoomIn')} onClick={()=>runtime.current?.zoom(.8)}><ZoomIn size={16}/></IconBtn>
-        <IconBtn label={message('zoomOut')} onClick={()=>runtime.current?.zoom(1.25)}><ZoomOut size={16}/></IconBtn>
-        <IconBtn label={message('fit')} onClick={()=>runtime.current?.fit()}><Maximize size={16}/></IconBtn>
-        <IconBtn label={message('focus')} disabled={!props.selectedId||!!props.previewModel} onClick={()=>runtime.current?.focus(props.selectedId)}><Focus size={16}/></IconBtn></div>
+      <div className="ov-scene-viewport-tools"><IconBtn label={message('zoomIn')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(.8);}}><ZoomIn size={16}/></IconBtn>
+        <IconBtn label={message('zoomOut')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(1.25);}}><ZoomOut size={16}/></IconBtn>
+        <IconBtn label={message('fit')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.fit();}}><Maximize size={16}/></IconBtn>
+        <IconBtn label={message('focus')} disabled={!props.selectedId||!!props.previewModel} onClick={()=>{props.onCameraInteraction?.();runtime.current?.focus(props.selectedId);}}><Focus size={16}/></IconBtn></div>
     </div><footer className="ov-scene-viewport-foot"><span>{props.previewModel?`${message('preview')} · ${props.previewModel.displayName}`:
       moving?message('moving'):props.editing?props.pendingPlacement?message('place'):message('drag'):message('browse')}</span>
       {props.previewModel?.calibration.state==='unverified'?<span>{message('unverified')}</span>:null}</footer>

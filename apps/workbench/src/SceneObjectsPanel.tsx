@@ -12,6 +12,7 @@ import './sceneEngineering.css';
 
 export interface SceneObjectsPanelProps {
   api:WorkbenchApi;root:SceneObjectContext|null;selectedUid:string;ancestorUids:string[];
+  rootReading?:boolean;
   onSelect:(uid:string,scope:'equipment'|'project')=>void;
 }
 
@@ -62,12 +63,12 @@ function EquipmentNode({api,object,context,selectedUid,ancestorUids,onSelect,dep
 }
 
 /** Device reads always carry the selected equipment's explicit installation. */
-export function SceneObjectsPanel({api,root,selectedUid,ancestorUids,onSelect}:SceneObjectsPanelProps) {
+export function SceneObjectsPanel({api,root,rootReading=false,selectedUid,ancestorUids,onSelect}:SceneObjectsPanelProps) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof sceneEngineeringText>[1])=>sceneEngineeringText(locale,key);
   const [scope,setScope]=useState<'equipment'|'project'>(root?.context?'equipment':'project');
   const [query,setQuery]=useState(''),[settled,setSettled]=useState('');
   useEffect(()=>{const timer=window.setTimeout(()=>setSettled(query.trim()),250);return ()=>clearTimeout(timer);},[query]);
-  useEffect(()=>{if(!root?.context)setScope('project');},[root?.context]);
+  useEffect(()=>{if(!root?.context&&!rootReading)setScope('project');},[root?.context,rootReading]);
   const context=root?.context,object=root?.item;
   const identity=JSON.stringify([api.epoch,api.revision,context?.installationContextId,context?.hierarchyRevision,object?.entityUid,object?.entityRevision]);
   return <section className="se-objects" aria-label={t('projectObjects')}>
@@ -77,7 +78,7 @@ export function SceneObjectsPanel({api,root,selectedUid,ancestorUids,onSelect}:S
     </div>
     {scope==='project'&&<label className="se-search"><Search size={14}/><input aria-label={t('search')} placeholder={t('search')} value={query} onChange={event=>setQuery(event.target.value)}/></label>}
     <div className="se-object-body">{!api.revision?<p className="se-state">{t('login')}</p>:scope==='equipment'?
-      context&&object?<div role="tree" aria-label={t('equipment')}><EquipmentNode key={identity} api={api} object={object} context={context} selectedUid={selectedUid} ancestorUids={ancestorUids} onSelect={uid=>onSelect(uid,'equipment')}/></div>:<p className="se-state">{t('rootRequired')}</p>:
+      rootReading?<p className="se-state" role="status">{t('loading')}</p>:context&&object?<div role="tree" aria-label={t('equipment')}><EquipmentNode key={identity} api={api} object={object} context={context} selectedUid={selectedUid} ancestorUids={ancestorUids} onSelect={uid=>onSelect(uid,'equipment')}/></div>:<p className="se-state">{t('rootRequired')}</p>:
       query.trim()!==settled?<p className="se-state" role="status">{t('loading')}</p>:<Catalog key={`${identity}:${settled}`} api={api} query={settled} scope="project" selected={selectedUid} onSelect={uid=>onSelect(uid,'project')}/>}</div>
   </section>;
 }

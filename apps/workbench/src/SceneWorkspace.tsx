@@ -8,6 +8,11 @@ import {SceneObjectsPanel} from './SceneObjectsPanel';
 import {SceneInstanceLinks} from './SceneInstanceLinks';
 import {SceneBindingReview} from './SceneBindingReview';
 import {SourceEvidence} from './SourceEvidence';
+import {SceneBatchPanel,type SceneSnap} from './SceneBatchPanel';
+import {SceneRoutePanel,type SceneRouteControl} from './SceneRoutePanel';
+import type {SceneCameraControl} from './SceneViewport';
+import {SceneBatchError,moveSceneInstances,pruneSceneGroups,selectSceneInstances,snapNumber,snapPoint} from './sceneOrganization';
+import {organizationError,organizationText} from './sceneOrganizationMessages';
 import {sceneEngineeringText} from './sceneEngineeringMessages';
 import {engineeringReviews,reviewSelectedObject,reviewedForSave,rootChangesForSave,changeRootBinding,bindComponentKeys,refKey} from './sceneEngineeringState';
 import type {EngineeringExpectation,SceneObjectContext,SceneLocation,SceneRepresentation} from './sceneEngineeringTypes';
@@ -32,10 +37,14 @@ const finite=(value:string)=>value.trim()!=='' && Number.isFinite(Number(value))
 export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;initialEntry?:LegacySceneEntryTarget|null;onProjectName?:(name:string)=>void}>(function SceneWorkspace({api,initialEntry,onProjectName},ref) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof sceneText>[1])=>sceneText(locale,key);
   const et=(key:Parameters<typeof sceneEngineeringText>[1])=>sceneEngineeringText(locale,key);
+  const ot=(key:Parameters<typeof organizationText>[1])=>organizationText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const modelCatalog=useMemo(()=>new Map<string,ProjectModelVersion>(),[api,api.epoch,api.revision]);
   const [list,setList]=useState<SceneList|null>(null),[search,setSearch]=useState(''),[base,setBase]=useState<SceneOpen|null>(null);
   const [history,setHistory]=useState<SceneHistory|null>(null),[selected,setSelected]=useState<string|null>(null);
+  const [selection,setSelection]=useState<string[]>([]),[inspectorTab,setInspectorTab]=useState<'properties'|'batch'|'routesTab'>('properties');
+  const [continuous,setContinuous]=useState(false),[snap,setSnap]=useState<SceneSnap>({grid:0,angle:0}),[routePlaying,setRoutePlaying]=useState(false);
+  const cameraControl=useRef<SceneCameraControl|null>(null),routeControl=useRef<SceneRouteControl|null>(null),placementInFlight=useRef(false);
   const [entryPending,setEntryPending]=useState(!!initialEntry);
   const [editing,setEditing]=useState(false),[readOnly,setReadOnly]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null);
   const [left,setLeft]=useState<'content'|'resources'|'objects'>('content'),[side,setSide]=useState<'left'|'right'|null>(null);
@@ -68,9 +77,11 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
   const acceptedEngineering=useRef(new Map<string,EngineeringExpectation>()),approvedRoots=useRef<RootBindingChange[]>([]);
   const objectRead=useRef<AbortController|null>(null),objectIntent=useRef(0),locationRead=useRef<AbortController|null>(null);
   const retainObject=useRef(false);
+  const savedAnalysis=useRef<{sceneId:string;instanceId:string|null;uid:string;scope:'equipment'|'project';ticket:number}|null>(null);
   const internalReturn=useRef<{view:SceneView|null;visibility:Record<string,boolean>}|null>(null);
   const createRequest=useRef<{name:string,id:string}|null>(null);
   const draft=history?.present||null,current=draft?.instances.find(item=>item.sceneModelInstanceId===selected)||null;
+  const selectedIds=selection.filter(id=>draft?.instances.some(item=>item.sceneModelInstanceId===id));
   const sceneIdentity=JSON.stringify([base?.sceneId,base?.sceneRevision,draft]);
   const latestSceneIdentity=useRef(sceneIdentity);latestSceneIdentity.current=sceneIdentity;
   const currentIdentity=JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,selected,current?.rootBinding,current?.modelVersionId]);
@@ -82,7 +93,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
   const latestIdentity=useRef(selectionIdentity);latestIdentity.current=selectionIdentity;
   const dirty=!!base && !!draft && JSON.stringify(base.snapshot)!==JSON.stringify(draft);
   const unsaved=dirty||reviewDirty||!!anchorResult||saveUnknown;
-  const canWrite=!!base?.capabilities.canWrite && !readOnly,editable=editing && canWrite && !busy && !preview && !anchorResult && !saveUnknown;
+  const canWrite=!!base?.capabilities.canWrite && !readOnly,editable=editing && canWrite && !busy && !preview && !anchorResult && !saveUnknown && !routePlaying;
   const snapshot=anchorResult?.proposedSnapshot||draft;
   const refs=useMemo(()=>{
     const known=new Map([...(base?.resourceRefs||[]),...Object.values(hints),...(anchorResult?.resourceRefs.models||[])].map(item=>[item.modelVersionId,item]));
@@ -102,10 +113,11 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
   }
   function failed(value:unknown){
     if(cancelled(value)||!mounted.current)return;
+    if(value instanceof ApiError&&[401,403].includes(value.status))routeControl.current?.cancel(false);
     if(value instanceof ApiError && value.status===403 && ['SCENE_WRITE_FORBIDDEN','MODEL_WRITE_FORBIDDEN'].includes(value.code)){setReadOnly(true);setEditing(false);setList(previous=>previous?{...previous,capabilities:{...previous.capabilities,canWrite:false}}:previous);}
     setError(value);
   }
-  function requestLeave(after:()=>void){if(busy){if(!entryPending)return;openRequest.current?.abort();sequence.current++;}if(unsaved){leave.current=after;setModal('leave');}else after();}
+  function requestLeave(after:()=>void){routeControl.current?.cancel(true);if(busy){if(!entryPending)return;openRequest.current?.abort();sequence.current++;}if(unsaved){leave.current=after;setModal('leave');}else after();}
   useImperativeHandle(ref,()=>({requestLeave}),[unsaved,busy,entryPending]);
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;sequence.current++;listSequence.current++;for(const value of requests.current)value.abort();requests.current.clear();};},[]);
   useEffect(()=>{const handler=(event:BeforeUnloadEvent)=>{if(unsaved){event.preventDefault();event.returnValue='';}};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler);},[unsaved]);
@@ -117,6 +129,9 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
   }
   useEffect(()=>{if(initialEntry)void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry);else void readList();},[]);
   async function adopt(value:SceneOpen,token=sequence.current,instanceId?:string){
+    savedAnalysis.current=null;
+    routeControl.current?.cancel(false);setContinuous(false);setSnap({grid:0,angle:0});setInspectorTab('properties');
+    setSelection(instanceId?[instanceId]:value.snapshot.instances[0]?[value.snapshot.instances[0].sceneModelInstanceId]:[]);
     setBase(value);setHistory(sceneHistory(value.snapshot));setSelected(instanceId||value.snapshot.instances[0]?.sceneModelInstanceId||null);
     setPersonal({});setEditing(false);setReadOnly(false);setPending(null);setPreview(null);setAnchorResult(null);setUpdate(value.headRevision!==value.sceneRevision);setHints({});setSide(null);
     setSaveUnknown(false);saveRequest.current=null;
@@ -169,8 +184,13 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
       else client.model(resource.modelAssetId,resource.modelVersionId,abort.signal).then(value=>{if(!abort.signal.aborted){modelCatalog.set(value.modelVersionId,value);setInternalModel(value);}}).catch(value=>{if(!abort.signal.aborted)failed(value);});}
     return()=>{abort.abort();done(abort);};
   },[currentIdentity,internal,client,modelCatalog]);
-  useEffect(()=>{setPickedComponent(null);if(retainObject.current){retainObject.current=false;return;}objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setLocation(null);setComponentFocus(undefined);setObject(null);setObjectLoading(false);setLocating(false);},[base?.sceneId,base?.sceneRevision,selected]);
+  useEffect(()=>{setPickedComponent(null);if(retainObject.current){retainObject.current=false;return;}
+    const restore=savedAnalysis.current,restoreCurrent=restore?.ticket===objectIntent.current;savedAnalysis.current=null;
+    objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setLocation(null);setComponentFocus(undefined);setObject(null);setObjectLoading(false);setLocating(false);
+    if(restore&&restoreCurrent&&restore.sceneId===base?.sceneId&&restore.instanceId===selected)void chooseObject(restore.uid,restore.scope);
+  },[base?.sceneId,base?.sceneRevision,selected]);
   async function chooseObject(uid:string,scope:'equipment'|'project'='project'){
+    routeControl.current?.cancel(false);
     objectRead.current?.abort();locationRead.current?.abort();const abort=controller(),ticket=++objectIntent.current;
     objectRead.current=abort;setObjectScope(scope);setObject(null);setLocation(null);setComponentFocus(undefined);setPickedComponent(null);setObjectLoading(true);setLocating(false);setError(null);
     try{const value=await client.objectContext(uid,undefined,abort.signal);if(!abort.signal.aborted&&ticket===objectIntent.current){setObject(value);setSide('right');}}
@@ -208,12 +228,14 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
       if(abort.signal.aborted||ticket!==objectIntent.current||value.contextEpoch!==epoch||latestSceneIdentity.current!==fixedScene)return;
       if(value.selectedObject.entityRevision!==object.item.entityRevision)throw new ApiError(409,'ENGINEERING_CHANGED');
       setLocation(value);
-      if(value.status==='located'&&value.sceneModelInstanceId&&value.worldBounds){if(value.sceneModelInstanceId!==selected){retainObject.current=true;setSelected(value.sceneModelInstanceId);}setPersonal(previous=>({...previous,[value.sceneModelInstanceId!]:true}));setComponentFocus({token:Date.now(),instanceId:value.sceneModelInstanceId,bounds:value.worldBounds,componentKeys:[...value.componentKeys]});}
+      if(value.status==='located'&&value.sceneModelInstanceId&&value.worldBounds){setSelection([value.sceneModelInstanceId]);if(value.sceneModelInstanceId!==selected){retainObject.current=true;setSelected(value.sceneModelInstanceId);}setPersonal(previous=>({...previous,[value.sceneModelInstanceId!]:true}));setComponentFocus({token:Date.now(),instanceId:value.sceneModelInstanceId,bounds:value.worldBounds,componentKeys:[...value.componentKeys]});}
     }catch(value){if(ticket===objectIntent.current&&!abort.signal.aborted)failed(value);}finally{done(abort);if(ticket===objectIntent.current&&!abort.signal.aborted)setLocating(false);}
   }
   async function commit(next:EditableSceneSnapshot):Promise<boolean>{
     if(!history||!base||!editable)return false;
-    locationRead.current?.abort();setLocating(false);setLocation(null);setComponentFocus(undefined);approvedRoots.current=[];
+    if(JSON.stringify([draft?.coordinateFrame,draft?.instances])!==JSON.stringify([next.coordinateFrame,next.instances])){
+      locationRead.current?.abort();setLocating(false);setLocation(null);setComponentFocus(undefined);approvedRoots.current=[];
+    }
     const token=++sequence.current,abort=controller();editRequest.current=abort;setError(null);
     try{
       let proposed=next;
@@ -223,7 +245,8 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
     }catch(value){failed(value);return false;}finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   async function save(override?:SceneCheck):Promise<boolean>{
-    if(!base||!draft||!canWrite||busy||saveInFlight.current)return false;
+    if(!base||!draft||!canWrite||busy||saveInFlight.current||routePlaying)return false;
+    const analysis=object?{uid:object.item.entityUid,scope:objectScope,instanceId:selected,ticket:objectIntent.current}:null;
     saveInFlight.current=true;const token=++sequence.current,abort=controller();setBusy(true);setError(null);let submitted=false;
     try{
       const key=JSON.stringify([base.sceneId,base.sceneRevision,override?.proposedSnapshot||draft,override?.spatialChange]);
@@ -241,6 +264,10 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
       if(!mounted.current||token!==sequence.current)return false;
       const known:SceneOpen={...base,...value,snapshot:cloneSnapshot(canonical),resourceRefs:attempt.models,
         terrainRefs:value.terrainRefs||[],sceneRevision:value.sceneRevision,headRevision:value.headRevision};
+      if(analysis&&!override&&analysis.ticket===objectIntent.current&&latestIdentity.current===selectionIdentity&&
+        JSON.stringify([base.snapshot.coordinateFrame,base.snapshot.instances])===JSON.stringify([canonical.coordinateFrame,canonical.instances])){
+        savedAnalysis.current={sceneId:base.sceneId,instanceId:analysis.instanceId,uid:analysis.uid,scope:analysis.scope,ticket:analysis.ticket};
+      }
       setBase(known);setHistory(sceneHistory(canonical));setTerrain(attempt.terrain);setAnchorResult(null);setCandidate(null);setModal(null);setUpdate(false);setPending(null);setSaveUnknown(false);saveRequest.current=null;
       acceptedEngineering.current=engineeringReviews(value.validation);approvedRoots.current=[];setReviewDirty(false);setBindingReview(null);setLocation(null);setComponentFocus(undefined);
       if(override)setEditing(true);return true;
@@ -258,32 +285,44 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
     catch(value){failed(value);}finally{done(abort);if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   async function place(point:Vector3){
-    if(!draft||!base||!pending||!editable)return;
-    try{const id=crypto.randomUUID(),next=pending.kind==='model'?placeModel(draft,pending.model,point,terrain,id,base.limits.maxInstances):duplicateAt(draft,pending.sourceId,point,id,base.limits.maxInstances);
-      if(await commit(next)){setSelected(id);setPending(null);setLeft('content');}}
-    catch(value){failed(value);}
+    if(!draft||!base||!pending||!editable||placementInFlight.current)return;
+    placementInFlight.current=true;
+    try{point=snapPoint(point,snap.grid);const id=crypto.randomUUID(),next=pending.kind==='model'?placeModel(draft,pending.model,point,terrain,id,base.limits.maxInstances):duplicateAt(draft,pending.sourceId,point,id,base.limits.maxInstances);
+      if(await commit(next)){setSelected(id);setSelection([id]);if(!continuous){setPending(null);setLeft('content');}}}
+    catch(value){failed(value);}finally{placementInFlight.current=false;}
   }
   async function resourceDrop(reference:{modelAssetId:string,modelVersionId:string},point:Vector3){
     if(!editable||!draft||!base)return;const abort=controller(),token=++sequence.current;editRequest.current=abort;setBusy(true);
     try{const value=await client.model(reference.modelAssetId,reference.modelVersionId,abort.signal);if(!mounted.current||token!==sequence.current)return;setHints(prior=>({...prior,[value.modelVersionId]:modelRef(value)}));
-      const id=crypto.randomUUID(),next=placeModel(draft,value,point,terrain,id,base.limits.maxInstances);if(await commit(next)){setSelected(id);setLeft('content');}}
+      const id=crypto.randomUUID(),next=placeModel(draft,value,snapPoint(point,snap.grid),terrain,id,base.limits.maxInstances);if(await commit(next)){setSelected(id);setSelection([id]);if(continuous)setPending({kind:'model',model:value});else setLeft('content');}}
     catch(value){failed(value);}finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   function changeCurrent(change:(item:SceneModelInstance)=>SceneModelInstance){if(draft&&current&&editable)void commit(updateInstance(draft,change(structuredClone(current))));}
-  function selectInstance(id:string|null,locate=false){
+  function selectInstance(id:string|null,locate=false,additive=false){
+    if(routePlaying)return;
+    const ids=draft?selectSceneInstances(draft,selectedIds,id,additive):[];setSelection(ids);
     retainObject.current=false;
     if(internal)returnInternal();
     objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setObject(null);setObjectLoading(false);setLocation(null);setComponentFocus(undefined);setPickedComponent(null);setLocating(false);
     cancelPlacement();setSelected(id);setPreview(null);setSide(null);
     if(id&&!editing)setPersonal(previous=>({...previous,[id]:true}));
-    if(locate)setFocus({token:Date.now(),instanceId:id});
+    if(locate&&ids.length<=1)setFocus({token:Date.now(),instanceId:id});
+  }
+  function selectMany(ids:string[]){if(routePlaying)return;selectInstance(ids[0]??null);setSelection(ids);}
+  function showTools(value:'properties'|'batch'|'routesTab'){routeControl.current?.cancel(true);if(value==='batch'&&internal)returnInternal();setInspectorTab(value);setSide('right');}
+  async function moveBatch(delta:[number,number],heading:number){
+    if(!draft||!editable)return false;
+    try{const next=moveSceneInstances(draft,selectedIds,delta,heading,snap.grid,snap.angle);
+      if(JSON.stringify(next)===JSON.stringify(draft)){setError(new Error(ot('noChange')));return false;}
+      return await commit(next);
+    }catch(error){failed(error);return false;}
   }
   function removeCurrent(){
     if(!draft||!current||!editable||current.positionLocked)return;
     const next=cloneSnapshot(draft);
     if(isLocalScene(next))next.instances=next.instances.filter(item=>item.sceneModelInstanceId!==current.sceneModelInstanceId);
     else next.instances=next.instances.filter(item=>item.sceneModelInstanceId!==current.sceneModelInstanceId);
-    void commit(next).then(ok=>{if(ok)setSelected(null);});
+    void commit(pruneSceneGroups(next)).then(ok=>{if(ok){setSelected(null);setSelection([]);}});
   }
   async function applyPosition(){
     if(!current||!draft||!editable)return;
@@ -291,7 +330,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
     if(current.positionLocked){await commit(updateInstance(draft,{...current,displayName:position.name.trim()}));return;}
     const inputs=[position.heading,position.height,...(position.mode==='local'?[position.x,position.z]:[position.longitude,position.latitude])];
     if(!inputs.every(finite)){setError(new Error(t('invalidPosition')));return;}
-    try{const item=structuredClone(current),heading=((Number(position.heading)%360)+360)%360;
+    try{const item=structuredClone(current),heading=((snapNumber(Number(position.heading),snap.angle)%360)+360)%360;
       item.displayName=position.name.trim();item.placement.headingDeg=heading;
       if(isLocalInstance(item)){item.placement.position={mode:'local',xM:Number(position.x),zM:Number(position.z)};item.placement.height={mode:'local_relative',relativeHeightM:Number(position.height)};}
       else if(!isLocalScene(draft)){
@@ -307,7 +346,8 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
             sampledHeightM:0,offsetM:Number(position.height),verticalDatum:draft.coordinateFrame.verticalDatum,samplingRule:terrain.report.mesh.placementSamplingRule};
         }
       }
-      await commit(updateInstance(draft,item));
+      const next=updateInstance(draft,item);
+      await commit(snap.grid?moveInstance(next,item.sceneModelInstanceId,snapPoint(toDisplay(draft.coordinateFrame,item.placement.position,item.placement.height),snap.grid)):next);
     }catch(value){failed(value);}
   }
   function adoptTerrain(value:TerrainVersion){
@@ -341,7 +381,9 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
     }catch(value){failed(value);}finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   function cancelAnchor(){if(saveInFlight.current||saveUnknown)return;setAnchorResult(null);if(beforeAnchorView.current)setViewCommand({token:Date.now(),view:beforeAnchorView.current});setCandidate(null);}
-  const errorText=error instanceof Error&&'code' in error&&error.code==='ENGINEERING_CHANGED'?et('reviewRequired'):error instanceof ApiError?failureMessage(error,locale):error instanceof Error?('code' in error&&typeof error.code==='string'?failureMessage(new ApiError(422,error.code),locale):error.message):error?failureMessage(error,locale):'';
+  const organizationFailure=organizationError(locale,error);
+  const memberNames=error instanceof SceneBatchError?error.instanceIds.flatMap(id=>{const item=draft?.instances.find(value=>value.sceneModelInstanceId===id);return item?[item.displayName]:[];}).join('、'):'';
+  const errorText=organizationFailure?organizationFailure+(memberNames?`：${memberNames}`:''):error instanceof Error&&'code' in error&&error.code==='ENGINEERING_CHANGED'?et('reviewRequired'):error instanceof ApiError?failureMessage(error,locale):error instanceof Error?('code' in error&&typeof error.code==='string'?failureMessage(new ApiError(422,error.code),locale):error.message):error?failureMessage(error,locale):'';
   const fields=(keys:('x'|'z'|'longitude'|'latitude'|'heading'|'height')[])=>keys.map(key=><label key={key}><span>{t(key==='height'?(position.heightMode==='relative'?'relativeHeight':position.heightMode==='ground'?'offset':'elevation'):key)}</span><input type="number" step="any" value={position[key]} onChange={event=>setPosition(value=>({...value,[key]:event.target.value}))}/></label>);
   const isAnchor=anchorResult?.spatialChange?.kind==='anchor',viewTerrain=anchorResult?.spatialChange&&anchorResult.spatialChange.kind!=='model'?candidate:terrain;
   const spatialDialog=modal==='anchor'||modal==='replaceTerrain';
@@ -354,21 +396,21 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
     {!base&&entryPending?<>{busy&&<p className="cw-state" role="status">{t('loading')}</p>}</>:!base?<><div className="sw-list-toolbar"><form onSubmit={event=>{event.preventDefault();void readList();}}><Search size={15}/><input aria-label={t('search')} placeholder={t('search')} value={search} onChange={event=>setSearch(event.target.value)}/><Btn disabled={busy} onClick={()=>void readList()}>{t('search')}</Btn></form><Btn primary disabled={busy||!list?.capabilities.canWrite} onClick={()=>setModal('create')}><Plus size={15}/>{t('create')}</Btn></div>
       <div className="sw-scene-list">{!list?<p role="status">{t('loading')}</p>:list.items.length===0?<p>{t('empty')}</p>:<table><thead><tr><th>{t('name')}</th><th>{t('count')}</th><th>{t('updated')}</th><th/></tr></thead><tbody>{list.items.map(row=><tr key={row.sceneId}><td><Layers size={15}/><button type="button" onClick={()=>void open(row.sceneId)} disabled={busy}>{row.displayName}</button></td><td>{row.instanceCount}</td><td>{new Date(row.updatedAt).toLocaleString(locale==='zh'?'zh-CN':'en-GB')}</td><td><Btn disabled={busy} onClick={()=>void open(row.sceneId)}>{t('open')}</Btn></td></tr>)}</tbody></table>}{list?.nextCursor&&<Btn disabled={busy} onClick={()=>void readList(list.nextCursor!)}>{t('more')}</Btn>}</div></>:
       <><div className="sw-editor-toolbar"><IconBtn label={t('back')} disabled={busy} onClick={()=>requestLeave(()=>{setBase(null);setHistory(null);setTerrain(null);setPreview(null);setModal(null);void readList();})}><ArrowLeft size={16}/></IconBtn><strong>{draft?.displayName}</strong><Badge>{unsaved?t('unsaved'):t('saved')}</Badge>{!canWrite&&<Badge>{t('readOnly')}</Badge>}<span className="sw-grow"/>{update&&<Btn disabled={busy} onClick={()=>setModal('conflict')}>{t('updateAvailable')}</Btn>}
-        <div className="sw-mode" role="group" aria-label={t('scenes')}><button type="button" aria-pressed={!editing} disabled={busy||!!anchorResult} onClick={()=>{setEditing(false);setPending(null);}}>{t('read')}</button><button type="button" aria-pressed={editing} disabled={!canWrite||busy||!!anchorResult} onClick={()=>{setEditing(true);setPreview(null);}}>{t('edit')}</button></div><Btn primary disabled={!canWrite||(!dirty&&!reviewDirty)||busy||!!anchorResult} onClick={()=>void save()}><Save size={14}/>{busy?t('saving'):t('save')}</Btn></div>
+        <div className="sw-mode" role="group" aria-label={t('scenes')}><button type="button" aria-pressed={!editing} disabled={busy||!!anchorResult||routePlaying} onClick={()=>{setEditing(false);setPending(null);setContinuous(false);}}>{t('read')}</button><button type="button" aria-pressed={editing} disabled={!canWrite||busy||!!anchorResult||routePlaying} onClick={()=>{setEditing(true);setPreview(null);}}>{t('edit')}</button></div><Btn primary disabled={!canWrite||(!dirty&&!reviewDirty)||busy||!!anchorResult||routePlaying} onClick={()=>void save()}><Save size={14}/>{busy?t('saving'):t('save')}</Btn></div>
       {snapshot&&<><div className="sw-mobile-tools"><IconBtn label={t('content')} onClick={()=>setSide(side==='left'?null:'left')}><PanelLeft size={16}/></IconBtn><span className="sw-grow"/><IconBtn label={t('position')} onClick={()=>setSide(side==='right'?null:'right')}><PanelRight size={16}/></IconBtn></div>
       <div className="sw-editor" data-side={side||undefined}><aside className="sw-left"><div className="sw-tabs" role="tablist">{(['content','resources','objects'] as const).map(value=><button type="button" role="tab" disabled={busy||!!anchorResult} aria-selected={left===value} key={value} onClick={()=>setLeft(value)}>{value==='objects'?et('objects'):t(value)}</button>)}</div>
-        {left==='objects'?<SceneObjectsPanel api={api} root={internal?rootObject:null} selectedUid={object?.item.entityUid||''} ancestorUids={object?.ancestors.path.map(row=>row.object.entityUid)||[]} onSelect={(uid,scope)=>void chooseObject(uid,scope)}/>:left==='resources'?<Suspense fallback={<p role="status">{t('loading')}</p>}><ResourcePanel api={api} canPlace={editable} geographic={!isLocalScene(draft!)} canReplace={editable&&!dirty&&!!current&&!current.positionLocked} replaceTargetVersion={current?.modelVersionId}
+        {left==='objects'?<SceneObjectsPanel key={internal?'equipment':'project'} api={api} root={internal?rootObject:null} rootReading={internal&&rootReading} selectedUid={object?.item.entityUid||''} ancestorUids={object?.ancestors.path.map(row=>row.object.entityUid)||[]} onSelect={(uid,scope)=>void chooseObject(uid,scope)}/>:left==='resources'?<Suspense fallback={<p role="status">{t('loading')}</p>}><ResourcePanel api={api} canPlace={editable} geographic={!isLocalScene(draft!)} canReplace={editable&&!dirty&&!!current&&!current.positionLocked} replaceTargetVersion={current?.modelVersionId}
           onReplace={value=>{if(current)void previewReplacement({kind:'model',sceneModelInstanceId:current.sceneModelInstanceId,candidateModelVersionId:value.modelVersionId});}} onPlace={value=>{if(!editable)return;setHints(prior=>({...prior,[value.modelVersionId]:modelRef(value)}));setPending({kind:'model',model:value});setPreview(null);setSide(null);}}
-          onPreview={value=>{cancelPlacement();setPreview(value);if(value)setSide(null);}} onTerrainReady={adoptTerrain} activeTerrainVersion={terrain}/></Suspense>:<div className="sw-content-list"><div className="sw-content-row"><Layers size={15}/><span>{terrain?.displayName||t('noTerrain')}</span>{terrain&&<IconBtn label={terrainVisible?t('hide'):t('show')} onClick={()=>setTerrainVisible(value=>!value)}>{terrainVisible?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn>}</div>
-          {draft?.instances.length===0&&<p className="sw-empty">{t('noContents')}</p>}{draft?.instances.map(item=><div key={item.sceneModelInstanceId} className={`sw-content-row ${selected===item.sceneModelInstanceId?'selected':''}`}><button type="button" className="sw-content-name" onClick={()=>selectInstance(item.sceneModelInstanceId,true)}>{item.displayName}</button>{item.positionLocked&&<LockKeyhole size={12} aria-label={t('locked')}/>}<IconBtn label={(personal[item.sceneModelInstanceId]??item.visible)?t('hide'):t('show')} disabled={busy||!!anchorResult} onClick={()=>editing?void commit(updateInstance(draft,{...item,visible:!item.visible})):setPersonal(value=>({...value,[item.sceneModelInstanceId]:!(value[item.sceneModelInstanceId]??item.visible)}))}>{(editing?item.visible:personal[item.sceneModelInstanceId]??item.visible)?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn></div>)}
+          onPreview={value=>{routeControl.current?.cancel(false);cancelPlacement();setPreview(value);if(value)setSide(null);}} onTerrainReady={adoptTerrain} activeTerrainVersion={terrain}/></Suspense>:<div className="sw-content-list"><div className="sw-content-row"><Layers size={15}/><span>{terrain?.displayName||t('noTerrain')}</span>{terrain&&<IconBtn label={terrainVisible?t('hide'):t('show')} onClick={()=>setTerrainVisible(value=>!value)}>{terrainVisible?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn>}</div>
+          {draft?.instances.length===0&&<p className="sw-empty">{t('noContents')}</p>}{draft?.instances.map(item=><div key={item.sceneModelInstanceId} className={`sw-content-row ${selectedIds.includes(item.sceneModelInstanceId)?'selected':''}`}><input className="so-select" type="checkbox" aria-label={`${ot('selectInstance')} ${item.displayName}`} checked={selectedIds.includes(item.sceneModelInstanceId)} disabled={routePlaying||busy||!!anchorResult} onChange={()=>selectInstance(item.sceneModelInstanceId,false,true)}/><button type="button" className="sw-content-name" disabled={routePlaying} onClick={event=>selectInstance(item.sceneModelInstanceId,true,event.shiftKey)}>{item.displayName}</button>{item.positionLocked&&<LockKeyhole size={12} aria-label={t('locked')}/>}<IconBtn label={(personal[item.sceneModelInstanceId]??item.visible)?t('hide'):t('show')} disabled={busy||!!anchorResult} onClick={()=>editing?void commit(updateInstance(draft,{...item,visible:!item.visible})):setPersonal(value=>({...value,[item.sceneModelInstanceId]:!(value[item.sceneModelInstanceId]??item.visible)}))}>{(editing?item.visible:personal[item.sceneModelInstanceId]??item.visible)?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn></div>)}
           {!editing&&Object.keys(personal).length>0&&<Btn onClick={()=>setPersonal({})}>{t('resetVisibility')}</Btn>}</div>}
-      </aside><div className="sw-viewport"><Suspense fallback={<p role="status">{t('loading')}</p>}><SceneViewport api={api} snapshot={snapshot} modelRefs={refs} terrainVersion={viewTerrain} selectedId={selected} editing={editable&&!internal} disabled={busy} personalVisibility={editing?(componentFocus?{[componentFocus.instanceId]:true}:{}):personal} terrainVisible={terrainVisible} pendingPlacement={!!pending} previewModel={preview} viewCommand={viewCommand} focusRequest={focus} componentFocus={componentFocus} componentPickingInstanceId={internal&&editable?current?.sceneModelInstanceId:null} onComponentPick={pickComponent}
-        onSelect={id=>{if(!internal)selectInstance(id);}} onPoint={point=>void place(point)} onMove={async(id,point)=>{try{return !!draft&&await commit(moveInstance(draft,id,point));}catch(error){failed(error);return false;}}} onViewChange={value=>{liveView.current=value;}} onResourceDrop={(reference,point)=>void resourceDrop(reference,point)} onError={failed}/></Suspense>
+      </aside><div className="sw-viewport"><div className="so-bar"><span>{ot('selected')} {selectedIds.length}</span><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('batch')}>{ot('batch')}</button><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('routesTab')}>{ot('routesTab')}</button></div><Suspense fallback={<p role="status">{t('loading')}</p>}><SceneViewport api={api} snapshot={snapshot} modelRefs={refs} terrainVersion={viewTerrain} selectedId={selected} selectedIds={selectedIds} gridSnap={snap.grid} cameraControl={cameraControl} onCameraInteraction={()=>routeControl.current?.manual()} editing={editable&&!internal} disabled={busy} personalVisibility={editing?(componentFocus?{[componentFocus.instanceId]:true}:{}):personal} terrainVisible={terrainVisible} pendingPlacement={!!pending} previewModel={preview} viewCommand={viewCommand} focusRequest={focus} componentFocus={componentFocus} componentPickingInstanceId={internal&&editable?current?.sceneModelInstanceId:null} onComponentPick={pickComponent}
+        onSelect={(id,additive)=>{if(!internal)selectInstance(id,false,additive);}} onPoint={point=>void place(point)} onMove={async(id,point)=>{try{return !!draft&&await commit(moveInstance(draft,id,snapPoint(point,snap.grid)));}catch(error){failed(error);return false;}}} onViewChange={value=>{liveView.current=value;}} onResourceDrop={(reference,point)=>void resourceDrop(reference,point)} onError={failed}/></Suspense>
         {preview&&<div className="sw-floating"><span>{t('preview')} · {preview.displayName}</span><Btn onClick={()=>setPreview(null)}>{t('closePreview')}</Btn></div>}
         {pending&&<div className="sw-floating"><span>{t(pending.kind==='copy'?'copyHint':'placementHint')}</span><IconBtn label={t('cancel')} onClick={cancelPlacement}><X size={15}/></IconBtn></div>}
         {anchorResult&&<div className="sw-floating sw-anchor-result"><strong>{t(isAnchor?'anchorPending':'replacementPreview')}</strong><span>{t(isAnchor?'anchorImpact':'replacementHint')}</span><Btn disabled={busy||saveUnknown} onClick={cancelAnchor}>{t('cancel')}</Btn><Btn primary disabled={busy||!canWrite||saveUnknown} onClick={()=>void save(anchorResult)}>{t(isAnchor?'anchorSave':'confirmReplacement')}</Btn></div>}
-      </div><aside className="sw-inspector"><div className="sw-inspector-title"><strong>{current?.displayName||t('position')}</strong>{current&&<IconBtn label={t('locate')} onClick={()=>selectInstance(current.sceneModelInstanceId,true)}><Focus size={15}/></IconBtn>}</div>
-        {anchorResult?<ReplacementImpact result={anchorResult} snapshot={draft!}/>:objectLoading?<p role="status">{et('loading')}</p>:object?<>
+      </div><aside className="sw-inspector"><div className="sw-inspector-title"><strong>{object?.item.displayName||current?.displayName||t('position')}</strong><button type="button" className="ov-icon-btn so-close" aria-label={ot('closePanel')} disabled={routePlaying} onClick={()=>setSide(null)}><X size={14}/></button>{current&&<IconBtn label={t('locate')} disabled={routePlaying} onClick={()=>selectInstance(current.sceneModelInstanceId,true)}><Focus size={15}/></IconBtn>}</div><div className="so-tabs" role="tablist" aria-label={ot('properties')}>{(['properties','batch','routesTab'] as const).map(value=><button type="button" role="tab" key={value} disabled={!!anchorResult} aria-selected={inspectorTab===value} onClick={()=>showTools(value)}>{ot(value)}</button>)}</div>
+        {anchorResult?<ReplacementImpact result={anchorResult} snapshot={draft!}/>:inspectorTab==='batch'?<SceneBatchPanel snapshot={draft!} editable={editable} selectedIds={selectedIds} onSelect={selectMany} onCommit={commit} onMove={moveBatch} onError={failed} continuous={continuous} onContinuous={value=>{setContinuous(value);if(!value)cancelPlacement();}} snap={snap} onSnap={setSnap}/>:inspectorTab==='routesTab'?<SceneRoutePanel snapshot={draft!} identity={JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,draft])} editable={editable} canPreview={!busy&&!preview&&!pending&&!anchorResult&&!saveUnknown} captureKind={internal&&location?.status==='located'&&location.componentKeys.length>0?'component':'overview'} captureInstanceId={internal&&location?.status==='located'?location.sceneModelInstanceId:null} analysisObjectName={object?.item.displayName||null} camera={cameraControl} control={routeControl} onCommit={commit} onError={failed} onPlaying={value=>{setRoutePlaying(value);if(value)setSide('right');}} beforePreview={async signal=>{if(!base)throw new ApiError(404,'NOT_FOUND_OR_FORBIDDEN');const value=await client.open(base.sceneId,base.sceneRevision,signal);if(signal.aborted)return;syncWrite(value);setUpdate(value.headRevision!==base.sceneRevision);}} onView={value=>{setComponentFocus(undefined);setViewCommand({token:Date.now(),view:value});}}/>:objectLoading?<p role="status">{et('loading')}</p>:object?<>
           <section className="sw-object-head" aria-label={et('ownObject')}><strong>{object.item.displayName}</strong><div className="se-link-status"><Badge>{et(object.item.reviewStatus==='confirmed'?'objectConfirmed':'objectUnreviewed')}</Badge>{object.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div>
             <Btn disabled={unsaved||busy||locating} onClick={()=>void locateObject()}><Focus size={14}/>{et(locating?'locating':'locate')}</Btn>{unsaved&&<p className="se-note">{et('saveToLocate')}</p>}
             {editable&&acceptedEngineering.current.has(refKey(object.objectRef))&&<Btn onClick={()=>void reviewObject(object)}>{et('reviewObject')}</Btn>}
@@ -386,9 +428,9 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
           <div className="sw-actions">{editing&&<><Btn disabled={!editable} onClick={()=>changeCurrent(item=>({...item,positionLocked:!item.positionLocked}))}>{current.positionLocked?<UnlockKeyhole size={14}/>:<LockKeyhole size={14}/>} {t(current.positionLocked?'unlock':'lock')}</Btn><Btn disabled={!editable} onClick={()=>setPending({kind:'copy',sourceId:current.sceneModelInstanceId})}><Copy size={14}/>{t('duplicate')}</Btn><Btn disabled={!editable||current.positionLocked} onClick={removeCurrent}><Trash2 size={14}/>{t('remove')}</Btn></>}</div>
           {links}<details className="sw-details"><summary>{t('details')}</summary><p>{t('geometryNote')}</p></details>
         </>:<p className="sw-empty">{t('noSelection')}</p>}
-        <details className="sw-details"><summary>{t('appearance')}</summary><fieldset disabled={!editable}>{(['background','lighting','terrainMaterial'] as const).map(key=><label key={key}>{t(key==='terrainMaterial'?'material':key)}<select value={draft!.defaults[key]} onChange={event=>{if(draft)void commit({...draft,defaults:{...draft.defaults,[key]:event.target.value}} as EditableSceneSnapshot);}}>{(key==='background'?['plain','sky'] as const:key==='lighting'?['neutral','dusk'] as const:['solid','grass'] as const).map(value=><option key={value} value={value}>{t(value)}</option>)}</select></label>)}</fieldset></details>
+        {inspectorTab==='properties'&&<details className="sw-details"><summary>{t('appearance')}</summary><fieldset disabled={!editable}>{(['background','lighting','terrainMaterial'] as const).map(key=><label key={key}>{t(key==='terrainMaterial'?'material':key)}<select value={draft!.defaults[key]} onChange={event=>{if(draft)void commit({...draft,defaults:{...draft.defaults,[key]:event.target.value}} as EditableSceneSnapshot);}}>{(key==='background'?['plain','sky'] as const:key==='lighting'?['neutral','dusk'] as const:['solid','grass'] as const).map(value=><option key={value} value={value}>{t(value)}</option>)}</select></label>)}</fieldset></details>}
       </aside></div>
-      <div className="sw-footer"><IconBtn label={t('undo')} disabled={!editable||!history?.past.length} onClick={()=>{if(history)setHistory(undoScene(history));}}><Undo2 size={15}/></IconBtn><IconBtn label={t('redo')} disabled={!editable||!history?.future.length} onClick={()=>{if(history)setHistory(redoScene(history));}}><Redo2 size={15}/></IconBtn><span>{isLocalScene(snapshot!)?t('unanchored'):snapshot!.coordinateFrame.verticalDatum}</span><span className="sw-grow"/><Btn disabled={busy||!!anchorResult} onClick={()=>setFocus({token:Date.now(),instanceId:null})}>{t('fit')}</Btn><Btn disabled={busy||!!anchorResult} onClick={()=>setViewCommand({token:Date.now(),view:draft!.initialView})}>{t('resetView')}</Btn>{editing&&<Btn disabled={!editable||!liveView.current} onClick={()=>{if(draft&&liveView.current)void commit({...draft,initialView:structuredClone(liveView.current)});}}>{t('initialView')}</Btn>}</div>
+      <div className="sw-footer"><IconBtn label={t('undo')} disabled={!editable||!history?.past.length} onClick={()=>{if(history)setHistory(undoScene(history));}}><Undo2 size={15}/></IconBtn><IconBtn label={t('redo')} disabled={!editable||!history?.future.length} onClick={()=>{if(history)setHistory(redoScene(history));}}><Redo2 size={15}/></IconBtn><span>{isLocalScene(snapshot!)?t('unanchored'):snapshot!.coordinateFrame.verticalDatum}</span><span className="sw-grow"/><Btn disabled={busy||!!anchorResult} onClick={()=>{routeControl.current?.manual();setFocus({token:Date.now(),instanceId:null});}}>{t('fit')}</Btn><Btn disabled={busy||!!anchorResult} onClick={()=>{routeControl.current?.manual();setViewCommand({token:Date.now(),view:draft!.initialView});}}>{t('resetView')}</Btn>{editing&&<Btn disabled={!editable||!liveView.current} onClick={()=>{if(draft&&liveView.current)void commit({...draft,initialView:structuredClone(liveView.current)});}}>{t('initialView')}</Btn>}</div>
       </>}
       </>}
     {modal==='create'&&<Modal title={t('create')} description={t('createHint')} onClose={()=>{if(!busy)setModal(null);}}><form onSubmit={event=>{event.preventDefault();void create();}} className="sw-form"><label>{t('createName')}<input value={newName} onChange={event=>setNewName(event.target.value)} maxLength={200} disabled={busy} autoFocus required/></label><Btn primary disabled={busy} onClick={()=>void create()}>{t('create')}</Btn></form></Modal>}
