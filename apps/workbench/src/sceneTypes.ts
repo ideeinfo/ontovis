@@ -67,8 +67,10 @@ export interface SceneDefaults {
   background: 'plain' | 'sky'; lighting: 'neutral' | 'dusk'; terrainMaterial: 'solid' | 'grass';
 }
 export interface SceneTerrainRef {terrainVersionId: string; expectedContentRevision: string}
-interface SnapshotBase {displayName: string; initialView: SceneView; defaults: SceneDefaults;organization?:SceneOrganization}
+export interface SceneImageryRef {imageryVersionId:string;expectedContentRevision:string;expectedReportSha256:string;visible:boolean}
+interface SnapshotBase {displayName: string; initialView: SceneView; defaults: SceneDefaults;organization?:SceneOrganization;imagery?:SceneImageryRef|null}
 export interface LocalSceneSnapshot extends SnapshotBase {
+  imagery?:null;
   coordinateFrame: LocalFrame; terrain: null; instances: LocalSceneModelInstance[];
 }
 export interface ProjectedSceneSnapshot extends SnapshotBase {

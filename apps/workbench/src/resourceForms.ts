@@ -25,7 +25,7 @@ export function resourceFailure(error: unknown, locale: Locale) {
   return failureMessage(error, locale);
 }
 export function writeDenial(error: unknown) {
-  return error instanceof ApiError && error.status === 403 && ['MODEL_WRITE_FORBIDDEN','SCENE_WRITE_FORBIDDEN'].includes(error.code);
+  return error instanceof ApiError && error.status === 403 && ['MODEL_WRITE_FORBIDDEN','SCENE_WRITE_FORBIDDEN','IMAGERY_WRITE_FORBIDDEN'].includes(error.code);
 }
 export function privateDenial(error: unknown) {
   return error instanceof ApiError && (error.status === 401 || error.status === 403 && !writeDenial(error));

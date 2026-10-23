@@ -7,11 +7,12 @@ export class ApiError extends Error {
 }
 
 export interface BinaryDescriptor {
-  mime: 'model/gltf-binary' | 'application/octet-stream'; maxBytes: number; sha256: string;
+  mime: 'model/gltf-binary' | 'application/octet-stream' | 'image/png'; maxBytes: number; sha256: string;
 }
-type UploadKind = 'legacyModel' | 'projectModel' | 'terrain';
+type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery';
 const MIB = 1024 * 1024;
 const writeOnlyDenials: Record<string, readonly string[]> = {
+  IMAGERY_WRITE_FORBIDDEN:['/api/workbench/imagery/upload'],
   MODEL_WRITE_FORBIDDEN: ['/api/workbench/models/upload', '/api/workbench/models/binding',
     '/api/workbench/resources/model/upload', '/api/workbench/resources/model/calibrate',
     '/api/workbench/resources/model/import-existing'],
@@ -87,10 +88,14 @@ export class WorkbenchApi {
     return this.send<T>('/api/workbench/terrains/upload', metadata, signal, false, {file, kind:'terrain'});
   }
 
+  uploadImagery<T>(file:Blob,metadata:object,signal?:AbortSignal) {
+    return this.send<T>('/api/workbench/imagery/upload',metadata,signal,false,{file,kind:'imagery'});
+  }
+
   content(path: string, body: object, descriptor: BinaryDescriptor, signal?: AbortSignal): Promise<Blob> {
-    if (!['model/gltf-binary','application/octet-stream'].includes(descriptor.mime)
+    if (!['model/gltf-binary','application/octet-stream','image/png'].includes(descriptor.mime)
         || !Number.isSafeInteger(descriptor.maxBytes) || descriptor.maxBytes <= 0
-        || descriptor.maxBytes > (descriptor.mime === 'model/gltf-binary' ? 20 : 256) * MIB
+        || descriptor.maxBytes > (descriptor.mime === 'model/gltf-binary' ? 20 : descriptor.mime === 'image/png' ? 64 : 256) * MIB
         || !/^[a-f0-9]{64}$/.test(descriptor.sha256)) {
       return Promise.reject(new ApiError(422, 'INVALID_REQUEST'));
     }
@@ -113,15 +118,15 @@ export class WorkbenchApi {
     const json = body ? JSON.stringify({...body, expectedSessionRevision: revision}) : undefined;
     const headers:Record<string,string> = body ? {'Content-Type':'application/json'} : {};
     if (upload) {
-      const terrain = upload.kind === 'terrain';
+      const imagery = upload.kind === 'imagery',terrain = upload.kind === 'terrain'||imagery;
       if (upload.kind !== 'legacyModel' && (!Number.isSafeInteger(upload.file.size)
-          || upload.file.size < (terrain ? 8 : 24) || upload.file.size > (terrain ? 256 : 20) * MIB)) {
-        throw new ApiError(413, terrain ? 'TERRAIN_LIMIT_EXCEEDED' : 'MODEL_LIMIT_EXCEEDED');
+          || upload.file.size < (terrain ? 8 : 24) || upload.file.size > (imagery ? 64 : terrain ? 256 : 20) * MIB)) {
+        throw new ApiError(413, imagery ? 'IMAGERY_LIMIT_EXCEEDED' : terrain ? 'TERRAIN_LIMIT_EXCEEDED' : 'MODEL_LIMIT_EXCEEDED');
       }
       const metadata = new TextEncoder().encode(json!);
       if (metadata.length > 6144) throw new ApiError(413, 'INVALID_REQUEST');
       headers['Content-Type'] = terrain ? 'image/tiff' : 'model/gltf-binary';
-      headers[terrain ? 'X-Terrain-Metadata' : 'X-Model-Metadata'] = btoa(String.fromCharCode(...metadata));
+      headers[imagery ? 'X-Imagery-Metadata' : terrain ? 'X-Terrain-Metadata' : 'X-Model-Metadata'] = btoa(String.fromCharCode(...metadata));
     }
     const response = await this.transport(path, {method: body ? 'POST' : 'GET', credentials: 'same-origin',
       cache: 'no-store', signal, headers, body:upload?.file || json});

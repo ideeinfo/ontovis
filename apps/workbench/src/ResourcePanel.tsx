@@ -6,6 +6,9 @@ import {usePreferences} from './Preferences';
 import {SceneApi} from './sceneApi';
 import {ResourceDetails} from './ResourceDetails';
 import {TerrainImport} from './TerrainImport';
+import {ImageryPanel} from './ImageryPanel';
+import {imageryText} from './imageryMessages';
+import type {ImageryVersion} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
   validateResourceFile, writeDenial, modelPlacementIssue, resourceCalibrationKey} from './resourceForms';
 import {resourceText} from './resourceMessages';
@@ -16,13 +19,14 @@ export interface Props {
   api:WorkbenchApi;canPlace:boolean;geographic?:boolean;canReplace?:boolean;replaceTargetVersion?:string|null;onReplace?:(version:ProjectModelVersion)=>void;onPlace:(version:ProjectModelVersion)=>void;
   onPreview:(version:ProjectModelVersion|null)=>void;onTerrainReady:(version:TerrainVersion)=>void;
   activeTerrainVersion?:TerrainVersion|null;
+  onImageryReady?:(value:ImageryVersion)=>void;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
 
-export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,geographic=false}:Props) {
+export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,onImageryReady,geographic=false}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
-  const [tab,setTab]=useState<'models'|'terrains'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
+  const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
   const [query,setQuery]=useState(''),[purpose,setPurpose]=useState<ModelPurpose|''>('');
   const [filters,setFilters]=useState<{q:string;purpose:ModelPurpose|''}>({q:'',purpose:''});
   const [loading,setLoading]=useState(false),[error,setError]=useState<unknown>(null),[denied,setDenied]=useState(false);
@@ -138,6 +142,7 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
     <div className="ov-resource-tabs" role="tablist" aria-label={t('resources')}>
       <button id="ov-resource-models-tab" role="tab" aria-selected={tab==='models'} aria-controls="ov-resource-models" onClick={()=>setTab('models')}>{t('models')}</button>
       <button id="ov-resource-terrain-tab" role="tab" aria-selected={tab==='terrains'} aria-controls="ov-resource-terrains" onClick={()=>setTab('terrains')}>{t('terrains')}</button>
+      <button id="ov-resource-imagery-tab" role="tab" aria-selected={tab==='imagery'} aria-controls="ov-resource-imagery" onClick={()=>setTab('imagery')}>{imageryText(locale,'imagery')}</button>
     </div>
     <section id="ov-resource-models" role="tabpanel" aria-labelledby="ov-resource-models-tab" hidden={tab!=='models'} className="ov-resource-tab-body">
       <form className="ov-resource-search" onSubmit={event=>{event.preventDefault();changeFilters(query,purpose);}}>
@@ -176,6 +181,9 @@ export function ResourcePanel({api,canPlace,canReplace,replaceTargetVersion,onRe
     </section>
     <section id="ov-resource-terrains" role="tabpanel" aria-labelledby="ov-resource-terrain-tab" hidden={tab!=='terrains'} className="ov-resource-tab-body">
       <TerrainImport key={privacyEpoch} api={client} writeBlocked={denied} canUse={canPlace} activeTerrainVersion={activeTerrainVersion} onTerrainReady={onTerrainReady} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>
+    </section>
+    <section id="ov-resource-imagery" role="tabpanel" aria-labelledby="ov-resource-imagery-tab" hidden={tab!=='imagery'} className="ov-resource-tab-body">
+      {tab==='imagery'&&<ImageryPanel api={client} writeBlocked={denied} canUse={canPlace&&geographic&&!!onImageryReady} onUse={value=>onImageryReady?.(value)} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>}
     </section>
     {upload&&<Modal title={t(upload.asset?'appendVersion':'uploadModel')} description={t('glbLimit')} onClose={()=>{if(!uploading)setUpload(null);}}><div className="ov-resource-form">
       <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);setRights(false);setUploadError(null);requestId.current.reset();}}/></label>

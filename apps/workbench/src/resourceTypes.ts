@@ -145,3 +145,23 @@ export interface TerrainsRequest {q?: string; cursor?: string | null; limit?: nu
 export interface TerrainCatalog extends TerrainResponse {
   items: TerrainSummary[]; nextCursor: string | null; snapshotRevision: string;
 }
+
+export interface UploadImageryMetadata {
+  clientRequestId:string;displayName:string;sourceNote:string;licenseNote:string;attribution:string;
+  acquiredAt:string;qualityNote:string;rightsDeclared:true;
+}
+export interface ImageryReport {
+  schemaVersion:1;purpose:'overview';width:number;height:number;bands:3|4;dtype:'uint8';horizontalCrs:string;
+  pixelCornerAffine:[number,number,number,number,number,number];pixelSize:[number,number];coverageWgs84:BoundsWgs84;
+  validPixels:number;transparentPixels:number;fieldAccuracyVerified:false;externalResourcesFetched:0;heightDataUsed:false;
+}
+export interface ImageryRecord {
+  imageryVersionId:string;contentRevision:string;displayName:string;sha256:string;expectedReportSha256:string;createdAt:string;
+  metadata:UploadImageryMetadata;report:ImageryReport;texture:{bytes:number;sha256:string;mediaType:'image/png'};
+}
+export interface ImageryResponse {
+  sessionRevision:string;capabilities:{scope:'private_overview_imagery';canRead:true;canUpload:boolean};
+  limits:{maxUploadBytes:number;maxSide:number;maxVersions:number;maxLibraryBytes:number};
+}
+export type ImageryVersion=ImageryRecord&ImageryResponse;
+export interface ImageryCatalog extends ImageryResponse {items:ImageryRecord[]}

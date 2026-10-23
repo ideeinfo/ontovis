@@ -16,6 +16,10 @@ import {componentFocusCurrent,componentFocusKey,componentFocusView,prepareCompon
 import type {ProjectModelVersion,TerrainVersion} from './resourceTypes';
 import type {EditableSceneSnapshot,ModelResourceRef,SceneModelInstance,SceneView,Vector3} from './sceneTypes';
 import {snapPoint} from './sceneOrganization';
+import {SceneApi} from './sceneApi';
+import {SceneImageryLayer} from './sceneImagery';
+import {imageryFailure,imageryText} from './imageryMessages';
+import type {ImageryRecord} from './resourceTypes';
 import './sceneViewport.css';
 
 export interface SceneCameraControl {getView:()=>SceneView;setView:(value:SceneView)=>void;ready:()=>boolean}
@@ -24,6 +28,7 @@ export interface SceneViewportProps {
   selectedId:string|null;editing:boolean;disabled?:boolean;personalVisibility:Record<string,boolean>;
   selectedIds?:string[];gridSnap?:number;cameraControl?:{current:SceneCameraControl|null};onCameraInteraction?:()=>void;
   terrainVisible:boolean;pendingPlacement:boolean;previewModel?:ProjectModelVersion|null;
+  imageryVersion?:ImageryRecord|null;imageryVisible?:boolean;
   viewCommand?:{token:number;view:SceneView};focusRequest?:{token:number;instanceId:string|null};
   componentFocus?:ComponentFocusRequest;
   componentPickingInstanceId?:string|null;onComponentPick?:(pick:SceneComponentPick)=>void;
@@ -54,6 +59,7 @@ export function SceneViewport(props:SceneViewportProps) {
   const current=useRef({...props,locale,resolved});current.current={...props,locale,resolved};
   const mount=useRef<HTMLDivElement>(null),runtime=useRef<Runtime|null>(null);
   const [reading,setReading]=useState(false),[error,setError]=useState<unknown>(null),[moving,setMoving]=useState(false);
+  const [imageryPartial,setImageryPartial]=useState(false);
   const latestError=useRef(error);latestError.current=error;
   const [attempt,setAttempt]=useState(0),[rendererAttempt,setRendererAttempt]=useState(0);
   const webglFailure=useRef(false);
@@ -68,7 +74,7 @@ export function SceneViewport(props:SceneViewportProps) {
     let disposed=false,renderer:THREE.WebGLRenderer;
     try {renderer=prepareSceneRenderer(new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'}));webglFailure.current=false;}
     catch(value){webglFailure.current=true;setError(value);props.onError?.(value);return;}
-    const cache=new SceneResourceCache(api),scene=new THREE.Scene();
+    const cache=new SceneResourceCache(api),scene=new THREE.Scene(),imageryLayer=new SceneImageryLayer(new SceneApi(api));
     const camera=new THREE.PerspectiveCamera(42,1,.05,2_000_000);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;
     renderer.domElement.setAttribute('role','img');renderer.domElement.tabIndex=0;
@@ -187,6 +193,7 @@ export function SceneViewport(props:SceneViewportProps) {
       for(const item of state.snapshot.instances){const entry=entries.get(item.sceneModelInstanceId);if(entry)entry.root.visible=(state.personalVisibility[item.sceneModelInstanceId]??item.visible)&&!preview;}
       grid.visible=state.snapshot.coordinateFrame.mode==='local_plane'&&!preview;
       if(terrain)terrain.visible=state.terrainVisible&&!preview;
+      imageryLayer.visible(state.terrainVisible&&!!state.imageryVisible&&!preview);
       const color=getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d';
       const material=selectedBox.material as THREE.LineBasicMaterial;material.color.set(color);
       (componentBox.material as THREE.LineBasicMaterial).color.set(color);
@@ -281,7 +288,11 @@ export function SceneViewport(props:SceneViewportProps) {
       })());
       const results=await Promise.allSettled(tasks);if(stale()||ticket!==generation)return;
       const failed=results.find(value=>value.status==='rejected');if(failed?.status==='rejected')report(failed.reason);
-      resourcesLoading=false;setReading(false);appearance();
+      try{await imageryLayer.sync(terrain,state.terrainVersion,state.imageryVersion??null,state.snapshot.imagery,signal);}
+      catch(value){if(!stale()&&ticket===generation)report(value);}
+      if(stale()||ticket!==generation)return;
+      setImageryPartial(imageryLayer.partial());
+      resourcesLoading=!!state.snapshot.imagery&&!state.imageryVersion;setReading(resourcesLoading);appearance();
       if(focusPending!==undefined){const id=focusPending;focusPending=undefined;fit(id);}
     };
     const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
@@ -389,25 +400,29 @@ export function SceneViewport(props:SceneViewportProps) {
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
       orbit.removeEventListener('change',request);orbit.removeEventListener('start',orbitStart);orbit.removeEventListener('end',emit);
-      sceneControls.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
+      sceneControls.dispose();imageryLayer.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
       componentBox.geometry.dispose();disposeMaterial(componentBox.material);
       grid.geometry.dispose();disposeMaterial(grid.material);terrainMaterial.dispose();grass.dispose();scene.clear();
       renderer.dispose();renderer.forceContextLoss();canvas.remove();runtime.current=null;
     };
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
-  useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.previewModel,attempt]);
-  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.disabled,props.editing,props.pendingPlacement,locale,resolved]);
+  useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,attempt]);
+  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
   useEffect(()=>{if(props.focusRequest)runtime.current?.focus(props.focusRequest.instanceId);},[props.focusRequest?.token]);
   useEffect(()=>{runtime.current?.componentFocus();},[props.componentFocus,props.snapshot,props.modelRefs,props.selectedId,props.personalVisibility,props.previewModel]);
   return <section className="ov-scene-viewport" aria-label={message('view')}>
     <div className="ov-scene-viewport-stage"><div ref={mount} className="ov-scene-viewport-canvas"/>
-      {(reading||!!error) && <div className="ov-scene-viewport-state" role={error?'alert':'status'}>{error?errorMessage:message('loading')}
+      {(reading||!!error) && <div className="ov-scene-viewport-state" role={error?'alert':'status'}>{error?error instanceof ApiError&&/IMAGERY/.test(error.code)?imageryFailure(error,locale):errorMessage:message('loading')}
         {error?<button className="ov-btn" onClick={()=>webglFailure.current?setRendererAttempt(value=>value+1):setAttempt(value=>value+1)}>{message('retry')}</button>:null}</div>}
       <div className="ov-scene-viewport-tools"><IconBtn label={message('zoomIn')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(.8);}}><ZoomIn size={16}/></IconBtn>
         <IconBtn label={message('zoomOut')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(1.25);}}><ZoomOut size={16}/></IconBtn>
         <IconBtn label={message('fit')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.fit();}}><Maximize size={16}/></IconBtn>
         <IconBtn label={message('focus')} disabled={!props.selectedId||!!props.previewModel} onClick={()=>{props.onCameraInteraction?.();runtime.current?.focus(props.selectedId);}}><Focus size={16}/></IconBtn></div>
+      {props.imageryVersion&&props.snapshot.imagery&&props.imageryVisible&&props.terrainVisible&&!props.previewModel&&<div className="ov-scene-imagery-attribution">
+        <span>{props.imageryVersion.displayName} · {props.imageryVersion.metadata.acquiredAt} · {props.imageryVersion.report.pixelSize.map(v=>Number(v.toPrecision(3))).join(' × ')} {props.imageryVersion.report.horizontalCrs==='EPSG:4326'?'°':'m'} · {imageryText(locale,'precision')}</span>
+        <span>{props.imageryVersion.metadata.attribution}</span>{imageryPartial&&<span>{imageryText(locale,'partial')}</span>}
+      </div>}
     </div><footer className="ov-scene-viewport-foot"><span>{props.previewModel?`${message('preview')} · ${props.previewModel.displayName}`:
       moving?message('moving'):props.editing?props.pendingPlacement?message('place'):message('drag'):message('browse')}</span>
       {props.previewModel?.calibration.state==='unverified'?<span>{message('unverified')}</span>:null}</footer>
