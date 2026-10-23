@@ -33,6 +33,7 @@ from apps.api.scene_bindings import validate_ref
 from apps.api.scene_location import SceneLocationResolver
 from apps.api.legacy_scene_registry import LegacySceneRegistry
 from apps.api.legacy_scene_sources import LegacySceneSources
+from apps.api.imagery_library import ImageryLibrary, MAX_BYTES as MAX_IMAGERY_BYTES, MAX_VERSIONS as MAX_IMAGERY_VERSIONS, MAX_TOTAL_BYTES as MAX_IMAGERY_TOTAL_BYTES
 
 
 class WorkbenchSessions(UserSessions):
@@ -56,6 +57,7 @@ class WorkbenchSessions(UserSessions):
         self.scenes = SceneLibrary(self.library, model_identity=self.project_models.content_identity) if self.library else None
         self.legacy_registry = LegacySceneRegistry(self.library) if self.library else None
         self.terrains = TerrainLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
+        self.imagery = ImageryLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
         self.geometry = SceneGeometryProcess(self.library, python_executable=terrain_python,
             terrain_root=self.terrains.root / 'versions') if self.terrains else None
 
@@ -307,6 +309,36 @@ class WorkbenchSessions(UserSessions):
         authorize()
         return self.terrain_response(value, row, access)
 
+    def imagery_response(self, value, row, access):
+        return {**value, 'sessionRevision': row.revision,
+                'capabilities': {'scope':'private_overview_imagery', 'canRead':True, 'canUpload':access.get('role') == 'admin'},
+                'limits': {'maxUploadBytes':MAX_IMAGERY_BYTES, 'maxSide':4096,
+                           'maxVersions':MAX_IMAGERY_VERSIONS, 'maxLibraryBytes':MAX_IMAGERY_TOTAL_BYTES}}
+
+    def imagery_upload(self, sid, payload, stream, length):
+        row, authorize, access, actor = self.project_authorization(sid, payload, writing=True, write_code='IMAGERY_WRITE_FORBIDDEN')
+        if self.imagery is None: raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+        value = self.imagery.upload(stream, length, {key:value for key,value in payload.items() if key != 'expectedSessionRevision'}, actor, authorize)
+        return self.imagery_response(value, row, access)
+
+    def imagery_request(self, sid, path, payload):
+        row, authorize, access, _ = self.project_authorization(sid, payload, writing=False)
+        if self.imagery is None: raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+        body = {key:value for key,value in payload.items() if key != 'expectedSessionRevision'}
+        if path == '/api/workbench/imagery' and set(body) <= {'q'}:
+            value = self.imagery.listing(authorize, **body)
+        elif path == '/api/workbench/imagery/version' and set(body) == {'imageryVersionId'}:
+            value = self.imagery.version(body['imageryVersionId'], authorize)
+        elif path == '/api/workbench/imagery/content' and set(body) == {'imageryVersionId','expectedContentRevision','expectedSha256'}:
+            fingerprint = body['expectedSha256']
+            if not isinstance(fingerprint,str) or len(fingerprint) != 64 or any(c not in '0123456789abcdef' for c in fingerprint):
+                raise PreviewError(422, 'INVALID_REQUEST')
+            content = self.imagery.content(body['imageryVersionId'], body['expectedContentRevision'], fingerprint, authorize)
+            return {'content':content, 'sha256':fingerprint, 'sessionRevision':row.revision}
+        else: raise PreviewError(422, 'INVALID_REQUEST')
+        authorize()
+        return self.imagery_response(value, row, access)
+
     def scene_request(self, sid, path, payload):
         with self.lock:
             row = self.current(sid, authenticated=True, touch=True)
@@ -372,6 +404,10 @@ class WorkbenchSessions(UserSessions):
                         raise PreviewError(409, 'RESOURCE_CHANGED')
                     fixed_terrains[version['terrainVersionId']] = identity
                     terrains.append(identity)
+                if snapshot.get('imagery') is not None:
+                    if self.imagery is None or snapshot['terrain'] is None:
+                        raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+                    self.imagery.validate_scene(snapshot['imagery'], version, authorize)
                 return {'terrains': terrains}
 
             def validate_engineering(snapshot, reviewed, changes):

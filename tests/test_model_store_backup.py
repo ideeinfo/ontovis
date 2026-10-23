@@ -18,9 +18,34 @@ from apps.api.terrain_library import TerrainLibrary
 from tests import test_legacy_scene_sources as sources
 from tests.test_terrain_library import FAKE_PROCESSOR
 import tools.model_store_backup as backup
+from apps.api.imagery_library import ImageryLibrary
 
 
 class ModelStoreBackupTests(unittest.TestCase):
+    def add_imagery(self):
+        images=ImageryLibrary(self.fixture.fixture.library,python_executable=sys.executable)
+        identifier=str(uuid4());directory=images.root/'versions'/identifier;directory.mkdir()
+        source=b'II*\x00synthetic-imagery-source';texture=b'\x89PNG\r\n\x1a\nsynthetic-texture'
+        (directory/'source.tif').write_bytes(source);(directory/'texture.png').write_bytes(texture)
+        source_sha=hashlib.sha256(source).hexdigest();manifest={'bytes':len(texture),'sha256':hashlib.sha256(texture).hexdigest(),'mediaType':'image/png'}
+        metadata={'displayName':'Synthetic overview','acquiredAt':'2026-10-13'}
+        report={'schemaVersion':1,'purpose':'overview','fieldAccuracyVerified':False,'heightDataUsed':False}
+        report_sha=backup._digest(report);revision='imagery:'+backup._digest([source_sha,metadata,report_sha,manifest])
+        with self.fixture.fixture.library.connect() as db:
+            db.execute('insert into imagery_versions values (?,?,?,?,?,?,?,?,?,?)',(identifier,source_sha,revision,'Synthetic overview',json.dumps(metadata),json.dumps(report),report_sha,json.dumps(manifest),len(source)+len(texture),'2026-10-23T00:00:00Z'))
+        return directory
+
+    def test_imagery_source_texture_and_metadata_roundtrip_as_a_paired_backup(self):
+        self.add_imagery();before=self.source_state();result=self.snapshot();restored=self.root/'restored-imagery'
+        backup.restore_new(self.destination,restored,result['manifestSha256'],service_stopped=True)
+        self.assertEqual(self.tree(restored/'workbench-library'),before[0]);self.assertEqual(self.source_state(),before)
+
+    def test_changed_registered_imagery_texture_or_source_blocks_backup(self):
+        directory=self.add_imagery();original=(directory/'texture.png').read_bytes()
+        (directory/'texture.png').write_bytes(original[:-1]+b'X');self.reject(self.snapshot)
+        (directory/'texture.png').write_bytes(original)
+        (directory/'source.tif').write_bytes(b'changed source');self.reject(self.snapshot)
+
     def setUp(self):
         self.fixture = sources.LegacySceneSourcesTests(); self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)

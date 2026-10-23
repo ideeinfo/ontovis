@@ -176,6 +176,28 @@ def _database(library, entries):
                     if item['artifactId'] == 'source.tif':
                         _require(item['sha256'] == source_sha, 'INVALID_STORE')
                 _require(type(total) is int and total == sum(item['bytes'] for item in manifest) + report_entry['bytes'], 'INVALID_STORE')
+        if 'imagery_versions' in tables:
+            for identifier, source_sha, revision, metadata_text, report_text, report_sha, manifest_text, total in db.execute(
+                    'select id,sha256,content_revision,metadata,report,report_sha256,manifest,total_bytes from imagery_versions'):
+                _require(_uuid(identifier) and _sha(source_sha) and _sha(report_sha), 'INVALID_STORE')
+                metadata, report, texture = json.loads(metadata_text), json.loads(report_text), json.loads(manifest_text)
+                _require(type(metadata) is dict and type(report) is dict and type(texture) is dict
+                         and set(texture) == {'bytes','sha256','mediaType'} and texture['mediaType'] == 'image/png'
+                         and type(texture['bytes']) is int and 0 < texture['bytes'] <= 64*1024*1024
+                         and type(total) is int and 8 <= total-texture['bytes'] <= 64*1024*1024, 'INVALID_STORE')
+                _require(report_sha == _digest(report)
+                         and revision == 'imagery:' + _digest([source_sha,metadata,report_sha,texture]), 'INVALID_STORE')
+                base = 'imagery/versions/' + identifier + '/'
+                _registered(entries, base+'source.tif', total-texture['bytes'], source_sha)
+                _registered(entries, base+'texture.png', texture['bytes'], texture['sha256'])
+        if 'scene_imagery_uses' in tables:
+            for revision, identifier, content_revision, source_sha, report_sha in db.execute('select * from scene_imagery_uses'):
+                image = db.execute('select content_revision,sha256,report_sha256 from imagery_versions where id=?',(identifier,)).fetchone()
+                _require(image == (content_revision,source_sha,report_sha), 'INVALID_STORE')
+                snapshot = json.loads(db.execute('select snapshot from scene_revisions where revision=?',(revision,)).fetchone()[0])
+                reference = snapshot.get('imagery') or {}
+                _require(reference.get('imageryVersionId') == identifier and reference.get('expectedContentRevision') == content_revision
+                         and reference.get('expectedReportSha256') == report_sha, 'INVALID_STORE')
         registry = {'state': 'absent'}
         if 'legacy_scene_registry_state' in tables:
             rows = db.execute('select * from legacy_scene_registry_state').fetchall()

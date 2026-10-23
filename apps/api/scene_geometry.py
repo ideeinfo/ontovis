@@ -172,7 +172,15 @@ def _terrain(terrains,identifier):
 
 def _base_snapshot(snapshot):
     value=_bounded_copy(snapshot)
-    _fields(value,('displayName','coordinateFrame','terrain','instances','initialView','defaults'),('organization',))
+    _fields(value,('displayName','coordinateFrame','terrain','instances','initialView','defaults'),('organization','imagery'))
+    image=value.get('imagery')
+    if image is not None:
+        _fields(image,('imageryVersionId','expectedContentRevision','expectedReportSha256','visible'))
+        _uuid(image['imageryVersionId']);_text(image['expectedContentRevision'])
+        _require(type(image['expectedReportSha256']) is str and len(image['expectedReportSha256'])==64
+                 and all(c in '0123456789abcdef' for c in image['expectedReportSha256']) and type(image['visible']) is bool)
+        _require(type(value['coordinateFrame']) is dict and value['coordinateFrame'].get('mode')=='projected_site'
+                 and value['terrain'] is not None,'SCENE_SCOPE_UNSUPPORTED','Imagery needs a georeferenced terrain.')
     _text(value['displayName']);_require(type(value['instances']) is list and len(value['instances'])<=MAX_INSTANCES,'SCENE_LIMIT_EXCEEDED','At most 100 instances are accepted.')
     identifiers=set();bindings=0
     for item in value['instances']:

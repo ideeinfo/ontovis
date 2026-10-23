@@ -42,7 +42,13 @@ def _fields(value, expected):
 
 def _snapshot_fields(value):
     required = {'displayName', 'coordinateFrame', 'terrain', 'instances', 'initialView', 'defaults'}
-    _require(type(value) is dict and required <= set(value) <= required | {'organization'})
+    _require(type(value) is dict and required <= set(value) <= required | {'organization','imagery'})
+    image = value.get('imagery')
+    if image is not None:
+        _fields(image, ('imageryVersionId','expectedContentRevision','expectedReportSha256','visible'))
+        _uuid(image['imageryVersionId']); _text(image['expectedContentRevision']); _sha(image['expectedReportSha256'])
+        _require(type(image['visible']) is bool and type(value['coordinateFrame']) is dict
+                 and value['coordinateFrame'].get('mode') == 'projected_site' and value['terrain'] is not None, 'SCENE_SCOPE_UNSUPPORTED')
 
 
 def _organization(value, identifiers):
@@ -231,6 +237,7 @@ def validate_snapshot(value: dict, *, geographic=False, engineering=False) -> di
     common['coordinateFrame'] = {'mode': 'local_plane', 'frameRevision': 'schema-check',
                                  'origin': [0, 0, 0], 'unit': 'm', 'axes': 'X_EAST_Y_UP_Z_SOUTH'}
     common['terrain'] = None
+    common.pop('imagery', None)
     for item, probe in zip(result['instances'], common['instances']):
         _require(type(item) is dict and type(item.get('placement')) is dict)
         placement = item['placement']
@@ -435,6 +442,22 @@ class SceneLibrary:
             db.execute('insert into scene_terrain_uses values (?,?,?,?,?)',
                        (revision, terrain['terrainVersionId'], terrain['contentRevision'],
                         terrain['sha256'], terrain['reportSha256']))
+        image = snapshot.get('imagery')
+        if image is not None:
+            _require(db.execute("select 1 from sqlite_master where type='table' and name='imagery_versions'").fetchone() is not None, 'RESOURCE_VALIDATION_REQUIRED', 409)
+            # Old installations need no imagery schema. Create its retained use
+            # table atomically on the first actual image save, after its parent exists.
+            db.execute('''create table if not exists scene_imagery_uses (
+                revision text not null references scene_revisions(revision),
+                imagery_version_id text not null references imagery_versions(id), content_revision text not null,
+                source_sha256 text not null, report_sha256 text not null, primary key(revision,imagery_version_id))''')
+            db.execute("create trigger if not exists scene_imagery_no_update before update on scene_imagery_uses begin select raise(abort, 'immutable scene imagery reference'); end")
+            db.execute("create trigger if not exists scene_imagery_no_delete before delete on scene_imagery_uses begin select raise(abort, 'retained scene imagery reference'); end")
+            row = db.execute('select * from imagery_versions where id=?', (image['imageryVersionId'],)).fetchone()
+            _require(row is not None and row['content_revision'] == image['expectedContentRevision']
+                     and row['report_sha256'] == image['expectedReportSha256'], 'RESOURCE_CHANGED', 409)
+            db.execute('insert into scene_imagery_uses values (?,?,?,?,?)',
+                       (revision,row['id'],row['content_revision'],row['sha256'],row['report_sha256']))
 
     @staticmethod
     def _empty(display_name):

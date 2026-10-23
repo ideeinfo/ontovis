@@ -9,6 +9,7 @@ from .authority import PreviewError
 from .user_sessions import COOKIE, UserSessions
 from .scene_library import decode_scene_request, MAX_SCENE_BYTES
 from .terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES
+from .imagery_validation import MAX_BYTES as MAX_IMAGERY_BYTES
 from tools.model_probe import strict_json, ProbeError
 
 def handler_type(sessions: UserSessions, origin: str, *, development=False):
@@ -92,14 +93,16 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, value)
             if self.command == 'GET' and parts.path in ('/api/demo/context','/api/demo/locate'):
                 return self.reply(200, sessions.read(sid, parts.path, query))
-            if self.command == 'POST' and parts.path == '/api/workbench/terrains/upload' and not query:
+            if self.command == 'POST' and parts.path in ('/api/workbench/terrains/upload','/api/workbench/imagery/upload') and not query:
+                imagery = parts.path == '/api/workbench/imagery/upload'
+                metadata_header = 'X-Imagery-Metadata' if imagery else 'X-Terrain-Metadata'
                 if (self.headers.get('Transfer-Encoding') or self.headers.get_all('Transfer-Encoding')
                         or self.headers.get_all('Content-Type') != ['image/tiff']
                         or len(self.headers.get_all('Content-Length', [])) != 1
-                        or len(self.headers.get_all('X-Terrain-Metadata', [])) != 1):
+                        or len(self.headers.get_all(metadata_header, [])) != 1):
                     raise PreviewError(415, 'INVALID_REQUEST')
                 try:
-                    header = self.headers['X-Terrain-Metadata']
+                    header = self.headers[metadata_header]
                     if len(header) > 8192: raise ValueError()
                     data = base64.b64decode(header, validate=True)
                     if len(data) > 6144: raise ValueError()
@@ -110,9 +113,10 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                     if not isinstance(payload, dict): raise ValueError()
                 except (ValueError, UnicodeError, ProbeError):
                     raise PreviewError(422, 'INVALID_REQUEST') from None
-                if not 8 <= length <= MAX_TERRAIN_BYTES:
-                    raise PreviewError(413, 'TERRAIN_LIMIT_EXCEEDED')
-                return self.reply(202, sessions.terrain_upload(sid, payload, self.rfile, length))
+                if not 8 <= length <= (MAX_IMAGERY_BYTES if imagery else MAX_TERRAIN_BYTES):
+                    raise PreviewError(413, 'IMAGERY_LIMIT_EXCEEDED' if imagery else 'TERRAIN_LIMIT_EXCEEDED')
+                method = sessions.imagery_upload if imagery else sessions.terrain_upload
+                return self.reply(200 if imagery else 202, method(sid, payload, self.rfile, length))
             if self.command == 'POST' and parts.path in ('/api/workbench/models/upload', '/api/workbench/resources/model/upload') and not query:
                 if (self.headers.get_all('Transfer-Encoding') or self.headers.get_all('Content-Type')!=['model/gltf-binary']
                         or len(self.headers.get_all('Content-Length',[]))!=1
@@ -143,12 +147,13 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                            for action in ('sources', 'check', 'activate', 'entry'))
             terrain_paths = ('/api/workbench/terrains', '/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
                              '/api/workbench/terrains/version', '/api/workbench/terrains/content')
+            imagery_paths = ('/api/workbench/imagery', '/api/workbench/imagery/version', '/api/workbench/imagery/content')
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
                               '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',
                               '/api/workbench/resources/model/preserve-legacy-display',
                               '/api/workbench/resources/uses', '/api/workbench/resources/models/legacy',
                               '/api/workbench/resources/model/import-existing')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *resource_paths) or query:
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
                     or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json'):
@@ -188,6 +193,11 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 value = sessions.terrain_request(sid, parts.path, payload)
                 if parts.path.endswith('/content'):
                     return self.image(value['content'], value['sessionRevision'], 'application/octet-stream', value['sha256'])
+                return self.reply(200, value)
+            if parts.path in imagery_paths:
+                value = sessions.imagery_request(sid, parts.path, payload)
+                if parts.path.endswith('/content'):
+                    return self.image(value['content'], value['sessionRevision'], 'image/png', value['sha256'])
                 return self.reply(200, value)
             if parts.path=='/api/workbench/models/binding': return self.reply(200,sessions.save_binding(sid,payload))
             if parts.path in workbench_paths:
