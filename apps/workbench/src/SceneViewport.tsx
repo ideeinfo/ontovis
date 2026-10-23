@@ -1,11 +1,12 @@
 import {useEffect,useRef,useState} from 'react';
 import {Focus,Maximize,ZoomIn,ZoomOut} from 'lucide-react';
 import * as THREE from 'three';
-import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import type {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
 import {usePreferences} from './Preferences';
 import {IconBtn} from './Primitives';
 import {SceneResourceCache,cloneModel} from './sceneResourceCache';
+import {createSceneControls} from './sceneControls';
 import {SceneCabinetAppearance} from './sceneCabinetAppearance';
 import {sceneModelRayHit,type SceneComponentPick} from './sceneComponentPick';
 import {toDisplay,trueHeadingToThreeYaw} from './sceneTransforms';
@@ -67,7 +68,8 @@ export function SceneViewport(props:SceneViewportProps) {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;
     renderer.domElement.setAttribute('role','img');renderer.domElement.tabIndex=0;
     element.append(renderer.domElement);
-    const orbit=new OrbitControls(camera,renderer.domElement);orbit.enableDamping=false;orbit.maxDistance=300_000;
+    const sceneControls=createSceneControls(camera,renderer.domElement),orbit=sceneControls.orbit;
+    orbit.enableDamping=false;orbit.maxDistance=300_000;
     const models=new THREE.Group();scene.add(models);
     const light=new THREE.HemisphereLight(0xf1f5ec,0x58694d,2.2);scene.add(light);
     const sun=new THREE.DirectionalLight(0xffe4bd,2.5);sun.position.set(-100,140,80);scene.add(sun);
@@ -375,7 +377,8 @@ export function SceneViewport(props:SceneViewportProps) {
       disposed=true;++generation;loadingAbort?.abort();cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',visible);
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
-      orbit.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
+      orbit.removeEventListener('change',request);orbit.removeEventListener('start',orbitStart);orbit.removeEventListener('end',emit);
+      sceneControls.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
       componentBox.geometry.dispose();disposeMaterial(componentBox.material);
       grid.geometry.dispose();disposeMaterial(grid.material);terrainMaterial.dispose();grass.dispose();scene.clear();
       renderer.dispose();renderer.forceContextLoss();canvas.remove();runtime.current=null;

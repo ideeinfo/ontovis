@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Box, Focus, Maximize, ZoomIn, ZoomOut } from 'lucide-react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import type { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ApiError, cancelled, failureMessage, type WorkbenchApi } from './api';
 import { IconBtn } from './Primitives';
 import { usePreferences } from './Preferences';
 import { bindingNeedsReview, modelLocation, modelNavigation } from './modelLocation';
+import { createSceneControls } from './sceneControls';
 import type { ModelView, ObjectView } from './types';
 
 type Controls = {fit:() => void; locate:() => void; zoom:(factor:number) => void};
@@ -30,6 +31,7 @@ export function ModelViewport({api, active, detail, model, modelVersionId, onMod
     const epoch=api.epoch,revision=api.revision;
     let renderer:THREE.WebGLRenderer | null = null, scene:THREE.Scene | null = null;
     let orbit:OrbitControls | null = null, observer:ResizeObserver | null = null, frame = 0;
+    let sceneControls:ReturnType<typeof createSceneControls> | null = null;
     let disposed = false;
     const stale=()=>disposed || abort.signal.aborted || api.epoch!==epoch || api.revision!==revision;
     onModel(null); setReading(true); setError(null);
@@ -91,7 +93,8 @@ export function ModelViewport({api, active, detail, model, modelVersionId, onMod
       root.add(proxy); scene.add(root);
       const light = new THREE.HemisphereLight(0xffffff, 0x596d61, 2.5); scene.add(light);
       const sun = new THREE.DirectionalLight(0xfff0d8, 3); sun.position.set(40,140,70); scene.add(sun);
-      orbit = new OrbitControls(camera, renderer.domElement); orbit.enableDamping = false; orbit.maxDistance = 700;
+      sceneControls = createSceneControls(camera, renderer.domElement); orbit = sceneControls.orbit;
+      orbit.enableDamping = false; orbit.maxDistance = 700;
       const whole = new THREE.Box3().setFromObject(root);
       let tween:{start:number; from:THREE.Vector3; to:THREE.Vector3; targetFrom:THREE.Vector3; targetTo:THREE.Vector3} | null = null;
       const render = () => {
@@ -175,7 +178,7 @@ export function ModelViewport({api, active, detail, model, modelVersionId, onMod
     }
     void start().catch(value => {if (!disposed && !cancelled(value)) {setError(value); setReading(false); onModel(null);}});
     return () => {
-      disposed=true; abort.abort(); cancelAnimationFrame(frame); observer?.disconnect(); orbit?.dispose();
+      disposed=true; abort.abort(); cancelAnimationFrame(frame); observer?.disconnect(); sceneControls?.dispose(); orbit=null;
       if (scene) {disposeObject(scene); scene.clear();}
       if (renderer) {renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();}
       controls.current=null; update.current=() => {};
