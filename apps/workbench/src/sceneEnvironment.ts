@@ -17,7 +17,7 @@ export function environmentPreset(id:Exclude<SceneEnvironmentV1['presetId'],'cus
     lighting:{hemisphereIntensity:1,environment:{source:'procedural-sky-v1',intensity:.8},sun:{enabled:true,azimuthDeg:135,elevationDeg:dusk?12:35,intensity:dusk?1.6:2.5,color:dusk?'#ffca93':'#fff3df'}},
     atmosphere:{sky:'gradient-v1',topColor:dusk?'#7b849a':'#8daec0',horizonColor:dusk?'#e2bba0':'#d7e0dd',fog:{mode:id==='offshore-overview-v1'?'off':'linear',nearM:1500,farM:13000}},
     shadows:{mode:'sun-local',quality:'balanced',radiusM:500},surface:{imageryShading:'source-color',textureSet:null,terrainRoughness:1,textureRepeatM:20},
-    water:{enabled:id==='offshore-overview-v1',baseSurface:'active-flat-relative-terrain',mode:'normal-waves',travelHeadingDeg:20,rippleStrength:.35,amplitudeM:0,wavelengthM:20,travelSpeedMps:.6,color:'#507d91',roughness:.3,reflection:'procedural-sky',seed:771},
+    water:{enabled:id==='offshore-overview-v1',baseSurface:'active-flat-relative-terrain',mode:'normal-waves',travelHeadingDeg:20,rippleStrength:.35,amplitudeM:0,wavelengthM:20,travelSpeedMps:id==='offshore-overview-v1'?5:.6,color:'#507d91',roughness:.3,reflection:'procedural-sky',seed:771},
     animation:{defaultPlayback:'playing',initialPhase:0}};
 }
 export function waterSurfaceSupported(frame:CoordinateFrame,terrain:TerrainVersion|null):boolean {

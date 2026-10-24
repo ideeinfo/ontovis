@@ -5,7 +5,7 @@ import {commitScene,sceneHistory,duplicateAt} from '../src/sceneState.ts';
 const frame={mode:'local_plane',frameRevision:'local',origin:[0,0,0],unit:'m',axes:'X_EAST_Y_UP_Z_SOUTH'};
 test('environment presets are independent and only offshore requests visual water',()=>{
   const land=environmentPreset('land-day-v1'),sea=environmentPreset('offshore-overview-v1');sea.color.exposure=2;
-  assert.equal(land.color.exposure,1);assert.equal(land.water.enabled,false);assert.equal(sea.water.enabled,true);assert.equal(sea.water.amplitudeM,0);
+  assert.equal(land.color.exposure,1);assert.equal(land.water.enabled,false);assert.equal(sea.water.enabled,true);assert.equal(sea.water.amplitudeM,0);assert.equal(sea.water.travelSpeedMps,5);assert.equal(sea.animation.defaultPlayback,'playing');assert.equal(land.water.travelSpeedMps,.6);
   assert.equal(environmentPreset('dusk-v1').lighting.sun.elevationDeg,12);
   assert.equal(environmentPreset('offshore-overview-v1').atmosphere.fog.mode,'off');
 });

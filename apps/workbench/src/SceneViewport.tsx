@@ -73,9 +73,14 @@ export function SceneViewport(props:SceneViewportProps) {
   const [waterOverride,setWaterOverride]=useState<boolean|null>(null),[reduced,setReduced]=useState(()=>matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [environmentStatus,setEnvironmentStatus]=useState({water:false,surroundings:null as 'land'|'offshore'|null,casters:0,phase:0,fallback:false,textureBudgetBytes:0});
   const motionState=useRef({waterOverride,reduced});motionState.current={waterOverride,reduced};
-  const previewMotion=useRef<{override:boolean|null}|null>(null);
-  useEffect(()=>{if(props.environmentPreview&&!previewMotion.current)previewMotion.current={override:waterOverride};
-    else if(!props.environmentPreview&&previewMotion.current){setWaterOverride(previewMotion.current.override);previewMotion.current=null;}},[props.environmentPreview]);
+  const previewMotion=useRef<{override:boolean|null;playback?:'playing'|'paused';environment:SceneEnvironmentV1|null|undefined;resetPlayback:boolean}|null>(null);
+  useEffect(()=>{if(props.environmentPreview){
+      const value=props.environmentPreview.value,playback=value?.animation.defaultPlayback;
+      if(!previewMotion.current)previewMotion.current={override:waterOverride,playback:props.snapshot.environment?.animation.defaultPlayback,environment:props.snapshot.environment,resetPlayback:false};
+      // An explicit preset or playback edit previews its default, independently of a prior personal pause.
+      if(value?.presetId==='offshore-overview-v1'||playback!==previewMotion.current.playback){setWaterOverride(null);previewMotion.current.resetPlayback=true;}
+      previewMotion.current.playback=playback;
+    }else if(previewMotion.current){const previous=previewMotion.current;setWaterOverride(previous.resetPlayback&&props.snapshot.environment!==previous.environment?null:previous.override);previewMotion.current=null;}},[props.environmentPreview]);
   useEffect(()=>{const media=matchMedia('(prefers-reduced-motion: reduce)'),change=()=>{setReduced(media.matches);setWaterOverride(null);};media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
   const [imageryPartial,setImageryPartial]=useState(false);
   const latestError=useRef(error);latestError.current=error;

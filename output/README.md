@@ -19,3 +19,5 @@
 - [环境设置范围、入口优先级与场景加载进度](environment-clarity-loading-20261024/README.md)
 
 - [外围背景自动海陆显示与定位边界验证](surrounding-background-20261024/README.md)
+
+- [水纹设置前置、来源末位与海上默认动态](water-controls-20261024/README.md)
