@@ -155,7 +155,9 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                               '/api/workbench/resources/model/preserve-legacy-display',
                               '/api/workbench/resources/uses', '/api/workbench/resources/models/legacy',
                               '/api/workbench/resources/model/import-existing',
-                              '/api/workbench/resources/model/metadata', '/api/workbench/resources/model/metadata/save')
+                              '/api/workbench/resources/model/metadata', '/api/workbench/resources/model/metadata/save',
+                              '/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',
+                              '/api/workbench/resources/model/thumbnail/content')
             if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
@@ -191,6 +193,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, value)
             if parts.path in resource_paths:
                 value = sessions.resource_request(sid, parts.path, payload)
+                if parts.path == '/api/workbench/resources/model/thumbnail/content':
+                    return self.image(value['content'], value['sessionRevision'], 'image/png', value['sha256'])
                 if parts.path.endswith('/content'):
                     return self.image(value['content'], value['sessionRevision'], 'model/gltf-binary', value['sha256'])
                 return self.reply(200, value)

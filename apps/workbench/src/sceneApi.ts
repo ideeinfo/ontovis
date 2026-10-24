@@ -2,7 +2,7 @@ import type {ModelResourceMetadata} from './modelResourceMetadata';
 import {ApiError, type WorkbenchApi} from './api.ts';
 import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
   SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
-import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelRequest, LegacyModelCatalog, ModelUses, ModelUsesRequest,
+import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelRequest, LegacyModelCatalog, ModelThumbnailInfo, ModelThumbnailReference, ModelUses, ModelUsesRequest,
   ProjectModel, ProjectModelCatalog, ProjectModelsRequest, ProjectModelVersion, ProjectModelWrite,
   TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
 
@@ -90,6 +90,21 @@ export class SceneApi {
   modelMetadata(modelAssetId:string,modelVersionId:string,signal?:AbortSignal) {
     return this.api.request<{item:ModelResourceMetadata|null;sessionRevision:string}>(ROOT+'resources/model/metadata',
       {modelAssetId,modelVersionId},signal);
+  }
+  modelThumbnail(version:ModelThumbnailReference,signal?:AbortSignal) {
+    return this.api.request<{thumbnail:ModelThumbnailInfo}>(ROOT+'resources/model/thumbnail',
+      {modelVersionId:version.modelVersionId,expectedContentRevision:version.contentRevision,expectedSha256:version.sha256},signal);
+  }
+  ensureModelThumbnail(version:ModelThumbnailReference,expectedThumbnailRevision:string|null,clientRequestId:string,signal?:AbortSignal) {
+    return this.api.request<{thumbnail:ModelThumbnailInfo}>(ROOT+'resources/model/thumbnail/ensure',
+      {modelVersionId:version.modelVersionId,expectedContentRevision:version.contentRevision,expectedSha256:version.sha256,
+        expectedThumbnailRevision,clientRequestId},signal);
+  }
+  modelThumbnailContent(version:ModelThumbnailReference,thumbnail:ModelThumbnailInfo,signal?:AbortSignal) {
+    return this.api.content(ROOT+'resources/model/thumbnail/content',
+      {modelVersionId:version.modelVersionId,expectedContentRevision:version.contentRevision,expectedSha256:version.sha256,
+        expectedThumbnailRevision:thumbnail.thumbnailRevision,expectedImageSha256:thumbnail.imageSha256},
+      {mime:'image/png',maxBytes:384*1024,sha256:thumbnail.imageSha256||''},signal);
   }
   modelUses(body: ModelUsesRequest, signal?: AbortSignal) {
     return this.api.request<ModelUses>(ROOT + 'resources/uses', {...body, resourceKind:'model'}, signal);

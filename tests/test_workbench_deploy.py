@@ -74,6 +74,8 @@ class WorkbenchDeploymentTests(unittest.TestCase):
                      '/api/workbench/terrains/upload/extra', '/api/workbench/scenes/open/',
                      '/api/workbench/imagery/delete', '/api/workbench/imagery/upload/extra',
                      '/api/workbench/imagery/content/', '/api/workbench/resources/model/metadata/extra',
+                     '/api/workbench/resources/model/thumbnail/extra', '/api/workbench/resources/model/thumbnail/content/',
+                     '/api/workbench/resources/model/thumbnail/ensure/extra',
                      '/api/workbench/resources/model/metadata/save/extra', '/api/workbench/resources/model/metadata/save/'):
             with self.subTest(path=path), self.assertRaises(AssertionError):
                 location_for(path)
@@ -124,10 +126,12 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         self.assertNotIn('IPAddressAllow=', service)
         for restriction in ('User=ontovis', 'NoNewPrivileges=true', 'ProtectSystem=strict',
                             'ProtectHome=true', 'PrivateTmp=true', 'CapabilityBoundingSet=',
-                            'RestrictAddressFamilies=AF_INET AF_UNIX', 'TasksMax=64', 'LimitNOFILE=256'):
+                            'RestrictAddressFamilies=AF_INET AF_UNIX', 'TasksMax=192', 'LimitNOFILE=256'):
             self.assertIn(restriction, service)
+        self.assertIn('--thumbnail-renderer /data/ontovis/workbench-current/public/model-thumbnail-renderer.js', service)
+        self.assertIn('--thumbnail-node /usr/local/bin/node --thumbnail-browser /opt/google/chrome/chrome', service)
         self.assertIn('location ^~ /api/demo/ { default_type application/json; return 410', nginx)
-        for path in ('data', 'sources', 'models', 'textures'):
+        for path in ('data', 'sources', 'models', 'textures', 'thumbnails'):
             self.assertIn('location /' + path + '/ { return 404; }', nginx)
         self.assertIn('location /api/ { return 404; }', nginx)
 

@@ -5,7 +5,7 @@ import {cancelled} from './api';
 import {Badge, Btn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
 import type {SceneApi} from './sceneApi';
-import type {ModelUses, ProjectModel, ProjectModelWrite} from './resourceTypes';
+import type {ModelThumbnailInfo, ModelUses, ProjectModel, ProjectModelWrite} from './resourceTypes';
 import {calibrationInput, privateDenial, ResourceRequestGate, ResourceRequestId, resourceBytes, resourceFailure, writeDenial, modelPlacementIssue, resourceCalibrationKey} from './resourceForms';
 import {resourceText} from './resourceMessages';
 
@@ -15,14 +15,28 @@ interface Props {
   onUpdated: (version: ProjectModelWrite) => void; onWriteDenied: () => void; onPrivateDenied: () => void;
   onOpenScene?:(sceneId:string)=>void;
   onRefreshLibrary: () => Promise<string|null>;
+  canGenerateThumbnail?:boolean;onThumbnailUpdated?:(sha256:string,value:ModelThumbnailInfo)=>void;
 }
 
 export function ResourceDetails({api, version, libraryRevision, canPlace, canCalibrate,
-    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary}: Props) {
+    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary,canGenerateThumbnail=false,onThumbnailUpdated}: Props) {
   const {locale} = usePreferences(), t = (key: Parameters<typeof resourceText>[1]) => resourceText(locale,key);
   const [uses,setUses] = useState<ModelUses|null>(null), [usesOpen,setUsesOpen] = useState(false);
   const [usesBusy,setUsesBusy] = useState(false), [usesError,setUsesError] = useState<unknown>(null);
   const [calibrating,setCalibrating] = useState(false), [saving,setSaving] = useState(false), [error,setError] = useState<unknown>(null);
+  const [thumbnailBusy,setThumbnailBusy]=useState(false);
+  const thumbnailGate=useMemo(()=>new ResourceRequestGate(),[]),thumbnailRequest=useRef(new ResourceRequestId());
+  useEffect(()=>()=>thumbnailGate.cancel(),[thumbnailGate]);
+  async function generateThumbnail() {
+    if(!canGenerateThumbnail||thumbnailBusy)return;
+    const request=thumbnailGate.start(),revision=version.thumbnail?.thumbnailRevision||null;
+    const clientRequestId=thumbnailRequest.current.forPayload({modelVersionId:version.modelVersionId,sha256:version.sha256,revision});
+    setThumbnailBusy(true);setError(null);
+    try {const value=await api.ensureModelThumbnail(version,revision,clientRequestId,request.signal);
+      if(request.isCurrent())onThumbnailUpdated?.(version.sha256,value.thumbnail);
+    }catch(value){if(request.isCurrent())failed(value);}
+    finally{if(request.isCurrent())setThumbnailBusy(false);}
+  }
   const [base,setBase] = useState(['0','0','0']), [forward,setForward] = useState(['0','0','-1']), [reviewed,setReviewed] = useState(false);
   const [expectedLibrary,setExpectedLibrary] = useState(libraryRevision);
   const useGate = useMemo(()=>new ResourceRequestGate(),[]), saveGate = useMemo(()=>new ResourceRequestGate(),[]);
@@ -96,6 +110,10 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
       <dt>{t('basePoint')}</dt><dd>{version.calibration.state==='verified'?version.calibration.basePoint.join(', '):t('unconfirmed')}</dd>
       <dt>{t('forward')}</dt><dd>{version.calibration.state==='verified'?version.calibration.forward.join(', '):t('unconfirmed')}</dd>
     </dl>
+    {canGenerateThumbnail&&(!version.thumbnail||version.thumbnail.state==='missing'||version.thumbnail.state==='failed')&&
+      <div className="ov-resource-actions"><Btn disabled={thumbnailBusy} onClick={()=>void generateThumbnail()}>
+        {locale==='zh'?(thumbnailBusy?'正在提交…':version.thumbnail?.state==='failed'?'重试缩略图':'生成缩略图'):
+          thumbnailBusy?'Submitting…':version.thumbnail?.state==='failed'?'Retry thumbnail':'Generate thumbnail'}</Btn></div>}
     {!!error&&!calibrating&&<p className="ov-resource-error" role="alert">{resourceFailure(error,locale)}</p>}
     <details className="ov-resource-disclosure"><summary>{t('report')}</summary><dl className="ov-resource-facts">
       <dt>{t('meshes')}</dt><dd>{version.report.activeMeshInstances.toLocaleString(locale)}</dd>

@@ -15,6 +15,7 @@ import re
 import shutil
 import sqlite3
 import stat
+import struct
 from uuid import UUID
 
 
@@ -190,6 +191,20 @@ def _database(library, entries):
                 base = 'imagery/versions/' + identifier + '/'
                 _registered(entries, base+'source.tif', total-texture['bytes'], source_sha)
                 _registered(entries, base+'texture.png', texture['bytes'], texture['sha256'])
+        if 'model_thumbnails' in tables:
+            for source_sha, version_id, renderer, state, image_sha, size, width, height in db.execute(
+                    'select source_sha256,model_version_id,renderer_version,state,image_sha256,bytes,width,height from model_thumbnails'):
+                _require(_sha(source_sha) and _uuid(version_id) and renderer == 'model-thumbnail-v1'
+                         and state in ('queued', 'processing', 'ready', 'failed')
+                         and db.execute('select sha256 from versions where id=?', (version_id,)).fetchone() == (source_sha,), 'INVALID_STORE')
+                if state == 'ready':
+                    _require(_sha(image_sha) and type(size) is int and 57 <= size <= 384*1024
+                             and width == height == 256, 'INVALID_STORE')
+                    name = 'thumbnails/files/' + source_sha + '.png'
+                    _registered(entries, name, size, image_sha)
+                    with os.fdopen(_open(library / name, os.O_RDONLY), 'rb') as stream: header = stream.read(33)
+                    _require(header[:8] == b'\x89PNG\r\n\x1a\n' and header[12:16] == b'IHDR'
+                             and header[16:29] == struct.pack('>IIBBBBB', 256, 256, 8, 6, 0, 0, 0), 'INVALID_STORE')
         if 'scene_imagery_uses' in tables:
             for revision, identifier, content_revision, source_sha, report_sha in db.execute('select * from scene_imagery_uses'):
                 image = db.execute('select content_revision,sha256,report_sha256 from imagery_versions where id=?',(identifier,)).fetchone()

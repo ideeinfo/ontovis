@@ -22,6 +22,29 @@ from apps.api.imagery_library import ImageryLibrary
 
 
 class ModelStoreBackupTests(unittest.TestCase):
+    def add_thumbnail(self):
+        from apps.api.model_thumbnails import ModelThumbnails
+        from tests.test_model_thumbnails import png
+        fixture = self.fixture.fixture
+        engine = ModelThumbnails(fixture.models, lambda content, work: png(), start_worker=False)
+        self.addCleanup(engine.close)
+        engine.automatic(fixture.legacy, 'synthetic-admin', lambda: None)
+        fingerprint, (body, guard) = engine.pending.popitem()
+        engine._process(fingerprint, body, guard)
+        return engine.root / 'files' / (fingerprint + '.png')
+
+    def test_thumbnail_source_identity_and_png_roundtrip_in_the_paired_backup(self):
+        image = self.add_thumbnail(); before = self.source_state(); result = self.snapshot()
+        target = self.root / 'restored-thumbnails'
+        backup.restore_new(self.destination, target, result['manifestSha256'], service_stopped=True)
+        self.assertEqual((target / 'workbench-library' / image.relative_to(self.library)).read_bytes(), image.read_bytes())
+        self.assertEqual(self.source_state(), before)
+        self.assertEqual(result['database']['tables']['model_thumbnails']['rows'], 1)
+
+    def test_changed_registered_thumbnail_blocks_backup(self):
+        image = self.add_thumbnail(); image.write_bytes(b'changed private thumbnail')
+        self.reject(self.snapshot)
+
     def add_imagery(self):
         images=ImageryLibrary(self.fixture.fixture.library,python_executable=sys.executable)
         identifier=str(uuid4());directory=images.root/'versions'/identifier;directory.mkdir()

@@ -8,8 +8,8 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 4180 --strictPort",
-    "check": "tsc --noEmit && node --test tests/*.test.mjs && vite build",
-    "build": "tsc --noEmit && vite build"
+    "check": "tsc --noEmit && node --test tests/*.test.mjs && vite build && node ../../tools/build_model_thumbnail.mjs",
+    "build": "tsc --noEmit && vite build && node ../../tools/build_model_thumbnail.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.23",

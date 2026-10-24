@@ -30,7 +30,13 @@ export interface ProjectModelVersion {
   calibration: {state: 'unverified'} | VerifiedModelCalibration | LegacyDisplayCalibration;
   calibrationState: 'unverified' | 'verified' | 'legacy_display'; canPlace: boolean; canPlaceGeographic: boolean;
   report: ProjectModelReport; components: ProjectModelComponent[]; sourceModelVersionId: string | null;
+  thumbnail?:ModelThumbnailInfo;
 }
+export interface ModelThumbnailInfo {
+  state:'missing'|'queued'|'processing'|'ready'|'failed';thumbnailRevision:string|null;rendererVersion:string;
+  imageSha256?:string|null;bytes?:number|null;width?:number|null;height?:number|null;errorCode?:string|null;
+}
+export type ModelThumbnailReference=Pick<ProjectModelVersion,'modelVersionId'|'contentRevision'|'sha256'>;
 export type ProjectModelVersionSummary = Omit<ProjectModelVersion, 'report' | 'components' | 'calibration' | 'sourceNote'>;
 export interface ProjectModelAsset {
   modelAssetId: string; displayName: string; purpose: ModelPurpose; assetRevision: string;
@@ -39,6 +45,7 @@ export interface ProjectModelAsset {
 export interface ResourceCapabilities {
   scope: 'project_static_glb_resources'; canRead: true; canUpload: boolean; canCalibrate: boolean;
   calibrationRequiredForGeographicPlacement: true; automaticLegacyAdoption: false;
+  canGenerateThumbnails?:boolean;
 }
 export interface ResourceLimits {
   maxUploadBytes: number; maxVersions: number; maxLibraryBytes: number;

@@ -22,6 +22,7 @@ from apps.api.model_assets import ModelAsset
 from apps.api.model_library import ModelLibrary
 from apps.api.project_model_library import ProjectModelLibrary
 from apps.api.model_resource_metadata import ModelResourceMetadata, MAX_METADATA_BYTES, MAX_METADATA_REQUEST_BYTES
+from apps.api.model_thumbnails import ModelThumbnails, ThumbnailRenderer, MAX_PNG_BYTES
 from apps.api.model_validation import MAX_BYTES
 from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COORDINATE_M, MAX_COMPONENT_BINDINGS
 from apps.api.terrain_library import TerrainLibrary, MAX_VERSIONS as MAX_TERRAIN_VERSIONS, MAX_TOTAL_BYTES as MAX_TERRAIN_TOTAL_BYTES
@@ -40,9 +41,13 @@ from apps.api.public_geodata import PublicGeoData
 
 class WorkbenchSessions(UserSessions):
     def __init__(self, base_url, project_code, installation_context_id, *, model_root=None, library_root=None, terrain_python=None,
-                 terrain_max_upload_bytes=MAX_TERRAIN_BYTES, ontobase_connection_id='ontobase-primary', **kwargs):
+                 terrain_max_upload_bytes=MAX_TERRAIN_BYTES, ontobase_connection_id='ontobase-primary',
+                 thumbnail_renderer=None, thumbnail_node=None, thumbnail_browser=None, **kwargs):
         if type(terrain_max_upload_bytes) is not int or not 8 <= terrain_max_upload_bytes <= MAX_TERRAIN_BYTES:
             raise ValueError('Invalid configured terrain upload limit')
+        if any(value is not None for value in (thumbnail_renderer, thumbnail_node, thumbnail_browser)) and not all(
+                value is not None for value in (thumbnail_renderer, thumbnail_node, thumbnail_browser)):
+            raise ValueError('Configure thumbnail renderer, Node and browser together')
         super().__init__(base_url, project_code, **kwargs)
         self.terrain_max_upload_bytes = terrain_max_upload_bytes
         if (not isinstance(ontobase_connection_id, str) or not 0 < len(ontobase_connection_id) <= 200
@@ -57,6 +62,8 @@ class WorkbenchSessions(UserSessions):
         self.library = ModelLibrary(Path(library_root),project_code,self.context_id) if library_root else None
         self.project_models = ProjectModelLibrary(self.library) if self.library else None
         self.model_metadata = ModelResourceMetadata(self.project_models) if self.project_models else None
+        self.thumbnails = ModelThumbnails(self.project_models,
+            ThumbnailRenderer(thumbnail_renderer, thumbnail_node, thumbnail_browser)) if self.project_models and thumbnail_renderer else None
         self.scenes = SceneLibrary(self.library, model_identity=self.project_models.content_identity) if self.library else None
         self.legacy_registry = LegacySceneRegistry(self.library) if self.library else None
         self.terrains = TerrainLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
@@ -198,16 +205,19 @@ class WorkbenchSessions(UserSessions):
             raise
 
     def resource_response(self, value, row, access):
+        if self.thumbnails is not None: self.thumbnails.attach(value)
         value['sessionRevision'] = row.revision
         value['capabilities'] = {'scope': 'project_static_glb_resources', 'canRead': True,
             'canUpload': access.get('role') == 'admin', 'canCalibrate': access.get('role') == 'admin',
             'canWriteMetadata': access.get('role') == 'admin',
+            'canGenerateThumbnails': self.thumbnails is not None and access.get('role') == 'admin',
             'calibrationRequiredForGeographicPlacement': True, 'automaticLegacyAdoption': False}
         limits = ProjectModelLibrary.capabilities()
         value['limits'] = {key: limits[key] for key in ('maxUploadBytes', 'maxVersions', 'maxLibraryBytes')}
         value['limits'].update({'maxMetadataHeaderBytes': 8192,
             'maxMetadataJsonBytes': 6144, 'maxJsonBytes': 16384,
-            'maxResourceMetadataBytes': MAX_METADATA_BYTES, 'maxResourceMetadataRequestBytes': MAX_METADATA_REQUEST_BYTES})
+            'maxResourceMetadataBytes': MAX_METADATA_BYTES, 'maxResourceMetadataRequestBytes': MAX_METADATA_REQUEST_BYTES,
+            'maxThumbnailBytes': MAX_PNG_BYTES})
         return value
 
     def resource_upload(self, sid, payload, stream, length):
@@ -217,13 +227,14 @@ class WorkbenchSessions(UserSessions):
             raise PreviewError(503, 'MODEL_UNAVAILABLE')
         metadata = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
         value = self.project_models.upload(stream, length, metadata, actor, authorize)
+        if self.thumbnails is not None: self.thumbnails.automatic(value, actor, authorize)
         authorize()
         return self.resource_response(value, row, access)
 
     def resource_request(self, sid, path, payload):
         writing = path in ('/api/workbench/resources/model/calibrate', '/api/workbench/resources/model/import-existing',
                            '/api/workbench/resources/model/preserve-legacy-display',
-                           '/api/workbench/resources/model/metadata/save')
+                           '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/thumbnail/ensure')
         row, authorize, access, actor = self.project_authorization(sid, payload,
             writing=writing, write_code='MODEL_WRITE_FORBIDDEN')
         if self.project_models is None or self.scenes is None:
@@ -244,6 +255,15 @@ class WorkbenchSessions(UserSessions):
             value = self.model_metadata.read(body, authorize)
         elif path == '/api/workbench/resources/model/metadata/save':
             value = self.model_metadata.save(body, actor, authorize)
+        elif path in ('/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',
+                      '/api/workbench/resources/model/thumbnail/content'):
+            if self.thumbnails is None: raise PreviewError(503, 'THUMBNAIL_UNAVAILABLE')
+            if path.endswith('/content'):
+                value = self.thumbnails.content(body, authorize)
+                authorize()
+                return {**value, 'sessionRevision': row.revision}
+            value = {'thumbnail': self.thumbnails.ensure(body, actor, authorize) if path.endswith('/ensure')
+                     else self.thumbnails.status(body, authorize)}
         elif path == '/api/workbench/resources/model/content' and set(body) == {
                 'modelVersionId', 'expectedContentRevision', 'expectedSha256'}:
             fingerprint = body['expectedSha256']
@@ -256,10 +276,13 @@ class WorkbenchSessions(UserSessions):
             return {'content': content, 'sha256': fingerprint, 'sessionRevision': row.revision}
         elif path == '/api/workbench/resources/model/import-existing':
             value = self.project_models.import_existing(body, actor, authorize)
+            if self.thumbnails is not None: self.thumbnails.automatic(value, actor, authorize)
         elif path == '/api/workbench/resources/model/calibrate':
             value = self.project_models.calibrate(body, actor, authorize)
+            if self.thumbnails is not None: self.thumbnails.automatic(value, actor, authorize)
         elif path == '/api/workbench/resources/model/preserve-legacy-display':
             value = self.project_models.preserve_legacy_display(body, actor, authorize)
+            if self.thumbnails is not None: self.thumbnails.automatic(value, actor, authorize)
         elif path == '/api/workbench/resources/uses' and {'resourceKind', 'versionId'} <= set(body) and set(body).issubset(
                 {'resourceKind', 'versionId', 'scope', 'cursor', 'limit'}):
             if body['resourceKind'] != 'model':
@@ -616,6 +639,8 @@ class WorkbenchSessions(UserSessions):
                             'geometryQuality':'proxy_schematic', 'bounds':row_binding['bounds']})
             self.guard(sid,row)
             value = self.library.save_upload(path,payload,authority.username,result,authorize)
+            if self.thumbnails is not None:
+                value['thumbnail'] = self.thumbnails.automatic(value, authority.username, authorize)
             revision = self.library.listing()['libraryRevision']
             self.guard(sid,row)
             return {'item':value, 'libraryRevision':revision, 'sessionRevision':row.revision}
@@ -837,10 +862,14 @@ def main():
     parser.add_argument('--library-root', type=Path)
     parser.add_argument('--terrain-python', type=Path)
     parser.add_argument('--terrain-max-upload-bytes', type=int, default=MAX_TERRAIN_BYTES)
+    parser.add_argument('--thumbnail-renderer', type=Path)
+    parser.add_argument('--thumbnail-node', type=Path)
+    parser.add_argument('--thumbnail-browser', type=Path)
     args = parser.parse_args()
     sessions = WorkbenchSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root,
         library_root=args.library_root, terrain_python=args.terrain_python, terrain_max_upload_bytes=args.terrain_max_upload_bytes,
-        ontobase_connection_id=args.ontobase_connection_id)
+        ontobase_connection_id=args.ontobase_connection_id, thumbnail_renderer=args.thumbnail_renderer,
+        thumbnail_node=args.thumbnail_node, thumbnail_browser=args.thumbnail_browser)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin, development=args.development))
     print('ONTOVis evidence workbench ready', flush=True)
     try:
@@ -851,6 +880,8 @@ def main():
             sessions.public_geodata.close()
         if sessions.terrains:
             sessions.terrains.close()
+        if sessions.thumbnails:
+            sessions.thumbnails.close()
 
 
 if __name__ == '__main__': main()

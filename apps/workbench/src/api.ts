@@ -15,7 +15,7 @@ const writeOnlyDenials: Record<string, readonly string[]> = {
   IMAGERY_WRITE_FORBIDDEN:['/api/workbench/imagery/upload'],
   MODEL_WRITE_FORBIDDEN: ['/api/workbench/models/upload', '/api/workbench/models/binding',
     '/api/workbench/resources/model/upload', '/api/workbench/resources/model/calibrate',
-    '/api/workbench/resources/model/import-existing'],
+    '/api/workbench/resources/model/import-existing', '/api/workbench/resources/model/thumbnail/ensure'],
   SCENE_WRITE_FORBIDDEN: ['/api/workbench/scenes/create', '/api/workbench/scenes/save',
     '/api/workbench/terrains/upload', '/api/workbench/terrains/job/cancel',
     '/api/workbench/public-geodata/start', '/api/workbench/public-geodata/cancel'],

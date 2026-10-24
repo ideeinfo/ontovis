@@ -1,12 +1,13 @@
 import {createPortal} from 'react-dom';
 import type {ReactNode} from 'react';
-import {useEffect, useMemo, useRef, useState} from 'react';
-import {Box, Eye, FileUp, MapPin, Plus, RefreshCw, Search} from 'lucide-react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {Eye, FileUp, MapPin, Plus, RefreshCw, Search} from 'lucide-react';
 import {cancelled, type WorkbenchApi} from './api';
 import {Badge, Btn, IconBtn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
 import {SceneApi} from './sceneApi';
 import {ResourceDetails} from './ResourceDetails';
+import {ModelThumbnail} from './ModelThumbnail';
 import {TerrainImport} from './TerrainImport';
 import {ImageryPanel} from './ImageryPanel';
 import {PublicGeoDataPanel} from './PublicGeoDataPanel';
@@ -16,7 +17,7 @@ import type {ImageryVersion} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
   validateResourceFile, writeDenial, modelPlacementIssue, placementModelVersion, resourceCalibrationKey, type ModelResourceSelection} from './resourceForms';
 import {resourceText} from './resourceMessages';
-import type {LegacyModelCandidate, LegacyModelCatalog, ModelPurpose, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion} from './resourceTypes';
+import type {LegacyModelCandidate, LegacyModelCatalog, ModelPurpose, ModelThumbnailInfo, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion} from './resourceTypes';
 import './resourcePanel.css';
 
 export interface Props {
@@ -57,6 +58,13 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const canUpload=!!catalog?.capabilities.canUpload&&!denied;
   const canCalibrate=!!catalog?.capabilities.canCalibrate&&!!version?.capabilities.canCalibrate&&!denied;
   const selectedAsset=catalog?.items.find(item=>item.modelAssetId===assetId);
+  const selectedThumbnail=selectedAsset?.versions.find(item=>item.modelVersionId===version?.modelVersionId)?.thumbnail;
+  const detailVersion=version&&selectedThumbnail?{...version,thumbnail:selectedThumbnail}:version;
+  const thumbnailUpdated=useCallback((sha256:string,thumbnail:ModelThumbnailInfo)=>{
+    setCatalog(previous=>previous?{...previous,items:previous.items.map(asset=>({...asset,
+      versions:asset.versions.map(item=>item.sha256===sha256?{...item,thumbnail}:item)}))}:previous);
+    setVersion(previous=>previous?.sha256===sha256?{...previous,thumbnail}:previous);
+  },[]);
   function clearPrivate() {
     cardIntent.current++;
     setPublicAcquisition(false);setResourceRefresh(0);
@@ -199,7 +207,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         const waiting=active&&detailLoading;
         return <li className={`ov-resource-card ${active?'selected':''}`} key={asset.modelAssetId} aria-label={asset.displayName}>
           <button type="button" className="ov-resource-card-heading" aria-expanded={active} onClick={()=>selectAsset(asset.modelAssetId)}>
-            <span className="ov-resource-card-icon" title={t('genericModelIcon')}><Box size={30} aria-hidden="true"/><span>{t('genericIcon')}</span></span>
+            <ModelThumbnail api={client} version={choice} name={asset.displayName} onStatus={thumbnailUpdated}/>
             <span className="ov-resource-card-label"><strong>{asset.displayName}</strong><span className={`ov-resource-card-state ${choice?.calibrationState==='verified'?'verified':'pending'}`}>{choice?t(resourceCalibrationKey(choice.calibrationState)):t('noModelVersion')}</span></span>
           </button>
           <div className="ov-resource-card-actions">
@@ -212,9 +220,10 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
           </div>
           <details className="ov-resource-disclosure ov-resource-card-history"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><p className="ov-resource-caption">{t('modelVersionHint')}</p><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,event.target.value);}}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>
           {waiting&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
-          {active&&version&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} key={version.modelVersionId} api={client} version={version} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
+          {active&&version&&detailVersion&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} key={detailVersion.modelVersionId} api={client} version={detailVersion} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
             canReplace={canReplace&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
             onOpenScene={onOpenScene} onPreview={()=>onPreview(version)} onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
+            canGenerateThumbnail={catalog?.capabilities.canGenerateThumbnails===true&&!denied} onThumbnailUpdated={thumbnailUpdated}
             onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/></ResourceDetailHost>}
         </li>;
       })}</ul>
