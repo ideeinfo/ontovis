@@ -74,3 +74,52 @@ python3 tools/installation_preview.py \
 GET `/api/demo/context`和GET `/api/demo/locate`为仅有的工程读取入口，Host/Origin限制为当前回环服务，响应no-store。每次从后端核实当前成员/身份、同安装范围和完整assumed父链，树修订不一致最多重读一次。合并/跨机位/断链不复用旧几何，子对象仍为分析对象，CN只为空间宿主，柜内坐标未知。所有成功响应明确`previewOnly=true`、`bindingStatus=demonstration_draft`、`engineeringUseAllowed=false`。
 
 14项测试覆盖真实本机HTTP入口、方法/来源限制、清单指纹、跨范围/未知身份、权限拒绝、合并不自动改绑、完整父链及有界重读。测试全为合成数据，不依赖服务器或现有演示清单。实际API/三维与浏览器故障验证分列在[本机交付说明](../output/installation-preview-20261021/README.md)，不等于G3正式工程验收。
+
+## 历史演示资源打包（仅归档参考）
+
+[package_spatial_demo.py](package_spatial_demo.py)针对夏李技术演示导出固定资源清单。用户最新要求Demo仅作本机交互参考，不发布到vis.ontobase.ai；下列打包能力保留归档，不作为当前发布任务。原模型、工程清单、原始附件/商业参考影像、日志与中间文件不进入公开包；声明需有非敏感授权依据，不自动推断素材开放许可。2026-10-21用户已确认现有TU-3000公网用途授权，保留模型，书面依据待补充。
+
+```bash
+python3 -m unittest discover -s tests -p 'test_package_spatial_demo.py' -v
+python3 tools/package_spatial_demo.py \
+  --source output/xiali-spatial-demo-20261020 \
+  --output output/public-spatial-demo-20261021/bundle-01 \
+  --model-authorization-basis '用户于2026-10-21确认本模型公网使用与再分发授权；依据文件待补充。'
+```
+
+上述目录已存在，复跑必须换新目录。工具拒绝覆盖，拒绝缺文件/符号链接和本机路径，输出逐文件SHA/字节数的release.json、公开来源与模型声明。9项合成测试通过；实际服务器包/公网浏览器检查另见[部署记录](../docs/plans/公网演示部署记录.md)。包不含工程身份或登录凭据，工程读取明确未连接；它不是完整产品或用户会话实现。
+
+## 历史逐用户会话包（仅参考）
+
+`package_spatial_demo.py --with-user-sessions`将维护中的apps/web会话与工程页覆盖入固定空间资源包，新增session.js/session.css；私有身份清单不导出。打包本身不证明后端已连接，实际部署见[部署记录](../docs/plans/公网演示部署记录.md)，服务与检查见[应用说明](../apps/README.md)。当前机位数量按源GeoJSON元数据生成公开说明，保留原编号；不修改机位坐标。
+
+## 私有库与固定模型的离线备份/恢复
+
+[model_store_backup.py](model_store_backup.py)只复制当前成对的 `workbench-library`（完整 SQLite、模型、地形与临时文件）和 `workbench-model`（固定配置/GLB及其他常规文件），不管理服务、迁移数据或切换运行目录。它不同于只清孤儿的 `model_store_recovery.py`。
+
+操作者须先停止所有写者，并另存 unit/MainPID/cgroup/端口等停服证据。`--service-stopped` 仅为明确声明，工具不冒充检测任意写者。仅支持当前 rollback-journal SQLite；WAL/SHM/journal、symlink（含父路径）、hardlink、特殊文件、已有/重叠目标全部拒绝，不自动修库、清理或覆盖。所有路径须为无链接的绝对路径；以下是停服并获操作授权后才执行的示例，本节不表示已经备份运行站。
+
+```bash
+python3 tools/model_store_backup.py snapshot \
+  --library-root /data/ontovis/private/workbench-library \
+  --model-root /data/ontovis/private/workbench-model \
+  --destination /data/ontovis/output/q06-scene-acceptance-20261023/backup-B0 \
+  --service-stopped
+
+# 手工填入 snapshot 回执中的完整 manifestSha256，不从待核验包自行推导期望值。
+ONTOVIS_BACKUP_MANIFEST_SHA256='填入回执中的64位小写SHA256'
+python3 tools/model_store_backup.py verify \
+  --backup-root /data/ontovis/output/q06-scene-acceptance-20261023/backup-B0 \
+  --expected-manifest-sha256 "$ONTOVIS_BACKUP_MANIFEST_SHA256"
+python3 tools/model_store_backup.py restore-new \
+  --backup-root /data/ontovis/output/q06-scene-acceptance-20261023/backup-B0 \
+  --expected-manifest-sha256 "$ONTOVIS_BACKUP_MANIFEST_SHA256" \
+  --destination /data/ontovis/output/q06-scene-acceptance-20261023/restore-R0 \
+  --service-stopped
+```
+
+目标必须每次换新目录。工具以0700/0600创建私有副本，核对复制前后完整目录清单/文件身份/SHA、SQLite `integrity_check`/外键、所有表及完整 schema 摘要，并按数据库记录核对注册 GLB、固定模型 scope/SHA和地形版本全部制品/报告；不调用会清临时文件或改任务状态的应用构造器。整库字节和全表摘要保留场景头/历史、registry、幂等结果、全部审计和 catalog 签名密钥；回执只输出计数/摘要及 registry 状态，不输出私密行值或密钥。
+
+失败返回非零并保留私有未完成目标，不自动删数据。出现 `manifest.partial`、缺少 `manifest.json`、seal失败的双链接或任何清单差异均不可使用，`verify` 会拒绝；不能仅凭清单文件名存在认定成功。中断后保留证据，重试使用新目录。外部期望 SHA 必须来自独立保存的成功回执。
+
+恢复只生成新目录，不启用服务、不覆写原根。切换后须由操作者比较当前库与恢复回执中的 registry/全表摘要，保持同一 active gate 和全部新数据；不得以切换前旧备份倒回库或让不识别 gate 的旧后端启动。失败回退优先保留兼容后端、只退兼容前端；无法保持旧写关闭则停服维护。真实停服、恢复演练、旧写拒绝与部署回退另行验收，不由本工具的合成测试代替。

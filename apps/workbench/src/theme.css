@@ -1,0 +1,79 @@
+/* ONTOVis supplied offline color kit, 2026-10-21. Original logo is unchanged. */
+:root[data-theme="light"],.ov-compact[data-theme="light"]{
+  --background:#F2F4F0;
+  --shell:#E9EEEA;
+  --surface:#FFFFFF;
+  --surfaceRaised:#E9EEEA;
+  --borderSubtle:#D5DED7;
+  --borderControl:#73887A;
+  --text:#23342E;
+  --textSecondary:#596D61;
+  --primary:#007E6D;
+  --primaryHover:#006758;
+  --onPrimary:#FFFFFF;
+  --selected:#E1F0E9;
+  --onSelected:#006B5C;
+  --focus:#007E6D;
+  --statusNormal:#536E4D;
+  --statusWarning:#946015;
+  --statusCritical:#B4423B;
+  --statusInfo:#4F7182;
+  --statusUnknown:#596D61;
+  --warningSurface:#F6EDD8;
+  --criticalSurface:#F8E6E3;
+  --knowledgeEntity:#006B5C;
+  --knowledgeDocument:#806C3C;
+  --knowledgePhoto:#4F7182;
+  --aiInference:#71618D;
+  --aiSurface:#F0ECF6;
+  --sceneBackground:#E5EBE3;
+  --sceneLand:#CBD7C9;
+  --sceneTerrain:#B4C4B0;
+  --sceneModel:#718275;
+  --sceneModelEdge:#52665A;
+  --sceneSelected:#007E6D;
+  --chartPrimary:#007E6D;
+  --chartSecondary:#4F7182;
+  --chartTertiary:#71618D;
+  --chartQuaternary:#667A43;
+}
+:root[data-theme="dark"],.ov-compact[data-theme="dark"]{
+  --background:#151B1A;
+  --shell:#111615;
+  --surface:#1E2725;
+  --surfaceRaised:#27332F;
+  --borderSubtle:#3C4B45;
+  --borderControl:#72877B;
+  --text:#EAF0EC;
+  --textSecondary:#A8B7AE;
+  --primary:#58BFA8;
+  --primaryHover:#73CDB8;
+  --onPrimary:#10271F;
+  --selected:#253F36;
+  --onSelected:#89D5BC;
+  --focus:#89D5BC;
+  --statusNormal:#9DB493;
+  --statusWarning:#E2B55F;
+  --statusCritical:#F18E85;
+  --statusInfo:#8BAEBC;
+  --statusUnknown:#A8B7AE;
+  --warningSurface:#3C3322;
+  --criticalSurface:#402B29;
+  --knowledgeEntity:#89D5BC;
+  --knowledgeDocument:#C3B285;
+  --knowledgePhoto:#8BAEBC;
+  --aiInference:#B9ADD8;
+  --aiSurface:#312C3B;
+  --sceneBackground:#141D1B;
+  --sceneLand:#293D34;
+  --sceneTerrain:#435B4A;
+  --sceneModel:#A4B4AA;
+  --sceneModelEdge:#CBD8CF;
+  --sceneSelected:#58BFA8;
+  --chartPrimary:#58BFA8;
+  --chartSecondary:#8BAEBC;
+  --chartTertiary:#B9ADD8;
+  --chartQuaternary:#A8BA8F;
+}
+.ov-app{--warning:var(--statusWarning)}
+:root{--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--control-height:30px;--tree-row-height:32px;--header-height:48px;--toolbar-height:42px;--font-body:13px;--font-caption:11px;--radius:6px;}

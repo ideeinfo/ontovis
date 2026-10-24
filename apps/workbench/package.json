@@ -1,0 +1,32 @@
+{
+  "name": "ontovis-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4180 --strictPort",
+    "check": "tsc --noEmit && node --test tests/*.test.mjs && vite build && node ../../tools/build_model_thumbnail.mjs",
+    "build": "tsc --noEmit && vite build && node ../../tools/build_model_thumbnail.mjs"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "1.1.23",
+    "@radix-ui/react-dropdown-menu": "2.1.24",
+    "@radix-ui/react-tabs": "1.1.21",
+    "lucide-react": "1.22.0",
+    "proj4": "2.22.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "three": "0.184.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@types/three": "0.184.0",
+    "@vitejs/plugin-react": "6.0.3",
+    "typescript": "6.0.3",
+    "vite": "8.3.5"
+  }
+}
