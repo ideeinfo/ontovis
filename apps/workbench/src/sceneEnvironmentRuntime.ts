@@ -2,16 +2,8 @@ import * as THREE from 'three';
 import {EnvironmentClock,type SceneEnvironmentV1} from './sceneEnvironment.ts';
 import {trueHeadingToThreeYaw} from './sceneTransforms.ts';
 import type {CoordinateFrame} from './sceneTypes';
-
-export function rippleNormals(seed:number,size=256):THREE.DataTexture {
-  const data=new Uint8Array(size*size*4),phase=(seed%997)/997*Math.PI*2;
-  for(let y=0;y<size;y++)for(let x=0;x<size;x++){
-    const a=x/size*Math.PI*2,b=y/size*Math.PI*2;
-    const nx=.28*Math.cos(a*3+b*2+phase)+.14*Math.cos(a*7-b*5),ny=.28*Math.cos(a*3+b*2+phase)-.1*Math.cos(a*7-b*5);
-    const normal=new THREE.Vector3(nx,ny,1).normalize();data.set([Math.round((normal.x*.5+.5)*255),Math.round((normal.y*.5+.5)*255),Math.round((normal.z*.5+.5)*255),255],(y*size+x)*4);
-  }
-  const t=new THREE.DataTexture(data,size,size);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.minFilter=t.magFilter=THREE.LinearFilter;t.colorSpace=THREE.NoColorSpace;t.needsUpdate=true;return t;
-}
+import {rippleNormals,waterMaterial} from './sceneWater.ts';
+export {rippleNormals} from './sceneWater.ts';
 function skyTexture(top:string,horizon:string){
   const width=1024,height=512,data=new Uint8Array(width*height*4),a=new THREE.Color(top),b=new THREE.Color(horizon);
   for(let y=0;y<height;y++){
@@ -33,6 +25,7 @@ export function shadowCandidates(roots:THREE.Group[],target:THREE.Vector3,radius
 export class SceneEnvironmentRuntime {
   private sky:THREE.DataTexture|null=null;private target:THREE.WebGLRenderTarget|null=null;private generator:THREE.PMREMGenerator|null=null;
   private water:THREE.Mesh<THREE.BufferGeometry,THREE.MeshStandardMaterial>|null=null;private normals:THREE.DataTexture|null=null;
+  private waterPattern:ReturnType<typeof waterMaterial>|null=null;
   private skyKey='';private terrain:THREE.Mesh|null=null;private waterSeed=-1;private waterFrame='';private clockKey='';
   private config:SceneEnvironmentV1|null=null;private frame:CoordinateFrame|null=null;
   private clock=new EnvironmentClock();private lastWave=-Infinity;private dirtyShadow=true;private shadowAnchor=new THREE.Vector3(Infinity,Infinity,Infinity);
@@ -47,7 +40,7 @@ export class SceneEnvironmentRuntime {
     this.scene=scene;this.renderer=renderer;this.sun=sun;this.hemisphere=hemisphere;this.ground=ground;this.grass=grass;scene.add(sun.target);
   }
   private releaseSky(){this.scene.environment=null;this.target?.dispose();this.target=null;this.sky?.dispose();this.sky=null;this.skyKey='';}
-  private releaseWater(){this.water?.removeFromParent();this.water?.geometry.dispose();this.water?.material.dispose();this.water=null;this.normals?.dispose();this.normals=null;this.terrain=null;this.waterSeed=-1;}
+  private releaseWater(){this.water?.removeFromParent();this.water?.geometry.dispose();this.water?.material.dispose();this.water=null;this.waterPattern=null;this.normals?.dispose();this.normals=null;this.terrain=null;this.waterSeed=-1;}
   private releaseShadow(){this.sun.castShadow=false;this.renderer.shadowMap.enabled=false;this.sun.shadow.dispose();this.sun.shadow.map=null;this.sun.shadow.mapPass=null;this.casterCount=0;}
   preview(active:boolean){
     if(active&&!this.previewClock){this.previewClock={clock:this.clock,key:this.clockKey};this.clock=new EnvironmentClock(this.clock.value());}
@@ -95,7 +88,8 @@ export class SceneEnvironmentRuntime {
       if(box&&box.max.y-box.min.y<=.0001){
         const geometry=terrain.geometry.clone(),positions=geometry.getAttribute('position'),uv=new Float32Array(positions.count*2);
         for(let i=0;i<positions.count;i++){uv[i*2]=positions.getX(i);uv[i*2+1]=-positions.getZ(i);}geometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));
-        this.normals=rippleNormals(value.water.seed);const material=new THREE.MeshStandardMaterial({color:value.water.color,roughness:value.water.roughness,metalness:.05,normalMap:this.normals,side:THREE.FrontSide});
+        this.normals=rippleNormals(value.water.seed);this.normals.anisotropy=Math.min(4,this.renderer.capabilities.getMaxAnisotropy());
+        this.waterPattern=waterMaterial(this.normals);const material=this.waterPattern.material;
         this.water=new THREE.Mesh(geometry,material);this.water.name='visual-water-not-placement';this.water.receiveShadow=true;
         terrain.updateMatrixWorld(true);this.water.matrixAutoUpdate=false;this.water.matrix.copy(terrain.matrixWorld);this.scene.add(this.water);this.terrain=terrain;this.waterSeed=value.water.seed;this.waterFrame=frame.frameRevision;
       }
@@ -103,6 +97,7 @@ export class SceneEnvironmentRuntime {
     if(this.water){this.water.visible=enabled;this.water.material.color.set(value.water.color);this.water.material.roughness=value.water.roughness;this.water.material.normalScale.setScalar(value.water.rippleStrength);}
     const phaseKey=JSON.stringify([value.animation.initialPhase,frame.frameRevision,value.water.seed]);
     if(phaseKey!==this.clockKey){this.clock=new EnvironmentClock(value.animation.initialPhase);this.clockKey=phaseKey;this.lastWave=-Infinity;}
+    this.waterPattern?.update(this.clock.value(),value.water.wavelengthM,value.water.travelSpeedMps,this.waveHeading);
     const shadows=value.shadows.mode==='sun-local'&&value.lighting.sun.enabled&&!this.fallback;
     if(!shadows)this.releaseShadow();else{
       this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=THREE.PCFShadowMap;this.renderer.shadowMap.autoUpdate=false;
@@ -128,12 +123,12 @@ export class SceneEnvironmentRuntime {
       if(this.sun.castShadow)this.casters(target,radius);
     }
     const phase=this.clock.step(now,playing),due=now-this.lastWave>=1000/30;
-    if(this.normals&&due){const water=e.water,heading=this.waveHeading;
-      this.normals.repeat.setScalar(1/water.wavelengthM);this.normals.offset.set(-Math.sin(heading)*phase*water.travelSpeedMps/water.wavelengthM,-Math.cos(heading)*phase*water.travelSpeedMps/water.wavelengthM);this.lastWave=now;
+    if(this.waterPattern&&due){const water=e.water;
+      this.waterPattern.update(phase,water.wavelengthM,water.travelSpeedMps,this.waveHeading);this.lastWave=now;
     }
     return playing&&due;
   }
-  status(){return {water:!!this.water,casters:this.casterCount,phase:this.clock.value(),fallback:this.fallback,textureBudgetBytes:2*1024*512*4+6*256*256*8+1024*1024*4+256*256*4};}
+  status(){return {water:!!this.water,casters:this.casterCount,phase:this.clock.value(),fallback:this.fallback,textureBudgetBytes:2*1024*512*4+6*256*256*8+1024*1024*4+349524};}
   dispose(){if(this.disposed)return;this.disposed=true;this.releaseWater();this.releaseSky();this.releaseShadow();this.generator?.dispose();this.generator=null;this.scene.fog=null;
     for(const [mesh,p] of this.ownedShadow){mesh.castShadow=p.cast;mesh.receiveShadow=p.receive;}this.ownedShadow.clear();this.roots=[];this.selected=null;this.previewClock=null;this.sun.target.removeFromParent();}
 }
