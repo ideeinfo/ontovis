@@ -9,3 +9,5 @@
 - [场景设备关联、构件拾取及旧库只读迁移准备](q05-scene-bindings-20261022/README.md)
 
 - [模型上传自动缩略图、41项存量补图与测试部署](model-thumbnails-20261024/README.md)
+
+- [模型预览构件树、交叉定位、隔离和右栏属性](model-component-preview-20261024/README.md)
