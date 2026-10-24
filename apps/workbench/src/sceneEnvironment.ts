@@ -1,11 +1,18 @@
 import type {CoordinateFrame} from './sceneTypes';
 import type {TerrainVersion} from './resourceTypes';
+export interface SceneCloudsV1 {
+  mode:'procedural-cumulus-v1';enabled:boolean;coverage:number;density:number;scaleM:number;
+  speedMps:number;headingDeg:number;seed:number;defaultPlayback:'playing'|'paused';
+}
+export function cloudDefaults():SceneCloudsV1 {
+  return {mode:'procedural-cumulus-v1',enabled:true,coverage:.5,density:1,scaleM:2200,speedMps:12,headingDeg:75,seed:1437,defaultPlayback:'playing'};
+}
 export interface SceneEnvironmentV1 {
   schemaVersion:1;renderProfile:'standard-v1';presetId:'land-day-v1'|'offshore-overview-v1'|'dusk-v1'|'custom-v1';
   surroundings?:{mode:'auto'|'off';profile:'land'|'offshore'};
   color:{toneMapping:'none'|'aces';exposure:number};
   lighting:{hemisphereIntensity:number;environment:{source:'procedural-sky-v1';intensity:number};sun:{enabled:boolean;azimuthDeg:number;elevationDeg:number;intensity:number;color:string}};
-  atmosphere:{sky:'gradient-v1';topColor:string;horizonColor:string;fog:{mode:'off'|'linear';nearM:number;farM:number}};
+  atmosphere:{sky:'gradient-v1';topColor:string;horizonColor:string;fog:{mode:'off'|'linear';nearM:number;farM:number};clouds?:SceneCloudsV1};
   shadows:{mode:'off'|'sun-local';quality:'balanced';radiusM:number};
   surface:{imageryShading:'source-color'|'lit';textureSet:null;terrainRoughness:number;textureRepeatM:number};
   water:{enabled:boolean;baseSurface:'active-flat-relative-terrain';mode:'normal-waves';travelHeadingDeg:number;rippleStrength:number;amplitudeM:0;wavelengthM:number;travelSpeedMps:number;color:string;roughness:number;reflection:'procedural-sky';seed:number};
@@ -15,7 +22,7 @@ export function environmentPreset(id:Exclude<SceneEnvironmentV1['presetId'],'cus
   const dusk=id==='dusk-v1';
   return {schemaVersion:1,renderProfile:'standard-v1',presetId:id,surroundings:{mode:'auto',profile:id==='offshore-overview-v1'?'offshore':'land'},color:{toneMapping:'aces',exposure:1},
     lighting:{hemisphereIntensity:1,environment:{source:'procedural-sky-v1',intensity:.8},sun:{enabled:true,azimuthDeg:135,elevationDeg:dusk?12:35,intensity:dusk?1.6:2.5,color:dusk?'#ffca93':'#fff3df'}},
-    atmosphere:{sky:'gradient-v1',topColor:dusk?'#7b849a':'#8daec0',horizonColor:dusk?'#e2bba0':'#d7e0dd',fog:{mode:id==='offshore-overview-v1'?'off':'linear',nearM:1500,farM:13000}},
+    atmosphere:{sky:'gradient-v1',topColor:dusk?'#7b849a':'#8daec0',horizonColor:dusk?'#e2bba0':'#d7e0dd',fog:{mode:'linear',nearM:id==='offshore-overview-v1'?2000:150,farM:id==='offshore-overview-v1'?35000:dusk?4000:6000},clouds:cloudDefaults()},
     shadows:{mode:'sun-local',quality:'balanced',radiusM:500},surface:{imageryShading:'source-color',textureSet:null,terrainRoughness:1,textureRepeatM:20},
     water:{enabled:id==='offshore-overview-v1',baseSurface:'active-flat-relative-terrain',mode:'normal-waves',travelHeadingDeg:20,rippleStrength:.35,amplitudeM:0,wavelengthM:20,travelSpeedMps:id==='offshore-overview-v1'?5:.6,color:'#507d91',roughness:.3,reflection:'procedural-sky',seed:771},
     animation:{defaultPlayback:'playing',initialPhase:0}};

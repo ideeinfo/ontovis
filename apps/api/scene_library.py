@@ -371,7 +371,7 @@ class SceneLibrary:
     def capabilities(*, geographic=False, engineering=False):
         return {'storageScope': 'project_scenes' if engineering else 'projected_site_unbound' if geographic else 'local_plane_unbound', 'supportsGeographic': geographic,
                 'supportsEngineeringBindings': engineering, 'maxInstances': MAX_INSTANCES,
-                'environmentSchemaVersions': [1], 'waterModes': ['normal-waves'], 'surroundingBackgroundModes': ['auto', 'off'],
+                'environmentSchemaVersions': [1], 'waterModes': ['normal-waves'], 'surroundingBackgroundModes': ['auto', 'off'], 'cloudModes': ['procedural-cumulus-v1'],
                 'maxSnapshotBytes': MAX_SCENE_BYTES, 'maxCheckJsonBytes': MAX_SCENE_BYTES}
 
     @staticmethod

@@ -41,6 +41,8 @@ test('pending terrain or imagery metadata waits without content reads and attach
     assert.equal(reads,0);assert.equal(terrain.children.length,0);
     await layer.sync(terrain,terrainVersion,imagery,ref,signal);
     assert.equal(reads,1);assert.equal(terrain.children.length,1);
+    layer.shading('source-color',true);assert.equal(terrain.children[0].material.toneMapped,false);assert.equal(terrain.children[0].material.fog,true);
+    layer.shading('lit',true);assert.equal(terrain.children[0].material.fog,true);
     layer.dispose();assert.equal(closed,1);
   }finally{globalThis.createImageBitmap=previous;layer.dispose();terrain.geometry.dispose();terrain.material.dispose();}
 });

@@ -59,7 +59,8 @@ export class SceneImageryLayer {
       layer.lit.onBeforeCompile=layer.source.onBeforeCompile;layer.lit.customProgramCacheKey=()=> 'ontovis-imagery-lit-clip-v1';
     }
     const toneMapped=!environment;if(layer.source.toneMapped!==toneMapped){layer.source.toneMapped=toneMapped;layer.source.needsUpdate=true;}
-    layer.source.fog=!environment;layer.mesh.material=mode==='lit'?layer.lit!:layer.source;layer.mesh.receiveShadow=mode==='lit';
+    // Source colors bypass lighting and exposure, but still share the scene's distance haze.
+    layer.source.fog=true;layer.mesh.material=mode==='lit'?layer.lit!:layer.source;layer.mesh.receiveShadow=mode==='lit';
   }
   partial(){return this.layer?.partial??false;}
   /** Start the fixed private read alongside model/terrain loading; only sync may attach it. */

@@ -15,6 +15,11 @@ export const environmentNumbers={
   length:{min:5,max:200,note:['波纹的视觉尺度，越大越舒展。','Visual ripple scale; larger values spread the pattern out.']},
   speed:{min:0,max:5,note:['0为静止；只改变视觉动画，不移动设备。','0 is still; affects visual animation, not equipment placement.']},
   waterRough:{min:.1,max:1,note:['越小反光越集中，越大越哑光。','Lower produces sharper highlights; higher is more matte.']},
+  cloudCoverage:{min:0,max:1,note:['天空覆盖比例：0无云、1接近满天；不是气象实测。','Sky coverage: 0 clear, 1 near overcast; not weather observations.']},
+  cloudDensity:{min:0,max:2,note:['0透明，越大云团越浓厚；不改变云量。','0 transparent; higher creates denser clouds without changing coverage.']},
+  cloudScale:{min:500,max:12000,note:['云团的视觉尺度，越大越舒展；单位米。','Visual cloud scale in metres; larger values spread clouds out.']},
+  cloudSpeed:{min:0,max:100,note:['0静止；默认12m/s，须开启默认播放或临时播放。','0 still; default 12 m/s, requires default or personal playback.']},
+  cloudHeading:{min:0,max:360,exclusive:true,note:['云移向的方位：北0°、东90°；不是风向来源。','Cloud travel toward north 0° or east 90°; not wind-from direction.']},
 } as const;
 export type EnvironmentNumberKey=keyof typeof environmentNumbers;
 export function environmentNumberValid(key:EnvironmentNumberKey,value:number){

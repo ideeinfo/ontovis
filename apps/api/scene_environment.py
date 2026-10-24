@@ -45,8 +45,15 @@ def validate_environment(snapshot):
     sun=light['sun'];fields(sun, 'enabled azimuthDeg elevationDeg intensity color')
     require(type(sun['enabled']) is bool);number(sun['azimuthDeg'], 0, 360, upper_open=True)
     number(sun['elevationDeg'], 5, 85);number(sun['intensity'], 0, 5);color(sun['color'])
-    sky=v['atmosphere'];fields(sky, 'sky topColor horizonColor fog')
+    sky=v['atmosphere'];fields(sky, 'sky topColor horizonColor fog' + (' clouds' if type(sky) is dict and 'clouds' in sky else ''))
     require(sky['sky'] == 'gradient-v1');color(sky['topColor']);color(sky['horizonColor'])
+    if 'clouds' in sky:
+        clouds=sky['clouds'];fields(clouds, 'mode enabled coverage density scaleM speedMps headingDeg seed defaultPlayback')
+        require(clouds['mode'] == 'procedural-cumulus-v1' and type(clouds['enabled']) is bool)
+        number(clouds['coverage'], 0, 1);number(clouds['density'], 0, 2);number(clouds['scaleM'], 500, 12000)
+        number(clouds['speedMps'], 0, 100);number(clouds['headingDeg'], 0, 360, upper_open=True)
+        require(type(clouds['seed']) is int and 0 <= clouds['seed'] <= 2147483647
+                and clouds['defaultPlayback'] in ('playing', 'paused'))
     fog=sky['fog'];fields(fog, 'mode nearM farM')
     require(fog['mode'] in ('off', 'linear'));number(fog['nearM'], 0, 100000);number(fog['farM'], 0, 100000)
     require(fog['nearM'] < fog['farM'])
@@ -83,6 +90,8 @@ def environment_write(body, previous):
         old, new = previous.get('environment'), candidate.get('environment')
         if type(old) is dict and 'surroundings' in old and type(new) is dict:
             require('surroundings' in new, 'SURROUNDING_BACKGROUND_FIELD_REQUIRED', 409)
+        if type(old) is dict and type(old.get('atmosphere')) is dict and 'clouds' in old['atmosphere'] and type(new) is dict:
+            require(type(new.get('atmosphere')) is dict and 'clouds' in new['atmosphere'], 'CLOUD_FIELD_REQUIRED', 409)
 
 
 def preserve_environment(before, after):

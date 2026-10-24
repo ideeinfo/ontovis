@@ -184,6 +184,7 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     ENVIRONMENT_WRITE_VERSION_REQUIRED:['请刷新到新版工作台后保存环境配置。','Reload the updated workbench before saving environment settings.'],
     ENVIRONMENT_FIELD_REQUIRED:['环境配置未完整保留，请重新读取场景。','Reload the scene to preserve its environment settings.'],
     SURROUNDING_BACKGROUND_FIELD_REQUIRED:['外围背景配置未完整保留，请重新读取场景。','Reload the scene to preserve its surrounding background settings.'],
+    CLOUD_FIELD_REQUIRED:['云层配置未完整保留，请重新读取场景。','Reload the scene to preserve its cloud settings.'],
     SNAPSHOT_EXPIRED:['列表已变化，请从第一页重新读取。','The list changed. Reload from the first page.'],
     REQUEST_CONFLICT:['该请求的内容已变化，请核对后重新操作。','This request was already used with different content. Review the change.'],
     RESOURCE_CHANGED:['资源内容或版本已变化，请重新核对。','The resource content or version changed. Review it again.'],

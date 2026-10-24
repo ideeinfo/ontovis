@@ -7,7 +7,7 @@ test('environment presets are independent and only offshore requests visual wate
   const land=environmentPreset('land-day-v1'),sea=environmentPreset('offshore-overview-v1');sea.color.exposure=2;
   assert.equal(land.color.exposure,1);assert.equal(land.water.enabled,false);assert.equal(sea.water.enabled,true);assert.equal(sea.water.amplitudeM,0);assert.equal(sea.water.travelSpeedMps,5);assert.equal(sea.animation.defaultPlayback,'playing');assert.equal(land.water.travelSpeedMps,.6);
   assert.equal(environmentPreset('dusk-v1').lighting.sun.elevationDeg,12);
-  assert.equal(environmentPreset('offshore-overview-v1').atmosphere.fog.mode,'off');
+  assert.deepEqual(environmentPreset('offshore-overview-v1').atmosphere.fog,{mode:'linear',nearM:2000,farM:35000});
 });
 test('preview cancellation restores the original visible clock; allocation failure keeps static display usable',()=>{
   const prior=globalThis.document;globalThis.document={hidden:true};

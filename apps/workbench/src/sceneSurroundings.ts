@@ -69,8 +69,8 @@ export class SceneSurroundings {
     if(key!==this.key){
       this.dispose();const geometry=surroundingGeometry(terrain.geometry,profile==='offshore');if(!geometry)return;
       this.pattern=water?waterMaterial(normals!):null;
-      const material=this.pattern?.material??new THREE.MeshBasicMaterial({vertexColors:true,toneMapped:false,fog:false});
-      material.depthWrite=false;material.depthTest=false;material.fog=false;
+      const material=this.pattern?.material??new THREE.MeshBasicMaterial({vertexColors:true,toneMapped:false});
+      material.depthWrite=false;material.depthTest=false;material.fog=true;
       const compile=material.onBeforeCompile.bind(material);
       material.onBeforeCompile=(shader,renderer)=>{
         compile(shader,renderer);shader.uniforms.ontoVisSurroundingHorizon=this.horizon;

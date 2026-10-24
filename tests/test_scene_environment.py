@@ -14,7 +14,71 @@ def environment():
     return json.loads((Path(__file__).parent/'fixtures/scene-environment-v1.json').read_text())
 
 
+def clouds():
+    return {'mode': 'procedural-cumulus-v1', 'enabled': True, 'coverage': .5, 'density': 1,
+            'scaleM': 2200, 'speedMps': 12, 'headingDeg': 75, 'seed': 1437, 'defaultPlayback': 'playing'}
+
+
 class EnvironmentTests(unittest.TestCase):
+    def test_clouds_optional_strict_and_never_inserted_on_read(self):
+        old = {'environment': environment()}; before = copy.deepcopy(old)
+        validate_environment(old); self.assertEqual(old, before)
+        good = copy.deepcopy(old); good['environment']['atmosphere']['clouds'] = clouds()
+        validate_environment(good)
+        for key, value in [('enabled', 1), ('coverage', True), ('coverage', -1), ('coverage', 1.01),
+                           ('density', float('nan')), ('density', 2.1), ('scaleM', 499), ('scaleM', 12001),
+                           ('speedMps', -1), ('speedMps', 101), ('headingDeg', 360), ('seed', False),
+                           ('seed', 2147483648), ('defaultPlayback', 'automatic'), ('mode', 'volume-script'),
+                           ('url', 'https://example.com/cloud.png')]:
+            bad = copy.deepcopy(good); bad['environment']['atmosphere']['clouds'][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(PreviewError):
+                validate_environment(bad)
+        for value in [None, False, {}, []]:
+            bad = copy.deepcopy(old); bad['environment']['atmosphere']['clouds'] = value
+            with self.assertRaises(PreviewError): validate_environment(bad)
+        for value in [{'coverage': 0, 'density': 0, 'scaleM': 500, 'speedMps': 0, 'headingDeg': 0, 'seed': 0},
+                      {'coverage': 1, 'density': 2, 'scaleM': 12000, 'speedMps': 100, 'headingDeg': 359.999, 'seed': 2147483647}]:
+            good['environment']['atmosphere']['clouds'] = {**clouds(), **value}; validate_environment(good)
+
+    def test_cloud_http_roundtrip_history_replay_permission_conflict_and_omission_guard(self):
+        f = http_fixture.SceneHttpTests('test_real_http_create_save_open_and_fixed_old_revision')
+        f.setUp(); self.addCleanup(f.doCleanups)
+        scene = f.create(); original = copy.deepcopy(f.open(scene)[1]['snapshot'])
+        request = f.save_body(scene); request['environmentWriteVersion'] = 1
+        request['snapshot']['environment'] = environment(); request['snapshot']['environment']['atmosphere']['clouds'] = clouds()
+        status, saved, _ = f.save(request); self.assertEqual(status, 200, saved)
+        self.assertEqual(f.save(request)[1]['sceneRevision'], saved['sceneRevision'])
+        opened = f.open(saved)[1]; self.assertEqual(opened['capabilities']['cloudModes'], ['procedural-cumulus-v1'])
+        self.assertEqual(opened['snapshot']['environment'], request['snapshot']['environment'])
+        for key in ('coordinateFrame', 'terrain', 'imagery', 'instances', 'initialView'):
+            self.assertEqual(opened['snapshot'].get(key), original.get(key))
+        self.assertEqual(f.open(scene, scene['sceneRevision'])[1]['snapshot'], original)
+        stale = f.save_body(opened); stale['environmentWriteVersion'] = 1; del stale['snapshot']['environment']['atmosphere']['clouds']
+        f.assert_response(f.save(stale), 409, 'CLOUD_FIELD_REQUIRED')
+        check = {'kind': 'validate', 'sceneId': saved['sceneId'], 'expectedSceneRevision': saved['sceneRevision'],
+                 'environmentWriteVersion': 1, 'snapshot': stale['snapshot']}
+        f.assert_response(f.request('/api/workbench/scenes/check', check), 409, 'CLOUD_FIELD_REQUIRED')
+        member = f.login('fixture-cloud-reader'); f.account(member).role = 'reader'
+        denied = f.save_body(opened); denied['environmentWriteVersion'] = 1; denied['snapshot']['environment']['atmosphere']['clouds']['enabled'] = False
+        f.assert_response(f.save(denied, client=member), 403, 'SCENE_WRITE_FORBIDDEN')
+        old = f.save_body(scene); old['environmentWriteVersion'] = 1; old['snapshot']['environment'] = None
+        f.assert_response(f.save(old), 409, 'SCENE_CHANGED')
+        disabled = f.save_body(opened); disabled['environmentWriteVersion'] = 1; disabled['snapshot']['environment']['atmosphere']['clouds']['enabled'] = False
+        self.assertEqual(f.save(disabled)[0], 200)
+        self.assertEqual(f.open(saved, saved['sceneRevision'])[1]['snapshot']['environment']['atmosphere']['clouds'], clouds())
+
+    def test_clouds_cannot_change_geometry_or_extend_ground_coverage(self):
+        f = self.geometry(); f.resource(); snapshot = f.preview()['snapshot']; before = copy.deepcopy(snapshot)
+        snapshot['environment'] = environment(); snapshot['environment']['atmosphere']['clouds'] = clouds()
+        checked = geometry_check(snapshot, f.terrains)['snapshot']
+        for key in ('coordinateFrame', 'terrain', 'instances'):
+            self.assertEqual(checked[key], before[key])
+        environment_write({'environmentWriteVersion': 1, 'snapshot': {'environment': None}}, snapshot)
+        position = snapshot['instances'][0]['placement']['position']; position['longitude'] += .02
+        snapshot['instances'][0]['placement']['height']['sampleLongitude'] = position['longitude']
+        with self.assertRaises(GeometryError) as caught: geometry_check(snapshot, f.terrains)
+        self.assertEqual(caught.exception.code, 'OUTSIDE_COVERAGE')
+
     def test_surroundings_optional_strict_and_not_inserted_into_old_environment(self):
         old = {'environment': environment()}
         before = copy.deepcopy(old)

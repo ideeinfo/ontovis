@@ -32,3 +32,8 @@ test('a replaced water normal is adopted by the surrounding sea without disposin
  const scene=new THREE.Scene(),t=terrain(),e=environmentPreset('offshore-overview-v1'),layer=new SceneSurroundings(scene),a=new THREE.DataTexture(new Uint8Array(16),2,2),b=new THREE.DataTexture(new Uint8Array(16),2,2);let borrowed=0,released=0;
  a.addEventListener('dispose',()=>borrowed++);b.addEventListener('dispose',()=>borrowed++);layer.configure(e,t,a,true);const before=scene.children[0];before.material.addEventListener('dispose',()=>released++);layer.configure(e,t,b,true);const after=scene.children[0];assert.notEqual(before,after);assert.equal(released,1);assert.equal(after.material.normalMap,b);layer.dispose();assert.equal(borrowed,0);a.dispose();b.dispose();t.geometry.dispose();t.material.dispose();
 });
+test('both source-colored land and water surroundings participate in scene fog',()=>{
+ const scene=new THREE.Scene(),t=terrain(),layer=new SceneSurroundings(scene),normal=new THREE.DataTexture(new Uint8Array(16),2,2);
+ for(const profile of ['land-day-v1','offshore-overview-v1']){layer.configure(environmentPreset(profile),t,normal,true);assert.equal(scene.children[0].material.fog,true);}
+ layer.dispose();t.geometry.dispose();t.material.dispose();normal.dispose();
+});
