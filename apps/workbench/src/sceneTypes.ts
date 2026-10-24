@@ -69,7 +69,7 @@ export interface SceneDefaults {
 }
 export interface SceneTerrainRef {terrainVersionId: string; expectedContentRevision: string}
 export interface SceneImageryRef {imageryVersionId:string;expectedContentRevision:string;expectedReportSha256:string;visible:boolean}
-interface SnapshotBase {environment?:SceneEnvironmentV1|null;displayName: string; initialView: SceneView; defaults: SceneDefaults;organization?:SceneOrganization;imagery?:SceneImageryRef|null}
+interface SnapshotBase {environment?:SceneEnvironmentV1|null;displayName: string; description?:string; initialView: SceneView; defaults: SceneDefaults;organization?:SceneOrganization;imagery?:SceneImageryRef|null}
 export interface LocalSceneSnapshot extends SnapshotBase {
   imagery?:null;
   coordinateFrame: LocalFrame; terrain: null; instances: LocalSceneModelInstance[];
@@ -157,8 +157,9 @@ export interface LegacySceneEntry {
   migrated:boolean;legacyReadOnly:boolean;available:boolean;entry:LegacySceneEntryTarget|null;
   reason:string|null;sessionRevision:string;
 }
-export interface SceneCreateRequest {displayName: string; clientRequestId: string}
+export interface SceneCreateRequest {displayName: string; description?:string; clientRequestId: string}
 export interface SceneOpen extends SceneResponse {
+  createdAt?:string;
   sceneId: string; projectCode: string; sceneRevision: string; headRevision: string; savedAt: string;
   snapshot: EditableSceneSnapshot; resourceRefs: ModelResourceRef[]; validation: GeometryValidation;
   heightProvenance?: HeightProvenance[]; terrainRefs?: TerrainResourceRef[];
@@ -167,7 +168,7 @@ export interface SceneOpen extends SceneResponse {
 export interface SceneHead extends SceneResponse {sceneId: string; headRevision: string; updateAvailable: boolean}
 export interface SpatialChange {kind: 'anchor' | 'model' | 'terrain'; receipt: string}
 export interface SceneSaveRequest {
-  environmentWriteVersion?:1;
+  environmentWriteVersion?:1;sceneInfoWriteVersion?:1;
   sceneId: string; expectedSceneRevision: string; clientRequestId: string; snapshot: EditableSceneSnapshot;
   reviewedEngineering: EngineeringExpectation[]; rootBindingChanges: RootBindingChange[]; spatialChange?: SpatialChange;
 }
@@ -175,7 +176,7 @@ export interface SceneSave extends SceneResponse {
   sceneId: string; sceneRevision: string; headRevision: string; savedAt: string;
   validation: GeometryValidation; heightProvenance?: HeightProvenance[]; terrainRefs?: TerrainResourceRef[];
 }
-interface SceneCheckBase {environmentWriteVersion?:1;sceneId: string; expectedSceneRevision: string; snapshot: EditableSceneSnapshot}
+interface SceneCheckBase {environmentWriteVersion?:1;sceneInfoWriteVersion?:1;sceneId: string; expectedSceneRevision: string; snapshot: EditableSceneSnapshot}
 export type SceneCheckRequest = (SceneCheckBase & {kind: 'validate'}) | (
   Omit<SceneCheckBase, 'snapshot'> & {kind: 'anchor'; snapshot: LocalSceneSnapshot;
     candidateTerrainVersionId: string; anchor: GeographicAnchorInput}

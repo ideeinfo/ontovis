@@ -175,7 +175,7 @@ def _terrain(terrains,identifier):
 
 def _base_snapshot(snapshot):
     value=_bounded_copy(snapshot)
-    _fields(value,('displayName','coordinateFrame','terrain','instances','initialView','defaults'),('organization','imagery','environment'))
+    _fields(value,('displayName','coordinateFrame','terrain','instances','initialView','defaults'),('organization','imagery','environment','description'))
     try:validate_environment(value)
     except PreviewError as error:raise GeometryError(error.code,'The environment is unsupported or invalid.') from None
     image=value.get('imagery')
@@ -186,6 +186,8 @@ def _base_snapshot(snapshot):
                  and all(c in '0123456789abcdef' for c in image['expectedReportSha256']) and type(image['visible']) is bool)
         _require(type(value['coordinateFrame']) is dict and value['coordinateFrame'].get('mode')=='projected_site'
                  and value['terrain'] is not None,'SCENE_SCOPE_UNSUPPORTED','Imagery needs a georeferenced terrain.')
+    if 'description' in value:
+        _require(isinstance(value['description'],str) and len(value['description'])<=2000 and all(ord(ch)>=32 or ch=='\n' for ch in value['description']), 'INVALID_REQUEST', 'Invalid scene description.')
     _text(value['displayName']);_require(type(value['instances']) is list and len(value['instances'])<=MAX_INSTANCES,'SCENE_LIMIT_EXCEEDED','At most 100 instances are accepted.')
     identifiers=set();bindings=0
     for item in value['instances']:

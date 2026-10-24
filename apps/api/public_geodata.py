@@ -30,6 +30,8 @@ class PublicGeoData:
         self.library, self.terrains, self.imagery = library, terrains, imagery
         self.lock = RLock()
         self.active = None
+        from threading import BoundedSemaphore
+        self.fetch_budget=BoundedSemaphore(1)
         self.process = None
         self.cancelled = Event()
         self.stopping = False
@@ -137,7 +139,12 @@ class PublicGeoData:
             guard(); work.mkdir(mode=0o700)
             (work/'request.json').write_text(_canonical(request))
             os.chmod(work/'request.json', 0o600)
-            report = self._fetch(work, identifier, guard)
+            while not self.fetch_budget.acquire(timeout=.25):
+                guard()
+            try:
+                guard(); report = self._fetch(work, identifier, guard)
+            finally:
+                self.fetch_budget.release()
             for kind in ('terrain', 'imagery'):
                 if not request[kind]: continue
                 guard(); self._change(identifier, stage=kind+'_import')

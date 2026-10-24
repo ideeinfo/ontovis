@@ -72,6 +72,8 @@ class ThumbnailRenderer:
             raise ValueError('Thumbnail renderer, Node and browser must be regular files')
         self.timeout = timeout
         self.lock, self.process, self.stopping = RLock(), None, False
+        from threading import BoundedSemaphore
+        self.process_budget=BoundedSemaphore(1)
 
     @staticmethod
     def _kill(process):
@@ -79,6 +81,10 @@ class ThumbnailRenderer:
         except ProcessLookupError: pass
 
     def __call__(self, content, work):
+        with self.process_budget:
+            return self._call_locked(content, work)
+
+    def _call_locked(self, content, work):
         # Chromium's Linux singleton socket must fit the short AF_UNIX path limit.
         with tempfile.TemporaryDirectory(prefix='ov-thumb-', dir='/tmp') as runtime:
             return self._render(content, work, runtime)

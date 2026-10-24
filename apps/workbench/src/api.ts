@@ -1,3 +1,5 @@
+import type {ProjectRef} from './projectTypes';
+
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -15,7 +17,7 @@ const writeOnlyDenials: Record<string, readonly string[]> = {
   IMAGERY_WRITE_FORBIDDEN:['/api/workbench/imagery/upload'],
   MODEL_WRITE_FORBIDDEN: ['/api/workbench/models/upload', '/api/workbench/models/binding',
     '/api/workbench/resources/model/upload', '/api/workbench/resources/model/calibrate',
-    '/api/workbench/resources/model/import-existing', '/api/workbench/resources/model/thumbnail/ensure'],
+    '/api/workbench/resources/model/import-existing', '/api/workbench/resources/model/thumbnail/ensure', '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/preserve-legacy-display'],
   SCENE_WRITE_FORBIDDEN: ['/api/workbench/scenes/create', '/api/workbench/scenes/save',
     '/api/workbench/terrains/upload', '/api/workbench/terrains/job/cancel',
     '/api/workbench/public-geodata/start', '/api/workbench/public-geodata/cancel'],
@@ -72,6 +74,9 @@ export class WorkbenchApi {
   revision = '';
   epoch = 0;
   onDenied: (status: number) => void = () => {};
+  onProjectDenied: () => void = () => {};
+  project: ProjectRef|null = null;
+  selectProject(value:ProjectRef|null) {this.invalidate();this.project=value;}
   transport: typeof fetch;
   constructor(transport: typeof fetch = (input, init) => fetch(input, init)) { this.transport = transport; }
   invalidate() { this.epoch += 1; }
@@ -109,14 +114,15 @@ export class WorkbenchApi {
 
   private async send<T>(path: string, body?: object, signal?: AbortSignal,
     image: boolean | 'model' | BinaryDescriptor = false, upload?: {file: Blob; kind: UploadKind}): Promise<T> {
-    const epoch = this.epoch, revision = this.revision;
+    const epoch = this.epoch, revision = this.revision,project=this.project?{...this.project}:null;
     const guard = () => {
       if (epoch !== this.epoch || revision !== this.revision || signal?.aborted) {
         throw new DOMException('Selection or session changed', 'AbortError');
       }
     };
     guard();
-    const json = body ? JSON.stringify({...body, expectedSessionRevision: revision}) : undefined;
+    const scoped=path.startsWith('/api/workbench/')&&!path.startsWith('/api/workbench/projects');
+    const json = body ? JSON.stringify({...body,...(scoped&&project?{projectRef:project}:{}), expectedSessionRevision: revision}) : undefined;
     const headers:Record<string,string> = body ? {'Content-Type':'application/json'} : {};
     if (upload) {
       const imagery = upload.kind === 'imagery',terrain = upload.kind === 'terrain'||imagery;
@@ -138,7 +144,9 @@ export class WorkbenchApi {
       const code = data && typeof data.code === 'string' ? data.code : 'SOURCE_UNAVAILABLE';
       const writeDenied = response.status === 403 && Object.hasOwn(writeOnlyDenials, code)
         && writeOnlyDenials[code].includes(path);
-      if (response.status === 401 || response.status === 403 && !writeDenied) {
+      if(response.status===403&&path.startsWith('/api/workbench/projects')){/* Project access failures keep the authenticated identity. */}
+      else if(response.status===403&&!writeDenied&&scoped&&project){this.invalidate();this.onProjectDenied();}
+      else if (response.status === 401 || response.status === 403 && !writeDenied) {
         this.invalidate(); this.onDenied(response.status);
       }
       throw new ApiError(response.status, code);
@@ -153,6 +161,7 @@ export class WorkbenchApi {
     }
     const data = await response.json();
     guard();
+    if(scoped&&project&&data.projectRef&&(data.projectRef.ontobaseConnectionId!==project.ontobaseConnectionId||data.projectRef.projectCode!==project.projectCode))throw new ApiError(409,'PROJECT_SCOPE_MISMATCH');
     if (data.sessionRevision && path.startsWith('/api/workbench/') && data.sessionRevision !== revision) {
       throw new DOMException('Session changed', 'AbortError');
     }
@@ -162,6 +171,10 @@ export class WorkbenchApi {
 
 export function failureMessage(error: unknown, locale = 'zh'): string {
   const modelErrors:Record<string,[string,string]> = {
+    PROJECT_REQUIRED:['请先选择所属项目。','Select a project first.'],
+    PROJECT_SCOPE_MISMATCH:['项目范围不一致，请返回项目目录重新选择。','The project scope changed. Select the project again.'],
+    WORKSPACE_SCOPE_INVALID:['项目存储归属需要核对，当前已停止写入。','The project storage scope requires review. Writes are blocked.'],
+    SCENE_INFO_WRITE_VERSION_REQUIRED:['请刷新新版工作台，完整保留场景说明后再保存。','Reload the workbench to preserve the scene description before saving.'],
     LEGACY_SCENE_ENTRY_UNAVAILABLE:['原模型对应的场景暂不可用，请重新读取。','The scene for this legacy model is unavailable. Reload it.'],
     INVALID_MODEL:['模型结构不完整或已损坏，请检查文件。','The model is incomplete or damaged. Check the file.'],
     UNSUPPORTED_MODEL:['仅支持自包含静态 GLB，当前模型含未支持的资源或扩展。','Only self-contained static GLB is supported. This model uses unsupported resources or extensions.'],

@@ -153,7 +153,14 @@ def _database(library, entries):
             tables[name] = {'rows': len(hashes), 'sha256': _digest(hashes)}
         scope = db.execute('select id,revision,project_code,context_id from library').fetchall()
         _require(len(scope) == 1 and scope[0][0] == 1 and type(scope[0][1]) is int and scope[0][1] >= 0, 'INVALID_STORE')
-        _require(isinstance(scope[0][2], str) and scope[0][2] and _uuid(scope[0][3]), 'INVALID_STORE')
+        _require(isinstance(scope[0][2], str) and scope[0][2]
+                 and (scope[0][3] is None and 'workspace_scope' in tables or _uuid(scope[0][3])), 'INVALID_STORE')
+        if 'workspace_scope' in tables:
+            workspace = db.execute('select workspace_id,ontobase_connection_id,project_code,scope_version from workspace_scope').fetchall()
+            _require(len(workspace) == 1 and _uuid(workspace[0][0]) and workspace[0][1]
+                     and workspace[0][2] == scope[0][2] and workspace[0][3] == 1, 'INVALID_STORE')
+            _require(not db.execute('select 1 from scenes where workspace_id is null or workspace_id!=? or project_code!=? limit 1',
+                                   (workspace[0][0], workspace[0][2])).fetchone(), 'INVALID_STORE')
         for identifier, size, digest in db.execute('select id,bytes,sha256 from versions'):
             _require(_uuid(identifier), 'INVALID_STORE')
             _registered(entries, 'files/' + identifier + '.glb', size, digest)

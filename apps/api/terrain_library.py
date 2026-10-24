@@ -113,6 +113,8 @@ class TerrainLibrary:
         self.python=Path(python_executable)
         _require(self.python.is_absolute() and self.python.is_file(),'PROCESSING_UNAVAILABLE',503)
         _require(type(max_queue) is int and 1<=max_queue<=2 and 1<=process_timeout<=65)
+        from threading import BoundedSemaphore
+        self.process_budget=BoundedSemaphore(1)
         self.timeout=process_timeout; self.max_queue=max_queue
         self.root=library.root/'terrains'
         for path in (self.root,self.root/'temporary',self.root/'versions'):
@@ -436,6 +438,15 @@ class TerrainLibrary:
                 self._wait_for_storage()
 
     def _process(self,row):
+        while not self.process_budget.acquire(timeout=.25):
+            _require(not self.stopping,'PROCESSING_INTERRUPTED',503)
+        try:
+            _require(not self.stopping,'PROCESSING_INTERRUPTED',503)
+            return self._process_locked(row)
+        finally:
+            self.process_budget.release()
+
+    def _process_locked(self,row):
         metadata=json.loads(row['payload']); work=self.root/'temporary'/row['id']
         args=[str(self.python),'-m','apps.api.terrain_validation',str(work/'source.tif'),str(work/'derived'),
               '--vertical-datum='+metadata['verticalDatum'],'--source='+metadata['sourceNote'],

@@ -141,6 +141,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             scene_paths = ('/api/workbench/scenes','/api/workbench/scenes/create','/api/workbench/scenes/open',
                            '/api/workbench/scenes/head','/api/workbench/scenes/save','/api/workbench/scenes/check',
                            '/api/workbench/scenes/replacement-check','/api/workbench/scenes/locate')
+            project_paths = ('/api/workbench/projects', '/api/workbench/projects/access')
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
                                   '/api/workbench/objects/evidence/content')
@@ -158,7 +159,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                               '/api/workbench/resources/model/metadata', '/api/workbench/resources/model/metadata/save',
                               '/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',
                               '/api/workbench/resources/model/thumbnail/content')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *project_paths, *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
                     or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json'):
@@ -183,6 +184,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 payload = decode_scene_request(raw) if parts.path in scene_paths else strict_json(raw)
             except (ValueError, UnicodeError, ProbeError): raise PreviewError(422, 'INVALID_REQUEST') from None
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
+            if parts.path in project_paths:
+                return self.reply(200, sessions.projects_request(sid, parts.path, payload))
             if parts.path in scene_paths: return self.reply(200,sessions.scene_request(sid,parts.path,payload))
             if parts.path in legacy_migration_paths:
                 return self.reply(200, sessions.legacy_migration_request(sid, parts.path, payload))

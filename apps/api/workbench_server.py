@@ -55,9 +55,9 @@ class WorkbenchSessions(UserSessions):
                 or any(ord(character) < 32 for character in ontobase_connection_id)):
             raise ValueError('Invalid configured OntoBase connection identity')
         self.ontobase_connection_id = ontobase_connection_id
-        self.context_id = str(UUID(installation_context_id))
+        self.context_id = str(UUID(installation_context_id)) if installation_context_id else None
         self.prefix = '/api/v1/projects/' + quote(project_code, safe='')
-        self.context_path = self.prefix + '/installations/' + self.context_id
+        self.context_path = self.prefix + '/installations/' + self.context_id if self.context_id else None
         self.model = ModelAsset(Path(model_root), project_code, self.context_id) if model_root else None
         self.library = ModelLibrary(Path(library_root),project_code,self.context_id) if library_root else None
         self.project_models = ProjectModelLibrary(self.library) if self.library else None
@@ -703,6 +703,8 @@ class WorkbenchSessions(UserSessions):
         return result
 
     def context(self, authority):
+        if self.context_path is None:
+            raise PreviewError(404, 'LEGACY_SCENE_ENTRY_UNAVAILABLE')
         item = authority.request('GET', self.context_path)['item']
         if item.get('projectCode') != self.project_code or item.get('installationContextId') != self.context_id:
             raise PreviewError(502, 'SOURCE_UNAVAILABLE')
@@ -851,8 +853,9 @@ class WorkbenchSessions(UserSessions):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--project-code', required=True)
-    parser.add_argument('--installation-context-id', required=True)
+    parser.add_argument('--project-code')
+    parser.add_argument('--installation-context-id')
+    parser.add_argument('--workspace-root', type=Path)
     parser.add_argument('--ontobase-connection-id', default='ontobase-primary')
     parser.add_argument('--source', default='http://127.0.0.1:18001')
     parser.add_argument('--origin', default='https://vis.ontobase.ai')
@@ -866,7 +869,9 @@ def main():
     parser.add_argument('--thumbnail-node', type=Path)
     parser.add_argument('--thumbnail-browser', type=Path)
     args = parser.parse_args()
-    sessions = WorkbenchSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root,
+    from apps.api.project_sessions import ProjectSessions
+    sessions = ProjectSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root,
+        workspace_root=args.workspace_root,
         library_root=args.library_root, terrain_python=args.terrain_python, terrain_max_upload_bytes=args.terrain_max_upload_bytes,
         ontobase_connection_id=args.ontobase_connection_id, thumbnail_renderer=args.thumbnail_renderer,
         thumbnail_node=args.thumbnail_node, thumbnail_browser=args.thumbnail_browser)
@@ -876,12 +881,7 @@ def main():
         server.serve_forever()
     finally:
         server.server_close()
-        if sessions.public_geodata:
-            sessions.public_geodata.close()
-        if sessions.terrains:
-            sessions.terrains.close()
-        if sessions.thumbnails:
-            sessions.thumbnails.close()
+        sessions.close()
 
 
 if __name__ == '__main__': main()

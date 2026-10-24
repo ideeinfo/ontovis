@@ -16,7 +16,7 @@ from .model_validation import MAX_BYTES
 
 
 class ModelLibrary:
-    def __init__(self, root: Path, project_code: str, context_id: str):
+    def __init__(self, root: Path, project_code: str, context_id: str | None):
         if root.is_symlink(): raise ValueError('Private library must be a real directory')
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.root = root.resolve()
@@ -26,7 +26,7 @@ class ModelLibrary:
         self.slots = BoundedSemaphore(1)
         with self.connect() as db:
             db.executescript('''
-                create table if not exists library (id integer primary key check(id=1), revision integer not null, project_code text not null, context_id text not null);
+                create table if not exists library (id integer primary key check(id=1), revision integer not null, project_code text not null, context_id text);
                 create table if not exists versions (
                     id text primary key, request_id text not null unique, actor text not null,
                     name text not null, source_note text not null, sha256 text not null,
@@ -54,6 +54,11 @@ class ModelLibrary:
         db.row_factory = sqlite3.Row
         db.execute('pragma foreign_keys=on')
         try:
+            expected = getattr(self, 'workspace_scope', None)
+            if expected is not None:
+                actual = db.execute('select workspace_id,ontobase_connection_id,project_code from workspace_scope where id=1').fetchone()
+                if actual is None or tuple(actual) != expected:
+                    raise PreviewError(409, 'WORKSPACE_SCOPE_INVALID')
             yield db
             db.commit()
         except BaseException:

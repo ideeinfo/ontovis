@@ -43,7 +43,9 @@ def _fields(value, expected):
 
 def _snapshot_fields(value):
     required = {'displayName', 'coordinateFrame', 'terrain', 'instances', 'initialView', 'defaults'}
-    _require(type(value) is dict and required <= set(value) <= required | {'organization','imagery','environment'})
+    _require(type(value) is dict and required <= set(value) <= required | {'organization','imagery','environment','description'})
+    if 'description' in value:
+        _description(value['description'])
     validate_environment(value)
     image = value.get('imagery')
     if image is not None:
@@ -65,6 +67,19 @@ def _text(value, limit=200):
     _require(isinstance(value, str) and 0 < len(value.strip()) <= limit
              and all(ord(character) >= 32 for character in value))
     return value.strip()
+
+
+def _description(value):
+    _require(isinstance(value, str) and len(value) <= 2000
+             and all(ord(ch) >= 32 or ch == '\n' for ch in value))
+    return value
+
+
+def _information_write(body, previous):
+    if body.get('sceneInfoWriteVersion') not in (None, 1) or type(body.get('sceneInfoWriteVersion', 1)) is not int:
+        raise PreviewError(409, 'SCENE_INFO_WRITE_VERSION_REQUIRED')
+    if 'description' in previous and (body.get('sceneInfoWriteVersion') != 1 or 'description' not in body['snapshot']):
+        raise PreviewError(409, 'SCENE_INFO_WRITE_VERSION_REQUIRED')
 
 
 def _uuid(value):
@@ -371,7 +386,7 @@ class SceneLibrary:
     def capabilities(*, geographic=False, engineering=False):
         return {'storageScope': 'project_scenes' if engineering else 'projected_site_unbound' if geographic else 'local_plane_unbound', 'supportsGeographic': geographic,
                 'supportsEngineeringBindings': engineering, 'maxInstances': MAX_INSTANCES,
-                'environmentSchemaVersions': [1], 'waterModes': ['normal-waves'], 'surroundingBackgroundModes': ['auto', 'off'], 'cloudModes': ['procedural-cumulus-v1'],
+                'environmentSchemaVersions': [1], 'waterModes': ['normal-waves'], 'surroundingBackgroundModes': ['auto', 'off'], 'cloudModes': ['procedural-cumulus-v1'], 'sceneInfoWriteVersion': 1,
                 'maxSnapshotBytes': MAX_SCENE_BYTES, 'maxCheckJsonBytes': MAX_SCENE_BYTES}
 
     @staticmethod
@@ -476,9 +491,9 @@ class SceneLibrary:
         self._callbacks(authorize, validate_resources, validate_engineering)
         authorize()
         _json(body)
-        _fields(body, ('displayName', 'clientRequestId'))
+        _require(type(body) is dict and {'displayName', 'clientRequestId'} <= set(body) <= {'displayName', 'clientRequestId', 'description'})
         actor, name, request_id = _text(actor), _text(body['displayName']), _uuid(body['clientRequestId'])
-        digest = hashlib.sha256(_json({'displayName': name}).encode()).hexdigest()
+        digest = hashlib.sha256(_json({'displayName': name, **({'description': _description(body['description'])} if 'description' in body else {})}).encode()).hexdigest()
         with self.library.connect() as db:
             db.execute('begin immediate')
             prior = self._prior(db, actor, 'create', request_id, digest)
@@ -486,12 +501,19 @@ class SceneLibrary:
                 authorize()
                 return prior
             snapshot = self._empty(name)
+            if 'description' in body:
+                snapshot['description'] = body['description']
             validate_resources(json.loads(_json(snapshot)))
             validate_engineering(json.loads(_json(snapshot)), [], [])
             identifier, revision = str(uuid4()), 'scene:' + str(uuid4())
             now = datetime.now(timezone.utc).isoformat()
-            db.execute('insert into scenes values (?,?,?,?,?,?)',
-                       (identifier, self.project_code, name, revision, now, 0))
+            scope = getattr(self.library, 'workspace_scope', None)
+            if scope:
+                db.execute('insert into scenes(id,project_code,display_name,head_revision,updated_at,instance_count,workspace_id) values (?,?,?,?,?,?,?)',
+                           (identifier, self.project_code, name, revision, now, 0, scope[0]))
+            else:
+                db.execute('insert into scenes(id,project_code,display_name,head_revision,updated_at,instance_count) values (?,?,?,?,?,?)',
+                           (identifier, self.project_code, name, revision, now, 0))
             self._insert_snapshot(db, identifier, revision, snapshot, now)
             result = {'sceneId': identifier, 'projectCode': self.project_code, 'sceneRevision': revision,
                       'headRevision': revision, 'savedAt': now, 'snapshot': snapshot, 'resourceRefs': [],
@@ -842,6 +864,7 @@ class SceneLibrary:
         _require(all(previous[key] == proposed[key] for key in ('displayName', 'defaults', 'initialView')),
                  'INVALID_GEOMETRY_RESULT')
         preserve_environment(previous, proposed)
+        _require(previous.get('description') == proposed.get('description'), 'INVALID_GEOMETRY_RESULT')
         _require(previous.get('organization') == proposed.get('organization'), 'INVALID_GEOMETRY_RESULT')
         old_frame, new_frame = previous['coordinateFrame'], proposed['coordinateFrame']
         _require({key: value for key, value in old_frame.items() if key not in ('frameRevision', 'anchor')}
@@ -928,7 +951,7 @@ class SceneLibrary:
         authorize(); _json(body)
         _require(type(body) is dict and body.get('kind') in ('model', 'terrain'))
         common = {'sceneId', 'expectedSceneRevision', 'snapshot'}
-        optional_environment = {'environmentWriteVersion'} if 'environmentWriteVersion' in body else set()
+        optional_environment = ({'environmentWriteVersion'} if 'environmentWriteVersion' in body else set()) | ({'sceneInfoWriteVersion'} if 'sceneInfoWriteVersion' in body else set())
         operation = self._replacement_operation({key: value for key, value in body.items() if key not in common | optional_environment})
         _fields(body, common | set(operation) | optional_environment)
         actor, access_revision = _text(actor), _text(access_revision)
@@ -940,6 +963,7 @@ class SceneLibrary:
             row = self._revision(db, scene_id, base_revision)
             previous, previous_refs = validate_snapshot(json.loads(row['snapshot']), geographic=True, engineering=callable(engineering_check)), json.loads(row['resource_refs'])
             environment_write(body, previous)
+            _information_write(body, previous)
             previous_provenance = self._height_provenance(db, base_revision)
             previous_validation = self._stored_validation(db, base_revision)
         _require(_receipt_snapshot_digest(body['snapshot']) == _receipt_snapshot_digest(previous), 'SCENE_DRAFT_REQUIRES_SAVE', 409)
@@ -979,6 +1003,7 @@ class SceneLibrary:
         _require(proposed['coordinateFrame']['mode'] == 'projected_site', 'INVALID_GEOMETRY_RESULT')
         _require(all(local[key] == proposed[key] for key in ('displayName', 'defaults')), 'INVALID_GEOMETRY_RESULT')
         preserve_environment(local, proposed)
+        _require(local.get('description') == proposed.get('description'), 'INVALID_GEOMETRY_RESULT')
         _require(local.get('organization') == proposed.get('organization'), 'INVALID_GEOMETRY_RESULT')
         _require(len(local['instances']) == len(proposed['instances']), 'INVALID_GEOMETRY_RESULT')
         for before, after in zip(local['instances'], proposed['instances']):
@@ -991,7 +1016,7 @@ class SceneLibrary:
         authorize(); _json(body)
         base = {'kind', 'sceneId', 'expectedSceneRevision', 'snapshot'}
         _require(type(body) is dict and body.get('kind') in ('validate', 'anchor'))
-        _fields(body, base | ({'candidateTerrainVersionId', 'anchor'} if body['kind'] == 'anchor' else set()) | ({'environmentWriteVersion'} if 'environmentWriteVersion' in body else set()))
+        _fields(body, base | ({'candidateTerrainVersionId', 'anchor'} if body['kind'] == 'anchor' else set()) | (({'environmentWriteVersion'} if 'environmentWriteVersion' in body else set()) | ({'sceneInfoWriteVersion'} if 'sceneInfoWriteVersion' in body else set())))
         actor, access_revision = _text(actor), _text(access_revision)
         scene_id, base_revision = _uuid(body['sceneId']), _text(body['expectedSceneRevision'])
         is_anchor = body['kind'] == 'anchor'
@@ -1003,6 +1028,7 @@ class SceneLibrary:
             row = self._revision(db, scene_id, base_revision)
             previous = validate_snapshot(json.loads(row['snapshot']), geographic=True, engineering=callable(engineering_check))
             environment_write(body, previous)
+            _information_write(body, previous)
             previous_refs = json.loads(row['resource_refs'])
             previous_provenance = self._height_provenance(db, base_revision)
             previous_validation = self._stored_validation(db, base_revision)
@@ -1064,7 +1090,7 @@ class SceneLibrary:
         authorize(); _json(body)
         required = {'sceneId', 'expectedSceneRevision', 'clientRequestId', 'snapshot',
                     'reviewedEngineering', 'rootBindingChanges'}
-        _require(type(body) is dict and required <= set(body) <= required | {'spatialChange','environmentWriteVersion'})
+        _require(type(body) is dict and required <= set(body) <= required | {'spatialChange','environmentWriteVersion','sceneInfoWriteVersion'})
         actor, request_id, scene_id = _text(actor), _uuid(body['clientRequestId']), _uuid(body['sceneId'])
         base_revision = _text(body['expectedSceneRevision'])
         if not callable(engineering_check):
@@ -1097,6 +1123,7 @@ class SceneLibrary:
             row = self._revision(db, scene_id, base_revision)
             previous = validate_snapshot(json.loads(row['snapshot']), geographic=True, engineering=callable(engineering_check))
             environment_write(body, previous)
+            _information_write(body, previous)
             previous_refs = json.loads(row['resource_refs'])
             previous_provenance = self._height_provenance(db, base_revision)
             previous_validation = self._stored_validation(db, base_revision)
