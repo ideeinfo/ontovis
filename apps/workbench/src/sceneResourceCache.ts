@@ -23,8 +23,13 @@ const MAX_TRIANGLES=500_000;
 const SAMPLING_RULE='mesh-triangle-tr-bl-cell-mask-v2';
 const parsedScenes=new WeakMap<THREE.Object3D,THREE.Group[]>();
 const sourceNodeIndices=new WeakMap<THREE.Object3D,number>();
+export interface ModelSourceNode {index:number;name:string;attributes:Record<string,unknown>}
+const sourceNodes=new WeakMap<THREE.Object3D,ModelSourceNode>();
 // Only cache-created boxes may provide schematic identities; GLB extras are untrusted.
 const schematicProxyKeys=new WeakMap<THREE.Object3D,string>();
+/** Identities come from parser associations/cache-owned proxies, never GLB extras. */
+export const modelSourceNode=(node:THREE.Object3D)=>sourceNodes.get(node);
+export const modelSchematicKey=(node:THREE.Object3D)=>schematicProxyKeys.get(node);
 const shaValid=(value:unknown):value is string=>typeof value==='string' && /^[a-f0-9]{64}$/.test(value);
 const text=(value:unknown):value is string=>typeof value==='string' && value.length>0 && value.length<=200;
 const integer=(value:unknown):value is number=>typeof value==='number' && Number.isSafeInteger(value);
@@ -71,7 +76,11 @@ async function parseModel(bytes:ArrayBuffer) {
       // scenes. Capture the actual association before that pruning takes place.
       const actual=parser.associations.get(node)?.nodes;
       requireValue(integer(actual)&&actual===index,'INVALID_MODEL',422);
-      sourceNodeIndices.set(node,actual);return node;
+      sourceNodeIndices.set(node,actual);
+      const definition=parser.json.nodes[index];
+      sourceNodes.set(node,{index:actual,name:typeof definition.name==='string'?definition.name:'',
+        attributes:definition.extras&&typeof definition.extras==='object'&&!Array.isArray(definition.extras)?definition.extras:{}});
+      return node;
     });
   }}));
   const gltf=await loader.parseAsync(bytes,'');
@@ -145,8 +154,9 @@ export function cloneModel(resource:CachedModel,id:string,options:{calibrated?:b
   copies.forEach((node,index)=>{
     node.userData.sceneModelInstanceId=id;node.userData.ontoVisModelVersionId=resource.version.modelVersionId;
     delete node.userData.ontoVisComponentKey;delete node.userData.ontoVisNodeIndex;delete node.userData.ontoVisProxySchematic;
+    const definition=sourceNodes.get(originals[index]);if(definition)sourceNodes.set(node,definition);
     const proxyKey=schematicProxyKeys.get(originals[index]);
-    if(proxyKey!==undefined){node.userData.ontoVisComponentKey=proxyKey;node.userData.ontoVisProxySchematic=true;return;}
+    if(proxyKey!==undefined){schematicProxyKeys.set(node,proxyKey);node.userData.ontoVisComponentKey=proxyKey;node.userData.ontoVisProxySchematic=true;return;}
     let original:THREE.Object3D|null=originals[index];
     while(original){
       const sourceIndex=sourceNodeIndices.get(original);
