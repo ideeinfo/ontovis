@@ -7,3 +7,5 @@
 - [OntoBase旧读取授权实施与测试](../../OntoBase/output/resource-read-auth-20261021/README.md)
 
 - [场景设备关联、构件拾取及旧库只读迁移准备](q05-scene-bindings-20261022/README.md)
+
+- [模型上传自动缩略图、41项存量补图与测试部署](model-thumbnails-20261024/README.md)
