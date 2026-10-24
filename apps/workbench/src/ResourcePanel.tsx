@@ -8,6 +8,7 @@ import {usePreferences} from './Preferences';
 import {SceneApi} from './sceneApi';
 import {ResourceDetails} from './ResourceDetails';
 import {ModelThumbnail} from './ModelThumbnail';
+import type {ProjectRef} from './projectTypes';
 import {TerrainImport} from './TerrainImport';
 import {ImageryPanel} from './ImageryPanel';
 import {PublicGeoDataPanel} from './PublicGeoDataPanel';
@@ -26,7 +27,7 @@ export interface Props {
   activeTerrainVersion?:TerrainVersion|null;
   onImageryReady?:(value:ImageryVersion)=>void;
   detailsTarget?:HTMLElement|null;
-  canAcquire?:boolean;modelsOnly?:boolean;onOpenScene?:(sceneId:string)=>void;
+  canAcquire?:boolean;modelsOnly?:boolean;onOpenScene?:(sceneId:string,projectRef?:ProjectRef)=>void;
   modelSelection?:ModelResourceSelection|null;onModelSelected?:(value:ModelResourceSelection|null)=>void;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;

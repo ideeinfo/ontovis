@@ -121,7 +121,8 @@ export class WorkbenchApi {
       }
     };
     guard();
-    const scoped=path.startsWith('/api/workbench/')&&!path.startsWith('/api/workbench/projects');
+    const sharedModels=path.startsWith('/api/workbench/resources/model');
+    const scoped=path.startsWith('/api/workbench/')&&!path.startsWith('/api/workbench/projects')&&!sharedModels;
     const json = body ? JSON.stringify({...body,...(scoped&&project?{projectRef:project}:{}), expectedSessionRevision: revision}) : undefined;
     const headers:Record<string,string> = body ? {'Content-Type':'application/json'} : {};
     if (upload) {
@@ -144,7 +145,7 @@ export class WorkbenchApi {
       const code = data && typeof data.code === 'string' ? data.code : 'SOURCE_UNAVAILABLE';
       const writeDenied = response.status === 403 && Object.hasOwn(writeOnlyDenials, code)
         && writeOnlyDenials[code].includes(path);
-      if(response.status===403&&path.startsWith('/api/workbench/projects')){/* Project access failures keep the authenticated identity. */}
+      if(response.status===403&&(path.startsWith('/api/workbench/projects')||sharedModels||path==='/api/workbench/resources/uses')){/* Resource/project access failures keep the authenticated identity. */}
       else if(response.status===403&&!writeDenied&&scoped&&project){this.invalidate();this.onProjectDenied();}
       else if (response.status === 401 || response.status === 403 && !writeDenied) {
         this.invalidate(); this.onDenied(response.status);
@@ -181,7 +182,8 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     MODEL_LIMIT_EXCEEDED:['模型超过当前文件、几何或贴图处理限额。','The model exceeds file, geometry or texture limits.'],
     MODEL_LIBRARY_FULL:['模型库已达到当前容量限额。','The model library has reached its current capacity.'],
     MODEL_BUSY:['另一个模型正在校验，请稍后重试。','Another model is being validated. Retry shortly.'],
-    MODEL_WRITE_FORBIDDEN:['需项目管理员权限，仍可查看已有模型。','Project administrator access is required. Existing models remain readable.'],
+    MODEL_WRITE_FORBIDDEN:['需模型维护权限（现有项目管理员），仍可查看共享模型。','Model maintenance access (an existing project administrator) is required. Shared models remain readable.'],
+    SHARED_MODEL_MIGRATION_REQUIRED:['发现旧项目模型库，请先核对并合并共享资源；原文件已保留。','A former project model library requires a reviewed shared-resource migration. Original files are retained.'],
     MODEL_RIGHTS_REQUIRED:['请确认你有权使用此模型。','Confirm that you have the right to use this model.'],
     COMPONENT_ALREADY_LINKED:['该构件已关联另一个柜体，请选择其他构件。','This component is already linked to another cabinet. Choose a different component.'],
     MODEL_LIBRARY_CHANGED:['模型库已变化，请刷新后重试。','The library changed. Refresh and retry.'],

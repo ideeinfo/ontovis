@@ -145,7 +145,7 @@ test('restricted uploads reject empty, over-budget and oversized metadata before
   assert.equal(calls, 0);
 });
 
-test('only exact write-only endpoint and code pairs preserve a valid read session', async () => {
+test('write-only endpoint pairs preserve reads; shared model denials stay local', async () => {
   const allowed = {
     MODEL_WRITE_FORBIDDEN:['models/upload','models/binding','resources/model/upload','resources/model/calibrate'],
     SCENE_WRITE_FORBIDDEN:['scenes/create','scenes/save','terrains/upload','terrains/job/cancel','public-geodata/start','public-geodata/cancel'],
@@ -162,7 +162,7 @@ test('only exact write-only endpoint and code pairs preserve a valid read sessio
     const api = new WorkbenchApi(async() => new Response(JSON.stringify(body), {status:403}));api.session('r1');
     let denied = false;api.onDenied = () => {denied = true;};
     await assert.rejects(api.request('/api/workbench/resources/model', {}), error => error instanceof ApiError && error.status === 403);
-    assert.equal(denied, true);
+    assert.equal(denied, false);
   }
 });
 

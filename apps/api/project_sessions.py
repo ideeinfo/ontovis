@@ -15,6 +15,7 @@ from .user_sessions import UserSessions
 from .workbench_server import WorkbenchSessions
 from .scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COMPONENT_BINDINGS, MAX_COORDINATE_M
 from .project_model_library import ProjectModelLibrary
+from .shared_models import SharedModelAccess
 
 
 METHODS = ('scene_request', 'scene_object_request', 'resource_request', 'resource_upload',
@@ -39,6 +40,27 @@ class ProjectSessions(UserSessions):
         self.upload_slots, self.geometry_slots = BoundedSemaphore(1), BoundedSemaphore(1)
         self.terrain_slots, self.thumbnail_slots, self.fetch_slots = BoundedSemaphore(1), BoundedSemaphore(1), BoundedSemaphore(1)
         self.imagery_lock=Lock()
+        # Keep existing model IDs/files in place. The configured library is now
+        # the connection-wide resource store, not a project chosen by a request.
+        self.shared = WorkbenchSessions(self.base_url, project_code or '__shared_models__', installation_context_id,
+            library_root=library_root, model_root=model_root, ontobase_connection_id=self.connection_id, **self.options)
+        self._delegate(self.shared)
+        with self.shared.library.connect() as db:
+            db.execute('''create table if not exists shared_model_scope (
+                id integer primary key check(id=1), connection_id text not null, scope_version integer not null)''')
+            db.execute('insert or ignore into shared_model_scope values(1,?,1)', (self.connection_id,))
+            if tuple(db.execute('select connection_id,scope_version from shared_model_scope where id=1').fetchone()) != (self.connection_id, 1):
+                raise ValueError('Shared models belong to a different source connection')
+        self.shared_access = SharedModelAccess(self)
+        with self.registry.connect() as db:
+            db.execute('''create table if not exists shared_model_store (
+                id integer primary key check(id=1), connection_id text not null, scope_version integer not null)''')
+            db.execute('insert or ignore into shared_model_store values(1,?,1)', (self.connection_id,))
+            if tuple(db.execute('select connection_id,scope_version from shared_model_store where id=1').fetchone()) != (self.connection_id, 1):
+                raise ValueError('Shared model registry belongs to a different source connection')
+        self.shared.model_authorization = self.shared_access.authorize
+        self.shared.model_scope = 'shared_static_glb_resources'
+        self.shared.scenes.use_shared_models(lambda identifier, db=None: self.shared.project_models.content_identity(identifier), self.connection_id)
         if project_code and self.registry.lookup(project_code):
             self._workspace(self.registry.lookup(project_code))
 
@@ -147,27 +169,35 @@ class ProjectSessions(UserSessions):
             except PreviewError:
                 self.registry.mark(workspace, 'blocked', 'scope_mismatch')
                 raise
-            service = WorkbenchSessions(self.base_url, workspace['project_code'], workspace['legacy_context_id'],
-                library_root=self.registry.path(workspace), model_root=self.model_root if workspace['storage_key'] == 'legacy' else None,
-                ontobase_connection_id=self.connection_id, **self.options)
+            service = self.shared if self.registry.path(workspace) == self.shared.library.root else WorkbenchSessions(
+                self.base_url, workspace['project_code'], workspace['legacy_context_id'],
+                library_root=self.registry.path(workspace), ontobase_connection_id=self.connection_id, **self.options)
             try:
                 self.registry.bind(workspace, service.library)
+                if service is not self.shared:
+                    with service.library.connect() as db:
+                        if db.execute('select 1 from versions limit 1').fetchone():
+                            raise PreviewError(409, 'SHARED_MODEL_MIGRATION_REQUIRED')
+                    service.project_models = self.shared.project_models
+                    service.scenes.use_shared_models(
+                        lambda identifier, db=None: self.shared.project_models.content_identity(identifier), self.connection_id)
             except PreviewError:
                 self.registry.mark(workspace, 'blocked', 'scope_mismatch')
                 self._close(service)
                 raise
-            # Delegate to the identity store, whose dictionary can rotate during pruning.
-            service.lock = self.lock
-            service.current, service.guard, service.invalidate = self.current, self.guard, self.invalidate
-            service.library.slots = self.upload_slots
-            if service.geometry:
-                service.geometry.slots = self.geometry_slots
-            if service.terrains: service.terrains.process_budget=self.terrain_slots
-            if service.thumbnails: service.thumbnails.renderer.process_budget=self.thumbnail_slots
-            if service.public_geodata: service.public_geodata.fetch_budget=self.fetch_slots
-            if service.imagery: service.imagery.lock=self.imagery_lock
+            self._delegate(service)
             self.services[key] = service
             return service
+
+    def _delegate(self, service):
+        service.lock = self.lock
+        service.current, service.guard, service.invalidate = self.current, self.guard, self.invalidate
+        service.library.slots = self.upload_slots
+        if service.geometry: service.geometry.slots = self.geometry_slots
+        if service.terrains: service.terrains.process_budget = self.terrain_slots
+        if service.thumbnails: service.thumbnails.renderer.process_budget = self.thumbnail_slots
+        if service.public_geodata: service.public_geodata.fetch_budget = self.fetch_slots
+        if service.imagery: service.imagery.lock = self.imagery_lock
 
     def _empty(self, path, row, access, payload):
         body = {k: v for k, v in payload.items() if k != 'expectedSessionRevision'}
@@ -207,6 +237,14 @@ class ProjectSessions(UserSessions):
         if path.startswith('/api/demo/'):
             raise PreviewError(410, 'DEMO_REMOVED')
         row = self._session(sid, payload)
+        if method in ('resource_request', 'resource_upload') and (path != '/api/workbench/resources/uses' or 'projectRef' not in payload):
+            clean = {k: v for k, v in payload.items() if k != 'projectRef'}
+            if 'projectRef' in payload:
+                self._ref(payload['projectRef'])
+            if path == '/api/workbench/resources/uses':
+                return self.shared_access.uses(sid, clean)
+            return (self.shared.resource_request(sid, path, clean) if method == 'resource_request'
+                    else self.shared.resource_upload(sid, clean, *args))
         code = self._ref(payload.get('projectRef'))
         access = self._access(sid, row, code)
         clean = {k: v for k, v in payload.items() if k != 'projectRef'}
@@ -255,7 +293,7 @@ class ProjectSessions(UserSessions):
                 item.close()
 
     def close(self):
-        for service in self.services.values():
+        for service in {self.shared, *self.services.values()}:
             self._close(service)
 
 

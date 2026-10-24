@@ -207,7 +207,7 @@ class WorkbenchSessions(UserSessions):
     def resource_response(self, value, row, access):
         if self.thumbnails is not None: self.thumbnails.attach(value)
         value['sessionRevision'] = row.revision
-        value['capabilities'] = {'scope': 'project_static_glb_resources', 'canRead': True,
+        value['capabilities'] = {'scope': getattr(self, 'model_scope', 'project_static_glb_resources'), 'canRead': True,
             'canUpload': access.get('role') == 'admin', 'canCalibrate': access.get('role') == 'admin',
             'canWriteMetadata': access.get('role') == 'admin',
             'canGenerateThumbnails': self.thumbnails is not None and access.get('role') == 'admin',
@@ -220,9 +220,13 @@ class WorkbenchSessions(UserSessions):
             'maxThumbnailBytes': MAX_PNG_BYTES})
         return value
 
+    def resource_authorization(self, sid, payload, *, writing, read_capabilities=True):
+        if hasattr(self, 'model_authorization'):
+            return self.model_authorization(sid, payload, writing=writing, read_capabilities=read_capabilities)
+        return self.project_authorization(sid, payload, writing=writing, write_code='MODEL_WRITE_FORBIDDEN')
+
     def resource_upload(self, sid, payload, stream, length):
-        row, authorize, access, actor = self.project_authorization(sid, payload,
-            writing=True, write_code='MODEL_WRITE_FORBIDDEN')
+        row, authorize, access, actor = self.resource_authorization(sid, payload, writing=True)
         if self.project_models is None:
             raise PreviewError(503, 'MODEL_UNAVAILABLE')
         metadata = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
@@ -235,8 +239,8 @@ class WorkbenchSessions(UserSessions):
         writing = path in ('/api/workbench/resources/model/calibrate', '/api/workbench/resources/model/import-existing',
                            '/api/workbench/resources/model/preserve-legacy-display',
                            '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/thumbnail/ensure')
-        row, authorize, access, actor = self.project_authorization(sid, payload,
-            writing=writing, write_code='MODEL_WRITE_FORBIDDEN')
+        row, authorize, access, actor = self.resource_authorization(sid, payload,
+            writing=writing, read_capabilities=not path.endswith('/content'))
         if self.project_models is None or self.scenes is None:
             raise PreviewError(503, 'MODEL_UNAVAILABLE')
         body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
@@ -437,7 +441,7 @@ class WorkbenchSessions(UserSessions):
                         else:
                             if snapshot['coordinateFrame']['mode'] != 'local_plane':
                                 raise PreviewError(409, 'MODEL_CALIBRATION_REQUIRED')
-                            self.library.content(self.library.version(identifier))
+                            self.project_models.library.content(self.project_models.library.version(identifier))
                         fixed_models[identifier] = content_identity
                     except PreviewError as error:
                         if error.code == 'MODEL_CHANGED':

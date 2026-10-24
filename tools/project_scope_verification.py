@@ -26,7 +26,7 @@ def verify_legacy_scope_upgrade(original_library, current_library):
                 raise ValueError('INVALID_PROJECT_STORE')
         old = {row[0] for row in before.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%'")}
         new = {row[0] for row in after.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%'")}
-        if new - old - {'workspace_scope'} or old - new:
+        if new - old - {'workspace_scope', 'shared_model_scope', 'scene_model_scope'} or old - new:
             raise ValueError('UNEXPECTED_SCHEMA_CHANGE')
         counts = {}
         for table in old:
@@ -42,6 +42,9 @@ def verify_legacy_scope_upgrade(original_library, current_library):
         if not scope or after.execute('select 1 from scenes where workspace_id is null or workspace_id!=? or project_code!=? limit 1',
                                       (scope[0], scope[2])).fetchone():
             raise ValueError('SCENE_SCOPE_MISMATCH')
+        for table in ('shared_model_scope', 'scene_model_scope'):
+            if table in new and after.execute('select connection_id,scope_version from ' + table).fetchall() != [(scope[1], 1)]:
+                raise ValueError('SHARED_MODEL_SCOPE_MISMATCH')
         return {'originalTablesPreserved': len(old), 'originalTableCounts': counts,
                 'scopeTableAdded': 'workspace_scope' not in old, 'originalBusinessRowsPreserved': True,
                 'retainedSceneRevisions': counts['scene_revisions'], 'sceneCount': counts['scenes'],

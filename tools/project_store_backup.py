@@ -1,9 +1,11 @@
 """Offline project registry and every private project store, with optional legacy pair."""
 from __future__ import annotations
 
+from contextlib import closing
 import argparse
 from pathlib import Path
 import os
+import json
 import sqlite3
 from uuid import UUID
 
@@ -21,9 +23,13 @@ def _capture(projects, library=None, model=None):
         meta = db.execute('select schema_version,connection_id from registry_meta').fetchall()
         paired._require(len(meta) == 1 and meta[0][0] == 1 and meta[0][1], 'INVALID_PROJECT_REGISTRY')
         rows = db.execute('select workspace_id,ontobase_connection_id,project_code,storage_key,legacy_context_id,state from project_workspaces order by workspace_id').fetchall()
+        shared_registered = db.execute("select 1 from sqlite_master where name='shared_model_store'").fetchone() is not None
+        if shared_registered:
+            paired._require(library is not None and db.execute('select connection_id,scope_version from shared_model_store').fetchall()
+                            == [(meta[0][1], 1)], 'SHARED_MODEL_STORE_REQUIRED')
     finally:
         db.close()
-    spaces, keys, legacy = {}, set(), None
+    spaces, keys, legacy, roots = {}, set(), None, []
     for identifier, connection, code, key, context, state in rows:
         paired._require(str(UUID(identifier)) == identifier and connection == meta[0][1]
                          and code and key not in keys and state in ('ready','preparing','blocked'), 'INVALID_PROJECT_REGISTRY')
@@ -48,6 +54,7 @@ def _capture(projects, library=None, model=None):
             root = projects / 'libraries' / key
         files, _ = paired._inventory(root)
         database, scope = paired._database(root, files)
+        roots.append(root)
         paired._require((scope[2], scope[3]) == (code, context), 'PROJECT_SCOPE_MISMATCH')
         conn = sqlite3.connect((root / 'library.sqlite3').as_uri() + '?mode=ro', uri=True)
         try:
@@ -61,9 +68,40 @@ def _capture(projects, library=None, model=None):
         actual = {p.name for p in (projects / 'libraries').iterdir()}
         ready = {space['storageKey'] for space in spaces.values() if space['state'] == 'ready' and space['storageKey'] != 'legacy'}
         paired._require(ready <= actual <= keys - {'legacy'}, 'UNREGISTERED_PROJECT_STORE')
+    shared = None
+    if library is not None:
+        with closing(sqlite3.connect((library / 'library.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:
+            if db.execute("select 1 from sqlite_master where name='shared_model_scope'").fetchone():
+                paired._require(db.execute('select connection_id,scope_version from shared_model_scope').fetchall()
+                                == [(meta[0][1], 1)], 'SHARED_MODEL_SCOPE_MISMATCH')
+                shared = {'root': 'legacy' if legacy is not None else 'library', 'connectionId': meta[0][1]}
+                models = {r[0]: (r[1], r[2] or 'sha256:' + r[1], r[3]) for r in db.execute('''select v.id,v.sha256,p.content_revision,p.asset_id
+                    from versions v left join project_model_versions p on p.version_id=v.id''')}
+        if shared is not None and legacy is None:
+            files, _ = paired._inventory(library)
+            shared['library'] = files
+            shared['database'], _ = paired._database(library, files)
+    paired._require(not shared_registered or shared is not None, 'SHARED_MODEL_STORE_REQUIRED')
+    for root in roots:
+        with closing(sqlite3.connect((root / 'library.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:
+            if not db.execute("select 1 from sqlite_master where name='scene_model_scope'").fetchone():
+                continue
+            paired._require(shared is not None, 'SHARED_MODEL_STORE_REQUIRED')
+            paired._require(db.execute('select connection_id,scope_version from scene_model_scope').fetchall()
+                            == [(shared['connectionId'], 1)], 'SHARED_MODEL_SCOPE_MISMATCH')
+            for snapshot, references in db.execute('select snapshot,resource_refs from scene_revisions'):
+                refs = json.loads(references)
+                paired._require({item['modelVersionId'] for item in json.loads(snapshot)['instances']}
+                                == {ref['modelVersionId'] for ref in refs}, 'INVALID_SHARED_MODEL_REFERENCE')
+                for ref in refs:
+                    paired._require(models.get(ref['modelVersionId']) == (ref['sha256'], ref['contentRevision'], ref.get('modelAssetId')),
+                                    'INVALID_SHARED_MODEL_REFERENCE')
     after, after_ids = paired._inventory(projects)
     paired._require((entries, identities) == (after, after_ids), 'SOURCE_CHANGED')
-    return {'format': FORMAT, 'projects': entries, 'spaces': spaces, 'legacy': legacy}, identities
+    result = {'format': FORMAT, 'projects': entries, 'spaces': spaces, 'legacy': legacy}
+    if shared is not None:
+        result['sharedModels'] = shared
+    return result, identities
 
 
 def _copy_tree(source, target, entries):
@@ -84,10 +122,12 @@ def _copy(projects, library, model, destination, report, identities):
     if report['legacy'] is not None:
         _copy_tree(library, destination / 'workbench-library', report['legacy']['library'])
         _copy_tree(model, destination / 'workbench-model', report['legacy']['model'])
+    elif report.get('sharedModels'):
+        _copy_tree(library, destination / 'workbench-library', report['sharedModels']['library'])
     actual, after_ids = _capture(projects, library, model)
     paired._require(report == actual and identities == after_ids, 'SOURCE_CHANGED')
     restored, _ = _capture(destination / 'project-spaces',
-        destination / 'workbench-library' if report['legacy'] else None,
+        destination / 'workbench-library' if report['legacy'] or report.get('sharedModels') else None,
         destination / 'workbench-model' if report['legacy'] else None)
     paired._require(restored == report, 'COPY_MISMATCH')
     raw = paired._canonical(report)
@@ -96,7 +136,8 @@ def _copy(projects, library, model, destination, report, identities):
     paired._sync(destination)
     return {'manifestSha256': __import__('hashlib').sha256(raw).hexdigest(), 'spaces': len(report['spaces']),
             'fileCount': sum(v['kind'] == 'file' for v in report['projects'].values())
-                + sum(v['kind'] == 'file' for group in ('library', 'model') for v in (report['legacy'] or {}).get(group, {}).values())}
+                + sum(v['kind'] == 'file' for group in ('library', 'model') for v in (report['legacy'] or {}).get(group, {}).values())
+                + sum(v['kind'] == 'file' for v in (report.get('sharedModels') or {}).get('library', {}).values())}
 
 
 def snapshot(project_root, destination, *, library_root=None, model_root=None, service_stopped=False):
@@ -118,7 +159,7 @@ def verify(backup_root, expected_manifest_sha256):
     paired._require(__import__('hashlib').sha256(data).hexdigest() == expected_manifest_sha256, 'MANIFEST_MISMATCH')
     report = paired._read_json(backup / 'manifest.json')
     paired._require(report.get('format') == FORMAT, 'STORE_FORMAT_UNSUPPORTED')
-    actual, _ = _capture(backup / 'project-spaces', backup / 'workbench-library' if report['legacy'] else None,
+    actual, _ = _capture(backup / 'project-spaces', backup / 'workbench-library' if report['legacy'] or report.get('sharedModels') else None,
                          backup / 'workbench-model' if report['legacy'] else None)
     paired._require(actual == report, 'COPY_MISMATCH')
     return report
@@ -130,7 +171,8 @@ def restore_new(backup_root, destination, expected_manifest_sha256, *, service_s
     report = verify(backup, expected_manifest_sha256)
     target = paired._destination(destination, (backup,))
     projects = backup / 'project-spaces'
-    library, model = (backup / 'workbench-library', backup / 'workbench-model') if report['legacy'] else (None, None)
+    library = backup / 'workbench-library' if report['legacy'] or report.get('sharedModels') else None
+    model = backup / 'workbench-model' if report['legacy'] else None
     _, identities = _capture(projects, library, model)
     return _copy(projects, library, model, target, report, identities)
 

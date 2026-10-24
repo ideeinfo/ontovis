@@ -179,12 +179,12 @@ class ProjectWorkspaceTests(unittest.TestCase):
         from tools.project_store_backup import snapshot, verify, restore_new
         a, b = self.create('A'), self.create('B')
         self.sessions.close()
-        receipt = snapshot(self.sessions.registry.root, self.root / 'B0', service_stopped=True)
+        receipt = snapshot(self.sessions.registry.root, self.root / 'B0', library_root=self.sessions.shared.library.root, service_stopped=True)
         report = verify(self.root / 'B0', receipt['manifestSha256'])
         self.assertEqual(len(report['spaces']), 2)
         restored = restore_new(self.root / 'B0', self.root / 'restored', receipt['manifestSha256'], service_stopped=True)
         self.assertEqual(restored['manifestSha256'], receipt['manifestSha256'])
-        root = ProjectSessions('http://127.0.0.1:18001', library_root=self.root / 'unused',
+        root = ProjectSessions('http://127.0.0.1:18001', library_root=self.root / 'restored' / 'workbench-library',
             workspace_root=self.root / 'restored' / 'project-spaces', factory=ProjectsAuthority)
         self.addCleanup(root.close)
         for item in (a, b):
@@ -193,7 +193,7 @@ class ProjectWorkspaceTests(unittest.TestCase):
             with root._workspace(space).library.connect() as db:
                 self.assertEqual(db.execute('select head_revision from scenes').fetchone()[0], item['sceneRevision'])
 
-    def test_model_upload_metadata_and_content_are_isolated_even_for_same_bytes(self):
+    def test_model_upload_replay_and_content_share_identity_across_projects(self):
         from tests.test_model_upload import glb
         data = glb(self.root / 'synthetic.glb').read_bytes()
         request_id = str(uuid4())
@@ -204,21 +204,20 @@ class ProjectWorkspaceTests(unittest.TestCase):
                 sourceNote='Synthetic geometry', rightsDeclared=True), io.BytesIO(data), len(data))
             versions.append(result)
         a, b = versions
-        self.assertEqual(a['sha256'], b['sha256'])
-        self.assertNotEqual(a['modelVersionId'], b['modelVersionId'])
-        self.assertCode('NOT_FOUND_OR_FORBIDDEN', lambda: self.sessions.resource_request(self.sid,
-            '/api/workbench/resources/model/content', self.payload('B', modelVersionId=a['modelVersionId'],
-                expectedContentRevision=a['contentRevision'], expectedSha256=a['sha256'])))
-        for value in versions:
+        self.assertEqual(a['modelVersionId'], b['modelVersionId'])
+        self.assertNotIn('projectRef', a)
+        for code in (None, 'A', 'B'):
             result = self.sessions.resource_request(self.sid, '/api/workbench/resources/model/content',
-                self.payload(value['projectRef']['projectCode'], modelVersionId=value['modelVersionId'],
-                    expectedContentRevision=value['contentRevision'], expectedSha256=value['sha256']))
+                self.payload(code, modelVersionId=a['modelVersionId'],
+                    expectedContentRevision=a['contentRevision'], expectedSha256=a['sha256']))
             self.assertEqual(result['content'], data)
+        self.assertIsNone(self.sessions.registry.lookup('A'))
+        self.assertIsNone(self.sessions.registry.lookup('B'))
 
     def test_backup_preserves_incomplete_space_without_declaring_it_ready(self):
         from tools.project_store_backup import snapshot, verify, restore_new
         workspace = self.sessions.registry.prepare('A')
-        result = snapshot(self.sessions.registry.root, self.root / 'incomplete-B1', service_stopped=True)
+        result = snapshot(self.sessions.registry.root, self.root / 'incomplete-B1', library_root=self.sessions.shared.library.root, service_stopped=True)
         report = verify(self.root / 'incomplete-B1', result['manifestSha256'])
         self.assertEqual(report['spaces'][workspace['workspace_id']]['state'], 'preparing')
         self.assertIsNone(report['spaces'][workspace['workspace_id']]['database'])

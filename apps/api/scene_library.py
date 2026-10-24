@@ -326,6 +326,7 @@ class SceneLibrary:
         self.library = library
         _require(model_identity is None or callable(model_identity))
         self.model_identity = model_identity
+        self.shared_models = False
         with library.connect() as db:
             self.project_code = db.execute('select project_code from library where id=1').fetchone()[0]
             db.executescript('''
@@ -382,6 +383,38 @@ class SceneLibrary:
             ''')
             db.execute('insert or ignore into scene_catalog values (1,0,?)', (secrets.token_hex(32),))
 
+    def use_shared_models(self, model_identity, connection_id):
+        """Keep retained references, while resolving fixed versions in the connection's model library."""
+        _require(callable(model_identity))
+        with self.library.connect() as db:
+            db.execute('begin immediate')
+            db.execute('''create table if not exists scene_model_scope (
+                id integer primary key check(id=1), connection_id text not null, scope_version integer not null)''')
+            row = db.execute('select connection_id,scope_version from scene_model_scope where id=1').fetchone()
+            _require(row is None or tuple(row) == (connection_id, 1), 'WORKSPACE_SCOPE_INVALID', 409)
+            if any(row['table'] == 'versions' for row in db.execute('pragma foreign_key_list(scene_resource_uses)')):
+                # SQLite cannot enforce a foreign key into a different private database.
+                # Save/read validation and whole-store backup verify the shared immutable identity instead.
+                db.execute('''create table scene_shared_uses_upgrade (
+                    revision text not null references scene_revisions(revision),
+                    instance_id text not null, model_version_id text not null,
+                    primary key(revision,instance_id))''')
+                db.execute('insert into scene_shared_uses_upgrade select * from scene_resource_uses')
+                db.execute('drop table scene_resource_uses')
+                db.execute('alter table scene_shared_uses_upgrade rename to scene_resource_uses')
+                db.execute('create index scene_uses_model_version on scene_resource_uses(model_version_id)')
+                db.execute('''create trigger scene_use_no_update before update on scene_resource_uses
+                    begin select raise(abort, 'immutable scene reference'); end''')
+                db.execute('''create trigger scene_use_no_delete before delete on scene_resource_uses
+                    begin select raise(abort, 'retained scene reference'); end''')
+            db.execute('insert or ignore into scene_model_scope values(1,?,1)', (connection_id,))
+            for record in db.execute('select resource_refs from scene_revisions'):
+                for ref in json.loads(record[0]):
+                    identity = model_identity(ref['modelVersionId'])
+                    _require(identity['sha256'] == ref['sha256'] and identity['contentRevision'] == ref['contentRevision'],
+                             'RESOURCE_CHANGED', 409)
+        self.model_identity, self.shared_models = model_identity, True
+
     @staticmethod
     def capabilities(*, geographic=False, engineering=False):
         return {'storageScope': 'project_scenes' if engineering else 'projected_site_unbound' if geographic else 'local_plane_unbound', 'supportsGeographic': geographic,
@@ -427,6 +460,14 @@ class SceneLibrary:
     def _resource_refs(self, db, snapshot):
         refs = []
         for identifier in sorted({item['modelVersionId'] for item in snapshot['instances']}):
+            if self.shared_models:
+                identity = self.model_identity(identifier)
+                ref = {'modelVersionId': identifier, 'sha256': _sha(identity['sha256']),
+                       'contentRevision': _text(identity['contentRevision'])}
+                if identity.get('modelAssetId') is not None:
+                    ref['modelAssetId'] = _uuid(identity['modelAssetId'])
+                refs.append(ref)
+                continue
             row = db.execute('select id,sha256 from versions where id=?', (identifier,)).fetchone()
             if row is None:
                 raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
@@ -1323,8 +1364,11 @@ class SceneLibrary:
                  and type(limit) is int and 1 <= limit <= 100)
         with self.library.connect() as db:
             db.execute('begin')
-            _require(db.execute('select 1 from versions where id=?', (version_id,)).fetchone() is not None,
-                     'NOT_FOUND_OR_FORBIDDEN', 404)
+            if self.shared_models:
+                self.model_identity(version_id)
+            else:
+                _require(db.execute('select 1 from versions where id=?', (version_id,)).fetchone() is not None,
+                         'NOT_FOUND_OR_FORBIDDEN', 404)
             revision, key = self._catalog(db)
             context = {'kind': 'model_uses', 'project': self.project_code, 'actor': actor,
                        'accessRevision': access_revision, 'versionId': version_id, 'scope': scope, 'limit': limit}

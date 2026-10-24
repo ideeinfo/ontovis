@@ -36,13 +36,13 @@ class ProjectScopeHttpTests(unittest.TestCase):
         status, directory, _ = self.request('/api/workbench/projects', {})
         self.assertEqual(status, 200)
         self.assertEqual([i['projectRef']['projectCode'] for i in directory['items']], ['A', 'B'])
-        for path in ['scenes', 'scenes/create', 'scenes/open', 'scenes/save', 'resources/models',
-                     'resources/model/thumbnail', 'resources/model/metadata', 'resources/uses', 'terrains',
+        for path in ['scenes', 'scenes/create', 'scenes/open', 'scenes/save', 'terrains',
                      'terrains/job', 'imagery', 'public-geodata/job', 'objects/context', 'catalog',
                      'evidence/resolve', 'models/binding', 'scenes/legacy-migration/entry']:
             with self.subTest(path=path):
                 status, value, _ = self.request('/api/workbench/' + path, {})
                 self.assertEqual((status, value['code']), (422, 'PROJECT_REQUIRED'))
+        self.assertEqual(self.request('/api/workbench/resources/models', {})[0], 200)
         self.assertIsNone(self.sessions.registry.lookup('A'))
 
     def test_create_open_revoke_replay_and_no_legacy_default(self):

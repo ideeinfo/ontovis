@@ -6,7 +6,7 @@ import {SceneApi} from '../src/sceneApi.ts';
 const ref=code=>({ontobaseConnectionId:'synthetic-source',projectCode:code});
 const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
 
-test('all business requests and uploads use the selected explicit project, directory does not',async()=>{
+test('scene requests use the selected project; shared models and uploads do not',async()=>{
   const requests=[];
   const api=new WorkbenchApi(async(path,init)=>{requests.push([path,init]);return json({sessionRevision:'r1'});});
   api.session('r1');api.selectProject(ref('A'));
@@ -16,7 +16,9 @@ test('all business requests and uploads use the selected explicit project, direc
   assert.deepEqual(JSON.parse(requests[0][1].body).projectRef,ref('A'));
   assert.equal(JSON.parse(requests[1][1].body).projectRef,undefined);
   const metadata=JSON.parse(Buffer.from(requests[2][1].headers['X-Model-Metadata'],'base64').toString('utf8'));
-  assert.deepEqual(metadata.projectRef,ref('A'));
+  assert.equal(metadata.projectRef,undefined);
+  await new SceneApi(api).models();
+  assert.equal(JSON.parse(requests[3][1].body).projectRef,undefined);
 });
 
 test('changing project discards a late success and a late denial from the previous project',async()=>{
@@ -51,4 +53,12 @@ test('scene writes explicitly preserve the optional information version',async()
   await new SceneApi(api).save({sceneId:'synthetic',snapshot:{displayName:'Name',description:'Purpose'}});
   assert.equal(body.sceneInfoWriteVersion,1);assert.equal(body.environmentWriteVersion,1);
   assert.equal(body.snapshot.description,'Purpose');assert.deepEqual(body.projectRef,ref('A'));
+});
+
+test('shared model access errors retain identity and the selected project',async()=>{
+  const api=new WorkbenchApi(async()=>new Response('{"code":"FORBIDDEN"}',{status:403}));
+  api.session('r1');api.selectProject(ref('A'));let denied=0;
+  api.onDenied=()=>denied++;api.onProjectDenied=()=>denied++;
+  await assert.rejects(new SceneApi(api).models());
+  assert.equal(denied,0);assert.equal(api.revision,'r1');assert.deepEqual(api.project,ref('A'));
 });

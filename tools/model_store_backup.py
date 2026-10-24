@@ -154,7 +154,12 @@ def _database(library, entries):
         scope = db.execute('select id,revision,project_code,context_id from library').fetchall()
         _require(len(scope) == 1 and scope[0][0] == 1 and type(scope[0][1]) is int and scope[0][1] >= 0, 'INVALID_STORE')
         _require(isinstance(scope[0][2], str) and scope[0][2]
-                 and (scope[0][3] is None and 'workspace_scope' in tables or _uuid(scope[0][3])), 'INVALID_STORE')
+                 and (scope[0][3] is None and ('workspace_scope' in tables or 'shared_model_scope' in tables)
+                      or _uuid(scope[0][3])), 'INVALID_STORE')
+        for name in ('shared_model_scope', 'scene_model_scope'):
+            if name in tables:
+                shared = db.execute('select id,connection_id,scope_version from ' + name).fetchall()
+                _require(len(shared) == 1 and shared[0][0] == 1 and shared[0][1] and shared[0][2] == 1, 'INVALID_STORE')
         if 'workspace_scope' in tables:
             workspace = db.execute('select workspace_id,ontobase_connection_id,project_code,scope_version from workspace_scope').fetchall()
             _require(len(workspace) == 1 and _uuid(workspace[0][0]) and workspace[0][1]

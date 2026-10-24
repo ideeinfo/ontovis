@@ -8,12 +8,13 @@ import type {SceneApi} from './sceneApi';
 import type {ModelThumbnailInfo, ModelUses, ProjectModel, ProjectModelWrite} from './resourceTypes';
 import {calibrationInput, privateDenial, ResourceRequestGate, ResourceRequestId, resourceBytes, resourceFailure, writeDenial, modelPlacementIssue, resourceCalibrationKey} from './resourceForms';
 import {resourceText} from './resourceMessages';
+import type {ProjectRef} from './projectTypes';
 
 interface Props {
   api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean; geographic?: boolean; compact?:boolean;hidePlacement?:boolean;hidePreview?:boolean;
   onPreview: () => void; onPlace: () => void;canReplace?:boolean;onReplace?:()=>void;
   onUpdated: (version: ProjectModelWrite) => void; onWriteDenied: () => void; onPrivateDenied: () => void;
-  onOpenScene?:(sceneId:string)=>void;
+  onOpenScene?:(sceneId:string,projectRef?:ProjectRef)=>void;
   onRefreshLibrary: () => Promise<string|null>;
   canGenerateThumbnail?:boolean;onThumbnailUpdated?:(sha256:string,value:ModelThumbnailInfo)=>void;
 }
@@ -129,7 +130,7 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
     <details className="ov-resource-disclosure" open={usesOpen} onToggle={event=>{
       const open=event.currentTarget.open;setUsesOpen(open);if(open&&!uses&&!usesBusy)void readUses();
     }}><summary>{t('uses')}</summary>
-      {uses&&<><p className="ov-resource-caption">{counts(uses)}</p>{uses.items.length===0?<p className="ov-resource-caption">{t('noUses')}</p>:<ul className="ov-resource-use-list">{uses.items.map(item=><li key={item.sceneId}><span>{item.displayName}</span><small>{counts(item)}</small>{onOpenScene&&<Btn onClick={()=>onOpenScene(item.sceneId)}>{locale==='zh'?'打开场景':'Open scene'}</Btn>}</li>)}</ul>}</>}
+      {uses&&<><p className="ov-resource-caption">{counts(uses)}</p>{uses.items.length===0?<p className="ov-resource-caption">{t('noUses')}</p>:<ul className="ov-resource-use-list">{uses.items.map(item=><li key={item.sceneId}><span>{item.projectName&&`${item.projectName} · `}{item.displayName}</span><small>{counts(item)}</small>{onOpenScene&&<Btn onClick={()=>onOpenScene(item.sceneId,item.projectRef)}>{locale==='zh'?'打开场景':'Open scene'}</Btn>}</li>)}</ul>}</>}
       {!!usesError&&<p className="ov-resource-error" role="alert">{resourceFailure(usesError,locale)}</p>}
       {usesBusy&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
       <div className="ov-resource-actions"><Btn disabled={usesBusy} onClick={()=>void readUses()}>{t('reloadUses')}</Btn>{uses?.nextCursor&&<Btn disabled={usesBusy} onClick={()=>void readUses(uses.nextCursor!)}>{t('more')}</Btn>}</div>

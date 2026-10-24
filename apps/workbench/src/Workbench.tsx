@@ -22,7 +22,7 @@ import type {LegacySceneEntryTarget} from './sceneTypes';
 import {LandingPage} from './LandingPage';
 import {ProjectsPanel} from './ProjectsPanel';
 import {ProjectObjects} from './ProjectObjects';
-import type {ProjectAccess,ProjectSummary} from './projectTypes';
+import type {ProjectAccess,ProjectRef,ProjectSummary} from './projectTypes';
 
 const api = new WorkbenchApi();
 const ModelViewport = lazy(() => import('./ModelViewport').then(module => ({default:module.ModelViewport})));
@@ -76,9 +76,10 @@ export function Workbench() {
   const lastActivity = useRef(0);
   const sceneWorkspace = useRef<SceneWorkspaceHandle|null>(null);
   function navigate(next:Page,legacyVersionId:string|null=null){
-    if(next!=='project'&&!project)next='project';
+    if(next!=='project'&&next!=='models'&&!project)next='project';
     if(next==='bindings'&&legacyVersionId===null)next='scene';
     const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setResourceSceneId(undefined);setLegacyReady(null);
+      api.selectProject(next==='models'?null:project?.projectRef||null);setError(null);
       if(next==='bindings'){setModelVersionId(legacyVersionId);setModel(null);setContext(null);setDetail(null);setModelReload(value=>value+1);}
       setPage(next);setLeft(false);setRight(false);};
     if(page==='scene'&&(next!=='scene'||sceneEntry!==null)&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else change();
@@ -218,6 +219,16 @@ export function Workbench() {
     const change=()=>enterProject(value);
     if(page==='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else change();
   }
+  async function openModelScene(sceneId?:string,projectRef?:ProjectRef){
+    if(!sceneId||!projectRef){navigate(project?'scene':'project');return;}
+    const revision=api.revision;
+    try{
+      const access=await api.request<ProjectAccess>('/api/workbench/projects/access',{projectRef});
+      if(revision!==api.revision||current.current?.state!=='active')return;
+      enterProject({projectRef,displayName:access.projectName,sourceDescription:'',status:'active',
+        workspaceState:'ready',sceneCount:0},sceneId);
+    }catch(value){if(!cancelled(value))setError(value);}
+  }
   function select(uid:string, scope:'equipment' | 'project' = 'equipment') {
     setDetail(null); setSelection({uid,scope}); setLeft(false);
   }
@@ -230,7 +241,7 @@ export function Workbench() {
   const workspace = page === 'bindings';
   return <>{!active&&<LandingPage onLogin={()=>void openLogin()} videoSrc={import.meta.env.VITE_LOGIN_VIDEO_SRC} posterSrc={import.meta.env.VITE_LOGIN_POSTER_SRC} suspended={modal==='login'} loginButtonRef={loginButton}/>}{active&&<div className="ov-app ov-compact">
     <header className="cw-header"><a className="cw-brand" href="#project" onClick={event => {event.preventDefault();navigate('project');}} aria-label="ONTOVis"><img src={logo} alt="ONTOVis 本源数智"/></a><span className="cw-divider"/>
-      <button className="cw-project" type="button" onClick={() => navigate('project')}><Building2 size={15}/><span>{projectName || t('workbench')}</span><ChevronDown size={12}/></button><span className="cw-grow"/>
+      {page==='models'?<span className="cw-project"><Boxes size={15}/><span>{locale==='zh'?'共享模型库':'Shared model library'}</span></span>:<button className="cw-project" type="button" onClick={() => navigate('project')}><Building2 size={15}/><span>{projectName || t('workbench')}</span><ChevronDown size={12}/></button>}<span className="cw-grow"/>
       {active ? <Dropdown.Root><Dropdown.Trigger asChild><button type="button" className="cw-avatar" aria-label={t('account')}>{session?.username?.slice(0,2).toUpperCase() || <User size={16}/>}</button></Dropdown.Trigger><Dropdown.Portal><Dropdown.Content className="cw-menu" align="end" sideOffset={8}>
         <div className="cw-user-info"><strong>{session?.username}</strong><span className="cw-caption">{projectName}</span></div>
         <Dropdown.Item onSelect={() => setModal('account')}><User size={15}/>{t('account')}</Dropdown.Item><Dropdown.Separator/>
@@ -246,7 +257,7 @@ export function Workbench() {
       <main className="cw-main"><div className="cw-toolbar">{workspace && <IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn>}<div className="cw-page-title"><span className="cw-breadcrumb">{t('projectManagement')}<ChevronRight size={11}/>{t(title)}</span><h1>{t(title)}</h1></div>{workspace && <><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}</>}<span className="cw-grow"/>{workspace && <div className="cw-layout" role="group" aria-label={t('workbenchLayout')}>{(['balanced','modelLayout','drawingLayout'] as const).map(value => <button type="button" key={value} aria-pressed={layout === value} className={layout === value ? 'active' : ''} onClick={() => setLayout(value)}>{t(value)}</button>)}</div>}<IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn>{workspace && <IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn>}</div>
       {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}</div>}
       {page==='scene'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${JSON.stringify(project?.projectRef)}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceSceneId||''}`} api={api} ref={sceneWorkspace} initialEntry={sceneEntry} initialSceneId={resourceSceneId} project={project} onProjectCreated={enterProject} onProjectName={setProjectName}/></Suspense>}
-      {!workspace&&page!=='scene'&&<div className="cw-page-content">{page==='models'&&active&&project?<ProjectModelCenter key={JSON.stringify(project.projectRef)} api={api} onOpenScene={sceneId=>{navigate('scene');setResourceSceneId(sceneId);}}/>:page==='hierarchy'&&active&&project?<ProjectObjects key={JSON.stringify(project.projectRef)} api={api}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
+      {!workspace&&page!=='scene'&&<div className="cw-page-content">{page==='models'&&active?<ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>:page==='hierarchy'&&active&&project?<ProjectObjects key={JSON.stringify(project.projectRef)} api={api}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
       {page==='scene'&&!active&&<p className="cw-state">{t('loginPrompt')}</p>}
       {workspace&&(!active||legacyReady===entryIdentity)&&<div className={`cw-workspace layout-${layout}`}>
         <ObjectsPanel key={`${session?.sessionRevision}:${reload}:${context?.context.hierarchyRevision}`} api={api} view={context} selected={selection.uid} ancestors={detail?.ancestors.path.map(row=>row.object.entityUid) || []} onSelect={select} className={left ? 'is-open' : ''}/>
@@ -260,7 +271,7 @@ export function Workbench() {
         </aside>
       </div>}</main>
     </div></div>}
-    {modal === 'login' && <Modal title={t('signInTitle')} description={t('accountHint')} onClose={closeModal} onCloseAutoFocus={event=>{if(loginButton.current){event.preventDefault();loginButton.current.focus();}}}><form className="ov-simple-login" onSubmit={event => {event.preventDefault();void login();}}>
+    {modal === 'login' && <Modal className="ov-login-dialog" title={t('signInTitle')} description={t('accountHint')} onClose={closeModal} onCloseAutoFocus={event=>{if(loginButton.current){event.preventDefault();loginButton.current.focus();}}}><form className="ov-simple-login" onSubmit={event => {event.preventDefault();void login();}}>
       <input aria-label={t('username')} placeholder={t('username')} autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required disabled={signingIn||signingOut}/><input aria-label={t('password')} placeholder={t('password')} type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={signingIn||signingOut}/>
       {(sessionCheck==='loading'||signingOut)&&!signingIn&&<p role="status">{t('loading')}</p>}
       {sessionCheck==='failed'&&<p role="alert">{t(mustSignOut.current?'logoutFailed':'unavailable')} <Btn disabled={signingOut} onClick={()=>void openLogin()}>{t('retry')}</Btn></p>}

@@ -8,6 +8,7 @@ import {ResourcePanel} from './ResourcePanel';
 import {ModelComponentTree,ModelComponentProperties,ModelPreviewTools,useModelPreview} from './ModelPreviewInspector';
 import type {ProjectModelVersion} from './resourceTypes';
 import type {LocalSceneSnapshot,ModelResourceRef} from './sceneTypes';
+import type {ProjectRef} from './projectTypes';
 import './projectModelCenter.css';
 
 const SceneViewport=lazy(()=>import('./SceneViewport').then(module=>({default:module.SceneViewport})));
@@ -17,15 +18,15 @@ const previewScene:LocalSceneSnapshot={displayName:'',coordinateFrame:{mode:'loc
 const ignore=()=>{};
 const emptyRefs:ModelResourceRef[]=[],emptyVisibility:Record<string,boolean>={};
 
-export function ProjectModelCenter({api,onOpenScene}:{api:WorkbenchApi;onOpenScene:(sceneId?:string)=>void}) {
+export function ProjectModelCenter({api,onOpenScene}:{api:WorkbenchApi;onOpenScene:(sceneId?:string,projectRef?:ProjectRef)=>void}) {
   const {locale}=usePreferences(),text=(zh:string,en:string)=>locale==='zh'?zh:en;
   const [preview,setPreview]=useState<ProjectModelVersion|null>(null),[error,setError]=useState<unknown>(null);
   const inspection=useModelPreview(preview);
   const [detailsTarget,setDetailsTarget]=useState<HTMLDivElement|null>(null);
   function show(value:ProjectModelVersion|null){setPreview(value);setError(null);}
-  return <section className={`pm-center${preview?' pm-previewing':''}`} aria-label={text('项目模型资源','Project model resources')}>
-    <header className="pm-heading"><div className="pm-heading-title">{preview&&<Btn onClick={()=>show(null)}><ArrowLeft size={15}/>{text('返回模型中心','Back to model center')}</Btn>}<div><strong>{preview?.displayName||text('项目模型资源','Project model resources')}</strong>
-      <p>{text('与场景共用资源库。一个固定模型版本可放置多个独立实例。','Shared with Scenes. One fixed model version can be placed as many independent instances.')}</p></div>
+  return <section className={`pm-center${preview?' pm-previewing':''}`} aria-label={text('共享模型资源','Shared model resources')}>
+    <header className="pm-heading"><div className="pm-heading-title">{preview&&<Btn onClick={()=>show(null)}><ArrowLeft size={15}/>{text('返回模型中心','Back to model center')}</Btn>}<div><strong>{preview?.displayName||text('共享模型资源','Shared model resources')}</strong>
+      <p>{text('模型可供多个项目使用；同一固定版本在各场景中放置为独立实例。','Models are shared across projects. Place independent instances of the same fixed version in each scene.')}</p></div>
       </div>
       <Btn onClick={()=>onOpenScene()}><Layers size={15}/>{text('进入场景布置','Open scene placement')}</Btn></header>
     <div className="pm-catalog pm-library" hidden={!!preview}><ResourcePanel api={api} modelsOnly detailsTarget={detailsTarget} canPlace={false} canAcquire={false}
