@@ -169,8 +169,13 @@ export interface ImageryRecord {
 }
 export interface ImageryResponse {
   sessionRevision:string;capabilities:{scope:'private_overview_imagery';canRead:true;canUpload:boolean};
-  limits:{maxUploadBytes:number;maxSide:number;maxVersions:number;maxLibraryBytes:number};
+  limits:{maxUploadBytes:number;maxSide:number;maxVersions:number;maxLibraryBytes:number;maxChunkBytes?:number;maxPendingUploads?:number;uploadTtlSeconds?:number};
 }
 export type ImageryVersion=ImageryRecord&ImageryResponse;
 export type ImageryUploadResult=({state:'unknown'}&ImageryResponse)|({state:'completed'}&ImageryVersion);
-export interface ImageryCatalog extends ImageryResponse {items:ImageryRecord[]}
+export interface ImageryUploadSession {
+  state:'receiving';uploadId:string;metadata:UploadImageryMetadata;sha256:string;bytes:number;
+  receivedBytes:number;uploadRevision:string;expiresAt:number;
+}
+export type ImageryTransferResult=(ImageryUploadSession&ImageryResponse)|({state:'completed'}&ImageryVersion);
+export interface ImageryCatalog extends ImageryResponse {items:ImageryRecord[];uploads?:ImageryUploadSession[]}

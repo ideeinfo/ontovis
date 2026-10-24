@@ -349,10 +349,18 @@ class WorkbenchSessions(UserSessions):
         return self.terrain_response(value, row, access)
 
     def imagery_response(self, value, row, access):
+        from .imagery_uploads import CHUNK_BYTES, MAX_PENDING, TTL_SECONDS
         return {**value, 'sessionRevision': row.revision,
                 'capabilities': {'scope':'private_overview_imagery', 'canRead':True, 'canUpload':access.get('role') == 'admin'},
                 'limits': {'maxUploadBytes':MAX_IMAGERY_BYTES, 'maxSide':4096,
-                           'maxVersions':MAX_IMAGERY_VERSIONS, 'maxLibraryBytes':MAX_IMAGERY_TOTAL_BYTES}}
+                           'maxVersions':MAX_IMAGERY_VERSIONS, 'maxLibraryBytes':MAX_IMAGERY_TOTAL_BYTES,
+                           'maxChunkBytes':CHUNK_BYTES, 'maxPendingUploads':MAX_PENDING, 'uploadTtlSeconds':TTL_SECONDS}}
+
+    def imagery_chunk(self, sid, payload, stream, length):
+        row, authorize, access, actor = self.project_authorization(sid, payload, writing=True, write_code='IMAGERY_WRITE_FORBIDDEN')
+        if self.imagery is None: raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
+        body = {key:value for key,value in payload.items() if key != 'expectedSessionRevision'}
+        return self.imagery_response(self.imagery.uploads.chunk(stream, length, body, actor, authorize), row, access)
 
     def imagery_upload(self, sid, payload, stream, length):
         row, authorize, access, actor = self.project_authorization(sid, payload, writing=True, write_code='IMAGERY_WRITE_FORBIDDEN')
@@ -361,11 +369,20 @@ class WorkbenchSessions(UserSessions):
         return self.imagery_response(value, row, access)
 
     def imagery_request(self, sid, path, payload):
-        row, authorize, access, actor = self.project_authorization(sid, payload, writing=False)
+        writing = path in ('/api/workbench/imagery/uploads/start', '/api/workbench/imagery/uploads/complete', '/api/workbench/imagery/uploads/cancel')
+        row, authorize, access, actor = self.project_authorization(sid, payload, writing=writing, write_code='IMAGERY_WRITE_FORBIDDEN')
         if self.imagery is None: raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
         body = {key:value for key,value in payload.items() if key != 'expectedSessionRevision'}
         if path == '/api/workbench/imagery' and set(body) <= {'q'}:
             value = self.imagery.listing(authorize, **body)
+            value['uploads'] = self.imagery.uploads.listing(actor, authorize)
+        elif path == '/api/workbench/imagery/uploads/start' and set(body) == {'metadata', 'expectedSourceSha256', 'bytes'}:
+            value = self.imagery.uploads.start(body['metadata'], body['expectedSourceSha256'], body['bytes'], actor, authorize)
+        elif path == '/api/workbench/imagery/uploads/status' and set(body) == {'uploadId'}:
+            value = self.imagery.uploads.status(body['uploadId'], actor, authorize)
+        elif path in ('/api/workbench/imagery/uploads/complete', '/api/workbench/imagery/uploads/cancel') and set(body) == {'uploadId', 'expectedUploadRevision'}:
+            action = self.imagery.uploads.complete if path.endswith('/complete') else self.imagery.uploads.cancel
+            value = action(body['uploadId'], body['expectedUploadRevision'], actor, authorize)
         elif path == '/api/workbench/imagery/upload-result' and set(body) == {'metadata', 'expectedSourceSha256'}:
             value = self.imagery.upload_result(body['metadata'], body['expectedSourceSha256'],
                                                actor, authorize)

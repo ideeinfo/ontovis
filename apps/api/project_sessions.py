@@ -19,7 +19,7 @@ from .shared_models import SharedModelAccess
 
 
 METHODS = ('scene_request', 'scene_object_request', 'resource_request', 'resource_upload',
-           'terrain_request', 'terrain_upload', 'imagery_request', 'imagery_upload',
+           'terrain_request', 'terrain_upload', 'imagery_request', 'imagery_upload', 'imagery_chunk',
            'public_geodata_request', 'legacy_migration_request', 'read', 'upload', 'save_binding')
 
 
@@ -225,7 +225,14 @@ class ProjectSessions(UserSessions):
             return {'items': [], 'libraryRevision': 'library:0', 'nextCursor': None,
                     'capabilities': {'canRead': True, 'canUpload': can_write, 'canCalibrate': can_write},
                     'limits': limits}
-        if path in ('/api/workbench/terrains', '/api/workbench/imagery'):
+        if path == '/api/workbench/imagery':
+            from .imagery_library import MAX_BYTES, MAX_VERSIONS, MAX_TOTAL_BYTES
+            from .imagery_uploads import CHUNK_BYTES, MAX_PENDING, TTL_SECONDS
+            return {'items': [], 'uploads': [], 'capabilities': {'scope': 'private_overview_imagery', 'canRead': True, 'canUpload': can_write},
+                'limits': {'maxUploadBytes': MAX_BYTES, 'maxSide': 4096, 'maxVersions': MAX_VERSIONS,
+                           'maxLibraryBytes': MAX_TOTAL_BYTES, 'maxChunkBytes': CHUNK_BYTES,
+                           'maxPendingUploads': MAX_PENDING, 'uploadTtlSeconds': TTL_SECONDS}}
+        if path == '/api/workbench/terrains':
             return {'items': [], 'nextCursor': None, 'snapshotRevision': 'resources:empty',
                 'capabilities': {'canRead': True, 'canUpload': can_write},
                 'limits': {'maxUploadBytes': self.options.get('terrain_max_upload_bytes', 100000000)}}
@@ -248,13 +255,14 @@ class ProjectSessions(UserSessions):
         code = self._ref(payload.get('projectRef'))
         access = self._access(sid, row, code)
         clean = {k: v for k, v in payload.items() if k != 'projectRef'}
-        writing = method.endswith('upload') or path.endswith(('/create', '/save', '/calibrate', '/import-existing',
+        writing = method.endswith('upload') or method == 'imagery_chunk' or path == '/api/workbench/imagery/uploads/complete' or path.endswith(('/create', '/save', '/calibrate', '/import-existing',
             '/preserve-legacy-display', '/ensure', '/binding', '/cancel', '/start', '/activate'))
         if writing and access.get('role') != 'admin':
             raise PreviewError(403, 'SCENE_WRITE_FORBIDDEN' if '/scenes' in path or '/terrains' in path or '/public-geodata/' in path
                                else 'IMAGERY_WRITE_FORBIDDEN' if '/imagery' in path else 'MODEL_WRITE_FORBIDDEN')
         workspace = self.registry.lookup(code)
-        if workspace is None and writing:
+        if workspace is None and writing and path not in ('/api/workbench/imagery/uploads/chunk',
+                '/api/workbench/imagery/uploads/complete', '/api/workbench/imagery/uploads/cancel'):
             workspace = self.registry.prepare(code)
         if method == 'scene_object_request' or path == '/api/workbench/catalog':
             if code not in self.readers:
@@ -305,6 +313,7 @@ def _method(name):
             payload, *rest = args
             path = {'resource_upload': '/api/workbench/resources/model/upload',
                     'terrain_upload': '/api/workbench/terrains/upload', 'imagery_upload': '/api/workbench/imagery/upload',
+                    'imagery_chunk': '/api/workbench/imagery/uploads/chunk',
                     'upload': '/api/workbench/models/upload', 'save_binding': '/api/workbench/models/binding'}[name]
         return self._call(name, sid, path, payload, *rest)
     return request

@@ -7,6 +7,10 @@ const messages={
   processing:['正在上传并处理…','Uploading and processing…'],submit:['导入并校验','Import and validate'],cancel:['取消','Cancel'],
   checkResult:['核对上传结果','Check upload result'],retryOriginal:['按原请求重试','Retry original upload'],
   checking:['正在核对上传结果…','Checking upload result…'],
+  pause:['暂停上传','Pause upload'],resume:['继续上传','Continue upload'],discard:['放弃本次上传','Discard this upload'],
+  unfinished:['未完成的上传','Unfinished uploads'],confirmed:['已确认','Confirmed'],validating:['文件已接收，正在校验…','File received; validating…'],
+  sameFile:['重新选择同一文件继续；已确认的部分保留24小时。','Select the same file to continue; confirmed data is retained for 24 hours.'],
+  paused:['上传已暂停，已确认部分和原文件保持，可继续上传。','Upload paused. Confirmed data and the original file are retained; continue when ready.'],
   unconfirmed:['上传结果尚未确认。先核对结果；未查到记录不代表上传失败。当前文件与说明已保留，重试沿用原请求。','Upload result is unconfirmed. Check the result first; no record does not mean failure. The file and details are retained for the original request.'],
   loading:['正在读取影像…','Loading imagery…'],empty:['暂无影像资源','No imagery resources'],refresh:['刷新','Refresh'],
   search:['搜索影像','Search imagery'],show:['显示影像','Show imagery'],hide:['隐藏影像','Hide imagery'],remove:['移除影像层','Remove imagery layer'],
@@ -22,6 +26,9 @@ export type ImageryMessage=keyof typeof messages;
 export function imageryText(locale:string,key:ImageryMessage){return messages[key][locale==='en'?1:0];}
 export function imageryFailure(error:unknown,locale:string){
   if(error instanceof ApiError){
+    if(error.code==='IMAGERY_UPLOAD_PAUSED')return imageryText(locale,'paused');
+    if(['IMAGERY_UPLOAD_CHANGED','IMAGERY_CHUNK_CHANGED'].includes(error.code))return locale==='en'?'The upload or file changed. Check its current state or select the original file.':'上传状态或文件已变化，请核对当前状态或选择原文件。';
+    if(error.code==='IMAGERY_UPLOAD_EXPIRED')return locale==='en'?'The temporary upload expired. Import the file again.':'临时上传已过期，请重新导入文件。';
     if(error.code==='IMAGERY_UPLOAD_UNCONFIRMED')return imageryText(locale,'unconfirmed');
     if(['UNSUPPORTED_IMAGERY','IMAGERY_NO_VALID_PIXELS'].includes(error.code))return locale==='en'?'Unsupported imagery or no valid pixels. Check RGB bands, masks and geographic reference.':'影像不兼容或没有有效像元，请检查RGB波段、掩膜及地理参考。';
     if(error.code==='IMAGERY_LIMIT_EXCEEDED')return imageryText(locale,'fileHint');

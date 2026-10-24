@@ -77,6 +77,8 @@ class ImageryLibrary:
                 _require(not path.is_symlink(), 'RESOURCE_CHANGED', 409)
                 if path.is_dir() and (folder == 'temporary' or path.name not in retained):
                     shutil.rmtree(path)
+        from .imagery_uploads import ImageryUploads
+        self.uploads = ImageryUploads(self)
 
     @staticmethod
     def public(row):

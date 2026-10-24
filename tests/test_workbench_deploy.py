@@ -74,6 +74,7 @@ class WorkbenchDeploymentTests(unittest.TestCase):
                      '/api/workbench/terrains/upload/extra', '/api/workbench/scenes/open/',
                      '/api/workbench/imagery/delete', '/api/workbench/imagery/upload/extra',
                      '/api/workbench/imagery/upload-result/extra',
+                     '/api/workbench/imagery/uploads/chunk/extra', '/api/workbench/imagery/uploads/status/extra',
                      '/api/workbench/imagery/content/', '/api/workbench/resources/model/metadata/extra',
                      '/api/workbench/resources/model/thumbnail/extra', '/api/workbench/resources/model/thumbnail/content/',
                      '/api/workbench/resources/model/thumbnail/ensure/extra',
@@ -110,6 +111,15 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         self.assertIn('proxy_read_timeout 60s;', body)
         self.assertIn('proxy_request_buffering off;', body)
         self.assertIn('proxy_buffering off;', body)
+
+    def test_imagery_parts_have_separate_exact_bounded_proxy_locations(self):
+        from apps.api.imagery_uploads import CHUNK_BYTES
+        body=location_for('/api/workbench/imagery/uploads/chunk')
+        self.assertIn(f'client_max_body_size {CHUNK_BYTES};',body)
+        self.assertIn('proxy_request_buffering off;',body)
+        self.assertIn('client_body_timeout 30s;',body)
+        for action in ('start','status','complete','cancel'):
+            self.assertIn('client_max_body_size 16k;',location_for('/api/workbench/imagery/uploads/'+action))
 
     def test_terrain_service_and_proxy_share_exact_deployment_limit_and_trusted_runtime(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()

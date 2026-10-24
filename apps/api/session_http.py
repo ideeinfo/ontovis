@@ -10,6 +10,7 @@ from .user_sessions import COOKIE, UserSessions
 from .scene_library import decode_scene_request, MAX_SCENE_BYTES
 from .terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES
 from .imagery_validation import MAX_BYTES as MAX_IMAGERY_BYTES
+from .imagery_uploads import CHUNK_BYTES
 from .model_resource_metadata import MAX_METADATA_REQUEST_BYTES
 from tools.model_probe import strict_json, ProbeError
 
@@ -94,6 +95,20 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, value)
             if self.command == 'GET' and parts.path in ('/api/demo/context','/api/demo/locate'):
                 return self.reply(200, sessions.read(sid, parts.path, query))
+            if self.command == 'POST' and parts.path == '/api/workbench/imagery/uploads/chunk' and not query:
+                if (self.headers.get_all('Transfer-Encoding') or self.headers.get_all('Content-Type') != ['application/octet-stream']
+                        or len(self.headers.get_all('Content-Length', [])) != 1
+                        or len(self.headers.get_all('X-Imagery-Chunk', [])) != 1):
+                    raise PreviewError(415, 'INVALID_REQUEST')
+                try:
+                    header = self.headers['X-Imagery-Chunk']; text_length = self.headers['Content-Length']
+                    if len(header) > 4096 or not text_length.isascii() or not text_length.isdecimal(): raise ValueError()
+                    payload = strict_json(base64.b64decode(header, validate=True)); length = int(text_length)
+                    if not isinstance(payload, dict): raise ValueError()
+                except (ValueError, UnicodeError, ProbeError):
+                    raise PreviewError(422, 'INVALID_REQUEST') from None
+                if not 1 <= length <= CHUNK_BYTES: raise PreviewError(413, 'IMAGERY_LIMIT_EXCEEDED')
+                return self.reply(200, sessions.imagery_chunk(sid, payload, self.rfile, length))
             if self.command == 'POST' and parts.path in ('/api/workbench/terrains/upload','/api/workbench/imagery/upload') and not query:
                 imagery = parts.path == '/api/workbench/imagery/upload'
                 metadata_header = 'X-Imagery-Metadata' if imagery else 'X-Terrain-Metadata'
@@ -150,7 +165,9 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             terrain_paths = ('/api/workbench/terrains', '/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
                              '/api/workbench/terrains/version', '/api/workbench/terrains/content')
             imagery_paths = ('/api/workbench/imagery', '/api/workbench/imagery/version',
-                             '/api/workbench/imagery/content', '/api/workbench/imagery/upload-result')
+                             '/api/workbench/imagery/content', '/api/workbench/imagery/upload-result',
+                             '/api/workbench/imagery/uploads/start', '/api/workbench/imagery/uploads/status',
+                             '/api/workbench/imagery/uploads/complete', '/api/workbench/imagery/uploads/cancel')
             public_geo_paths = tuple('/api/workbench/public-geodata/' + action for action in ('start', 'job', 'cancel'))
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
                               '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',

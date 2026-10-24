@@ -3,6 +3,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 import hashlib
 import io
+import json
 import sys
 import tempfile
 from threading import Thread
@@ -40,7 +41,8 @@ class ProjectScopeHttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual([i['projectRef']['projectCode'] for i in directory['items']], ['A', 'B'])
         for path in ['scenes', 'scenes/create', 'scenes/open', 'scenes/save', 'terrains',
-                     'terrains/job', 'imagery', 'imagery/upload-result', 'public-geodata/job', 'objects/context', 'catalog',
+                     'terrains/job', 'imagery', 'imagery/upload-result', 'imagery/uploads/start', 'imagery/uploads/status',
+                     'imagery/uploads/complete', 'imagery/uploads/cancel', 'public-geodata/job', 'objects/context', 'catalog',
                      'evidence/resolve', 'models/binding', 'scenes/legacy-migration/entry']:
             with self.subTest(path=path):
                 status, value, _ = self.request('/api/workbench/' + path, {})
@@ -85,3 +87,22 @@ class ProjectScopeHttpTests(unittest.TestCase):
         del ProjectsAuthority.permissions['member']['A']
         self.assertEqual(self.request(path, {**body, 'projectRef': self.ref('A')})[0], 403)
         self.assertEqual(self.request(path, {**body, 'projectRef': self.ref('B')})[0], 200)
+
+    def test_segmented_upload_ids_cannot_cross_project_and_chunks_require_scope(self):
+        from tests.test_imagery_library import image_bytes, metadata
+        import base64
+        data=image_bytes(self.root/'part.tif')
+        body={'metadata':metadata(),'expectedSourceSha256':hashlib.sha256(data).hexdigest(),'bytes':len(data)}
+        status,row,_=self.request('/api/workbench/imagery/uploads/start',{**body,'projectRef':self.ref('A')})
+        self.assertEqual(status,200,row)
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',{'uploadId':row['uploadId'],'projectRef':self.ref('B')})[0],404)
+        payload={'uploadId':row['uploadId'],'offset':0,'expectedUploadRevision':row['uploadRevision'],
+                 'expectedChunkSha256':hashlib.sha256(data).hexdigest(),'expectedSessionRevision':self.admin['revision']}
+        def chunk(ref=None):
+            header={**payload,**({'projectRef':ref} if ref else {})}
+            return self.request('/api/workbench/imagery/uploads/chunk',raw=data,
+                headers={'Content-Type':'application/octet-stream','X-Imagery-Chunk':base64.b64encode(json.dumps(header).encode()).decode()})
+        self.assertEqual(chunk()[1]['code'],'PROJECT_REQUIRED')
+        self.assertEqual(chunk(self.ref('B'))[0],404)
+        self.assertEqual(chunk(self.ref('A'))[0],200)
+        self.assertIsNone(self.sessions.registry.lookup('B'))

@@ -11,6 +11,59 @@ from tests.test_imagery_library import image_bytes,metadata
 
 
 class ImageryHttpTests(unittest.TestCase):
+    def start_transfer(self, data=None):
+        data = self.transfer_data if data is None else data
+        return self.request('/api/workbench/imagery/uploads/start', {'metadata':self.transfer_metadata,
+            'expectedSourceSha256':hashlib.sha256(data).hexdigest(), 'bytes':len(data)})
+
+    def transfer_chunk(self, row, data, **headers):
+        payload = {'uploadId':row['uploadId'],'offset':row['receivedBytes'],
+            'expectedUploadRevision':row['uploadRevision'],'expectedChunkSha256':hashlib.sha256(data).hexdigest(),
+            'expectedSessionRevision':self.admin['revision']}
+        return self.request('/api/workbench/imagery/uploads/chunk', raw=data,
+            headers={'Content-Type':'application/octet-stream','X-Imagery-Chunk':base64.b64encode(json.dumps(payload).encode()).decode(),**headers})
+
+    def test_segmented_upload_http_confirms_bytes_and_publishes_only_once(self):
+        self.transfer_data=image_bytes(self.root/'segmented.tif');self.transfer_metadata=metadata()
+        status,row,headers=self.start_transfer();self.assertEqual(status,200,row)
+        self.assertEqual(headers['Cache-Control'],'no-store');self.assertEqual(row['limits']['maxChunkBytes'],262144)
+        self.assertEqual(self.request('/api/workbench/imagery',{})[1]['uploads'][0]['uploadId'],row['uploadId'])
+        status,next_row,_=self.transfer_chunk(row,self.transfer_data[:100]);self.assertEqual((status,next_row['receivedBytes']),(200,100))
+        self.assertEqual(self.transfer_chunk(row,self.transfer_data[:100])[1]['uploadRevision'],next_row['uploadRevision'])
+        status,final,_=self.transfer_chunk(next_row,self.transfer_data[100:]);self.assertEqual(status,200,final)
+        body={'uploadId':final['uploadId'],'expectedUploadRevision':final['uploadRevision']}
+        status,done,_=self.request('/api/workbench/imagery/uploads/complete',body);self.assertEqual((status,done['state']),(200,'completed'))
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/complete',body)[1]['imageryVersionId'],done['imageryVersionId'])
+        self.assertEqual(self.start_transfer()[1]['imageryVersionId'],done['imageryVersionId'])
+        self.assertEqual(self.request('/api/workbench/imagery',{})[1]['uploads'],[])
+        with self.sessions.library.connect() as db:
+            self.assertEqual(db.execute('select count(*) from imagery_versions').fetchone()[0],1)
+
+    def test_segmented_mutations_require_current_write_access_and_owner_scope(self):
+        self.transfer_data=image_bytes(self.root/'owner.tif');self.transfer_metadata=metadata()
+        _,row,_=self.start_transfer();body={'uploadId':row['uploadId']}
+        other=self.login('synthetic-reader')
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',body,client=other)[0],404)
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',body,client=False)[0],401)
+        self.authority(self.admin).role='reader'
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',body)[0],200)
+        self.assertEqual(self.start_transfer()[0],403)
+        self.assertEqual(self.transfer_chunk(row,b'123')[0],403)
+        for action in ('complete','cancel'):
+            self.assertEqual(self.request('/api/workbench/imagery/uploads/'+action,{**body,'expectedUploadRevision':row['uploadRevision']})[0],403)
+        self.authority(self.admin).allowed=False
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',body)[0],403)
+
+    def test_chunk_boundary_headers_limits_and_revision_conflicts_are_closed(self):
+        self.transfer_data=image_bytes(self.root/'header.tif');self.transfer_metadata=metadata()
+        _,row,_=self.start_transfer()
+        self.assertEqual(self.transfer_chunk(row,b'abc',Origin='http://invalid.example')[0],403)
+        self.assertEqual(self.transfer_chunk(row,b'abc',**{'Content-Type':'image/tiff'})[0],415)
+        self.assertEqual(self.transfer_chunk(row,b'x'*262145)[0],413)
+        self.assertEqual(self.transfer_chunk(row,b'abc',**{'X-Imagery-Chunk':'invalid'})[0],422)
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status/extra',{})[0],404)
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',{'uploadId':row['uploadId']})[1]['receivedBytes'],0)
+
     def test_upload_result_accepts_the_same_long_metadata_as_the_upload_header(self):
         payload = metadata(sourceNote='s' * 1900, licenseNote='l' * 1900, qualityNote='q' * 700)
         raw = image_bytes(self.root / 'long-metadata.tif')

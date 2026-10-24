@@ -63,6 +63,28 @@ class ModelStoreBackupTests(unittest.TestCase):
         backup.restore_new(self.destination,restored,result['manifestSha256'],service_stopped=True)
         self.assertEqual(self.tree(restored/'workbench-library'),before[0]);self.assertEqual(self.source_state(),before)
 
+    def test_partial_imagery_receipt_and_unconfirmed_tail_survive_paired_restore(self):
+        from tests.test_imagery_library import metadata
+        from apps.api.imagery_uploads import ImageryUploads
+        from types import SimpleNamespace
+        images=ImageryLibrary(self.fixture.fixture.library,python_executable=sys.executable)
+        data=b'synthetic-private-partial-imagery'
+        row=images.uploads.start(metadata(),hashlib.sha256(data).hexdigest(),len(data),'synthetic-admin',lambda:None)
+        payload={'uploadId':row['uploadId'],'offset':0,'expectedUploadRevision':row['uploadRevision'],
+                 'expectedChunkSha256':hashlib.sha256(data[:8]).hexdigest()}
+        row=images.uploads.chunk(io.BytesIO(data[:8]),8,payload,'synthetic-admin',lambda:None)
+        source=images.uploads.root/row['uploadId']/'source.part'
+        with source.open('ab') as file: file.write(b'unconfirmed')
+        before=self.source_state();result=self.snapshot();target=self.root/'restored-partial-imagery'
+        backup.restore_new(self.destination,target,result['manifestSha256'],service_stopped=True)
+        receiver=ImageryUploads(SimpleNamespace(root=target/'workbench-library'/'imagery'))
+        state=receiver.status(row['uploadId'],'synthetic-admin',lambda:None)
+        self.assertEqual(state['receivedBytes'],8)
+        payload.update(offset=8,expectedUploadRevision=state['uploadRevision'],expectedChunkSha256=hashlib.sha256(data[8:16]).hexdigest())
+        receiver.chunk(io.BytesIO(data[8:16]),8,payload,'synthetic-admin',lambda:None)
+        self.assertEqual((receiver.root/row['uploadId']/'source.part').read_bytes(),data[:16])
+        self.assertEqual(self.source_state(),before)
+
     def test_changed_registered_imagery_texture_or_source_blocks_backup(self):
         directory=self.add_imagery();original=(directory/'texture.png').read_bytes()
         (directory/'texture.png').write_bytes(original[:-1]+b'X');self.reject(self.snapshot)

@@ -7,7 +7,7 @@ import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelReq
   TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
 
 import type {SceneObjectChildren, SceneObjectContext, SceneObjectDetailRequest, SceneLocation, SceneLocationRequest} from './sceneEngineeringTypes';
-import type {ImageryCatalog, ImageryRecord, ImageryUploadResult, ImageryVersion, UploadImageryMetadata} from './resourceTypes';
+import type {ImageryCatalog, ImageryRecord, ImageryUploadResult, ImageryVersion, UploadImageryMetadata, ImageryTransferResult} from './resourceTypes';
 
 const ROOT = '/api/workbench/';
 
@@ -21,6 +21,21 @@ export class SceneApi {
   uploadImagery(file:Blob,metadata:UploadImageryMetadata,signal?:AbortSignal) {return this.api.uploadImagery<ImageryVersion>(file,metadata,signal);}
   imageryUploadResult(metadata:UploadImageryMetadata,expectedSourceSha256:string,signal?:AbortSignal) {
     return this.api.request<ImageryUploadResult>(ROOT+'imagery/upload-result',{metadata,expectedSourceSha256},signal);
+  }
+  imageryUploadStart(metadata:UploadImageryMetadata,expectedSourceSha256:string,bytes:number,signal?:AbortSignal) {
+    return this.api.request<ImageryTransferResult>(ROOT+'imagery/uploads/start',{metadata,expectedSourceSha256,bytes},signal);
+  }
+  imageryUploadStatus(uploadId:string,signal?:AbortSignal) {
+    return this.api.request<ImageryTransferResult>(ROOT+'imagery/uploads/status',{uploadId},signal);
+  }
+  imageryUploadChunk(file:Blob,body:{uploadId:string;offset:number;expectedUploadRevision:string;expectedChunkSha256:string},signal?:AbortSignal) {
+    return this.api.uploadImageryChunk<ImageryTransferResult>(file,body,signal);
+  }
+  imageryUploadComplete(uploadId:string,expectedUploadRevision:string,signal?:AbortSignal) {
+    return this.api.request<ImageryTransferResult>(ROOT+'imagery/uploads/complete',{uploadId,expectedUploadRevision},signal);
+  }
+  imageryUploadCancel(uploadId:string,expectedUploadRevision:string,signal?:AbortSignal) {
+    return this.api.request<ImageryTransferResult|{state:'cancelled';uploadId:string}>(ROOT+'imagery/uploads/cancel',{uploadId,expectedUploadRevision},signal);
   }
   imageryContent(value:ImageryRecord,signal?:AbortSignal) {
     return this.api.content(ROOT+'imagery/content',{imageryVersionId:value.imageryVersionId,
