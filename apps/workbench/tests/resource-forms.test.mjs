@@ -6,7 +6,7 @@ import {calibrationInput, modelMetadata, privateDenial, ResourceFormError, Resou
   resourceFailure, resourceUploadBytes, terrainMetadata, terrainPending, TERRAIN_POLL_MS, validateResourceFile, writeDenial, placementModelVersion} from '../src/resourceForms.ts';
 import {resourceText} from '../src/resourceMessages.ts';
 
-const modelFields={name:'设备模型',purpose:'equipment',source:'项目提供的合成素材',rights:true};
+const modelFields={name:'设备模型',purpose:'equipment',source:'项目提供的合成素材'};
 const terrainFields={name:'地形',source:'公开源合成测试',license:'测试用途',rights:true,datum:'EGM2008',relativeReference:'',crop:false,bounds:['','','','']};
 const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
 const delayed=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
@@ -72,10 +72,12 @@ test('append model version keeps existing resource name and purpose and does not
   assert.equal(metadata.bindings,undefined);assert.equal(metadata.modelRevision,undefined);assert.equal(asset.displayName,'原设备');
 });
 
-test('new model requires source and rights declaration and trims user-entered business text',()=>{
+test('new model requires name and source without a separate confirmation and preserves upload protocol compatibility',()=>{
   assert.deepEqual(modelMetadata({...modelFields,name:' 名称 ',source:' 来源 '},'library:1','request:2'),{
     expectedLibraryRevision:'library:1',clientRequestId:'request:2',displayName:'名称',purpose:'equipment',sourceNote:'来源',rightsDeclared:true});
-  for(const patch of [{rights:false},{name:' '},{source:''}])assert.throws(()=>modelMetadata({...modelFields,...patch},'r','id'),error=>error.key==='sourceRequired');
+  for(const patch of [{name:' '},{source:''}])assert.throws(()=>modelMetadata({...modelFields,...patch},'r','id'),error=>error.key==='sourceRequired');
+  assert.equal(resourceText('zh','sourceRequired'),'请填写名称和来源说明。');
+  assert.equal(resourceText('en','sourceRequired'),'Enter a name and source description.');
 });
 
 test('calibration accepts only finite metre Y-up vectors and cannot submit a client-computed matrix or verifier',()=>{

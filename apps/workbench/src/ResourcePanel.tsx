@@ -46,7 +46,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const [detailLoading,setDetailLoading]=useState(false);
   const [upload,setUpload]=useState<{asset?:ProjectModelAsset;revision:string}|null>(null);
   const [file,setFile]=useState<File|null>(null),[name,setName]=useState(''),[use,setUse]=useState<ModelPurpose>('equipment');
-  const [source,setSource]=useState(''),[rights,setRights]=useState(false),[uploading,setUploading]=useState(false);
+  const [source,setSource]=useState(''),[uploading,setUploading]=useState(false);
   const [uploadError,setUploadError]=useState<unknown>(null),[notice,setNotice]=useState('');
   const [privacyEpoch,setPrivacyEpoch]=useState(0);
   const [privateUnavailable,setPrivateUnavailable]=useState(false);
@@ -72,7 +72,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     cardIntent.current++;
     setPublicAcquisition(false);setResourceRefresh(0);
     catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();setCatalog(null);setVersion(null);setAssetId(null);setVersionId('');
-    previewCallback.current(null);setUpload(null);setFile(null);setName('');setSource('');setRights(false);setError(null);setUploadError(null);
+    previewCallback.current(null);setUpload(null);setFile(null);setName('');setSource('');setError(null);setUploadError(null);
     setLoading(false);setDetailLoading(false);setUploading(false);setPrivacyEpoch(previous=>previous+1);
     setPrivateUnavailable(true);
     initialSelection.current=null;onModelSelected?.(null);
@@ -136,19 +136,19 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   function openUpload(asset?:ProjectModelAsset) {
     if(!catalog||!canUpload)return;
     setUpload({asset,revision:catalog.libraryRevision});setName(asset?.displayName||'');setUse(asset?.purpose||'equipment');
-    setSource('');setRights(false);setFile(null);setUploadError(null);setNotice('');requestId.current.reset();
+    setSource('');setFile(null);setUploadError(null);setNotice('');requestId.current.reset();
   }
   async function uploadModel() {
     if(!upload||!canUpload||uploading)return;
     try {
       if(!file)throw new ResourceFormError('modelFileInvalid');
       validateResourceFile(file,'model',catalog?.limits.maxUploadBytes);
-      const draft=modelMetadata({name,purpose:use,source,rights},upload.revision,'',upload.asset);
+      const draft=modelMetadata({name,purpose:use,source},upload.revision,'',upload.asset);
       const clientRequestId=requestId.current.forPayload(draft,`${file.name}:${file.size}:${file.lastModified}`);
       const request=uploadGate.start();setUploading(true);setUploadError(null);setNotice('');
       try {
         const value=await client.uploadModel(file,{...draft,clientRequestId},request.signal);
-        if(request.isCurrent()){setUpload(null);setFile(null);setName('');setSource('');setRights(false);updated(value);}
+        if(request.isCurrent()){setUpload(null);setFile(null);setName('');setSource('');updated(value);}
       }catch(value){if(request.isCurrent())failed(value,true);}
       finally{if(request.isCurrent())setUploading(false);}
     }catch(value){failed(value,true);}
@@ -265,12 +265,11 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         onImported={result=>{setResourceRefresh(value=>value+1);setTab(result.terrainVersionId?'terrains':'imagery');}}/>
     </Modal>}
     {upload&&<Modal title={t(upload.asset?'appendVersion':'uploadModel')} description={t('glbLimit')} onClose={()=>{if(!uploading)setUpload(null);}}><div className="ov-resource-form">
-      <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);setRights(false);setUploadError(null);requestId.current.reset();}}/></label>
+      <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);setUploadError(null);requestId.current.reset();}}/></label>
       <p className="ov-resource-caption">{t('glbLimit')}</p>
       <label>{t('displayName')}<input value={name} maxLength={120} disabled={uploading||!!upload.asset} onChange={event=>setName(event.target.value)}/></label>
       <label>{t('purpose')}<select value={use} disabled={uploading||!!upload.asset} onChange={event=>setUse(event.target.value as ModelPurpose)}>{purposes.map(value=><option key={value} value={value}>{t(value)}</option>)}</select></label>
       <label>{t('sourceNote')}<textarea value={source} rows={3} maxLength={2000} disabled={uploading} onChange={event=>setSource(event.target.value)}/></label>
-      <label className="ov-resource-check"><input type="checkbox" checked={rights} disabled={uploading} onChange={event=>setRights(event.target.checked)}/><span>{t('rights')}</span></label>
       {!!uploadError&&<p className="ov-resource-error" role="alert">{resourceFailure(uploadError,locale)}</p>}
       {notice&&<p className="ov-resource-caption" role="status">{notice}</p>}
       {uploading&&<p className="ov-resource-caption" role="status">{t('uploadingModel')}</p>}
