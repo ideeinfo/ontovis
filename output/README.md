@@ -15,3 +15,5 @@
 - [水面自然波纹、远景动态及候选验证](water-surface-20261024/README.md)
 
 - [模型中心点击即预览与三栏高度](model-center-direct-preview-20261024/README.md)
+
+- [环境设置范围、入口优先级与场景加载进度](environment-clarity-loading-20261024/README.md)

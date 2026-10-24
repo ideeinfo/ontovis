@@ -24,10 +24,13 @@ import type {SceneEnvironmentV1} from './sceneEnvironment';
 import {SceneImageryLayer} from './sceneImagery';
 import {imageryFailure,imageryText} from './imageryMessages';
 import type {ImageryRecord} from './resourceTypes';
+import {SceneLoadingProgress} from './SceneLoadingProgress';
+import {SceneLoadingTracker,sceneLoadingPlan,sceneLoadingIdentity,modelLoadingKey,terrainLoadingKey,imageryLoadingKey,type SceneLoadingState} from './sceneLoading';
 import './sceneViewport.css';
 
 export interface SceneCameraControl {getView:()=>SceneView;setView:(value:SceneView)=>void;ready:()=>boolean}
 export interface SceneViewportProps {
+  preparationKey?:string;preparationError?:unknown;onRetryPreparation?:()=>void;
   environmentPreview?:{value:SceneEnvironmentV1|null}|null;
   api:WorkbenchApi;snapshot:EditableSceneSnapshot;modelRefs:ModelResourceRef[];terrainVersion:TerrainVersion|null;
   selectedId:string|null;editing:boolean;disabled?:boolean;personalVisibility:Record<string,boolean>;
@@ -65,7 +68,8 @@ export function SceneViewport(props:SceneViewportProps) {
   const {locale,resolved}=usePreferences();
   const current=useRef({...props,locale,resolved});current.current={...props,locale,resolved};
   const mount=useRef<HTMLDivElement>(null),runtime=useRef<Runtime|null>(null);
-  const [reading,setReading]=useState(false),[error,setError]=useState<unknown>(null),[moving,setMoving]=useState(false);
+  const [loadingState,setLoadingState]=useState<SceneLoadingState>();
+  const [reading,setReading]=useState(true),[error,setError]=useState<unknown>(null),[moving,setMoving]=useState(false);
   const [waterOverride,setWaterOverride]=useState<boolean|null>(null),[reduced,setReduced]=useState(()=>matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [environmentStatus,setEnvironmentStatus]=useState({water:false,casters:0,phase:0,fallback:false,textureBudgetBytes:0});
   const motionState=useRef({waterOverride,reduced});motionState.current={waterOverride,reduced};
@@ -78,9 +82,10 @@ export function SceneViewport(props:SceneViewportProps) {
   const [attempt,setAttempt]=useState(0),[rendererAttempt,setRendererAttempt]=useState(0);
   const webglFailure=useRef(false);
   const message=(key:Parameters<typeof sceneViewportMessage>[1])=>sceneViewportMessage(locale,key);
-  const errorMessage=webglFailure.current?message('unavailable'):error instanceof ViewportInteractionError?message(error.messageKey):
-    error instanceof ApiError&&error.code==='MODEL_REFERENCE_REQUIRED'?message('modelReferenceRequired'):
-    error instanceof ApiError&&['INVALID_CALIBRATION','UNSUPPORTED_CALIBRATION'].includes(error.code)?message('invalidCalibration'):failureMessage(error,locale);
+  const displayError=props.preparationError||error;
+  const errorMessage=webglFailure.current?message('unavailable'):displayError instanceof ViewportInteractionError?message(displayError.messageKey):
+    displayError instanceof ApiError&&displayError.code==='MODEL_REFERENCE_REQUIRED'?message('modelReferenceRequired'):
+    displayError instanceof ApiError&&['INVALID_CALIBRATION','UNSUPPORTED_CALIBRATION'].includes(displayError.code)?message('invalidCalibration'):failureMessage(displayError,locale);
 
   useEffect(()=>{
     const element=mount.current;if(!element)return;
@@ -124,6 +129,7 @@ export function SceneViewport(props:SceneViewportProps) {
     let pointer:{x:number;y:number;id:number}|null=null;
     let drag:{id:string;root:THREE.Group;original:THREE.Vector3;offset:THREE.Vector3;pointerId:number}|null=null;
     let movePending=false;
+    let loading:SceneLoadingTracker|null=null,awaitingDisplay:SceneLoadingTracker|null=null;
     let resourcesLoading=false,lastFrameRevision=current.current.snapshot.coordinateFrame.frameRevision;
     const stale=()=>disposed||api.epoch!==epoch||api.revision!==revision;
     const report=(value:unknown)=>{if(!stale()&&!cancelled(value)){setError(value);current.current.onError?.(value);}};
@@ -142,7 +148,11 @@ export function SceneViewport(props:SceneViewportProps) {
       }
       const motion=motionState.current,playing=environment.playing(motion.waterOverride,motion.reduced);
       const wave=environment.beforeRender(performance.now(),orbit.target,playing);
-      if(dirtyFrame||tween||wave){renderer.render(scene,camera);dirtyFrame=false;}
+      if(dirtyFrame||tween||wave){
+        try{renderer.render(scene,camera);dirtyFrame=false;}
+        catch(value){loading?.fail();setReading(false);report(value);return;}
+        if(awaitingDisplay===loading&&awaitingDisplay){awaitingDisplay.drawn();awaitingDisplay=null;resourcesLoading=false;setReading(false);}
+      }
       if(tween||playing)schedule();
     };
     const moveView=(target:SceneView,animated=true,component=false)=>{
@@ -274,7 +284,12 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const sync=async()=>{
       const ticket=++generation;loadingAbort?.abort();loadingAbort=new AbortController();const signal=loadingAbort.signal;
-      const state=current.current;cancelDrag();resourcesLoading=true;setReading(true);setError(null);
+      const state=current.current;cancelDrag();resourcesLoading=true;setError(null);awaitingDisplay=null;
+      const plan=sceneLoadingPlan(state.snapshot,state.modelRefs,state.previewModel);
+      if(!loading||loading.identity!==sceneLoadingIdentity(plan,state.preparationKey)||loading.state().stage==='failed'){
+        loading?.cancel();loading=new SceneLoadingTracker(plan,value=>{if(!stale())setLoadingState(value);},state.preparationKey);
+      }
+      const progress=loading,valid=()=>!stale()&&ticket===generation;setReading(progress.state().stage!=='complete');
       highlight();
       const imageryPreparation=imageryLayer.prepare(state.imageryVersion??null,state.snapshot.imagery,signal);
       // Observe immediately: a model may load more slowly than a failed image read.
@@ -285,7 +300,7 @@ export function SceneViewport(props:SceneViewportProps) {
       }
       const wanted=new Set(state.snapshot.instances.map(item=>item.sceneModelInstanceId));
       for(const [id,entry] of entries)if(!wanted.has(id)){entry.appearance.dispose();models.remove(entry.root);entries.delete(id);}
-      const tasks=state.snapshot.instances.map(async item=>{
+      const modelTasks=state.snapshot.instances.map(async item=>{
         const ref=state.modelRefs.find(value=>value.modelVersionId===item.modelVersionId);
         if(!ref){
           const prior=entries.get(item.sceneModelInstanceId);if(prior){prior.appearance.dispose();models.remove(prior.root);entries.delete(item.sceneModelInstanceId);}
@@ -301,6 +316,10 @@ export function SceneViewport(props:SceneViewportProps) {
         }
         try {transform(item,entry.root);}
         catch(value){entry.appearance.dispose();models.remove(entry.root);entries.delete(item.sceneModelInstanceId);throw value;}
+      });
+      const tasks=[...new Set(state.snapshot.instances.map(item=>item.modelVersionId))].map(async id=>{
+        await Promise.all(modelTasks.filter((_,index)=>state.snapshot.instances[index].modelVersionId===id));
+        const ref=state.modelRefs.find(value=>value.modelVersionId===id);if(valid()&&ref)progress.done(modelLoadingKey(ref));
       });
       const terrainTask=(async()=>{
         const version=state.terrainVersion,reference=state.snapshot.terrain;
@@ -327,6 +346,7 @@ export function SceneViewport(props:SceneViewportProps) {
         }
         terrain?.position.set(resource.originEasting-frameData.originEasting,resource.originHeight-frameData.originHeight,
           frameData.originNorthing-resource.originNorthing);terrain?.updateMatrixWorld(true);
+        if(valid())progress.done(terrainLoadingKey(reference));
       })();
       tasks.push(terrainTask);
       tasks.push((async()=>{
@@ -334,6 +354,7 @@ export function SceneViewport(props:SceneViewportProps) {
         await imageryLayer.sync(terrain,state.terrainVersion,state.imageryVersion??null,state.snapshot.imagery,signal);
         if(stale()||ticket!==generation)return;
         setImageryPartial(imageryLayer.partial());appearance();
+        if(state.snapshot.imagery&&state.imageryVersion&&(!state.snapshot.terrain||state.terrainVersion))progress.done(imageryLoadingKey(state.snapshot.imagery));
       })());
       tasks.push((async()=>{
         const version=state.previewModel;
@@ -345,18 +366,22 @@ export function SceneViewport(props:SceneViewportProps) {
           return;
         }
         const key=JSON.stringify([version.modelVersionId,version.contentRevision,version.sha256]);
-        if(key===previewKey)return;
+        if(key===previewKey){progress.done(modelLoadingKey(version));return;}
         if(!restoreView)restoreView=view(camera,orbit);
         previewInspection?.dispose();previewInspection=null;lastPreviewFocus='';state.onPreviewStructure?.(null);
         if(preview){scene.remove(preview);preview=null;}previewKey='';
         const resource=await cache.model(version,signal);if(stale()||ticket!==generation)return;
         preview=cloneModel(resource,'resource-preview',{calibrated:false});scene.add(preview);previewKey=key;
         previewInspection=new ModelPreviewInspection(preview,resource.version);
-        current.current.onPreviewStructure?.(previewInspection.structure);appearance();fit();
+        current.current.onPreviewStructure?.(previewInspection.structure);appearance();fit();progress.done(modelLoadingKey(version));
       })());
       const results=await Promise.allSettled(tasks);if(stale()||ticket!==generation)return;
-      const failed=results.find(value=>value.status==='rejected');if(failed?.status==='rejected')report(failed.reason);
-      resourcesLoading=!!state.snapshot.terrain&&!state.terrainVersion||!!state.snapshot.imagery&&!state.imageryVersion;setReading(resourcesLoading);appearance();
+      const failed=results.find(value=>value.status==='rejected');
+      if(failed?.status==='rejected'){progress.fail();setReading(false);report(failed.reason);return;}
+      const waitingMetadata=!!state.snapshot.terrain&&!state.terrainVersion||!!state.snapshot.imagery&&!state.imageryVersion;
+      resourcesLoading=waitingMetadata||progress.state().stage==='display';
+      if(!waitingMetadata&&progress.state().stage==='display')awaitingDisplay=progress;
+      appearance();
       if(focusPending!==undefined){const id=focusPending;focusPending=undefined;fit(id);}
     };
     const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
@@ -465,7 +490,7 @@ export function SceneViewport(props:SceneViewportProps) {
     moveView(current.current.snapshot.initialView,false);void sync();
     return ()=>{
       if(current.current.cameraControl?.current===cameraControl)current.current.cameraControl.current=null;
-      disposed=true;++generation;loadingAbort?.abort();cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',visible);
+      disposed=true;++generation;loading?.cancel();loadingAbort?.abort();cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',visible);
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
       orbit.removeEventListener('change',request);orbit.removeEventListener('start',orbitStart);orbit.removeEventListener('end',emit);
@@ -478,7 +503,7 @@ export function SceneViewport(props:SceneViewportProps) {
     };
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
   useEffect(()=>{runtime.current?.preload();},[props.placementModel]);
-  useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,attempt]);
+  useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
   useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,waterOverride,reduced,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
   useEffect(()=>{if(props.focusRequest)runtime.current?.focus(props.focusRequest.instanceId);},[props.focusRequest?.token]);
@@ -486,8 +511,8 @@ export function SceneViewport(props:SceneViewportProps) {
   useEffect(()=>{runtime.current?.previewSelection();},[props.previewSelection]);
   return <section className="ov-scene-viewport" aria-label={message('view')}>
     <div className="ov-scene-viewport-stage"><div ref={mount} className="ov-scene-viewport-canvas"/>
-      {(reading||!!error) && <div className="ov-scene-viewport-state" role={error?'alert':'status'}>{error?error instanceof ApiError&&/IMAGERY/.test(error.code)?imageryFailure(error,locale):errorMessage:message('loading')}
-        {error?<button className="ov-btn" onClick={()=>webglFailure.current?setRendererAttempt(value=>value+1):setAttempt(value=>value+1)}>{message('retry')}</button>:null}</div>}
+      {(reading||!!displayError) && <div className="ov-scene-viewport-state" role={displayError?'alert':undefined}>{displayError?<>{displayError instanceof ApiError&&/IMAGERY/.test(displayError.code)?imageryFailure(displayError,locale):errorMessage}
+        <button className="ov-btn" onClick={()=>props.preparationError?props.onRetryPreparation?.():webglFailure.current?setRendererAttempt(value=>value+1):setAttempt(value=>value+1)}>{message('retry')}</button></>:<SceneLoadingProgress locale={locale} state={loadingState}/>}</div>}
       <div className="ov-scene-viewport-tools"><IconBtn label={message('zoomIn')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(.8);}}><ZoomIn size={16}/></IconBtn>
         <IconBtn label={message('zoomOut')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(1.25);}}><ZoomOut size={16}/></IconBtn>
         <IconBtn label={message('fit')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.fit();}}><Maximize size={16}/></IconBtn>
