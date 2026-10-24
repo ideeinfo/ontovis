@@ -122,7 +122,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
   const terrainCovered=!!effectiveEnvironment?.water.enabled||!!draft?.imagery&&(editing?draft.imagery.visible:imageryVisible);
   const dirty=!!base && !!draft && JSON.stringify(base.snapshot)!==JSON.stringify(draft);
   const unsaved=dirty||reviewDirty||!!anchorResult||saveUnknown;
-  const canWrite=!!base?.capabilities.canWrite && !readOnly,environmentEditable=editing && canWrite && !busy && !preview && !anchorResult && !saveUnknown && !routePlaying;
+  const canWrite=!!base?.capabilities.canWrite && base.sceneRevision===base.headRevision && !readOnly,environmentEditable=editing && canWrite && !busy && !preview && !anchorResult && !saveUnknown && !routePlaying;
   const editable=environmentEditable&&!environmentPreview;
   const snapshot=anchorResult?.proposedSnapshot||draft;
   const refs=useMemo(()=>{
