@@ -27,6 +27,24 @@ def location_for(path):
 
 
 class WorkbenchDeploymentTests(unittest.TestCase):
+    def test_embedded_model_images_can_be_fetched_without_allowing_external_connections(self):
+        nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
+        policies = re.findall(r'add_header Content-Security-Policy "([^"]+)" always;', nginx)
+        self.assertEqual(len(policies), 1)
+        directives = {}
+        for directive in policies[0].split(';'):
+            tokens = directive.split()
+            if tokens:
+                self.assertNotIn(tokens[0], directives)
+                directives[tokens[0]] = set(tokens[1:])
+        # Three's ImageBitmapLoader uses fetch(blob:), governed by connect-src, not img-src.
+        self.assertEqual(directives['connect-src'], {"'self'", 'blob:'})
+        self.assertTrue({"'self'", 'blob:', 'data:'}.issubset(directives['img-src']))
+        for name in ('default-src', 'script-src', 'media-src', 'base-uri'):
+            self.assertEqual(directives[name], {"'self'"})
+        for name in ('object-src', 'frame-ancestors'):
+            self.assertEqual(directives[name], {"'none'"})
+
     def test_every_implemented_route_has_the_matching_bounded_proxy_location(self):
         tree = ast.parse((ROOT / 'apps/api/session_http.py').read_text())
         groups = {}
