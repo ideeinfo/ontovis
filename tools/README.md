@@ -30,6 +30,12 @@ python3 tools/model_probe.py \
 
 可用`--source-sha256`、`--derived-sha256`传入已有参考指纹；不相符会失败。输出`report.json`和版本内节点目录`components.json`；全量映射比对通过时另产出`mapping-checked.json`，同时固定源/派生SHA256。已有旧sidecar只绑定源指纹的事实保留在报告中，不修改原sidecar。
 
+Q-09增补的报告为schemaVersion 2，目录保留每个节点的原始`sourceExtras`及是否存在该字段，区分身份缺失、残缺、格式错误和重复。目录实际字节的SHA256写入报告。来源属性保持原始JSON类型，不读取属性内的URI；其中身份仍是未核实声明。详见[属性与身份切片](../docs/plans/模型属性与源身份核验切片.md)。
+
+两版来源文件可用`--previous-source`及可选`--previous-source-sha256`比较；后者不能单独使用。当前版仍由`--source`及`--source-sha256`指定。技术检查通过时另输出`identity-candidates.json`，固定双方SHA256，精确比较`sourceModelKey/sourceElementId/placementId`原值；双方唯一且在默认场景的声明才列为待审阅候选，重复、非活动、仅前版/仅当前版和无完整声明分别保留。`propertiesChanged`提示原始extras差异，布尔与数字不会混同。
+
+名称、旧ObjectID及节点索引不补作源身份；大小写和空白不自动规范化。缺身份时零候选是有效的检查结果。候选不确认几何对应或工程绑定，`sourceIdentityVerified`、`geometryCorrespondenceVerified`及`bindingMigrationApproved`保持false。现有完整/外观表示的比较只证明声明可用性，不充当真实连续版本验收。
+
 核验范围：GLB2结构、嵌入资源、有限数值、节点父变换、实际顶点包络、源/派生全量三角形位置与版本内属性对应。所有`componentKey`都包含制品指纹和节点索引，只在该制品版本内有效；旧`sourceObjectId`、名称或未经核实的`extras.ontoVis`声明不会升级成工程身份或已验证跨版ID。模型父子只用于计算几何变换，不是设备安装树。
 
 当前仅支持选定默认场景的静态未压缩TRIANGLES、float POSITION与常规索引。稀疏/矩阵accessor、蒙皮、形变、必需扩展/压缩解码、节点扩展及data URI明确拒绝；这是本工具范围，不能据此把所有这些合法glTF特性判成坏模型。工具不代替[Khronos glTF规范与完整校验](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html)、材质/法线/UV或浏览器拾取验证。200MB仅为本机读取预算，不是已冻结的生产上传/内存/CPU限额。
