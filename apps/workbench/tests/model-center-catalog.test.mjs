@@ -45,6 +45,8 @@ test('model center opens as a resource catalog without mounting preview, tree or
  assert.match(html,/class="pm-catalog pm-library"/);
  assert.match(html,/aria-label="模型资源目录"/);
  assert.doesNotMatch(html,/class="pm-(?:grid|preview|canvas|inspector|empty)"|<canvas\b|role="tree"/);
+ assert.doesNotMatch(html,/id="ov-resource-(?:terrains|imagery)"|class="ov-terrain-panel"/,
+  'A shared model catalog must not mount project geodata readers without a project');
 });
 test('catalog offers named view controls and combined purpose and name retrieval in both languages',()=>{
  for(const locale of ['zh','en']){

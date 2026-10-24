@@ -253,12 +253,12 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         </li>)}</ul><Btn disabled={legacyLoading} onClick={()=>void readLegacy()}>{t('refresh')}</Btn>
       </details>
     </section>
-    <section id="ov-resource-terrains" role="tabpanel" aria-labelledby="ov-resource-terrain-tab" hidden={tab!=='terrains'} className="ov-resource-tab-body">
+    {!modelsOnly&&<><section id="ov-resource-terrains" role="tabpanel" aria-labelledby="ov-resource-terrain-tab" hidden={tab!=='terrains'} className="ov-resource-tab-body">
       <TerrainImport key={`${privacyEpoch}:${resourceRefresh}`} api={client} writeBlocked={denied} canUse={canPlace} activeTerrainVersion={activeTerrainVersion} onTerrainReady={onTerrainReady} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>
     </section>
     <section id="ov-resource-imagery" role="tabpanel" aria-labelledby="ov-resource-imagery-tab" hidden={tab!=='imagery'} className="ov-resource-tab-body">
       {tab==='imagery'&&<ImageryPanel key={resourceRefresh} api={client} writeBlocked={denied} canUse={canPlace&&geographic&&!!onImageryReady} onUse={value=>onImageryReady?.(value)} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>}
-    </section>
+    </section></>}
     {publicAcquisition&&<Modal title={publicGeoMessages[locale].title} description={publicGeoMessages[locale].hint} onClose={()=>setPublicAcquisition(false)}>
       <PublicGeoDataPanel api={api} canWrite={canAcquire&&!denied} onClose={()=>setPublicAcquisition(false)}
         initialCenter={activeTerrainVersion?{longitude:(activeTerrainVersion.report.source.samplingCentreCoverageWgs84[0]+activeTerrainVersion.report.source.samplingCentreCoverageWgs84[2])/2,latitude:(activeTerrainVersion.report.source.samplingCentreCoverageWgs84[1]+activeTerrainVersion.report.source.samplingCentreCoverageWgs84[3])/2}:undefined}
