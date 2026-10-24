@@ -198,7 +198,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;in
     routeControl.current?.cancel(false);setContinuous(false);setSnap({grid:0,angle:0});setInspectorTab('properties');
     setSelection(instanceId?[instanceId]:value.snapshot.instances[0]?[value.snapshot.instances[0].sceneModelInstanceId]:[]);
     setBase(value);setHistory(sceneHistory(value.snapshot));setSelected(instanceId||value.snapshot.instances[0]?.sceneModelInstanceId||null);
-    setPersonal({});setEditing(false);setReadOnly(false);setPending(null);setPreview(null);setAnchorResult(null);setUpdate(value.headRevision!==value.sceneRevision);setHints({});setSide(null);setResourceSelection(null);
+    setPersonal({});setEditing(false);setReadOnly(value.sceneRevision!==value.headRevision);setPending(null);setPreview(null);setAnchorResult(null);setUpdate(value.headRevision!==value.sceneRevision);setHints({});setSide(null);setResourceSelection(null);
     setSaveUnknown(false);saveRequest.current=null;
     acceptedEngineering.current=engineeringReviews(value.validation);approvedRoots.current=[];setReviewDirty(false);setReviewCandidate(null);
     setObject(null);setLocation(null);setComponentFocus(undefined);setFocus(instanceId?{token:Date.now(),instanceId}:undefined);setPickedComponent(null);setInternal(false);internalReturn.current=null;
