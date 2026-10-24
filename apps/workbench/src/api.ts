@@ -183,6 +183,7 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     WATER_SURFACE_NOT_SUPPORTED:['水面需要当前平坦的相对定位面，不能用于起伏地形或已知高程基准。','Water requires the active flat relative positioning surface.'],
     ENVIRONMENT_WRITE_VERSION_REQUIRED:['请刷新到新版工作台后保存环境配置。','Reload the updated workbench before saving environment settings.'],
     ENVIRONMENT_FIELD_REQUIRED:['环境配置未完整保留，请重新读取场景。','Reload the scene to preserve its environment settings.'],
+    SURROUNDING_BACKGROUND_FIELD_REQUIRED:['外围背景配置未完整保留，请重新读取场景。','Reload the scene to preserve its surrounding background settings.'],
     SNAPSHOT_EXPIRED:['列表已变化，请从第一页重新读取。','The list changed. Reload from the first page.'],
     REQUEST_CONFLICT:['该请求的内容已变化，请核对后重新操作。','This request was already used with different content. Review the change.'],
     RESOURCE_CHANGED:['资源内容或版本已变化，请重新核对。','The resource content or version changed. Review it again.'],

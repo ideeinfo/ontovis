@@ -71,7 +71,7 @@ export function SceneViewport(props:SceneViewportProps) {
   const [loadingState,setLoadingState]=useState<SceneLoadingState>();
   const [reading,setReading]=useState(true),[error,setError]=useState<unknown>(null),[moving,setMoving]=useState(false);
   const [waterOverride,setWaterOverride]=useState<boolean|null>(null),[reduced,setReduced]=useState(()=>matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const [environmentStatus,setEnvironmentStatus]=useState({water:false,casters:0,phase:0,fallback:false,textureBudgetBytes:0});
+  const [environmentStatus,setEnvironmentStatus]=useState({water:false,surroundings:null as 'land'|'offshore'|null,casters:0,phase:0,fallback:false,textureBudgetBytes:0});
   const motionState=useRef({waterOverride,reduced});motionState.current={waterOverride,reduced};
   const previewMotion=useRef<{override:boolean|null}|null>(null);
   useEffect(()=>{if(props.environmentPreview&&!previewMotion.current)previewMotion.current={override:waterOverride};
@@ -259,7 +259,7 @@ export function SceneViewport(props:SceneViewportProps) {
       if(terrain)terrain.visible=state.terrainVisible&&!preview&&!water;
       imageryLayer.shading(effective?.surface.imageryShading??'source-color',!!effective);
       imageryLayer.visible(state.terrainVisible&&!!state.imageryVisible&&!preview&&!water);
-      const status=environment.status();setEnvironmentStatus(previous=>previous.water===status.water&&previous.casters===status.casters&&previous.fallback===status.fallback?previous:status);
+      const status=environment.status();setEnvironmentStatus(previous=>previous.water===status.water&&previous.surroundings===status.surroundings&&previous.casters===status.casters&&previous.fallback===status.fallback?previous:status);
       const groundMap=state.snapshot.defaults.terrainMaterial==='grass'?grass:null;if(terrainMaterial.map!==groundMap){terrainMaterial.map=groundMap;terrainMaterial.needsUpdate=true;}
       orbit.enabled=!state.disabled&&!drag;highlight();
     };
@@ -449,7 +449,7 @@ export function SceneViewport(props:SceneViewportProps) {
         if(hit?.sceneModelInstanceId===state.componentPickingInstanceId&&hit.component)state.onComponentPick?.(hit.component);
         return;
       }
-      if(state.editing&&state.pendingPlacement){const point=groundPoint(event.clientX,event.clientY);if(point)state.onPoint(point.toArray() as Vector3);}
+      if(state.editing&&state.pendingPlacement){const point=groundPoint(event.clientX,event.clientY);if(point)state.onPoint(point.toArray() as Vector3);else report(new ApiError(422,'OUTSIDE_COVERAGE'));}
       else state.onSelect(hitId(event.clientX,event.clientY),event.shiftKey);
     };
     const escape=(event:KeyboardEvent)=>{if(event.key.startsWith('Arrow'))current.current.onCameraInteraction?.();if(event.key==='Escape'&&drag){event.preventDefault();cancelDrag();}};
@@ -461,7 +461,7 @@ export function SceneViewport(props:SceneViewportProps) {
         if(!value||typeof value!=='object'||Object.keys(value).sort().join(',')!=='modelAssetId,modelVersionId')throw new Error('invalid');
         const reference=value as {modelAssetId:string;modelVersionId:string};
         if(!uuid.test(reference.modelAssetId)||!uuid.test(reference.modelVersionId))throw new Error('invalid');
-        const point=groundPoint(event.clientX,event.clientY);if(point)state.onResourceDrop(reference,point.toArray() as Vector3);
+        const point=groundPoint(event.clientX,event.clientY);if(point)state.onResourceDrop(reference,point.toArray() as Vector3);else report(new ApiError(422,'OUTSIDE_COVERAGE'));
       } catch {report(new ViewportInteractionError('dropInvalid'));}
     };
     const dragover=(event:DragEvent)=>{const state=current.current;if(state.editing&&!state.disabled&&!state.previewModel&&state.onResourceDrop
@@ -521,7 +521,7 @@ export function SceneViewport(props:SceneViewportProps) {
         <span>{props.imageryVersion.displayName} · {props.imageryVersion.metadata.acquiredAt} · {props.imageryVersion.report.pixelSize.map(v=>Number(v.toPrecision(3))).join(' × ')} {props.imageryVersion.report.horizontalCrs==='EPSG:4326'?'°':'m'} · {imageryText(locale,'precision')}</span>
         <span>{props.imageryVersion.metadata.attribution}</span>{imageryPartial&&<span>{imageryText(locale,'partial')}</span>}
       </div>}
-      {(environmentStatus.water||environmentStatus.fallback)&&<div className="ev-status"><span>{environmentStatus.water?(locale==='en'?'Visual water; placement uses the positioning surface':'视觉水面 按原定位基准面放置'):(locale==='en'?'Static environment fallback':'静态环境回退')}</span>{environmentStatus.water&&!environmentStatus.fallback&&<button className="ov-btn" type="button" onClick={()=>setWaterOverride(previous=>!(previous??(!reduced&&(props.environmentPreview?props.environmentPreview.value:props.snapshot.environment)?.animation.defaultPlayback==='playing')))}>{(waterOverride??(!reduced&&(props.environmentPreview?props.environmentPreview.value:props.snapshot.environment)?.animation.defaultPlayback==='playing'))?(locale==='en'?'Pause ripples':'暂停水纹'):(locale==='en'?'Play ripples':'播放水纹')}</button>}{environmentStatus.fallback&&<span>{locale==='en'?'Environment allocation unavailable; shadows and animation are off':'环境资源不可用，已关闭阴影和动画'}</span>}{reduced&&<span>{locale==='en'?'Reduced motion':'减少动画'}</span>}</div>}
+      {(environmentStatus.water||environmentStatus.fallback||environmentStatus.surroundings)&&<div className="ev-status">{environmentStatus.surroundings&&<span>{locale==='en'?'Surrounding background is illustrative; placement and measurement use original terrain only':'外围背景为示意；放置、贴地和测量仅使用原地形'}</span>}<span>{environmentStatus.water?(locale==='en'?'Visual water; placement uses the positioning surface':'视觉水面 按原定位基准面放置'):environmentStatus.fallback?(locale==='en'?'Static environment fallback':'静态环境回退'):null}</span>{environmentStatus.water&&!environmentStatus.fallback&&<button className="ov-btn" type="button" onClick={()=>setWaterOverride(previous=>!(previous??(!reduced&&(props.environmentPreview?props.environmentPreview.value:props.snapshot.environment)?.animation.defaultPlayback==='playing')))}>{(waterOverride??(!reduced&&(props.environmentPreview?props.environmentPreview.value:props.snapshot.environment)?.animation.defaultPlayback==='playing'))?(locale==='en'?'Pause ripples':'暂停水纹'):(locale==='en'?'Play ripples':'播放水纹')}</button>}{environmentStatus.fallback&&<span>{locale==='en'?'Environment allocation unavailable; shadows and animation are off':'环境资源不可用，已关闭阴影和动画'}</span>}{reduced&&<span>{locale==='en'?'Reduced motion':'减少动画'}</span>}</div>}
     </div><footer className="ov-scene-viewport-foot"><span>{props.previewModel?`${message('preview')} · ${props.previewModel.displayName}`:
       moving?message('moving'):props.editing?props.pendingPlacement?message('place'):message('drag'):message('browse')}</span>
       {props.previewModel?.calibration.state==='unverified'?<span>{message('unverified')}</span>:null}</footer>

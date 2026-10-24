@@ -15,6 +15,71 @@ def environment():
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_surroundings_optional_strict_and_not_inserted_into_old_environment(self):
+        old = {'environment': environment()}
+        before = copy.deepcopy(old)
+        validate_environment(old)
+        self.assertEqual(old, before)
+        for profile in ('land', 'offshore'):
+            for mode in ('auto', 'off'):
+                value = copy.deepcopy(old)
+                value['environment']['surroundings'] = {'mode': mode, 'profile': profile}
+                validate_environment(value)
+        for setting in (None, 'auto', {'mode': True, 'profile': 'land'},
+                        {'mode': 'auto', 'profile': 'earth'}, {'mode': 'other', 'profile': 'land'},
+                        {'mode': 'auto', 'profile': 'land', 'url': 'https://example.com/terrain'},
+                        {'mode': 'auto'}):
+            with self.subTest(setting=setting), self.assertRaises(PreviewError):
+                validate_environment({'environment': {**environment(), 'surroundings': setting}})
+
+    def test_old_writer_cannot_omit_surroundings_but_explicit_off_and_legacy_are_supported(self):
+        old = {'environment': {**environment(), 'surroundings': {'mode': 'auto', 'profile': 'land'}}}
+        with self.assertRaises(PreviewError) as caught:
+            environment_write({'environmentWriteVersion': 1, 'snapshot': {'environment': environment()}}, old)
+        self.assertEqual(caught.exception.code, 'SURROUNDING_BACKGROUND_FIELD_REQUIRED')
+        for value in (None, {**environment(), 'surroundings': {'mode': 'off', 'profile': 'land'}}):
+            environment_write({'environmentWriteVersion': 1, 'snapshot': {'environment': value}}, old)
+
+    def test_surroundings_http_roundtrip_preserves_geometry_history_permission_and_replay(self):
+        f = http_fixture.SceneHttpTests('test_real_http_create_save_open_and_fixed_old_revision')
+        f.setUp(); self.addCleanup(f.doCleanups)
+        scene = f.create(); request = f.save_body(scene, [f.item()])
+        status, initial, _ = f.save(request); self.assertEqual(status, 200, initial)
+        old = copy.deepcopy(f.open(initial)[1]['snapshot'])
+        request = f.save_body(f.open(initial)[1]); request['snapshot']['environment'] = {**environment(), 'surroundings': {'mode': 'auto', 'profile': 'land'}}
+        request['environmentWriteVersion'] = 1
+        status, saved, _ = f.save(request); self.assertEqual(status, 200, saved)
+        self.assertEqual(f.save(request)[1]['sceneRevision'], saved['sceneRevision'])
+        opened = f.open(saved)[1]
+        self.assertEqual(opened['capabilities']['surroundingBackgroundModes'], ['auto', 'off'])
+        self.assertEqual(opened['snapshot']['environment'], request['snapshot']['environment'])
+        for key in ('coordinateFrame', 'terrain', 'imagery', 'instances', 'initialView'):
+            self.assertEqual(opened['snapshot'].get(key), old.get(key))
+        self.assertEqual(f.open(initial, initial['sceneRevision'])[1]['snapshot'], old)
+        member = f.login('fixture-bg-reader'); f.account(member).role = 'reader'
+        denied = f.save_body(opened); denied['environmentWriteVersion'] = 1
+        denied['snapshot']['environment']['surroundings']['mode'] = 'off'
+        f.assert_response(f.save(denied, client=member), 403, 'SCENE_WRITE_FORBIDDEN')
+        self.assertEqual(f.open(saved)[1]['sceneRevision'], saved['sceneRevision'])
+        stale = f.save_body(opened); stale['environmentWriteVersion'] = 1
+        del stale['snapshot']['environment']['surroundings']
+        f.assert_response(f.save(stale), 409, 'SURROUNDING_BACKGROUND_FIELD_REQUIRED')
+
+    def test_surroundings_do_not_extend_ground_coverage_or_change_terrain_sampling(self):
+        f = self.geometry(); f.resource()
+        snapshot = f.preview()['snapshot']; original = copy.deepcopy(snapshot)
+        snapshot['environment'] = {**environment(), 'surroundings': {'mode': 'auto', 'profile': 'land'}}
+        checked = geometry_check(snapshot, f.terrains)['snapshot']
+        for key in ('coordinateFrame', 'terrain', 'instances'):
+            self.assertEqual(checked[key], original[key])
+        for profile in ('land', 'offshore'):
+            outside = copy.deepcopy(snapshot); outside['environment']['surroundings']['profile'] = profile
+            position = outside['instances'][0]['placement']['position']; position['longitude'] += .02
+            outside['instances'][0]['placement']['height']['sampleLongitude'] = position['longitude']
+            with self.assertRaises(GeometryError) as caught:
+                geometry_check(outside, f.terrains)
+            self.assertEqual(caught.exception.code, 'OUTSIDE_COVERAGE')
+
     def test_actual_http_environment_write_guard_permissions_and_old_history(self):
         f=http_fixture.SceneHttpTests('test_real_http_create_save_open_and_fixed_old_revision');f.setUp();self.addCleanup(f.doCleanups)
         scene=f.create();request=f.save_body(scene,[f.item()]);request['snapshot']['environment']=environment()

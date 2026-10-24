@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import {SceneSurroundings} from './sceneSurroundings.ts';
 import {EnvironmentClock,type SceneEnvironmentV1} from './sceneEnvironment.ts';
 import {trueHeadingToThreeYaw} from './sceneTransforms.ts';
 import type {CoordinateFrame} from './sceneTypes';
@@ -33,11 +34,11 @@ export class SceneEnvironmentRuntime {
   private sunHeading=0;private waveHeading=0;
   private roots:THREE.Group[]=[];private selected:THREE.Group|null=null;private fallback=false;
   private previewClock:{clock:EnvironmentClock;key:string}|null=null;
-  private disposed=false;
+  private disposed=false;private surroundings:SceneSurroundings;
   private scene:THREE.Scene;private renderer:THREE.WebGLRenderer;private sun:THREE.DirectionalLight;private hemisphere:THREE.HemisphereLight;
   private ground:THREE.MeshStandardMaterial;private grass:THREE.Texture;
   constructor(scene:THREE.Scene,renderer:THREE.WebGLRenderer,sun:THREE.DirectionalLight,hemisphere:THREE.HemisphereLight,ground:THREE.MeshStandardMaterial,grass:THREE.Texture){
-    this.scene=scene;this.renderer=renderer;this.sun=sun;this.hemisphere=hemisphere;this.ground=ground;this.grass=grass;scene.add(sun.target);
+    this.scene=scene;this.renderer=renderer;this.sun=sun;this.hemisphere=hemisphere;this.ground=ground;this.grass=grass;this.surroundings=new SceneSurroundings(scene);scene.add(sun.target);
   }
   private releaseSky(){this.scene.environment=null;this.target?.dispose();this.target=null;this.sky?.dispose();this.sky=null;this.skyKey='';}
   private releaseWater(){this.water?.removeFromParent();this.water?.geometry.dispose();this.water?.material.dispose();this.water=null;this.waterPattern=null;this.normals?.dispose();this.normals=null;this.terrain=null;this.waterSeed=-1;}
@@ -56,7 +57,7 @@ export class SceneEnvironmentRuntime {
   configure(value:SceneEnvironmentV1|null,frame:CoordinateFrame,terrain:THREE.Mesh|null,roots:THREE.Group[],selected:THREE.Group|null,visible:boolean){
     if(this.disposed)return false;this.config=value;this.frame=frame;this.roots=roots;this.selected=selected;this.dirtyShadow=true;
     if(!value){
-      this.releaseSky();this.releaseWater();this.releaseShadow();this.fallback=false;this.sun.target.position.set(0,0,0);this.scene.fog=null;this.scene.environmentIntensity=1;
+      this.surroundings.dispose();this.releaseSky();this.releaseWater();this.releaseShadow();this.fallback=false;this.sun.target.position.set(0,0,0);this.scene.fog=null;this.scene.environmentIntensity=1;
       this.renderer.toneMapping=THREE.NoToneMapping;this.renderer.toneMappingExposure=1;this.ground.roughness=1;this.grass.repeat.set(1,1);
       for(const [mesh,prior] of this.ownedShadow){mesh.castShadow=prior.cast;mesh.receiveShadow=prior.receive;}this.ownedShadow.clear();return false;
     }
@@ -95,9 +96,11 @@ export class SceneEnvironmentRuntime {
       }
     }
     if(this.water){this.water.visible=enabled;this.water.material.color.set(value.water.color);this.water.material.roughness=value.water.roughness;this.water.material.normalScale.setScalar(value.water.rippleStrength);}
+    this.surroundings.configure(value,terrain,this.water?this.normals:null,visible);
     const phaseKey=JSON.stringify([value.animation.initialPhase,frame.frameRevision,value.water.seed]);
     if(phaseKey!==this.clockKey){this.clock=new EnvironmentClock(value.animation.initialPhase);this.clockKey=phaseKey;this.lastWave=-Infinity;}
     this.waterPattern?.update(this.clock.value(),value.water.wavelengthM,value.water.travelSpeedMps,this.waveHeading);
+    this.surroundings.update(this.clock.value(),value,this.waveHeading);
     const shadows=value.shadows.mode==='sun-local'&&value.lighting.sun.enabled&&!this.fallback;
     if(!shadows)this.releaseShadow();else{
       this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=THREE.PCFShadowMap;this.renderer.shadowMap.autoUpdate=false;
@@ -124,11 +127,11 @@ export class SceneEnvironmentRuntime {
     }
     const phase=this.clock.step(now,playing),due=now-this.lastWave>=1000/30;
     if(this.waterPattern&&due){const water=e.water;
-      this.waterPattern.update(phase,water.wavelengthM,water.travelSpeedMps,this.waveHeading);this.lastWave=now;
+      this.waterPattern.update(phase,water.wavelengthM,water.travelSpeedMps,this.waveHeading);this.lastWave=now;this.surroundings.update(phase,e,this.waveHeading);
     }
     return playing&&due;
   }
-  status(){return {water:!!this.water,casters:this.casterCount,phase:this.clock.value(),fallback:this.fallback,textureBudgetBytes:2*1024*512*4+6*256*256*8+1024*1024*4+349524};}
-  dispose(){if(this.disposed)return;this.disposed=true;this.releaseWater();this.releaseSky();this.releaseShadow();this.generator?.dispose();this.generator=null;this.scene.fog=null;
+  status(){return {water:!!this.water,surroundings:this.surroundings.status(),casters:this.casterCount,phase:this.clock.value(),fallback:this.fallback,textureBudgetBytes:2*1024*512*4+6*256*256*8+1024*1024*4+349524};}
+  dispose(){if(this.disposed)return;this.disposed=true;this.surroundings.dispose();this.releaseWater();this.releaseSky();this.releaseShadow();this.generator?.dispose();this.generator=null;this.scene.fog=null;
     for(const [mesh,p] of this.ownedShadow){mesh.castShadow=p.cast;mesh.receiveShadow=p.receive;}this.ownedShadow.clear();this.roots=[];this.selected=null;this.previewClock=null;this.sun.target.removeFromParent();}
 }

@@ -28,7 +28,12 @@ def validate_environment(snapshot):
     v = snapshot['environment']
     require(type(v) is dict and type(v.get('schemaVersion')) is int and v['schemaVersion'] == 1,
             'UNSUPPORTED_SCENE_ENVIRONMENT')
-    fields(v, 'schemaVersion renderProfile presetId color lighting atmosphere shadows surface water animation')
+    fields(v, 'schemaVersion renderProfile presetId color lighting atmosphere shadows surface water animation'
+           + (' surroundings' if 'surroundings' in v else ''))
+    if 'surroundings' in v:
+        fields(v['surroundings'], 'mode profile')
+        require(v['surroundings']['mode'] in ('auto', 'off')
+                and v['surroundings']['profile'] in ('land', 'offshore'))
     require(v['renderProfile'] == 'standard-v1' and v['presetId'] in
             ('land-day-v1', 'offshore-overview-v1', 'dusk-v1', 'custom-v1'))
     fields(v['color'], 'toneMapping exposure')
@@ -75,6 +80,9 @@ def environment_write(body, previous):
                 'ENVIRONMENT_WRITE_VERSION_REQUIRED', 409)
         require('environment' not in previous or 'environment' in candidate,
                 'ENVIRONMENT_FIELD_REQUIRED', 409)
+        old, new = previous.get('environment'), candidate.get('environment')
+        if type(old) is dict and 'surroundings' in old and type(new) is dict:
+            require('surroundings' in new, 'SURROUNDING_BACKGROUND_FIELD_REQUIRED', 409)
 
 
 def preserve_environment(before, after):

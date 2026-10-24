@@ -17,3 +17,5 @@
 - [模型中心点击即预览与三栏高度](model-center-direct-preview-20261024/README.md)
 
 - [环境设置范围、入口优先级与场景加载进度](environment-clarity-loading-20261024/README.md)
+
+- [外围背景自动海陆显示与定位边界验证](surrounding-background-20261024/README.md)

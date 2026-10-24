@@ -132,7 +132,7 @@ export interface HeightProvenance {
   previousTerrainRef?: unknown; previousAnchorHeight?: unknown;
 }
 export interface SceneCapabilities {
-  environmentSchemaVersions?:number[];waterModes?:string[];
+  environmentSchemaVersions?:number[];waterModes?:string[];surroundingBackgroundModes?:string[];
   storageScope: SceneScope; supportsGeographic: boolean; supportsEngineeringBindings: boolean;
   maxInstances: number; maxSnapshotBytes: number; maxCheckJsonBytes: number;
   scope: SceneScope; localPlaneUnbound: true; canRead: true; canWrite: boolean;
