@@ -13,6 +13,7 @@ import signal
 import sqlite3
 import struct
 import subprocess
+import tempfile
 from threading import Condition, RLock, Thread
 from uuid import uuid4
 import zlib
@@ -78,6 +79,11 @@ class ThumbnailRenderer:
         except ProcessLookupError: pass
 
     def __call__(self, content, work):
+        # Chromium's Linux singleton socket must fit the short AF_UNIX path limit.
+        with tempfile.TemporaryDirectory(prefix='ov-thumb-', dir='/tmp') as runtime:
+            return self._render(content, work, runtime)
+
+    def _render(self, content, work, runtime):
         source, output = work / 'model.glb', work / 'thumbnail.png'
         source.write_bytes(content)
         with self.lock:
@@ -85,7 +91,7 @@ class ThumbnailRenderer:
             self.process = subprocess.Popen([str(self.node), str(Path(__file__).with_name('render_model_thumbnail.mjs')),
                 str(source), str(output), str(self.renderer), str(self.browser), str(work)],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True,
-                env={'PATH': os.defpath, 'LANG': 'C.UTF-8', 'TZ': 'UTC', 'TMPDIR': str(work)})
+                env={'PATH': os.defpath, 'LANG': 'C.UTF-8', 'TZ': 'UTC', 'TMPDIR': runtime})
             process = self.process
         try:
             try: stdout, _ = process.communicate(timeout=self.timeout)

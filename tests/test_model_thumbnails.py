@@ -2,19 +2,22 @@
 import copy
 import hashlib
 import io
+import json
+import os
 from pathlib import Path
 import struct
 import tempfile
 from threading import Event, Thread
 import time
 import unittest
+from unittest.mock import Mock, patch
 from uuid import uuid4
 import zlib
 
 from apps.api.authority import PreviewError
 from apps.api.model_library import ModelLibrary
 from apps.api.project_model_library import ProjectModelLibrary
-from apps.api.model_thumbnails import ModelThumbnails, png_info, MAX_PNG_BYTES
+from apps.api.model_thumbnails import ModelThumbnails, ThumbnailRenderer, png_info, MAX_PNG_BYTES
 from tests.test_model_upload import glb
 from tests.test_project_model_library import Guard, CONTEXT
 
@@ -184,3 +187,25 @@ class ModelThumbnailTests(unittest.TestCase):
         body = self.body(); self.ensure(body); self.engine.renderer = lambda content, work: b'<svg>fake</svg>'
         with self.assertRaises(PreviewError): self.engine._process(self.version['sha256'], body, self.guard)
         self.assertFalse(list((self.engine.root / 'files').iterdir()))
+
+    def test_renderer_uses_short_private_socket_directory_without_inheriting_secrets_and_cleans_it(self):
+        paths = [self.root / name for name in ('renderer.js', 'node', 'browser')]
+        for path in paths: path.write_bytes(b'trusted test fixture')
+        renderer = ThumbnailRenderer(*paths); runtime_paths = []
+        work = self.root / ('long-job-path-' * 12); work.mkdir()
+        def launch(arguments, **options):
+            runtime = Path(options['env']['TMPDIR']); runtime_paths.append(runtime)
+            self.assertTrue(runtime.is_dir()); self.assertLess(len(str(runtime)), 40)
+            self.assertEqual(runtime.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(set(options['env']), {'PATH', 'LANG', 'TZ', 'TMPDIR'})
+            Path(arguments[3]).write_bytes(png())
+            return Mock(returncode=0, communicate=Mock(return_value=(json.dumps({'state':'ready','coveredPixels':100}).encode(), None)))
+        with patch.dict(os.environ, {'ONTOVIS_TEST_SECRET':'synthetic secret'}), patch(
+                'apps.api.model_thumbnails.subprocess.Popen', side_effect=launch), patch.object(renderer, '_kill'):
+            self.assertEqual(renderer(b'fixture input', work), png())
+        self.assertFalse(runtime_paths[0].exists())
+        def refuse(arguments, **options):
+            runtime_paths.append(Path(options['env']['TMPDIR'])); raise PermissionError('synthetic refusal')
+        with patch('apps.api.model_thumbnails.subprocess.Popen', side_effect=refuse), self.assertRaises(PermissionError):
+            renderer(b'fixture input', work)
+        self.assertFalse(runtime_paths[-1].exists())

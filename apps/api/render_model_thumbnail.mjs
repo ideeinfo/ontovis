@@ -40,6 +40,9 @@ async function main() {
     {stdio:['ignore','ignore','ignore','pipe','pipe'],env:{...process.env,XDG_CONFIG_HOME:work,XDG_CACHE_HOME:work}});
   chrome.on('error',()=>{for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error('THUMBNAIL_BROWSER_UNAVAILABLE'));}pending.clear();});
   chrome.on('exit',()=>{for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error('THUMBNAIL_BROWSER_UNAVAILABLE'));}pending.clear();});
+  for(const pipe of [chrome.stdio[3],chrome.stdio[4]])pipe.on('error',()=>{
+    for(const p of pending.values()){clearTimeout(p.timer);p.reject(new Error('THUMBNAIL_BROWSER_UNAVAILABLE'));}pending.clear();
+  });
   chrome.stdio[4].on('data',chunk=>{
     buffer=Buffer.concat([buffer,chunk]);if(buffer.length>2*1024*1024){chrome.kill('SIGKILL');return;}
     let end;while((end=buffer.indexOf(0))!==-1){
