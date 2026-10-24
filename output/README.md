@@ -13,3 +13,5 @@
 - [模型预览构件树、交叉定位、隔离和右栏属性](model-component-preview-20261024/README.md)
 
 - [水面自然波纹、远景动态及候选验证](water-surface-20261024/README.md)
+
+- [模型中心点击即预览与三栏高度](model-center-direct-preview-20261024/README.md)

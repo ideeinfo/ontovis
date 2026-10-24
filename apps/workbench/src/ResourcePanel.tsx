@@ -119,9 +119,9 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     finally{if(request.isCurrent())setDetailLoading(false);}
     return null;
   }
-  async function activateCard(asset:ProjectModelAsset,action:'preview'|'place') {
-    const choice=placementModelVersion(asset,geographic,assetId===asset.modelAssetId?versionId:
-      modelSelection?.modelAssetId===asset.modelAssetId?modelSelection.modelVersionId:undefined);
+  async function activateCard(asset:ProjectModelAsset,action:'preview'|'place',fixedVersionId?:string) {
+    const choice=placementModelVersion(asset,geographic,fixedVersionId??(assetId===asset.modelAssetId?versionId:
+      modelSelection?.modelAssetId===asset.modelAssetId?modelSelection.modelVersionId:undefined));
     if(!choice)return;
     const ticket=++cardIntent.current;setAssetId(asset.modelAssetId);
     const value=version?.modelVersionId===choice.modelVersionId?version:await selectVersion(asset.modelAssetId,choice.modelVersionId);
@@ -206,21 +206,23 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         const usable=!!choice&&choice.canPlace&&(!geographic||choice.canPlaceGeographic);
         const waiting=active&&detailLoading;
         return <li className={`ov-resource-card ${active?'selected':''}`} key={asset.modelAssetId} aria-label={asset.displayName}>
-          <button type="button" className="ov-resource-card-heading" aria-expanded={active} onClick={()=>selectAsset(asset.modelAssetId)}>
+          <button type="button" className="ov-resource-card-heading" aria-expanded={modelsOnly?undefined:active}
+            aria-label={modelsOnly?`${t('preview')} ${asset.displayName}`:undefined}
+            onClick={()=>modelsOnly?void activateCard(asset,'preview'):selectAsset(asset.modelAssetId)}>
             <ModelThumbnail api={client} version={choice} name={asset.displayName} onStatus={thumbnailUpdated}/>
             <span className="ov-resource-card-label"><strong>{asset.displayName}</strong><span className={`ov-resource-card-state ${choice?.calibrationState==='verified'?'verified':'pending'}`}>{choice?t(resourceCalibrationKey(choice.calibrationState)):t('noModelVersion')}</span></span>
           </button>
-          <div className="ov-resource-card-actions">
+          {!modelsOnly&&<div className="ov-resource-card-actions">
             <Btn disabled={!choice||waiting} onClick={()=>void activateCard(asset,'preview')}><Eye size={14}/>{t('preview')}</Btn>
             {!modelsOnly&&<Btn disabled={!canPlace||!usable||waiting} title={!usable?t(geographic?'geographicCalibrationRequired':'calibrationRequired'):!canPlace?t('sceneEditRequired'):t('dragPlace')}
               draggable={canPlace&&usable&&!waiting} onDragStart={event=>{
                 if(!canPlace||!usable||!choice||waiting){event.preventDefault();return;}
                 event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:asset.modelAssetId,modelVersionId:choice.modelVersionId}));
               }} onClick={()=>void activateCard(asset,'place')}><MapPin size={14}/>{t('place')}</Btn>}
-          </div>
-          <details className="ov-resource-disclosure ov-resource-card-history"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><p className="ov-resource-caption">{t('modelVersionHint')}</p><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,event.target.value);}}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>
+          </div>}
+          <details className="ov-resource-disclosure ov-resource-card-history"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><p className="ov-resource-caption">{t('modelVersionHint')}</p><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{const id=event.target.value;if(modelsOnly&&id)void activateCard(asset,'preview',id);else{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,id);}}}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>
           {waiting&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
-          {active&&version&&detailVersion&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} key={detailVersion.modelVersionId} api={client} version={detailVersion} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
+          {active&&version&&detailVersion&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} hidePreview={modelsOnly} key={detailVersion.modelVersionId} api={client} version={detailVersion} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
             canReplace={canReplace&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
             onOpenScene={onOpenScene} onPreview={()=>onPreview(version)} onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
             canGenerateThumbnail={catalog?.capabilities.canGenerateThumbnails===true&&!denied} onThumbnailUpdated={thumbnailUpdated}

@@ -5,7 +5,6 @@ import {failureMessage} from './api';
 import {Btn} from './Primitives';
 import {usePreferences} from './Preferences';
 import {ResourcePanel} from './ResourcePanel';
-import {ModelLibraryPanel} from './ModelLibraryPanel';
 import {ModelComponentTree,ModelComponentProperties,ModelPreviewTools,useModelPreview} from './ModelPreviewInspector';
 import type {ProjectModelVersion} from './resourceTypes';
 import type {LocalSceneSnapshot,ModelResourceRef} from './sceneTypes';
@@ -18,8 +17,7 @@ const previewScene:LocalSceneSnapshot={displayName:'',coordinateFrame:{mode:'loc
 const ignore=()=>{};
 const emptyRefs:ModelResourceRef[]=[],emptyVisibility:Record<string,boolean>={};
 
-export function ProjectModelCenter({api,onLegacyPreview,onOpenScene}:{api:WorkbenchApi;
-  onLegacyPreview:(id:string|null)=>void;onOpenScene:(sceneId?:string)=>void}) {
+export function ProjectModelCenter({api,onOpenScene}:{api:WorkbenchApi;onOpenScene:(sceneId?:string)=>void}) {
   const {locale}=usePreferences(),text=(zh:string,en:string)=>locale==='zh'?zh:en;
   const [preview,setPreview]=useState<ProjectModelVersion|null>(null),[error,setError]=useState<unknown>(null);
   const inspection=useModelPreview(preview);
@@ -41,7 +39,7 @@ export function ProjectModelCenter({api,onLegacyPreview,onOpenScene}:{api:Workbe
             onSelect={ignore} onPoint={ignore} onMove={async()=>false} onViewChange={ignore} onError={setError}/>
         </Suspense></div>{!!error&&<p role="alert">{failureMessage(error,locale)}</p>}
         <p className="pm-note">{text('资源预览；现场设备身份、安装位置和工程精度需另行核实。','Resource preview; installed identity, placement and engineering accuracy require separate verification.')}</p>
-      </>:<div className="pm-empty"><Box size={32}/><strong>{text('选择模型资源查看或预览','Select a model resource to inspect or preview')}</strong>
+      </>:<div className="pm-empty"><Box size={32}/><strong>{text('点击模型资源直接预览','Select a model resource to preview')}</strong>
         <p>{text('模型资源保存可复用的几何与来源；实例保存本次安装的位置、名称和设备关联。','Resources hold reusable geometry and provenance. Instances hold placement, name and equipment links.')}</p>
         <p>{text('固定版本只在上传或校准时增加。场景保存和型号属性分别记录修订。','Fixed versions increase only on upload or calibration. Scene saves and model metadata have separate revisions.')}</p></div>}</div>
       <aside className="pm-inspector" aria-label={text(inspection.node?'构件属性':'模型属性',inspection.node?'Component properties':'Model properties')}>
@@ -51,7 +49,5 @@ export function ProjectModelCenter({api,onLegacyPreview,onOpenScene}:{api:Workbe
         <div className="pm-resource-details" ref={setDetailsTarget}/><p className="pm-properties-empty">{text('选择模型资源查看属性','Select a model resource to view its properties')}</p></div>
       </aside>
     </div>
-    <details className="pm-legacy"><summary>{text('原有构件绑定兼容入口','Original component-binding compatibility')}</summary>
-      <ModelLibraryPanel api={api} onPreview={onLegacyPreview}/></details>
   </section>;
 }

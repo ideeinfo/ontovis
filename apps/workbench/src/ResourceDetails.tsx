@@ -10,7 +10,7 @@ import {calibrationInput, privateDenial, ResourceRequestGate, ResourceRequestId,
 import {resourceText} from './resourceMessages';
 
 interface Props {
-  api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean; geographic?: boolean; compact?:boolean;hidePlacement?:boolean;
+  api: SceneApi; version: ProjectModel; libraryRevision: string; canPlace: boolean; canCalibrate: boolean; geographic?: boolean; compact?:boolean;hidePlacement?:boolean;hidePreview?:boolean;
   onPreview: () => void; onPlace: () => void;canReplace?:boolean;onReplace?:()=>void;
   onUpdated: (version: ProjectModelWrite) => void; onWriteDenied: () => void; onPrivateDenied: () => void;
   onOpenScene?:(sceneId:string)=>void;
@@ -19,7 +19,7 @@ interface Props {
 }
 
 export function ResourceDetails({api, version, libraryRevision, canPlace, canCalibrate,
-    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary,canGenerateThumbnail=false,onThumbnailUpdated}: Props) {
+    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, hidePreview=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary,canGenerateThumbnail=false,onThumbnailUpdated}: Props) {
   const {locale} = usePreferences(), t = (key: Parameters<typeof resourceText>[1]) => resourceText(locale,key);
   const [uses,setUses] = useState<ModelUses|null>(null), [usesOpen,setUsesOpen] = useState(false);
   const [usesBusy,setUsesBusy] = useState(false), [usesError,setUsesError] = useState<unknown>(null);
@@ -92,7 +92,7 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
     {!compact&&<div className="ov-resource-title"><strong>{version.displayName}</strong><Badge tone={version.calibrationState==='verified'?'success':'warning'}>{t(resourceCalibrationKey(version.calibrationState))}</Badge></div>}
     {version.components.some(item=>item.geometryQuality==='proxy_schematic')&&<p className="ov-resource-caption">{t('proxyGeometry')}</p>}
     <div className="ov-resource-actions">
-      {!compact&&<><Btn onClick={onPreview}><Eye size={14}/>{t('preview')}</Btn>
+      {!compact&&<>{!hidePreview&&<Btn onClick={onPreview}><Eye size={14}/>{t('preview')}</Btn>}
       {!hidePlacement&&<Btn primary disabled={!canPlace||!usable} title={!usable?placementHint:!canPlace?t('sceneEditRequired'):t('dragPlace')}
         draggable={canPlace&&usable} onDragStart={event=>{
           if(!canPlace||!usable){event.preventDefault();return;}
