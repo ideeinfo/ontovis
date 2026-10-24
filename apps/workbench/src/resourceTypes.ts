@@ -172,4 +172,5 @@ export interface ImageryResponse {
   limits:{maxUploadBytes:number;maxSide:number;maxVersions:number;maxLibraryBytes:number};
 }
 export type ImageryVersion=ImageryRecord&ImageryResponse;
+export type ImageryUploadResult=({state:'unknown'}&ImageryResponse)|({state:'completed'}&ImageryVersion);
 export interface ImageryCatalog extends ImageryResponse {items:ImageryRecord[]}

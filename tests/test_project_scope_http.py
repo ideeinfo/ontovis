@@ -1,6 +1,9 @@
 """Explicit project scopes through the real same-origin HTTP dispatcher."""
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+import hashlib
+import io
+import sys
 import tempfile
 from threading import Thread
 import unittest
@@ -22,7 +25,7 @@ class ProjectScopeHttpTests(unittest.TestCase):
         self.root = Path(temp.name).resolve()
         ProjectsAuthority.permissions = {'member': {'A': 'admin', 'B': 'admin'}, 'empty': {}}
         self.sessions = ProjectSessions('http://127.0.0.1:18001', library_root=self.root / 'unused',
-            workspace_root=self.root / 'projects', factory=ProjectsAuthority)
+            workspace_root=self.root / 'projects', factory=ProjectsAuthority, terrain_python=Path(sys.executable))
         self.addCleanup(self.sessions.close)
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), handler_type(self.sessions, ORIGIN, development=True))
         thread = Thread(target=self.server.serve_forever, daemon=True); thread.start()
@@ -37,7 +40,7 @@ class ProjectScopeHttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual([i['projectRef']['projectCode'] for i in directory['items']], ['A', 'B'])
         for path in ['scenes', 'scenes/create', 'scenes/open', 'scenes/save', 'terrains',
-                     'terrains/job', 'imagery', 'public-geodata/job', 'objects/context', 'catalog',
+                     'terrains/job', 'imagery', 'imagery/upload-result', 'public-geodata/job', 'objects/context', 'catalog',
                      'evidence/resolve', 'models/binding', 'scenes/legacy-migration/entry']:
             with self.subTest(path=path):
                 status, value, _ = self.request('/api/workbench/' + path, {})
@@ -61,3 +64,24 @@ class ProjectScopeHttpTests(unittest.TestCase):
         self.assertEqual(self.request('/api/workbench/scenes/open', {'projectRef': self.ref('A'), 'sceneId': a['sceneId']})[0], 403)
         self.assertEqual(self.request('/api/session', method='GET')[1]['state'], 'active')
         self.assertEqual(self.request('/api/workbench/scenes', {'projectRef': self.ref('B')})[0], 200)
+
+    def test_imagery_result_cannot_cross_project_and_revocation_keeps_the_other_project_available(self):
+        from tests.test_imagery_library import image_bytes, metadata
+        for code in ('A', 'B'):
+            status, value, _ = self.request('/api/workbench/scenes/create',
+                {'projectRef': self.ref(code), 'displayName': 'Synthetic', 'clientRequestId': str(uuid4())})
+            self.assertEqual(status, 200, value)
+        raw = image_bytes(self.root / 'scoped.tif')
+        payload = metadata()
+        library = self.sessions._workspace(self.sessions.registry.lookup('A')).imagery
+        first = library.upload(io.BytesIO(raw), len(raw), payload, 'member', lambda: None)
+        body = {'metadata': payload, 'expectedSourceSha256': hashlib.sha256(raw).hexdigest()}
+        path = '/api/workbench/imagery/upload-result'
+        status, result, _ = self.request(path, {**body, 'projectRef': self.ref('A')})
+        self.assertEqual((status, result['imageryVersionId']), (200, first['imageryVersionId']))
+        status, result, _ = self.request(path, {**body, 'projectRef': self.ref('B')})
+        self.assertEqual((status, result['state']), (200, 'unknown'))
+        self.assertNotIn('imageryVersionId', result)
+        del ProjectsAuthority.permissions['member']['A']
+        self.assertEqual(self.request(path, {**body, 'projectRef': self.ref('A')})[0], 403)
+        self.assertEqual(self.request(path, {**body, 'projectRef': self.ref('B')})[0], 200)

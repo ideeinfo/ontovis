@@ -73,6 +73,7 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         for path in ('/api/workbench/scenes/delete', '/api/workbench/resources/secret',
                      '/api/workbench/terrains/upload/extra', '/api/workbench/scenes/open/',
                      '/api/workbench/imagery/delete', '/api/workbench/imagery/upload/extra',
+                     '/api/workbench/imagery/upload-result/extra',
                      '/api/workbench/imagery/content/', '/api/workbench/resources/model/metadata/extra',
                      '/api/workbench/resources/model/thumbnail/extra', '/api/workbench/resources/model/thumbnail/content/',
                      '/api/workbench/resources/model/thumbnail/ensure/extra',

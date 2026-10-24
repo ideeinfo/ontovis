@@ -11,6 +11,38 @@ from tests.test_imagery_library import image_bytes,metadata
 
 
 class ImageryHttpTests(unittest.TestCase):
+    def test_upload_result_accepts_the_same_long_metadata_as_the_upload_header(self):
+        payload = metadata(sourceNote='s' * 1900, licenseNote='l' * 1900, qualityNote='q' * 700)
+        raw = image_bytes(self.root / 'long-metadata.tif')
+        body = {'metadata': payload, 'expectedSourceSha256': hashlib.sha256(raw).hexdigest()}
+        self.assertGreater(len(json.dumps(body).encode()), 4096)
+        status, image, _ = self.upload_image(payload=payload, data=raw)
+        self.assertEqual(status, 200, image)
+        status, result, _ = self.request('/api/workbench/imagery/upload-result', body)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result['imageryVersionId'], image['imageryVersionId'])
+
+    def test_upload_result_is_private_actor_scoped_and_recovers_a_committed_upload(self):
+        payload = metadata()
+        raw = image_bytes(self.root / 'result.tif')
+        body = {'metadata': payload, 'expectedSourceSha256': hashlib.sha256(raw).hexdigest()}
+        path = '/api/workbench/imagery/upload-result'
+        status, unknown, _ = self.request(path, body)
+        self.assertEqual((status, unknown['state']), (200, 'unknown'))
+        status, image, _ = self.upload_image(payload=payload, data=raw)
+        self.assertEqual(status, 200, image)
+        status, recovered, headers = self.request(path, body)
+        self.assertEqual((status, recovered['state']), (200, 'completed'))
+        self.assertEqual(recovered['imageryVersionId'], image['imageryVersionId'])
+        self.assertEqual(headers['Cache-Control'], 'no-store')
+        reader = self.login('synthetic-reader')
+        self.authority(reader).role = 'reader'
+        self.assertEqual(self.request(path, body, client=reader)[1]['state'], 'unknown')
+        self.assertEqual(self.request(path, body, client=False)[0], 401)
+        self.assertEqual(self.request(path, {**body, 'expectedSourceSha256': '0' * 64})[0], 409)
+        self.authority(self.admin).allowed = False
+        self.assertEqual(self.request(path, body)[0], 403)
+
     def upload_image(self, *, client=None, data=None, payload=None, headers=None):
         client=self.admin if client is None else client
         payload={**(payload or metadata()),'expectedSessionRevision':client['revision']}

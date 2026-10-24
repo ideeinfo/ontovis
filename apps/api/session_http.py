@@ -149,7 +149,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                            for action in ('sources', 'check', 'activate', 'entry'))
             terrain_paths = ('/api/workbench/terrains', '/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
                              '/api/workbench/terrains/version', '/api/workbench/terrains/content')
-            imagery_paths = ('/api/workbench/imagery', '/api/workbench/imagery/version', '/api/workbench/imagery/content')
+            imagery_paths = ('/api/workbench/imagery', '/api/workbench/imagery/version',
+                             '/api/workbench/imagery/content', '/api/workbench/imagery/upload-result')
             public_geo_paths = tuple('/api/workbench/public-geodata/' + action for action in ('start', 'job', 'cancel'))
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
                               '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',
@@ -174,7 +175,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                          '/api/workbench/scenes/legacy-migration/activate')
             metadata_save = parts.path == '/api/workbench/resources/model/metadata/save'
             limit = (MAX_SCENE_BYTES if large_scene else MAX_METADATA_REQUEST_BYTES if metadata_save else
-                     16384 if parts.path in (*workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *resource_paths) else 4096)
+                     16384 if parts.path in (*workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')
             try:

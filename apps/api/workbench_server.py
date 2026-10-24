@@ -361,11 +361,14 @@ class WorkbenchSessions(UserSessions):
         return self.imagery_response(value, row, access)
 
     def imagery_request(self, sid, path, payload):
-        row, authorize, access, _ = self.project_authorization(sid, payload, writing=False)
+        row, authorize, access, actor = self.project_authorization(sid, payload, writing=False)
         if self.imagery is None: raise PreviewError(503, 'PROCESSING_UNAVAILABLE')
         body = {key:value for key,value in payload.items() if key != 'expectedSessionRevision'}
         if path == '/api/workbench/imagery' and set(body) <= {'q'}:
             value = self.imagery.listing(authorize, **body)
+        elif path == '/api/workbench/imagery/upload-result' and set(body) == {'metadata', 'expectedSourceSha256'}:
+            value = self.imagery.upload_result(body['metadata'], body['expectedSourceSha256'],
+                                               actor, authorize)
         elif path == '/api/workbench/imagery/version' and set(body) == {'imageryVersionId'}:
             value = self.imagery.version(body['imageryVersionId'], authorize)
         elif path == '/api/workbench/imagery/content' and set(body) == {'imageryVersionId','expectedContentRevision','expectedSha256'}:

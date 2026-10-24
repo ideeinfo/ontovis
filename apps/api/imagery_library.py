@@ -105,6 +105,24 @@ class ImageryLibrary:
         authorize()
         return {'items': result}
 
+    def upload_result(self, payload, fingerprint, actor, authorize):
+        payload = metadata(payload)
+        _require(type(fingerprint) is str and len(fingerprint) == 64
+                 and all(c in '0123456789abcdef' for c in fingerprint))
+        actor = _text(actor)
+        authorize()
+        with self._database() as db:
+            prior = db.execute('select * from imagery_requests where actor=? and request_id=?',
+                               (actor, payload['clientRequestId'])).fetchone()
+            if prior is None:
+                result = {'state': 'unknown'}
+            else:
+                _require(prior['payload'] == _canonical(payload) and prior['input_sha256'] == fingerprint,
+                         'REQUEST_CONFLICT', 409)
+                result = {'state': 'completed', **self.public(self._row(db, prior['version_id']))}
+        authorize()
+        return result
+
     def content(self, identifier, revision, fingerprint, authorize):
         value = self.version(identifier, authorize)
         _require(value['contentRevision'] == revision and value['texture']['sha256'] == fingerprint, 'RESOURCE_CHANGED', 409)

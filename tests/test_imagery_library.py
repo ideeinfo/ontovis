@@ -71,6 +71,37 @@ class ImageryLibraryTests(unittest.TestCase):
             self.assertEqual(db.execute('select count(*) from imagery_audit').fetchone()[0],1)
             with self.assertRaises(sqlite3.IntegrityError):db.execute("update imagery_versions set name='changed'")
 
+    def test_upload_result_recovers_only_the_same_actor_payload_and_bytes_without_writes(self):
+        payload = metadata()
+        fingerprint = hashlib.sha256(self.data).hexdigest()
+        query = lambda p=payload, sha=fingerprint, actor='synthetic-admin': self.images.upload_result(p, sha, actor, lambda: None)
+        self.assertEqual(query(), {'state': 'unknown'})
+        first = self.upload(payload)
+        with self.models.connect() as db:
+            before = [tuple(row) for row in db.execute('select * from imagery_requests')]
+        self.assertEqual(query(), {'state': 'completed', **first})
+        self.assertEqual(query(actor='another-actor'), {'state': 'unknown'})
+        self.expect('REQUEST_CONFLICT', lambda: query(sha='0' * 64))
+        self.expect('REQUEST_CONFLICT', lambda: query(p={**payload, 'sourceNote': 'Different'}))
+        for bad in (None, '0' * 63, 'G' * 64):
+            self.expect('INVALID_REQUEST', lambda: query(sha=bad))
+        with self.models.connect() as db:
+            self.assertEqual([tuple(row) for row in db.execute('select * from imagery_requests')], before)
+            self.assertEqual(db.execute('select count(*) from imagery_versions').fetchone()[0], 1)
+            self.assertEqual(db.execute('select count(*) from imagery_audit').fetchone()[0], 1)
+
+    def test_upload_result_unknown_is_not_failure_and_late_revocation_is_checked(self):
+        payload = metadata()
+        fingerprint = hashlib.sha256(self.data).hexdigest()
+        for uploaded in (False, True):
+            if uploaded: self.upload(payload)
+            calls = 0
+            def guard():
+                nonlocal calls
+                calls += 1
+                if calls == 2: raise PreviewError(403, 'FORBIDDEN')
+            self.expect('FORBIDDEN', lambda: self.images.upload_result(payload, fingerprint, 'synthetic-admin', guard))
+
     def test_unsupported_dtypes_bands_and_vrt_are_rejected_and_leave_no_output(self):
         for data in (image_bytes(self.root/'sixteen.tif',dtype='uint16'),image_bytes(self.root/'gray.tif',bands=1),
                      b'<VRTDataset rasterXSize="4" rasterYSize="4"></VRTDataset>'):

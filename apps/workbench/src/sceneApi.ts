@@ -7,7 +7,7 @@ import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelReq
   TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
 
 import type {SceneObjectChildren, SceneObjectContext, SceneObjectDetailRequest, SceneLocation, SceneLocationRequest} from './sceneEngineeringTypes';
-import type {ImageryCatalog, ImageryRecord, ImageryVersion, UploadImageryMetadata} from './resourceTypes';
+import type {ImageryCatalog, ImageryRecord, ImageryUploadResult, ImageryVersion, UploadImageryMetadata} from './resourceTypes';
 
 const ROOT = '/api/workbench/';
 
@@ -19,6 +19,9 @@ export class SceneApi {
   imagery(q='',signal?:AbortSignal) {return this.api.request<ImageryCatalog>(ROOT+'imagery',{q},signal);}
   imageryVersion(imageryVersionId:string,signal?:AbortSignal) {return this.api.request<ImageryVersion>(ROOT+'imagery/version',{imageryVersionId},signal);}
   uploadImagery(file:Blob,metadata:UploadImageryMetadata,signal?:AbortSignal) {return this.api.uploadImagery<ImageryVersion>(file,metadata,signal);}
+  imageryUploadResult(metadata:UploadImageryMetadata,expectedSourceSha256:string,signal?:AbortSignal) {
+    return this.api.request<ImageryUploadResult>(ROOT+'imagery/upload-result',{metadata,expectedSourceSha256},signal);
+  }
   imageryContent(value:ImageryRecord,signal?:AbortSignal) {
     return this.api.content(ROOT+'imagery/content',{imageryVersionId:value.imageryVersionId,
       expectedContentRevision:value.contentRevision,expectedSha256:value.texture.sha256},
