@@ -14,6 +14,7 @@ export interface BinaryDescriptor {
 type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk';
 const MIB = 1024 * 1024;
 const writeOnlyDenials: Record<string, readonly string[]> = {
+  ANALYSIS_WRITE_FORBIDDEN: ['/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/restore'],
   WORK_ORDER_WRITE_FORBIDDEN: ['/api/workbench/work-orders/seed-demo', '/api/workbench/work-orders/action'],
   IMAGERY_WRITE_FORBIDDEN:['/api/workbench/imagery/upload','/api/workbench/imagery/uploads/start',
     '/api/workbench/imagery/uploads/chunk','/api/workbench/imagery/uploads/complete','/api/workbench/imagery/uploads/cancel'],

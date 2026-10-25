@@ -27,6 +27,14 @@ def location_for(path):
 
 
 class WorkbenchDeploymentTests(unittest.TestCase):
+    def test_analysis_drafts_have_bounded_routes_without_conclusion_or_sharing(self):
+        for suffix in ('', '/create', '/save', '/detail', '/restore', '/revisions'):
+            body = location_for('/api/workbench/analysis-sessions'+suffix)
+            self.assertIn('client_max_body_size '+('264k' if suffix in ('/create', '/save') else '16k')+';', body)
+            self.assertIn('proxy_buffering off;', body)
+        for suffix in ('/confirm', '/archive', '/share', '/save/extra', '/'):
+            with self.assertRaises(AssertionError): location_for('/api/workbench/analysis-sessions'+suffix)
+
     def test_only_successful_content_named_public_assets_are_cacheable(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
         block = nginx.split('map "$status:$uri" $ontovis_public_asset_cache_control {', 1)[1].split('\n}', 1)[0]

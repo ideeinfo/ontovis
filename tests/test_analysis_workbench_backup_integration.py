@@ -81,7 +81,7 @@ class AnalysisWorkbenchBackupTests(unittest.TestCase):
         target = self.root/'recovered/workbench'
         app = ProjectSessions('http://127.0.0.1:1', library_root=target/'workbench-library',
             workspace_root=target/'project-spaces', registry_backend='postgres',
-            registry_database_url=self.urls[1], factory=ProjectsAuthority)
+            registry_database_url=self.urls[1], analysis_store_id=restored['sourceStoreId'], factory=ProjectsAuthority)
         self.addCleanup(app.close)
         self.assertEqual(app.registry.lookup('SYNTHETIC-A')['workspace_id'], self.workspace['workspace_id'])
         self.assertEqual(app.registry.summary('SYNTHETIC-A')['sceneCount'], 1)
@@ -96,7 +96,7 @@ class AnalysisWorkbenchBackupTests(unittest.TestCase):
         connect.assert_not_called()
         app = ProjectSessions('http://127.0.0.1:1', library_root=self.source/'workbench-library',
             workspace_root=self.source/'project-spaces', registry_backend='postgres',
-            registry_database_url=self.urls[0], factory=ProjectsAuthority)
+            registry_database_url=self.urls[0], analysis_store_id=self.store.store_id, factory=ProjectsAuthority)
         self.addCleanup(app.close)
         with self.assertRaises(PreviewError) as error: self.snapshot()
         self.assertEqual(error.exception.code, 'REGISTRY_IN_USE')

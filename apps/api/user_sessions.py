@@ -6,6 +6,7 @@ import secrets
 from threading import RLock
 import time
 from urllib.parse import quote
+from uuid import UUID
 from .authority import Authority, PreviewError
 
 COOKIE = '__Host-ontovis_session'
@@ -18,6 +19,7 @@ class Session:
     touched: float = 0
     status: str = 'anonymous'
     authority: Authority | None = None
+    subject_id: str | None = None
     rotated_to: str | None = None
 
 
@@ -106,6 +108,10 @@ class UserSessions:
             me = authority.request('GET', '/api/v1/auth/me').get('user', {})
             if me.get('username') != username or me.get('is_active') is not True:
                 raise PreviewError(401, 'CREDENTIALS_REJECTED')
+            subject = me.get('id')
+            if subject is not None and (not isinstance(subject, str) or str(UUID(subject)) != subject
+                    or result.get('user', {}).get('id', subject) != subject):
+                raise PreviewError(502, 'SOURCE_UNAVAILABLE')
             readable = True
             try: self.access(authority)
             except PreviewError as error:
@@ -116,7 +122,7 @@ class UserSessions:
                     raise PreviewError(409, 'SESSION_CHANGED')
                 new_sid = secrets.token_urlsafe(32)
                 now = self.clock()
-                active = Session(created=now, touched=now, status='active', authority=authority)
+                active = Session(created=now, touched=now, status='active', authority=authority, subject_id=subject)
                 self.rows[new_sid] = active
                 # A cancelled in-flight login can still invalidate its rotated
                 # cookie before a delayed response reaches the browser.
@@ -145,7 +151,8 @@ class UserSessions:
             return {'state':'signedOut', 'sessionRevision':row.revision}
         try:
             me = authority.request('GET', '/api/v1/auth/me').get('user', {})
-            if me.get('username') != authority.username or me.get('is_active') is not True:
+            if (me.get('username') != authority.username or me.get('is_active') is not True
+                    or row.subject_id is not None and me.get('id') != row.subject_id):
                 raise PreviewError(401, 'SESSION_EXPIRED')
             readable = True
             try: self.access(authority)

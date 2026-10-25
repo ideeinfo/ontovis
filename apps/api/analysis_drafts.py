@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import math
 from threading import RLock
@@ -297,6 +298,45 @@ class AnalysisDrafts:
             return {'headRevision': head, 'items': [{'revision':r[0], 'contentSha256':r[1], 'operation':r[2],
                     'restoredFromRevision':r[3], 'createdAt':r[4]} for r in rows],
                     'nextBeforeRevision': rows[-1][0] if more else None}
+
+    def listing(self, actor_id, body, authorize, *, cursor_key, session_revision):
+        identifier(actor_id)
+        require(type(body) is dict and set(body) <= {'q', 'status', 'limit', 'cursor'})
+        query, status, limit = body.get('q', ''), body.get('status', ''), body.get('limit', 25)
+        require(type(query) is str and len(query) <= 200 and type(limit) is int and 1 <= limit <= 50)
+        require(status in ('', 'analyzing', 'awaiting_field_check', 'awaiting_expert_review'))
+        authorize()
+        with self.connection.transaction(readonly=True) as cursor:
+            cursor.execute(f'''select session_id::text,title,status,head_revision,created_at,updated_at
+                from {SCHEMA}.analysis_sessions where connection_id=%s and project_code=%s and owner_id=%s
+                order by updated_at desc,session_id limit 1001''', (self.connection_id, self.project_code, actor_id))
+            rows = cursor.fetchall()
+            require(len(rows) <= 1000, 'ANALYSIS_STORAGE_INVALID', 409)
+            items = [{'analysisSessionId': r[0], 'title': r[1], 'status': r[2], 'analysisRevision': r[3],
+                      'createdAt': r[4], 'updatedAt': r[5]} for r in rows
+                     if (not status or r[2] == status) and query.strip().casefold() in r[1].casefold()]
+            revision = digest([self.store_id, self.connection_id, self.project_code, actor_id,
+                               session_revision, query, status, limit, items])
+            start = 0
+            token = body.get('cursor')
+            if token is not None:
+                require(type(token) is str and len(token) <= 200)
+                try:
+                    offset, previous, signature = token.split('.')
+                    unsigned = offset + '.' + previous
+                    require(hmac.compare_digest(signature, hmac.new(cursor_key, unsigned.encode(), 'sha256').hexdigest()))
+                    require(previous == revision, 'ANALYSIS_LIST_CHANGED', 409)
+                    start = int(offset)
+                    require(str(start) == offset and 0 <= start <= len(items))
+                except (ValueError, TypeError):
+                    raise PreviewError(422, 'INVALID_REQUEST') from None
+            following = None
+            if start + limit < len(items):
+                unsigned = str(start + limit) + '.' + revision
+                following = unsigned + '.' + hmac.new(cursor_key, unsigned.encode(), 'sha256').hexdigest()
+            authorize()
+            return {'items': items[start:start+limit], 'total': len(items), 'nextCursor': following,
+                    'snapshotRevision': revision}
 
     def write(self, actor_id, project_role, action, body, authorize):
         """actor/role and authorize must come from the server session, never JSON."""

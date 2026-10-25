@@ -914,6 +914,7 @@ def main():
             sessions = ProjectSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root,
                 workspace_root=workspace_root,
                 registry_backend=args.registry_backend, registry_database_url=os.environ.get('ONTOVIS_REGISTRY_DSN'),
+                analysis_store_id=os.environ.get('ONTOVIS_ANALYSIS_STORE_ID'),
                 library_root=args.library_root, terrain_python=args.terrain_python, terrain_max_upload_bytes=args.terrain_max_upload_bytes,
                 ontobase_connection_id=args.ontobase_connection_id, thumbnail_renderer=args.thumbnail_renderer,
                 thumbnail_node=args.thumbnail_node, thumbnail_browser=args.thumbnail_browser)

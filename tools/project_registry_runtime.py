@@ -81,7 +81,8 @@ def _runtime_rows(registry):
     return result, versions
 
 
-def snapshot(project_root, destination, database_url, *, library_root, model_root=None, service_stopped=False):
+def snapshot(project_root, destination, database_url, *, library_root, model_root=None, service_stopped=False,
+             _analysis_store_id=None):
     """Hold local and PG ownership while materializing a complete SQLite backup.
 
     Runtime's marker never enters the portable backup. Every non-registry file
@@ -100,6 +101,13 @@ def snapshot(project_root, destination, database_url, *, library_root, model_roo
             registry = runtime.PostgresProjectWorkspaces(projects, marker['connectionId'],
                 legacy_root=library, model_root=model, database_url=database_url)
             try:
+                from apps.api.analysis_drafts import SCHEMA as analysis_schema
+                with registry.connection.transaction(readonly=True) as cursor:
+                    cursor.execute('select to_regnamespace(%s)', (analysis_schema,))
+                    if cursor.fetchone()[0] is not None:
+                        cursor.execute(f'select store_id::text from {analysis_schema}.store_meta where id=1')
+                        row = cursor.fetchone()
+                        runtime.require(row and row[0] == _analysis_store_id, 'ANALYSIS_PAIRED_BACKUP_REQUIRED')
                 original, versions = _runtime_rows(registry)
                 fixed = {name: original[name] for name in migration.COLUMNS}
                 legacy = any(row['storage_key'] == 'legacy' for row in fixed['project_workspaces'])

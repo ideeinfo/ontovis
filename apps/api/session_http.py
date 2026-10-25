@@ -159,6 +159,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             project_paths = ('/api/workbench/projects', '/api/workbench/projects/access')
             work_order_paths = tuple('/api/workbench/work-orders' + suffix
                                      for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history'))
+            analysis_paths = tuple('/api/workbench/analysis-sessions' + suffix
+                                   for suffix in ('', '/create', '/detail', '/save', '/restore', '/revisions'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
                                   '/api/workbench/objects/evidence/content', '/api/workbench/objects/photos/resolve',
@@ -181,7 +183,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                               '/api/workbench/resources/model/metadata', '/api/workbench/resources/model/metadata/save',
                               '/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',
                               '/api/workbench/resources/model/thumbnail/content')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *project_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *project_paths, *analysis_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
                     or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json'):
@@ -196,6 +198,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                          '/api/workbench/scenes/legacy-migration/activate')
             metadata_save = parts.path == '/api/workbench/resources/model/metadata/save'
             limit = (MAX_SCENE_BYTES if large_scene else MAX_METADATA_REQUEST_BYTES if metadata_save else
+                     270336 if parts.path in ('/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save') else
                      32768 if parts.path == '/api/workbench/work-orders/action' else
                      16384 if parts.path in (*work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:
@@ -209,6 +212,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
             if parts.path in project_paths:
                 return self.reply(200, sessions.projects_request(sid, parts.path, payload))
+            if parts.path in analysis_paths:
+                return self.reply(200, sessions.analysis_request(sid, parts.path, payload))
             if parts.path in work_order_paths:
                 return self.reply(200, sessions.work_order_request(sid, parts.path, payload))
             if parts.path in scene_paths: return self.reply(200,sessions.scene_request(sid,parts.path,payload))

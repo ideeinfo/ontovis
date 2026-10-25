@@ -68,7 +68,8 @@ def snapshot(project_root, destination, database_url, *, library_root, model_roo
             analysis._safe_directory(target, new=True)
             try:
                 workbench = runtime.snapshot(project_root, target/'workbench', database_url,
-                    library_root=library_root, model_root=model_root, service_stopped=True)
+                    library_root=library_root, model_root=model_root, service_stopped=True,
+                    _analysis_store_id=original['sourceStoreId'])
                 _paired(target/'workbench', workbench['manifestSha256'], original)
                 saved = analysis.snapshot(database_url, target/'analysis')
                 draft.require(analysis.export_package(database_url) == original, 'ANALYSIS_SOURCE_CHANGED', 409)

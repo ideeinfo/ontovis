@@ -30,7 +30,9 @@ METHODS = ('scene_request', 'scene_object_request', 'resource_request', 'resourc
 class ProjectSessions(UserSessions):
     def __init__(self, base_url, project_code=None, installation_context_id=None, *, library_root,
                  workspace_root=None, model_root=None, ontobase_connection_id='ontobase-primary',
-                 registry_backend='sqlite', registry_database_url=None, **kwargs):
+                 registry_backend='sqlite', registry_database_url=None, analysis_store_id=None, **kwargs):
+        if analysis_store_id is not None and registry_backend != 'postgres':
+            raise PreviewError(409, 'ANALYSIS_POSTGRES_REQUIRED')
         identity_options = {key: kwargs.pop(key) for key in ('clock', 'factory') if key in kwargs}
         super().__init__(base_url, project_code or '', **identity_options)
         self.connection_id = text(ontobase_connection_id)
@@ -50,7 +52,18 @@ class ProjectSessions(UserSessions):
             legacy_context=installation_context_id, **registry_options)
         self.services = {}
         self.readers = {}
+        self.analysis_store_id, self.analysis_database_url = analysis_store_id, registry_database_url
         try:
+            if registry_backend == 'postgres':
+                from .analysis_drafts import SCHEMA, identifier, profile, require
+                with self.registry.connection.transaction(readonly=True) as cursor:
+                    cursor.execute('select to_regnamespace(%s)', (SCHEMA,))
+                    exists = cursor.fetchone()[0] is not None
+                    require(exists == (analysis_store_id is not None), 'ANALYSIS_CONFIGURATION_REQUIRED', 409)
+                    if exists:
+                        identifier(analysis_store_id); profile(cursor)
+                        cursor.execute(f'select store_id::text,connection_id from {SCHEMA}.store_meta where id=1')
+                        require(cursor.fetchone() == (analysis_store_id, self.connection_id), 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)
             self._initialize_services(project_code, installation_context_id, library_root, model_root)
         except BaseException:
             self.close()
@@ -355,6 +368,62 @@ class ProjectSessions(UserSessions):
                             'installationContextId': value['context']['installationContextId'],
                             'hierarchyRevision': value['context']['hierarchyRevision']}
         return targets
+
+    def analysis_request(self, sid, path, payload):
+        from .analysis_drafts import AnalysisDrafts, identifier, require, validate_snapshot
+        row = self._session(sid, payload)
+        code = self._ref(payload.get('projectRef'))
+        require(self.analysis_store_id is not None, 'ANALYSIS_NOT_ENABLED', 503)
+        require(row.subject_id is not None, 'ANALYSIS_IDENTITY_REQUIRED', 401)
+        actor = identifier(row.subject_id)
+        action = path.removeprefix('/api/workbench/analysis-sessions').removeprefix('/')
+        require(action in ('', 'create', 'detail', 'save', 'restore', 'revisions'))
+        writing = action in ('create', 'save', 'restore')
+        access = self._access(sid, row, code)
+        if writing:
+            require(access.get('role') == 'admin', 'ANALYSIS_WRITE_FORBIDDEN', 403)
+        body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
+
+        def authorize():
+            self.guard(sid, row)
+            try:
+                me = row.authority.request('GET', '/api/v1/auth/me').get('user', {})
+                require(me.get('id') == actor and me.get('is_active') is True
+                        and me.get('username') == row.authority.username, 'SESSION_EXPIRED', 401)
+                current = self._access(sid, row, code)
+                require(current['accessRevision'] == access['accessRevision']
+                        and (not writing or current.get('role') == 'admin'), 'ACCESS_CHANGED', 409)
+                self.guard(sid, row)
+            except PreviewError as error:
+                if error.status == 401: self.invalidate(sid, row)
+                raise
+
+        if action == 'create':
+            require(set(body) == {'requestId', 'snapshot'})
+            identifier(body['requestId']); validate_snapshot(body['snapshot'], self.connection_id, code)
+            authorize()
+            workspace = self.registry.lookup(code)
+            if workspace is None: workspace = self.registry.prepare(code)
+            self._workspace(workspace)
+        store = AnalysisDrafts(self.analysis_database_url, self.connection_id, code)
+        try:
+            require(store.store_id == self.analysis_store_id, 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)
+            if writing:
+                value = store.write(actor, access['role'], action, body, authorize)
+            elif action == '':
+                value = store.listing(actor, body, authorize, cursor_key=self.cursor_key, session_revision=row.revision)
+            elif action == 'detail':
+                require(set(body) in ({'analysisSessionId'}, {'analysisSessionId', 'analysisRevision'}))
+                value = store.detail(actor, body['analysisSessionId'], authorize, revision=body.get('analysisRevision'))
+            else:
+                require('analysisSessionId' in body and set(body) <= {'analysisSessionId', 'before', 'limit'})
+                value = store.history(actor, body['analysisSessionId'], authorize,
+                                      before=body.get('before'), limit=body.get('limit', 25))
+            return {**value, 'projectRef': payload['projectRef'], 'sessionRevision': row.revision,
+                    'capabilities': {'canWrite': access.get('role') == 'admin', 'canConfirmConclusion': False,
+                                     'sourceCardsEnabled': False}}
+        finally:
+            store.close()
 
     def work_order_request(self, sid, path, payload):
         row = self._session(sid, payload)

@@ -1,4 +1,4 @@
-// Q-20 page-contract logic. Used by the MagicPath prototype; not a live session API.
+// Bounded canvas layout shared by the design prototype and draft workspace.
 export const CARD_KINDS = ['object','drawing','document','photo','model3d','trend','alarm','work_order','analysis'] as const;
 export type CardKind = typeof CARD_KINDS[number];
 export type Availability = 'ready'|'restricted'|'missing'|'unavailable'|'unconnected'|'stale';
