@@ -30,4 +30,4 @@
 
 - [Q-13 分析草稿存储与整组恢复候选](q13-analysis-storage-20261026/README.md)：31项存储/8项配对恢复检查，现有247文件的私有副本恢复演练；未启用线上草稿保存。
 
-- [Q-21 本人分析草稿接入](q21-analysis-drafts-20261026/README.md)：HTTP/页面、隔离PG浏览器、MagicPath及整组备份恢复记录；结论确认不启用。
+- [Q-21 本人分析画布首期](q21-analysis-drafts-20261026/README.md)：正式HTTP/保存历史、实际账号重登、MagicPath及整组恢复；界面统一“分析画布”，结论确认不启用。
