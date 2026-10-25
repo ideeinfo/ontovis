@@ -60,3 +60,20 @@ test('work-order write denial keeps project reads and the signed-in identity ava
   await assert.rejects(api.request('/api/workbench/work-orders/action',{}),error=>error.code==='WORK_ORDER_WRITE_FORBIDDEN');
   assert.equal(denied,0);
 });
+test('verified photo transport keeps headers and size checks without a second browser digest',async t=>{
+  const bytes=new TextEncoder().encode('server-verified fixture');
+  const sha=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex');
+  const original=crypto.subtle.digest;
+  const digest=t.mock.method(crypto.subtle,'digest',(...args)=>original.apply(crypto.subtle,args));
+  let headerSha=sha,length=String(bytes.length);
+  const api=new WorkbenchApi(async()=>new Response(bytes,{headers:{'Content-Type':'image/jpeg','Content-Length':length,'X-Session-Revision':'r1','X-Content-SHA256':headerSha}}));
+  api.session('r1');const descriptor={mime:['image/jpeg'],maxBytes:1024,sha256:sha};
+  assert.equal((await api.content('/api/workbench/objects/photos/content',{},descriptor)).size,bytes.length);
+  assert.equal(digest.mock.calls.length,0);
+  await api.content('/another-protected-image',{},descriptor);
+  assert.equal(digest.mock.calls.length,1);
+  headerSha='a'.repeat(64);
+  await assert.rejects(api.content('/api/workbench/objects/photos/content',{},descriptor),e=>e.code==='RESOURCE_CHANGED');
+  headerSha=sha;length=String(bytes.length+1);
+  await assert.rejects(api.content('/api/workbench/objects/photos/content',{},descriptor),e=>e.code==='SOURCE_UNAVAILABLE');
+});

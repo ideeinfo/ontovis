@@ -38,18 +38,43 @@ class PhotoAuthority(engineering.SyntheticAuthority):
                     'coordinateSpace': 'oriented_display_normalized', 'bbox': {'x': .1, 'y': .2, 'width': .3, 'height': .4}},
                 'storage_uri': '/private/not-public'}]}
 
+    def selection(self, body):
+        self.guard()
+        item = self.objects.get(body['entityUid'])
+        if not item or item['installationContextId'] != body['installationContextId']:
+            raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
+        if item['entityRevision'] != body['expectedEntityRevision']:
+            raise PreviewError(409, 'ENGINEERING_CHANGED')
+        if body['installationContextId'] and self.contexts[body['installationContextId']]['hierarchyRevision'] != body['expectedHierarchyRevision']:
+            raise PreviewError(409, 'ENGINEERING_CHANGED')
+
     def request(self, method, path, body=None):
         if not path.endswith('/object-evidence/photos/resolve'):
             return super().request(method, path, body)
-        self.guard()
+        self.calls.append((method, path, copy.deepcopy(body)))
+        self.selection(body)
         value = self.metadata(body)
         if self.edit: self.edit(value)
+        self.selection(body)
         return value
 
     def photo(self, path, body, display_sha256):
         assert path.endswith('/photos/content') and body['representation'] == 'display'
         assert 'expectedDisplayRevision' not in body
+        self.calls.append(('POST', path, copy.deepcopy(body)))
+        self.selection(body)
+        value = self.metadata(body)
+        if self.edit: self.edit(value)
+        item = next((row for row in value['items'] if row['evidenceRef'] == body['evidenceRef']), None)
+        if not item or item['sourceRevision'] != body['expectedSourceRevision']:
+            raise PreviewError(409, 'SOURCE_CHANGED')
+        if item['sourceSha256'] != body['expectedSourceSha256'] or item['contentVersionId'] != body['expectedContentVersionId']:
+            raise PreviewError(409, 'CONTENT_CHANGED')
+        if not item['selector']: raise PreviewError(409, 'RENDITION_UNAVAILABLE')
+        if display_sha256 != item['selector']['displayRevision']:
+            raise PreviewError(409, 'CONTENT_CHANGED')
         if self.after_photo: self.after_photo(self)
+        self.selection(body)
         return {'content': PNG, 'mediaType': 'image/png', 'sha256': display_sha256}
 
 
@@ -90,7 +115,7 @@ class ScenePhotoTests(unittest.TestCase):
         self.authority.edit = None
         for key in ('expectedSourceRevision', 'expectedSourceSha256', 'expectedDisplayRevision'):
             body = self.content_body(); body[key] = 'c' * 64
-            self.error('RENDITION_UNAVAILABLE' if key == 'expectedDisplayRevision' else 'SOURCE_CHANGED', self.reader.content, body)
+            self.error('SOURCE_CHANGED' if key == 'expectedSourceRevision' else 'CONTENT_CHANGED', self.reader.content, body)
 
     def test_empty_unavailable_invalid_or_duplicate_regions_are_honest(self):
         self.authority.edit = lambda value: value.update(items=[])
@@ -110,16 +135,17 @@ class ScenePhotoTests(unittest.TestCase):
         self.authority.after_photo = lambda source: source.objects[engineering.CABINET].update(entityRevision='changed:2')
         self.error('ENGINEERING_CHANGED', self.reader.content, self.content_body())
 
-    def test_content_reads_identity_only_before_and_after_the_complete_operation(self):
-        with patch.object(self.reader, '_selected', wraps=self.reader._selected) as selected:
+    def test_content_uses_one_protected_source_read_without_duplicate_metadata_or_identity(self):
+        with patch.object(self.reader, '_selected', side_effect=AssertionError('Redundant object read')) as selected:
             self.assertEqual(self.reader.content(self.content_body())['content'], PNG)
-        self.assertEqual(selected.call_count, 2)
+        self.assertEqual(selected.call_count, 0)
+        self.assertEqual([path.rsplit('/', 1)[-1] for _, path, _ in self.authority.calls], ['content'])
 
     def test_identity_change_during_metadata_still_prevents_releasing_bytes(self):
         self.authority.edit = lambda _: self.authority.objects[engineering.CABINET].update(entityRevision='changed:2')
         self.error('ENGINEERING_CHANGED', self.reader.content, self.content_body())
 
-    def test_project_photo_uses_one_identity_read_per_boundary_and_keeps_final_guards(self):
+    def test_project_photo_relies_on_current_source_guards_without_duplicate_identity_reads(self):
         item = self.authority.objects['definition']
         body = {'entityUid': item['entityUid'], 'expectedEntityRevision': item['entityRevision'],
                 'installationContextId': None, 'expectedHierarchyRevision': None}
@@ -129,7 +155,7 @@ class ScenePhotoTests(unittest.TestCase):
                    'expectedDisplayRevision': row['selector']['displayRevision']}
         with patch.object(self.reader.reader, '_resolve', wraps=self.reader.reader._resolve) as resolve:
             self.assertEqual(self.reader.content(payload)['content'], PNG)
-        self.assertEqual(resolve.call_count, 2)
+        self.assertEqual(resolve.call_count, 0)
         self.authority.after_photo = lambda source: setattr(source, 'allowed', False)
         self.error('FORBIDDEN', self.reader.content, payload)
         self.authority.allowed = True

@@ -19,6 +19,7 @@ from .shared_models import SharedModelAccess
 from .work_orders import WorkOrders, require as order_require
 from .demo_faults import DEMO_PROJECT
 from .scene_engineering import SceneEngineeringReader
+from .scene_photos import ScenePhotoReader
 
 
 METHODS = ('scene_request', 'scene_object_request', 'resource_request', 'resource_upload',
@@ -268,6 +269,21 @@ class ProjectSessions(UserSessions):
             return (self.shared.resource_request(sid, path, clean) if method == 'resource_request'
                     else self.shared.resource_upload(sid, clean, *args))
         code = self._ref(payload.get('projectRef'))
+        if method == 'scene_object_request' and path in (
+                '/api/workbench/objects/photos/resolve', '/api/workbench/objects/photos/content'):
+            body = {k: v for k, v in payload.items() if k not in ('projectRef', 'expectedSessionRevision')}
+            # OntoBase checks the current project grant and fixed association
+            # inside this one protected read, including its final recheck.
+            reader = ScenePhotoReader(SceneEngineeringReader(row.authority, self.connection_id, code,
+                lambda: self.guard(sid, row)))
+            try:
+                value = reader.content(body) if path.endswith('/content') else reader.resolve(body)
+                self.guard(sid, row)
+                return {**value, 'sessionRevision': row.revision,
+                        'projectRef': {'ontobaseConnectionId': self.connection_id, 'projectCode': code}}
+            except PreviewError as error:
+                if error.status == 401: self.invalidate(sid, row)
+                raise
         access = self._access(sid, row, code)
         clean = {k: v for k, v in payload.items() if k != 'projectRef'}
         writing = method.endswith('upload') or method == 'imagery_chunk' or path == '/api/workbench/imagery/uploads/complete' or path.endswith(('/create', '/save', '/calibrate', '/import-existing',

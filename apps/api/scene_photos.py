@@ -43,21 +43,10 @@ def selector(value):
 
 
 class ScenePhotoReader(SceneEvidenceReader):
-    def _selected(self, body):
-        if body['installationContextId'] is None:
-            item = self.reader._resolve([body['entityUid']])[body['entityUid']]
-            _require(item['entityRevision'] == body['expectedEntityRevision']
-                     and item['installationContextId'] is None, 'ENGINEERING_CHANGED', 409)
-            if item['objectScope'] != 'installation':
-                # The outer before/after pair already checks the complete read.
-                # A project object has no installation path to traverse twice.
-                return {'item': item, 'context': None}
-        return super()._selected(body)
-
     def __init__(self, reader):
         self.reader = reader
 
-    def _photo_metadata(self, value, body, selected):
+    def _photo_metadata(self, value, body):
         _require(type(value) is dict and value.get('entityUid') == body['entityUid']
                  and value.get('entityRevision') == body['expectedEntityRevision']
                  and value.get('installationContextId') == body['installationContextId']
@@ -79,8 +68,8 @@ class ScenePhotoReader(SceneEvidenceReader):
                          and row.get('sourceTemplateRevision') is None, 'SOURCE_CHANGED', 409)
             else:
                 _require(relation == 'template_definition'
-                         and row.get('sourceEntityUid') == selected['item']['sourceTemplateEntityUid']
                          and row.get('sourceTemplateRevision') == row.get('sourceEntityRevision'), 'SOURCE_CHANGED', 409)
+                _text(row.get('sourceEntityUid')); _text(row.get('sourceEntityRevision'), 200)
             _require(row.get('engineeringConfirmation') is False
                      and row.get('verificationState') == 'association_record_only'
                      and row.get('applicabilityState') == 'recorded_unverified'
@@ -103,21 +92,18 @@ class ScenePhotoReader(SceneEvidenceReader):
             result.append(item)
         return {'items': result, 'complete': True, 'versionMode': 'fixed_content_version'}
 
-    def _resolve_selected(self, body, selected):
+    def _resolve_selected(self, body):
         try:
             value = self.reader._request('POST', self.reader.prefix + '/object-evidence/photos/resolve', body)
         except PreviewError as error:
             if error.status == 404:
                 raise PreviewError(503, 'PHOTO_SOURCE_UNAVAILABLE') from None
             raise
-        return self._photo_metadata(value, body, selected)
+        return self._photo_metadata(value, body)
 
     def resolve(self, payload):
         body = self._selection(payload)
-        selected = self._selected(body)
-        result = self._resolve_selected(body, selected)
-        self._unchanged(body, selected)
-        return result
+        return self._resolve_selected(body)
 
     def content(self, payload):
         _require(type(payload) is dict and set(payload) == SELECTION_FIELDS | PHOTO_FIELDS, 'INVALID_REQUEST', 422)
@@ -125,19 +111,12 @@ class ScenePhotoReader(SceneEvidenceReader):
         _text(payload['evidenceRef'], request=True); _text(payload['expectedContentVersionId'], request=True)
         for key in ('expectedSourceRevision', 'expectedSourceSha256', 'expectedDisplayRevision'):
             _sha(payload[key], request=True)
-        selected = self._selected(body)
-        # Keep one identity snapshot around the whole read, including the bytes.
-        # Calling resolve() here repeated both identity reads inside this pair.
-        metadata = self._resolve_selected(body, selected)
-        item = next((row for row in metadata['items'] if row['evidenceRef'] == payload['evidenceRef']), None)
-        _require(item is not None and item['sourceRevision'] == payload['expectedSourceRevision']
-                 and item['contentVersionId'] == payload['expectedContentVersionId']
-                 and item['sourceSha256'] == payload['expectedSourceSha256'], 'SOURCE_CHANGED', 409)
-        _require(item['selector'] is not None and item['selector']['displayRevision'] == payload['expectedDisplayRevision'],
-                 'RENDITION_UNAVAILABLE', 409)
+        # The fixed source endpoint owns membership, association, version and
+        # read-after-change checks. Do not repeat its queries in the proxy.
         request = {**body, **{key: payload[key] for key in PHOTO_FIELDS if key != 'expectedDisplayRevision'},
                    'representation': 'display'}
+        self.reader.authorize()
         result = self.reader.authority.photo(self.reader.prefix + '/object-evidence/photos/content', request,
                                              payload['expectedDisplayRevision'])
-        self._unchanged(body, selected)
+        self.reader.authorize()
         return result

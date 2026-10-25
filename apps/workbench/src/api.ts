@@ -25,7 +25,7 @@ const writeOnlyDenials: Record<string, readonly string[]> = {
     '/api/workbench/public-geodata/start', '/api/workbench/public-geodata/cancel'],
 };
 
-async function binaryResponse(response: Response, descriptor: BinaryDescriptor, revision: string, guard: () => void) {
+async function binaryResponse(response: Response, descriptor: BinaryDescriptor, revision: string, guard: () => void, verifyDigest=true) {
   const refuse = async (status: number, code: string): Promise<never> => {
     await response.body?.cancel().catch(() => {});
     throw new ApiError(status, code);
@@ -66,10 +66,12 @@ async function binaryResponse(response: Response, descriptor: BinaryDescriptor, 
   guard();
   if (blob.size > descriptor.maxBytes) throw new ApiError(413, 'CONTENT_LIMIT_EXCEEDED');
   if (blob.type !== mime || expectedLength !== null && blob.size !== expectedLength) throw new ApiError(502, 'SOURCE_UNAVAILABLE');
-  const bytes = await blob.arrayBuffer(); guard();
-  const digest = await crypto.subtle.digest('SHA-256', bytes); guard();
-  const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
-  if (sha256 !== descriptor.sha256) throw new ApiError(409, 'RESOURCE_CHANGED');
+  if(verifyDigest){
+    const bytes = await blob.arrayBuffer(); guard();
+    const digest = await crypto.subtle.digest('SHA-256', bytes); guard();
+    const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+    if (sha256 !== descriptor.sha256) throw new ApiError(409, 'RESOURCE_CHANGED');
+  }
   return blob;
 }
 
@@ -162,7 +164,10 @@ export class WorkbenchApi {
       }
       throw new ApiError(response.status, code);
     }
-    if (typeof image === 'object') return await binaryResponse(response, image, revision, guard) as T;
+    // Fixed photo bytes are already verified by the same-origin server. Keep
+    // revision/header/size checks, without copying and hashing the image again.
+    if (typeof image === 'object') return await binaryResponse(response, image, revision, guard,
+      path!=='/api/workbench/objects/photos/content') as T;
     if (image) {
       const blob = await response.blob();
       guard();
