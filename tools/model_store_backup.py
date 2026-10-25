@@ -17,6 +17,7 @@ import sqlite3
 import stat
 import struct
 from uuid import UUID
+from apps.api.storage_lease import storage_lease, StorageInUse
 
 
 ROOTS = ('workbench-library', 'workbench-model')
@@ -357,8 +358,11 @@ def snapshot(library_root, model_root, destination, *, service_stopped=False):
         library, model = _directory(library_root), _directory(model_root)
         _require(not library.is_relative_to(model) and not model.is_relative_to(library), 'OVERLAPPING_PATHS')
         destination = _destination(destination, (library, model))
-        report, identities = _capture(library, model)
-        return _copy(library, model, destination, report, identities)
+        with storage_lease((library,), shared=True):
+            report, identities = _capture(library, model)
+            return _copy(library, model, destination, report, identities)
+    except StorageInUse:
+        raise BackupError('OFFLINE_REQUIRED') from None
     except OSError:
         raise BackupError('UNSAFE_PATH') from None
 

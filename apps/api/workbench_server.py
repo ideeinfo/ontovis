@@ -38,6 +38,7 @@ from apps.api.legacy_scene_registry import LegacySceneRegistry
 from apps.api.legacy_scene_sources import LegacySceneSources
 from apps.api.imagery_library import ImageryLibrary, MAX_BYTES as MAX_IMAGERY_BYTES, MAX_VERSIONS as MAX_IMAGERY_VERSIONS, MAX_TOTAL_BYTES as MAX_IMAGERY_TOTAL_BYTES
 from apps.api.public_geodata import PublicGeoData
+from apps.api.storage_lease import storage_lease, StorageInUse
 
 
 class WorkbenchSessions(UserSessions):
@@ -897,19 +898,28 @@ def main():
     parser.add_argument('--thumbnail-node', type=Path)
     parser.add_argument('--thumbnail-browser', type=Path)
     args = parser.parse_args()
+    if args.library_root is None:
+        parser.error('--library-root is required')
     from apps.api.project_sessions import ProjectSessions
-    sessions = ProjectSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root,
-        workspace_root=args.workspace_root,
-        library_root=args.library_root, terrain_python=args.terrain_python, terrain_max_upload_bytes=args.terrain_max_upload_bytes,
-        ontobase_connection_id=args.ontobase_connection_id, thumbnail_renderer=args.thumbnail_renderer,
-        thumbnail_node=args.thumbnail_node, thumbnail_browser=args.thumbnail_browser)
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin, development=args.development))
-    print('ONTOVis evidence workbench ready', flush=True)
+    workspace_root = args.workspace_root or args.library_root.parent / 'workbench-projects'
     try:
-        server.serve_forever()
-    finally:
-        server.server_close()
-        sessions.close()
+        with storage_lease((args.library_root, workspace_root), create=True):
+            sessions = ProjectSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root,
+                workspace_root=workspace_root,
+                library_root=args.library_root, terrain_python=args.terrain_python, terrain_max_upload_bytes=args.terrain_max_upload_bytes,
+                ontobase_connection_id=args.ontobase_connection_id, thumbnail_renderer=args.thumbnail_renderer,
+                thumbnail_node=args.thumbnail_node, thumbnail_browser=args.thumbnail_browser)
+            try:
+                server = ThreadingHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin, development=args.development))
+                print('ONTOVis evidence workbench ready', flush=True)
+                try:
+                    server.serve_forever()
+                finally:
+                    server.server_close()
+            finally:
+                sessions.close()
+    except StorageInUse:
+        parser.exit(2, 'STORAGE_IN_USE: this SQLite runtime permits one service process per private store.\n')
 
 
 if __name__ == '__main__': main()

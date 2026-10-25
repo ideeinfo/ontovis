@@ -10,6 +10,7 @@ import sqlite3
 from uuid import UUID
 
 from tools import model_store_backup as paired
+from apps.api.storage_lease import storage_lease, StorageInUse
 
 FORMAT = 'ontovis-offline-project-stores-v1'
 
@@ -148,8 +149,12 @@ def snapshot(project_root, destination, *, library_root=None, model_root=None, s
     roots = tuple(p for p in (projects, library, model) if p is not None)
     paired._require(all(not a.is_relative_to(b) for a in roots for b in roots if a != b), 'OVERLAPPING_PATHS')
     destination = paired._destination(destination, roots)
-    report, identities = _capture(projects, library, model)
-    return _copy(projects, library, model, destination, report, identities)
+    try:
+        with storage_lease(tuple(path for path in (projects, library) if path is not None), shared=True):
+            report, identities = _capture(projects, library, model)
+            return _copy(projects, library, model, destination, report, identities)
+    except StorageInUse:
+        raise paired.BackupError('SERVICE_MUST_BE_STOPPED') from None
 
 
 def verify(backup_root, expected_manifest_sha256):
