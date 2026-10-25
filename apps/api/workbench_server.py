@@ -24,6 +24,7 @@ from apps.api.project_model_library import ProjectModelLibrary
 from apps.api.model_resource_metadata import ModelResourceMetadata, MAX_METADATA_BYTES, MAX_METADATA_REQUEST_BYTES
 from apps.api.model_thumbnails import ModelThumbnails, ThumbnailRenderer, MAX_PNG_BYTES
 from apps.api.model_validation import MAX_BYTES
+from apps.api.model_inspection import ModelInspection
 from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COORDINATE_M, MAX_COMPONENT_BINDINGS
 from apps.api.terrain_library import TerrainLibrary, MAX_VERSIONS as MAX_TERRAIN_VERSIONS, MAX_TOTAL_BYTES as MAX_TERRAIN_TOTAL_BYTES
 from apps.api.terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES, MAX_PIXELS as MAX_TERRAIN_PIXELS, MAX_TRIANGLES as MAX_TERRAIN_TRIANGLES
@@ -61,6 +62,7 @@ class WorkbenchSessions(UserSessions):
         self.model = ModelAsset(Path(model_root), project_code, self.context_id) if model_root else None
         self.library = ModelLibrary(Path(library_root),project_code,self.context_id) if library_root else None
         self.project_models = ProjectModelLibrary(self.library) if self.library else None
+        self.model_inspection = ModelInspection(self.project_models) if self.project_models else None
         self.model_metadata = ModelResourceMetadata(self.project_models) if self.project_models else None
         self.thumbnails = ModelThumbnails(self.project_models,
             ThumbnailRenderer(thumbnail_renderer, thumbnail_node, thumbnail_browser)) if self.project_models and thumbnail_renderer else None
@@ -257,6 +259,8 @@ class WorkbenchSessions(UserSessions):
             value = self.project_models.model(body['modelAssetId'], body['modelVersionId'], authorize)
         elif path == '/api/workbench/resources/model/metadata':
             value = self.model_metadata.read(body, authorize)
+        elif path == '/api/workbench/resources/model/inspection':
+            value = self.model_inspection.read(body, authorize)
         elif path == '/api/workbench/resources/model/metadata/save':
             value = self.model_metadata.save(body, actor, authorize)
         elif path in ('/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',

@@ -33,7 +33,7 @@ def image_size(data: bytes, mime: str):
     raise ProbeError('INVALID_MODEL', 'JPEG frame not found.')
 
 
-def validate(path: Path) -> dict:
+def validate(path: Path, *, include_source_nodes: bool = False) -> dict:
     data = path.read_bytes()
     require(24 <= len(data) <= MAX_BYTES, 'MODEL_LIMIT_EXCEEDED', 'File budget exceeded.')
     require(data[:4] == b'glTF', 'INVALID_MODEL', 'Expected GLB.')
@@ -97,19 +97,26 @@ def validate(path: Path) -> dict:
         require(all(math.isfinite(n) and abs(n)<=1000000 for point in (low,high) for n in point), 'MODEL_LIMIT_EXCEEDED', 'Coordinate budget exceeded.')
         components.append({'componentKey':f'component:{ordinal}', 'displayName':name[:200], 'nodeIndices':nodes,
                            'keyStability':'version_local', 'geometryQuality':'source_candidate', 'bounds':[low,high]})
-    return {'sha256':hashlib.sha256(data).hexdigest(), 'components':components,
+    result = {'sha256':hashlib.sha256(data).hexdigest(), 'components':components,
             'report':{key:summary[key] for key in ('bytes','nodes','activeMeshInstances','triangles','bounds','coordinateConvention','animations')}
                       | {'images':len(model.array('images')), 'texturePixels':texels, 'externalResourcesFetched':0,
                          'coordinateVerification':'unverified', 'sourceIdentityVerified':False}}
+    if include_source_nodes:
+        result['sourceNodes'] = model.catalog()
+    return result
 
 
-def main():
+def limit_process(max_file_bytes=1024*1024):
     import resource
     resource.setrlimit(resource.RLIMIT_CPU, (6,6))
     # macOS does not implement RLIMIT_AS; the deployed Linux worker enforces it.
     if sys.platform.startswith('linux'):
         resource.setrlimit(resource.RLIMIT_AS, (192*1024*1024,192*1024*1024))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (1024*1024,1024*1024))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (max_file_bytes,max_file_bytes))
+
+
+def main():
+    limit_process()
     try: print(json.dumps(validate(Path(sys.argv[1])), ensure_ascii=False))
     except (ProbeError, ValueError, KeyError, TypeError, IndexError, OverflowError, MemoryError, RecursionError, struct.error) as error:
         code = error.code if isinstance(error, ProbeError) and error.code in ('UNSUPPORTED_MODEL','MODEL_LIMIT_EXCEEDED') else 'INVALID_MODEL'

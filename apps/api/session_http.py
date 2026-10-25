@@ -170,6 +170,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                              '/api/workbench/imagery/uploads/complete', '/api/workbench/imagery/uploads/cancel')
             public_geo_paths = tuple('/api/workbench/public-geodata/' + action for action in ('start', 'job', 'cancel'))
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
+                              '/api/workbench/resources/model/inspection',
                               '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',
                               '/api/workbench/resources/model/preserve-legacy-display',
                               '/api/workbench/resources/uses', '/api/workbench/resources/models/legacy',

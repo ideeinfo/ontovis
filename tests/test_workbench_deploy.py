@@ -76,6 +76,7 @@ class WorkbenchDeploymentTests(unittest.TestCase):
                      '/api/workbench/imagery/upload-result/extra',
                      '/api/workbench/imagery/uploads/chunk/extra', '/api/workbench/imagery/uploads/status/extra',
                      '/api/workbench/imagery/content/', '/api/workbench/resources/model/metadata/extra',
+                     '/api/workbench/resources/model/inspection/extra', '/api/workbench/resources/model/inspection/',
                      '/api/workbench/resources/model/thumbnail/extra', '/api/workbench/resources/model/thumbnail/content/',
                      '/api/workbench/resources/model/thumbnail/ensure/extra',
                      '/api/workbench/resources/model/metadata/save/extra', '/api/workbench/resources/model/metadata/save/'):
