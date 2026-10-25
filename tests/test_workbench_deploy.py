@@ -57,7 +57,8 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         legacy = tuple('/api/workbench/scenes/legacy-migration/' + action for action in ('sources', 'check', 'activate', 'entry'))
         large = {'/api/workbench/scenes/' + action for action in ('save', 'check', 'replacement-check')}
         large.update('/api/workbench/scenes/legacy-migration/' + action for action in ('check', 'activate'))
-        routes = [path for paths in groups.values() for path in paths] + list(legacy)
+        orders = tuple('/api/workbench/work-orders' + suffix for suffix in ('', '/seed-demo', '/detail', '/action', '/locate'))
+        routes = [path for paths in groups.values() for path in paths] + list(legacy) + list(orders)
         for path in routes:
             with self.subTest(path=path):
                 body = location_for(path)

@@ -16,6 +16,9 @@ from .workbench_server import WorkbenchSessions
 from .scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COMPONENT_BINDINGS, MAX_COORDINATE_M
 from .project_model_library import ProjectModelLibrary
 from .shared_models import SharedModelAccess
+from .work_orders import WorkOrders, require as order_require
+from .demo_faults import DEMO_PROJECT
+from .scene_engineering import SceneEngineeringReader
 
 
 METHODS = ('scene_request', 'scene_object_request', 'resource_request', 'resource_upload',
@@ -303,6 +306,97 @@ class ProjectSessions(UserSessions):
     def close(self):
         for service in {self.shared, *self.services.values()}:
             self._close(service)
+
+    def _demo_order_targets(self, reader):
+        model = self.shared.model.value if self.shared.model else None
+        order_require(model and model.get('projectCode') == DEMO_PROJECT, 'DEMO_TARGETS_UNAVAILABLE', 409)
+        bindings = {item['componentKey']: item for item in model['bindings'] if item['componentKey'] in ('CN', 'CN1')}
+        order_require(set(bindings) == {'CN', 'CN1'}, 'DEMO_TARGETS_UNAVAILABLE', 409)
+        targets = {}
+        for key, binding in bindings.items():
+            value = reader.context_for_object(binding['entityUid'], binding['entityRevision'])
+            order_require(value['context'] and value['context']['purpose'] == 'demonstration'
+                and value['context']['engineeringUseAllowed'] is False
+                and value['context']['installationContextId'] == model['installationContextId'],
+                'DEMO_TARGETS_UNAVAILABLE', 409)
+            targets[key] = {'entityUid': value['item']['entityUid'], 'entityRevision': value['item']['entityRevision'],
+                            'installationContextId': value['context']['installationContextId'],
+                            'hierarchyRevision': value['context']['hierarchyRevision']}
+        return targets
+
+    def work_order_request(self, sid, path, payload):
+        row = self._session(sid, payload)
+        code = self._ref(payload.get('projectRef'))
+        access = self._access(sid, row, code)
+        writing = path.endswith(('/seed-demo', '/action'))
+        if writing and access.get('role') != 'admin':
+            raise PreviewError(403, 'WORK_ORDER_WRITE_FORBIDDEN')
+        def authorize():
+            self.guard(sid, row)
+            current = self._access(sid, row, code)
+            order_require(current['accessRevision'] == access['accessRevision']
+                          and (not writing or current.get('role') == 'admin'), 'ACCESS_CHANGED', 409)
+        body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
+        reader = SceneEngineeringReader(row.authority, self.connection_id, code, authorize)
+        workspace = self.registry.lookup(code)
+        targets = None
+        if path.endswith('/seed-demo'):
+            order_require(code == DEMO_PROJECT, 'DEMO_PROJECT_REQUIRED', 403)
+            targets = self._demo_order_targets(reader)
+            if workspace is None:
+                authorize()
+                workspace = self.registry.prepare(code)
+        if workspace is None:
+            if path != '/api/workbench/work-orders':
+                raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
+            order_require(set(body) <= {'q', 'state', 'cursor', 'limit', 'expectedSnapshotRevision'})
+            value = WorkOrders.empty(access.get('role') == 'admin' and code == DEMO_PROJECT)
+        else:
+            service = self._workspace(workspace)
+            if not hasattr(service, 'work_orders'):
+                with self.registry.lock:
+                    if not hasattr(service, 'work_orders'):
+                        service.work_orders = WorkOrders(service.library, code)
+            orders = service.work_orders
+            if path == '/api/workbench/work-orders':
+                value = orders.listing(body, access.get('role') == 'admin')
+            elif path.endswith('/detail'):
+                value = orders.detail(body)
+            elif path.endswith('/seed-demo'):
+                value = orders.seed(body, targets, row.authority.username, authorize)
+            elif path.endswith('/action'):
+                value = orders.action(body, row.authority.username, authorize)
+            elif path.endswith('/locate'):
+                order_require(set(body) == {'orderId', 'locateKey'})
+                detail = orders.detail({'orderId': body['orderId']})
+                key = body['locateKey']
+                order_require(isinstance(key, str) and 0 < len(key) <= 100)
+                if key in detail['targets']:
+                    target = detail['targets'][key]
+                    value = reader.context_for_object(target['entityUid'], target['entityRevision'])
+                    order_require(value['context'] and value['context']['installationContextId'] == target['installationContextId']
+                        and value['context']['hierarchyRevision'] == target['hierarchyRevision'], 'ENGINEERING_CHANGED', 409)
+                else:
+                    node = next((node for node in detail['diagnosis']['nodes'] if node.get('locateKey') == key), None)
+                    order_require(node is not None and 'rds' in node)
+                    from urllib.parse import urlencode
+                    catalog = reader._request('GET', reader.prefix + '/objects?' + urlencode({'q': node['rds'], 'limit': 50}))
+                    order_require(catalog.get('projectCode') == code, 'SOURCE_UNAVAILABLE', 502)
+                    order_require(type(catalog.get('items')) is list and len(catalog['items']) <= 50
+                        and all(type(item) is dict and type(item.get('identifiers')) is list
+                            and all(type(identifier) is dict for identifier in item['identifiers'])
+                            for item in catalog['items']), 'SOURCE_UNAVAILABLE', 502)
+                    matches = [item for item in catalog.get('items', []) if any(identifier.get('value') == node['rds']
+                        and identifier.get('role') == 'primary' and identifier.get('status') == 'accepted'
+                        and identifier.get('scheme') == 'RDS' for identifier in item.get('identifiers', []))]
+                    order_require(catalog.get('nextCursor') is None and len(matches) == 1, 'DIAGNOSTIC_OBJECT_UNRESOLVED', 409)
+                    value = reader.context_for_object(matches[0]['entityUid'], matches[0]['entityRevision'])
+                value = {**value, 'locateKey': key, 'engineeringConfirmation': False}
+            else:
+                raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
+        authorize()
+        return {**value, 'projectRef': {'ontobaseConnectionId': self.connection_id, 'projectCode': code},
+                'sessionRevision': row.revision}
 
 
 def _method(name):

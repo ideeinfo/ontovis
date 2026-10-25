@@ -30,6 +30,7 @@ from apps.api.terrain_library import TerrainLibrary, MAX_VERSIONS as MAX_TERRAIN
 from apps.api.terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES, MAX_PIXELS as MAX_TERRAIN_PIXELS, MAX_TRIANGLES as MAX_TERRAIN_TRIANGLES
 from apps.api.scene_geometry_process import SceneGeometryProcess
 from apps.api.scene_engineering import SceneEngineeringReader
+from apps.api.scene_photos import ScenePhotoReader
 from apps.api.scene_evidence import SceneEvidenceReader
 from apps.api.scene_engineering_validation import SceneEngineeringValidator
 from apps.api.scene_bindings import validate_ref
@@ -198,6 +199,10 @@ class WorkbenchSessions(UserSessions):
                 value = SceneEvidenceReader(reader).resolve(body)
             elif path == '/api/workbench/objects/evidence/content':
                 value = SceneEvidenceReader(reader).content(body)
+            elif path == '/api/workbench/objects/photos/resolve':
+                value = ScenePhotoReader(reader).resolve(body)
+            elif path == '/api/workbench/objects/photos/content':
+                value = ScenePhotoReader(reader).content(body)
             else:
                 raise PreviewError(422, 'INVALID_REQUEST')
             authorize()

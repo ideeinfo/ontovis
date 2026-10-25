@@ -9,11 +9,12 @@ export class ApiError extends Error {
 }
 
 export interface BinaryDescriptor {
-  mime: 'model/gltf-binary' | 'application/octet-stream' | 'image/png'; maxBytes: number; sha256: string;
+  mime: 'model/gltf-binary' | 'application/octet-stream' | 'image/png' | readonly ('image/png'|'image/jpeg'|'image/webp')[]; maxBytes: number; sha256: string;
 }
 type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk';
 const MIB = 1024 * 1024;
 const writeOnlyDenials: Record<string, readonly string[]> = {
+  WORK_ORDER_WRITE_FORBIDDEN: ['/api/workbench/work-orders/seed-demo', '/api/workbench/work-orders/action'],
   IMAGERY_WRITE_FORBIDDEN:['/api/workbench/imagery/upload','/api/workbench/imagery/uploads/start',
     '/api/workbench/imagery/uploads/chunk','/api/workbench/imagery/uploads/complete','/api/workbench/imagery/uploads/cancel'],
   MODEL_WRITE_FORBIDDEN: ['/api/workbench/models/upload', '/api/workbench/models/binding',
@@ -29,8 +30,9 @@ async function binaryResponse(response: Response, descriptor: BinaryDescriptor, 
     await response.body?.cancel().catch(() => {});
     throw new ApiError(status, code);
   };
-  if (response.headers.get('X-Session-Revision') !== revision
-      || response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== descriptor.mime) {
+  const mime = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() || '';
+  const allowed = typeof descriptor.mime === 'string' ? [descriptor.mime] : descriptor.mime;
+  if (response.headers.get('X-Session-Revision') !== revision || !(allowed as readonly string[]).includes(mime)) {
     return refuse(502, 'SOURCE_UNAVAILABLE');
   }
   if (response.headers.get('X-Content-SHA256') !== descriptor.sha256) return refuse(409, 'RESOURCE_CHANGED');
@@ -57,13 +59,13 @@ async function binaryResponse(response: Response, descriptor: BinaryDescriptor, 
       await reader.cancel().catch(() => {});
       throw error;
     } finally { reader.releaseLock(); }
-    blob = new Blob(chunks, {type: descriptor.mime});
+    blob = new Blob(chunks, {type: mime});
   } else {
     blob = await response.blob();
   }
   guard();
   if (blob.size > descriptor.maxBytes) throw new ApiError(413, 'CONTENT_LIMIT_EXCEEDED');
-  if (blob.type !== descriptor.mime || expectedLength !== null && blob.size !== expectedLength) throw new ApiError(502, 'SOURCE_UNAVAILABLE');
+  if (blob.type !== mime || expectedLength !== null && blob.size !== expectedLength) throw new ApiError(502, 'SOURCE_UNAVAILABLE');
   const bytes = await blob.arrayBuffer(); guard();
   const digest = await crypto.subtle.digest('SHA-256', bytes); guard();
   const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
@@ -104,9 +106,11 @@ export class WorkbenchApi {
   }
 
   content(path: string, body: object, descriptor: BinaryDescriptor, signal?: AbortSignal): Promise<Blob> {
-    if (!['model/gltf-binary','application/octet-stream','image/png'].includes(descriptor.mime)
+    const photoSet = Array.isArray(descriptor.mime) && descriptor.mime.length > 0 && descriptor.mime.length <= 3
+      && descriptor.mime.every(mime => ['image/png','image/jpeg','image/webp'].includes(mime));
+    if (!(typeof descriptor.mime === 'string' && ['model/gltf-binary','application/octet-stream','image/png'].includes(descriptor.mime) || photoSet)
         || !Number.isSafeInteger(descriptor.maxBytes) || descriptor.maxBytes <= 0
-        || descriptor.maxBytes > (descriptor.mime === 'model/gltf-binary' ? 20 : descriptor.mime === 'image/png' ? 64 : 256) * MIB
+        || descriptor.maxBytes > (photoSet || descriptor.mime === 'model/gltf-binary' ? 20 : descriptor.mime === 'image/png' ? 64 : 256) * MIB
         || !/^[a-f0-9]{64}$/.test(descriptor.sha256)) {
       return Promise.reject(new ApiError(422, 'INVALID_REQUEST'));
     }
@@ -178,6 +182,15 @@ export class WorkbenchApi {
 
 export function failureMessage(error: unknown, locale = 'zh'): string {
   const modelErrors:Record<string,[string,string]> = {
+    WORK_ORDER_WRITE_FORBIDDEN:['当前项目仅管理员可修改工单。','Only project administrators can update work orders.'],
+    WORK_ORDER_CHANGED:['工单已变化，请重新读取后再操作。','This work order changed. Reload before continuing.'],
+    WORK_ORDER_STATE_CONFLICT:['当前工单状态不允许此操作，请重新读取。','This action is not available in the current state. Reload.'],
+    WORK_ORDER_CHECKS_REQUIRED:['请完成全部演示排查项，再提交或关闭。','Complete all exercise checks before submitting or closing.'],
+    DEMO_TARGETS_UNAVAILABLE:['演示柜体身份需要重新核对，尚未生成工单。','The demo cabinet identities require review. No orders were created.'],
+    WORK_ORDER_TARGET_CHANGED:['工单保留的柜体依据已变化，请重新核对。','The stored cabinet basis changed and requires review.'],
+    DIAGNOSTIC_OBJECT_UNRESOLVED:['该参照位号尚无唯一已接受对象，可继续核对柜体与资料。','This reference has no unique accepted object. Review cabinet evidence instead.'],
+    PHOTO_SOURCE_UNAVAILABLE:['固定照片读取接口暂不可用，请稍后重新读取。','Fixed photo references are temporarily unavailable. Reload later.'],
+    RENDITION_UNAVAILABLE:['该固定版本的照片显示或区域不可用，未替换为其他版本。','The fixed photo display or region is unavailable. No replacement was opened.'],
     PROJECT_REQUIRED:['请先选择所属项目。','Select a project first.'],
     PROJECT_SCOPE_MISMATCH:['项目范围不一致，请返回项目目录重新选择。','The project scope changed. Select the project again.'],
     WORKSPACE_SCOPE_INVALID:['项目存储归属需要核对，当前已停止写入。','The project storage scope requires review. Writes are blocked.'],

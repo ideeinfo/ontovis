@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
-import { Boxes, Building2, ChevronDown, ChevronRight, Database, FileClock, Focus, GitBranch, Languages, Layers, Link2, LogOut, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
+import { Boxes, Building2, ChevronDown, ChevronRight, ClipboardList, Database, FileClock, Focus, GitBranch, Languages, Layers, Link2, LogOut, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
 import logo from '../../../assets/brand/ONTOVis.png';
 import { ApiError, cancelled, failureMessage, WorkbenchApi } from './api';
 import type { ContextView, ModelView, ObjectView, SessionView } from './types';
@@ -27,13 +27,14 @@ import type {ProjectAccess,ProjectRef,ProjectSummary} from './projectTypes';
 const api = new WorkbenchApi();
 const ModelViewport = lazy(() => import('./ModelViewport').then(module => ({default:module.ModelViewport})));
 const SceneWorkspace = lazy(() => import('./SceneWorkspace').then(module => ({default:module.SceneWorkspace})));
+const WorkOrders = lazy(() => import('./WorkOrders').then(module => ({default:module.WorkOrders})));
 const navigation = [
   ['project', 'projectAccess', Building2], ['models', 'modelCenter', Boxes],
   ['bindings', 'componentBinding', Link2], ['hierarchy', 'equipmentHierarchy', GitBranch],
-  ['scene', 'sceneSettings', Layers], ['data', 'dataAlarms', Database],
+  ['scene', 'sceneSettings', Layers], ['orders', 'projectWorkOrders', ClipboardList], ['data', 'dataAlarms', Database],
   ['ai', 'aiPolicy', Sparkles], ['audit', 'evidenceAudit', FileClock],
 ] as const;
-type Page = 'project' | 'models' | 'bindings' | 'hierarchy' | 'scene';
+type Page = 'project' | 'models' | 'bindings' | 'hierarchy' | 'scene' | 'orders';
 export function Workbench() {
   const {t, locale, theme, setTheme, setLocale} = usePreferences();
   const [session, setSession] = useState<SessionView | null>(null);
@@ -252,12 +253,13 @@ export function Workbench() {
     </header>
     <div className="cw-shell"><nav className="cw-navigation" data-expanded={navExpanded} aria-label={t('projectManagement')} onKeyDown={event => {if (event.key === 'Escape' && navExpanded) {setNavExpanded(false);event.currentTarget.querySelector<HTMLButtonElement>('.cw-nav-toggle')?.focus();}}}>
       <div className="cw-nav-header"><span className="cw-nav-heading">{t('projectManagement')}</span><button type="button" className="cw-nav-toggle" aria-label={t(navExpanded ? 'collapseNavigation' : 'expandNavigation')} title={t(navExpanded ? 'collapseNavigation' : 'expandNavigation')} aria-expanded={navExpanded} aria-controls="cw-navigation-items" onClick={() => setNavExpanded(value => !value)}>{navExpanded ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}</button></div>
-      <div className="cw-nav-items" id="cw-navigation-items">{navigation.map(([id,label,Icon]) => <button type="button" key={id} className={`cw-nav-item ${page === id ? 'active' : ''}`} aria-label={t(label)} aria-current={page === id ? 'page' : undefined} disabled={!['project','models','bindings','hierarchy','scene'].includes(id)} title={t(label)} onClick={() => navigate(id as Page)}><Icon size={17} strokeWidth={1.7}/><span>{t(label)}</span></button>)}</div>
+      <div className="cw-nav-items" id="cw-navigation-items">{navigation.map(([id,label,Icon]) => <button type="button" key={id} className={`cw-nav-item ${page === id ? 'active' : ''}`} aria-label={t(label)} aria-current={page === id ? 'page' : undefined} disabled={!['project','models','bindings','hierarchy','scene','orders'].includes(id)} title={t(label)} onClick={() => navigate(id as Page)}><Icon size={17} strokeWidth={1.7}/><span>{t(label)}</span></button>)}</div>
     </nav>
       <main className="cw-main"><div className="cw-toolbar">{workspace && <IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn>}<div className="cw-page-title"><span className="cw-breadcrumb">{t('projectManagement')}<ChevronRight size={11}/>{t(title)}</span><h1>{t(title)}</h1></div>{workspace && <><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}</>}<span className="cw-grow"/>{workspace && <div className="cw-layout" role="group" aria-label={t('workbenchLayout')}>{(['balanced','modelLayout','drawingLayout'] as const).map(value => <button type="button" key={value} aria-pressed={layout === value} className={layout === value ? 'active' : ''} onClick={() => setLayout(value)}>{t(value)}</button>)}</div>}<IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn>{workspace && <IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn>}</div>
       {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}</div>}
       {page==='scene'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${JSON.stringify(project?.projectRef)}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceSceneId||''}`} api={api} ref={sceneWorkspace} initialEntry={sceneEntry} initialSceneId={resourceSceneId} project={project} onProjectCreated={enterProject} onProjectName={setProjectName}/></Suspense>}
-      {!workspace&&page!=='scene'&&<div className="cw-page-content">{page==='models'&&active?<ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>:page==='hierarchy'&&active&&project?<ProjectObjects key={JSON.stringify(project.projectRef)} api={api}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
+      {page==='orders'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><WorkOrders key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale}/></Suspense>}
+      {!workspace&&page!=='scene'&&page!=='orders'&&<div className="cw-page-content">{page==='models'&&active?<ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>:page==='hierarchy'&&active&&project?<ProjectObjects key={JSON.stringify(project.projectRef)} api={api}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
       {page==='scene'&&!active&&<p className="cw-state">{t('loginPrompt')}</p>}
       {workspace&&(!active||legacyReady===entryIdentity)&&<div className={`cw-workspace layout-${layout}`}>
         <ObjectsPanel key={`${session?.sessionRevision}:${reload}:${context?.context.hierarchyRevision}`} api={api} view={context} selected={selection.uid} ancestors={detail?.ancestors.path.map(row=>row.object.entityUid) || []} onSelect={select} className={left ? 'is-open' : ''}/>
