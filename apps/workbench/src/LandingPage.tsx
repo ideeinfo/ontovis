@@ -82,7 +82,7 @@ export function LandingPage({onLogin, videoSrc, posterSrc=poster, suspended=fals
     </div>
     <a className="ov-entry-skip" href="#ov-entry-features" onClick={event=>{event.preventDefault();goTo('ov-entry-features');}}>{c.overview}</a>
     <header className="ov-entry-header">
-      <a className="ov-entry-brand" href="#ov-entry-top" aria-label="ONTOVis" onClick={event=>{event.preventDefault();goTo('ov-entry-top');}}><img src={logo} alt="ONTOVis 本源数智"/></a>
+      <a className="ov-entry-brand" href="#ov-entry-top" aria-label="ONTOVis" onClick={event=>{event.preventDefault();goTo('ov-entry-top');}}><img src={logo} alt="ONTOVis 本源数智" fetchPriority="high"/></a>
       <nav aria-label={c.navigation}>
         <button type="button" className="ov-entry-overview" onClick={()=>goTo('ov-entry-features')}>{c.overview}</button>
         <button type="button" className="ov-entry-language" aria-label={c.language} onClick={()=>setLocale(locale==='zh' ? 'en' : 'zh')}><Languages size={16}/><span>{locale==='zh' ? 'EN' : '中文'}</span></button>

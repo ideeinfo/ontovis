@@ -27,6 +27,31 @@ def location_for(path):
 
 
 class WorkbenchDeploymentTests(unittest.TestCase):
+    def test_only_successful_content_named_public_assets_are_cacheable(self):
+        nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
+        block = nginx.split('map "$status:$uri" $ontovis_public_asset_cache_control {', 1)[1].split('\n}', 1)[0]
+        self.assertIn('default "no-store";', block)
+        rules = re.findall(r'"~([^"]+)"\s+"([^"]+)";', block)
+        self.assertEqual(len(rules), 2)
+        def policy(status, path):
+            return next((value for pattern, value in rules if re.search(pattern, f'{status}:{path}')), 'no-store')
+        assets = ('/assets/ONTOVis--04A_0H2.png', '/assets/index-CUFv3qG2.js',
+                  '/assets/index-D70I8gPp.css', '/media/login-background-faa5494a30c25cb1.mp4',
+                  '/media/login-background-poster-b484ba1164cbfbc5.webp')
+        for path in assets:
+            for status in (200, 206, 304):
+                self.assertEqual(policy(status, path), 'public, max-age=31536000, immutable')
+            for status in (301, 401, 403, 404, 500):
+                self.assertEqual(policy(status, path), 'no-store')
+        for path in ('/', '/index.html', '/health.json', '/api/session',
+                     '/api/workbench/objects/photos/content', '/api/workbench/resources/model/content',
+                     '/assets/current.js', '/assets/private/index-CUFv3qG2.js',
+                     '/media/current.mp4', '/models/index-CUFv3qG2.js'):
+            self.assertEqual(policy(200, path), 'no-store')
+        # Keep all security headers at server scope; a location override would drop them.
+        self.assertIn('add_header Cache-Control $ontovis_public_asset_cache_control always;', nginx)
+        self.assertEqual(nginx.count('add_header Cache-Control'), 1)
+
     def test_embedded_model_images_can_be_fetched_without_allowing_external_connections(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
         policies = re.findall(r'add_header Content-Security-Policy "([^"]+)" always;', nginx)

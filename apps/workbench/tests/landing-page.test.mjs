@@ -67,6 +67,7 @@ function assertPoster(html){
   const brand=images.find(image=>image.alt==='ONTOVis 本源数智');
   assert.ok(brand);
   assert.match(brand.src,/\/assets\/brand\/ONTOVis\.png(?:\?|$)/);
+  assert.equal(brand.fetchpriority,'high','The brand must not wait behind background media');
   return background.src;
 }
 function assertPublicBoundary(html){
