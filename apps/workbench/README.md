@@ -18,6 +18,10 @@ npm --prefix apps/workbench run check
 npm --prefix apps/workbench run dev
 ```
 
-检查包含严格类型、20项请求/定位/语言检查和构建。产物在`output/compact-workbench-20261021/workbench-dist/`，不进入Git。临时4180预览代理固定本机18084；本机空间参考Demo的资源独立保留。
+检查包含严格类型、当前前端测试全集和构建，数量以最新执行记录为准。产物在`output/compact-workbench-20261021/workbench-dist/`，不进入Git。临时4180预览代理固定本机18084；本机空间参考Demo的资源独立保留。
+
+带登录视频的发布使用`tools/build_workbench.py`，显式提供`--media-dir`、`--public-dir`及`--check`；它注入视频地址并核对编译引用。单独运行npm构建不能替代这一发布入口。媒体、Logo原件和真实工程资料不随代码新增上传。
+
+静态交付使用`deploy/nginx-workbench.conf`：仅成功的带内容版本文件名的公开`/assets/`与登录`/media/`响应允许长期缓存，HTML、健康、会话、业务API和错误响应仍为no-store。Logo从HTML高优先级预加载，保持原字节；脚本/样式启用传输压缩。发布新目录时保留上一发布目录的带版本公开资源，若同名则必须同字节，避免已打开页面延迟加载旧分块时404；不沿用旧HTML或把业务资料放入静态目录。更新后核对实际缓存/安全响应头、条件读取304及旧分块可达性，见[Q-52记录](../../docs/plans/开发执行记录.md#96-q-52首页静态缓存与logo预加载2026-10-25)。
 
 API以`--project-code`、`--installation-context-id`、`--model-root`和`--library-root`固定部署范围。原模型映射、上传库/SQLite/审计放服务器私有目录，不进入Git或静态发布目录。上传与演示关联不修改OntoBase业务数据。详细服务、资源限制和边界见[上传切片](../../docs/plans/模型上传与演示关联切片.md)。
