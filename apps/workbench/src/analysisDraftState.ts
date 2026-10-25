@@ -16,16 +16,16 @@ export function blankAnalysisDraft(scope:ProjectScope, now=new Date()):CanvasSna
 }
 export function draftProblems(value:CanvasSnapshot,scope:ProjectScope):string[] {
   const errors=validateSnapshot(value,scope);
-  if(!['analyzing','awaiting_field_check','awaiting_expert_review'].includes(value.status))errors.push('本阶段只保存草稿');
+  if(!['analyzing','awaiting_field_check','awaiting_expert_review'].includes(value.status))errors.push('请选择有效的分析进度');
   if(value.cards.some(c=>c.kind!=='analysis'||c.source)||value.context.objectIds.length||value.context.eventId||value.context.workOrderId)errors.push('本阶段只支持人工分析内容');
   if(value.title!==value.title.trim()||value.cards.some(c=>c.title!==c.title.trim())||value.relations.some(r=>r.origin!=='manual'||r.reason!==r.reason.trim()))errors.push('名称与关系依据不能以空格开头或结尾');
   if(value.cards.some(c=>typeof c.note!=='string'||c.note.includes('\0')))errors.push('笔记内容无效');
-  if(new TextEncoder().encode(JSON.stringify(value)).byteLength>262144)errors.push('草稿过大，请减少本次笔记内容');
+  if(new TextEncoder().encode(JSON.stringify(value)).byteLength>262144)errors.push('分析内容过大，请减少本次笔记内容');
   return [...new Set(errors)];
 }
 export function pendingDraft(snapshot:CanvasSnapshot,receipt:DraftReceipt|null,requestId:string,restoreRevision?:number):PendingDraft {
   const action=restoreRevision!==undefined?'restore':receipt?'save':'create';
-  if(action==='restore'&&!receipt)throw new Error('A saved draft is required');
+  if(action==='restore'&&!receipt)throw new Error('A saved analysis is required');
   return {path:'/api/workbench/analysis-sessions/'+action,snapshot:structuredClone(snapshot),body:{requestId,
     ...(receipt?{analysisSessionId:receipt.analysisSessionId,expectedAnalysisRevision:receipt.headRevision??receipt.analysisRevision}:{}),
     ...(restoreRevision!==undefined?{restoreRevision}:{snapshot:structuredClone(snapshot)})}};

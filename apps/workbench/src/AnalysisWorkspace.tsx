@@ -13,12 +13,12 @@ type Versions={items:{revision:number;createdAt:string;operation:string}[];nextB
 const ROOT='/api/workbench/analysis-sessions';
 const code=(error:unknown)=>error&&typeof error==='object'&&'code'in error?String(error.code):'';
 const status=(error:unknown)=>error&&typeof error==='object'&&'status'in error?Number(error.status):0;
-const zhError:Record<string,string>={ANALYSIS_CHANGED:'草稿已有新修订。你当前的修改仍保留，可另存副本或重新读取。',
-  ANALYSIS_LIST_CHANGED:'列表已更新，请刷新后继续。',ANALYSIS_NOT_ENABLED:'当前环境尚未启用分析草稿。',
-  ANALYSIS_WRITE_FORBIDDEN:'当前账号已无保存权限，可查看已有草稿。',ANALYSIS_STORE_LIMIT:'草稿存储已达到本阶段容量，请联系管理员。',
-  ANALYSIS_REVISION_LIMIT:'此草稿已达到修订上限。',ANALYSIS_SOURCE_NOT_CONNECTED:'当前只支持人工分析笔记。',
-  ANALYSIS_REVIEW_NOT_CONFIGURED:'本阶段暂不启用结论确认。',ACCESS_CHANGED:'项目权限已变化，请重新打开草稿。',
-  NOT_FOUND_OR_FORBIDDEN:'草稿不存在或当前账号无权查看。',INVALID_REQUEST:'请检查草稿名称、内容和时间范围。'};
+const zhError:Record<string,string>={ANALYSIS_CHANGED:'分析已有新修订。你当前的修改仍保留，可另存副本或重新读取。',
+  ANALYSIS_LIST_CHANGED:'列表已更新，请刷新后继续。',ANALYSIS_NOT_ENABLED:'当前环境尚未启用分析画布。',
+  ANALYSIS_WRITE_FORBIDDEN:'当前账号已无保存权限，可查看已有分析。',ANALYSIS_STORE_LIMIT:'分析存储空间已满，请联系管理员。',
+  ANALYSIS_REVISION_LIMIT:'此分析已达到修订上限。',ANALYSIS_SOURCE_NOT_CONNECTED:'当前只支持人工分析笔记。',
+  ANALYSIS_REVIEW_NOT_CONFIGURED:'当前分析尚未开放结论确认。',ACCESS_CHANGED:'项目权限已变化，请重新打开分析。',
+  NOT_FOUND_OR_FORBIDDEN:'分析不存在或当前账号无权查看。',INVALID_REQUEST:'请检查分析名称、内容和时间范围。'};
 
 export function AnalysisWorkspace({api,locale='zh',onDirtyChange}:{api:DraftApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void}) {
   const en=locale==='en'; const t=(zh:string,eng:string)=>en?eng:zh;
@@ -73,7 +73,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange}:{api:DraftApi;
     let task=pending.current;
     if(!uncertain){
       const value=restore?.snapshot??(copy?{...draft,title:draft.title.slice(0,110)+t(' · 副本',' · Copy')}:draft);
-      const problems=draftProblems(value,api.project);if(problems.length){setError(new Error(en?'Please check the draft content.':problems[0]));return false;}
+      const problems=draftProblems(value,api.project);if(problems.length){setError(new Error(en?'Please check the analysis content.':problems[0]));return false;}
       task=pendingDraft(value,copy?null:receipt,crypto.randomUUID(),restore?.analysisRevision);pending.current=task;
     }
     if(!task)return false;
@@ -81,7 +81,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange}:{api:DraftApi;
     try{
       const result=await api.request<DraftReceipt>(task.path,task.body,abort.signal);
       if(!alive.current||abort.signal.aborted)return false;
-      adopt({...result,snapshot:task.snapshot});setNotice(t('草稿已保存','Draft saved'));setReload(value=>value+1);setPreview(null);setHistoryOpen(false);return true;
+      adopt({...result,snapshot:task.snapshot});setNotice(t('已保存','Saved'));setReload(value=>value+1);setPreview(null);setHistoryOpen(false);return true;
     }catch(value){
       if(alive.current&&!abort.signal.aborted){const unknown=status(value)===0||status(value)>=500;setUncertain(unknown);if(!unknown)pending.current=null;failure(value);}
       return false;
@@ -109,16 +109,16 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange}:{api:DraftApi;
     else {const card=moving.before.cards.find(value=>value.id===moving.id);if(card)setDraft(moveCard(moving.before,card.id,card.x+dx/moving.before.viewport.zoom,card.y+dy/moving.before.viewport.zoom));}}
   function fit(){if(draft&&canvas.current)setDraft({...draft,viewport:fitViewport(draft.cards,canvas.current.clientWidth,canvas.current.clientHeight)});}
   function zoom(factor:number){if(draft&&canvas.current)setDraft({...draft,viewport:zoomAt(draft.viewport,draft.viewport.zoom*factor,canvas.current.clientWidth/2,canvas.current.clientHeight/2)});}
-  const errorText=error instanceof Error&&!code(error)?error.message:en?'The request could not be completed. Your local draft is retained.':zhError[code(error)]||'暂时无法完成请求，请重试。';
+  const errorText=error instanceof Error&&!code(error)?error.message:en?'The request could not be completed. Your local edits are retained.':zhError[code(error)]||'暂时无法完成请求，请重试。';
   const statuses=[['analyzing','分析中','Analyzing'],['awaiting_field_check','待现场核查','Awaiting field check'],['awaiting_expert_review','待复核','Awaiting review']];
-  return <section className={`ad-workspace${draft?' ad-has-draft':''}`} aria-label={t('分析草稿工作空间','Analysis draft workspace')}>
-    <aside className="ad-list"><header><strong>{t('我的分析草稿','My analysis drafts')}</strong><span>{list?.total??'—'}</span></header>
-      <form className="ad-search" onSubmit={event=>{event.preventDefault();setFilter(query);}}><Search size={14}/><input aria-label={t('搜索分析草稿','Search drafts')} placeholder={t('搜索名称','Search titles')} value={query} onChange={event=>setQuery(event.target.value)}/><button>{t('搜索','Search')}</button></form>
-      <Btn primary disabled={!writable||busy} onClick={()=>change(fresh)}><Plus size={14}/>{t('新建草稿','New draft')}</Btn>
-      <div className="ad-list-items">{list?.items.map(item=><button type="button" key={item.analysisSessionId} disabled={busy} aria-current={receipt?.analysisSessionId===item.analysisSessionId?'page':undefined} onClick={()=>change(()=>void open(item.analysisSessionId))}><strong>{item.title}</strong><small>{t(statuses.find(s=>s[0]===item.status)?.[1]||'草稿',statuses.find(s=>s[0]===item.status)?.[2]||'Draft')} · r{item.analysisRevision}</small><time>{new Date(item.updatedAt).toLocaleString(en?'en-GB':'zh-CN')}</time></button>)}
-        {!loading&&list&&!list.total&&<p>{t('还没有分析草稿','No drafts yet')}</p>}{loading&&<p role="status">{t('正在读取…','Loading…')}</p>}
+  return <section className={`ad-workspace${draft?' ad-has-draft':''}`} aria-label={t('分析工作空间','Analysis workspace')}>
+    <aside className="ad-list"><header><strong>{t('我的分析','My analyses')}</strong><span>{list?.total??'—'}</span></header>
+      <form className="ad-search" onSubmit={event=>{event.preventDefault();setFilter(query);}}><Search size={14}/><input aria-label={t('搜索分析','Search analyses')} placeholder={t('搜索名称','Search titles')} value={query} onChange={event=>setQuery(event.target.value)}/><button>{t('搜索','Search')}</button></form>
+      <Btn primary disabled={!writable||busy} onClick={()=>change(fresh)}><Plus size={14}/>{t('新建分析','New analysis')}</Btn>
+      <div className="ad-list-items">{list?.items.map(item=><button type="button" key={item.analysisSessionId} disabled={busy} aria-current={receipt?.analysisSessionId===item.analysisSessionId?'page':undefined} onClick={()=>change(()=>void open(item.analysisSessionId))}><strong>{item.title}</strong><small>{t(statuses.find(s=>s[0]===item.status)?.[1]||'分析中',statuses.find(s=>s[0]===item.status)?.[2]||'Analyzing')} · r{item.analysisRevision}</small><time>{new Date(item.updatedAt).toLocaleString(en?'en-GB':'zh-CN')}</time></button>)}
+        {!loading&&list&&!list.total&&<p>{t('还没有分析','No analyses yet')}</p>}{loading&&<p role="status">{t('正在读取…','Loading…')}</p>}
         {list?.nextCursor&&<Btn disabled={loading} onClick={()=>void more()}>{t('加载更多','Load more')}</Btn>}</div>
-      <footer>{t('仅本人可见 · 人工草稿','Private to you · Manual drafts')}</footer>
+      <footer>{t('仅本人可见','Private to you')}</footer>
     </aside>
     <div className="ad-editor">
       {!!error&&<div className="ad-alert" role="alert"><span>{errorText}</span>{!draft&&<Btn onClick={()=>setReload(v=>v+1)}>{t('重试','Retry')}</Btn>}
@@ -128,16 +128,15 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange}:{api:DraftApi;
       {draft?<>
         <header className="ad-heading"><IconBtn label={t('返回列表','Back to list')} disabled={busy} onClick={()=>change(()=>{setDraft(null);setReceipt(null);setSaved('');})}><ArrowLeft size={16}/></IconBtn>
           <input aria-label={t('分析名称','Analysis title')} maxLength={120} value={draft.title} disabled={!editable} onChange={event=>apply({...draft,title:event.target.value})}/>
-          <select aria-label={t('草稿进度','Draft progress')} value={draft.status} disabled={!editable} onChange={event=>apply({...draft,status:event.target.value as CanvasSnapshot['status']})}>{statuses.map(([value,zh,eng])=><option key={value} value={value}>{t(zh,eng)}</option>)}</select>
+          <select aria-label={t('分析进度','Analysis progress')} value={draft.status} disabled={!editable} onChange={event=>apply({...draft,status:event.target.value as CanvasSnapshot['status']})}>{statuses.map(([value,zh,eng])=><option key={value} value={value}>{t(zh,eng)}</option>)}</select>
           <small aria-live="polite">{busy?t('处理中…','Working…'):dirty?t('未保存','Unsaved'):notice||t('已保存','Saved')}{receipt?' · r'+receipt.analysisRevision:''}</small>
           <IconBtn label={t('修订历史','Revision history')} disabled={!receipt||busy||uncertain} onClick={()=>void history()}><History size={17}/></IconBtn>
-          <Btn primary disabled={!writable||busy||!dirty} onClick={()=>void commit()}><Save size={14}/>{uncertain?t('重试保存','Retry save'):t('保存草稿','Save draft')}</Btn>
+          <Btn primary disabled={!writable||busy||!dirty} onClick={()=>void commit()}><Save size={14}/>{uncertain?t('重试保存','Retry save'):t('保存','Save')}</Btn>
         </header>
         <div className="ad-tools"><Btn disabled={!editable||draft.cards.length>=50} onClick={addNote}><Plus size={14}/>{t('分析笔记','Analysis note')}</Btn>
           <IconBtn label={t('选择工具','Select tool')} aria-pressed={tool==='pointer'} onClick={()=>setTool('pointer')}><MousePointer2 size={16}/></IconBtn><IconBtn label={t('平移工具','Pan tool')} aria-pressed={tool==='hand'} onClick={()=>setTool('hand')}><Hand size={16}/></IconBtn>
           <IconBtn label={t('撤销修改','Undo change')} disabled={!undo.length||!editable} onClick={()=>{setDraft(undo[undo.length-1]);setUndo(values=>values.slice(0,-1));}}><Undo2 size={16}/></IconBtn>
           <Btn disabled={!editable||!draft.cards.length} onClick={()=>apply(arrangeCards(draft))}><LayoutGrid size={14}/>{t('整理布局','Arrange')}</Btn>
-          <span>{t('本阶段保存草稿，结论确认暂未启用','Drafts only. Conclusion confirmation is not enabled.')}</span>
         </div>
         <div className="ad-canvas-row"><div ref={canvas} className={`ad-canvas ad-tool-${tool}`} tabIndex={0} aria-label={t('分析画布','Analysis canvas')}
           onKeyDown={event=>{if(event.code==='Space'){space.current=true;event.preventDefault();}}} onKeyUp={event=>{if(event.code==='Space')space.current=false;}} onBlur={()=>{space.current=false;drag.current=null;}}
@@ -159,10 +158,10 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange}:{api:DraftApi;
           <p>{t('人工笔记不代表已确认的工程事实。','Notes do not constitute confirmed engineering facts.')}</p>
           <div className="ad-inline"><strong>{t('关联关系','Relationships')}</strong><IconBtn label={t('添加关系','Add relationship')} disabled={!editable||draft.cards.length<2} onClick={()=>{setTarget(draft.cards.find(card=>card.id!==selected)?.id||'');setReason('');setLinkOpen(true);}}><Plus size={15}/></IconBtn></div>
           {draft.relations.filter(link=>link.from===selected||link.to===selected).map(link=><div className="ad-relation" key={link.id}><GitBranch size={13}/><div><strong>{draft.cards.find(card=>card.id===(link.from===selected?link.to:link.from))?.title}</strong><p>{link.reason}</p></div><IconBtn label={t('移除关系','Remove relationship')} disabled={!editable} onClick={()=>apply({...draft,relations:draft.relations.filter(item=>item.id!==link.id)})}><X size={13}/></IconBtn></div>)}
-        </>:<><p>{t('当前项目','Current project')}<strong>{api.project?.projectCode}</strong></p><details><summary>{t('分析时间范围','Analysis time window')}</summary><label>{t('开始时间（UTC）','From (UTC)')}<input disabled={!editable} value={draft.context.timeFrom} onChange={event=>apply({...draft,context:{...draft.context,timeFrom:event.target.value}})}/></label><label>{t('结束时间（UTC）','To (UTC)')}<input disabled={!editable} value={draft.context.timeTo} onChange={event=>apply({...draft,context:{...draft.context,timeTo:event.target.value}})}/></label></details><p>{t('图纸、模型、照片及工单的受控资料卡将在后续接入。','Controlled drawings, models, photos and work-order cards will follow.')}</p></>}</aside></div>
-      </>:<div className="ad-empty"><GitBranch size={32}/><h2>{t('整理你的分析思路','Organize your investigation')}</h2><p>{t('新建或继续一份草稿，保留笔记、人工关系与修订历史。','Create or continue a draft with notes, relationships and version history.')}</p><Btn primary disabled={!writable||busy} onClick={fresh}><Plus size={14}/>{t('新建草稿','New draft')}</Btn></div>}
+        </>:<><p>{t('当前项目','Current project')}<strong>{api.project?.projectCode}</strong></p><details><summary>{t('分析时间范围','Analysis time window')}</summary><label>{t('开始时间（UTC）','From (UTC)')}<input disabled={!editable} value={draft.context.timeFrom} onChange={event=>apply({...draft,context:{...draft.context,timeFrom:event.target.value}})}/></label><label>{t('结束时间（UTC）','To (UTC)')}<input disabled={!editable} value={draft.context.timeTo} onChange={event=>apply({...draft,context:{...draft.context,timeTo:event.target.value}})}/></label></details></>}</aside></div>
+      </>:<div className="ad-empty"><GitBranch size={32}/><h2>{t('整理你的分析思路','Organize your investigation')}</h2><p>{t('新建或继续一项分析，保留笔记、人工关系与修订历史。','Create or continue an analysis with notes, relationships and version history.')}</p><Btn primary disabled={!writable||busy} onClick={fresh}><Plus size={14}/>{t('新建分析','New analysis')}</Btn></div>}
     </div>
-    {leave&&<Modal title={t('草稿尚未保存','Unsaved draft')} description={t('离开前处理当前修改','Handle changes before leaving')} onClose={()=>setLeave(null)}><p>{uncertain?t('保存结果尚未确认，建议先重试。','Save result is unknown; retry first.'):t('离开将放弃当前未保存的修改。','Leaving discards unsaved edits.')}</p><div className="ad-inline"><Btn onClick={()=>setLeave(null)}>{t('继续编辑','Keep editing')}</Btn><Btn disabled={busy} onClick={()=>{const action=leave;setLeave(null);pending.current=null;setUncertain(false);action();}}>{t('放弃修改并离开','Discard and leave')}</Btn><Btn primary disabled={!writable||busy} onClick={()=>void commit().then(ok=>{if(ok){setLeave(null);leave();}})}>{t('保存并继续','Save and continue')}</Btn></div></Modal>}
+    {leave&&<Modal title={t('修改尚未保存','Unsaved changes')} description={t('离开前处理当前修改','Handle changes before leaving')} onClose={()=>setLeave(null)}><p>{uncertain?t('保存结果尚未确认，建议先重试。','Save result is unknown; retry first.'):t('离开将放弃当前未保存的修改。','Leaving discards unsaved edits.')}</p><div className="ad-inline"><Btn onClick={()=>setLeave(null)}>{t('继续编辑','Keep editing')}</Btn><Btn disabled={busy} onClick={()=>{const action=leave;setLeave(null);pending.current=null;setUncertain(false);action();}}>{t('放弃修改并离开','Discard and leave')}</Btn><Btn primary disabled={!writable||busy} onClick={()=>void commit().then(ok=>{if(ok){setLeave(null);leave();}})}>{t('保存并继续','Save and continue')}</Btn></div></Modal>}
     {historyOpen&&<Modal title={t('修订历史','Revision history')} description={t('历史只读，恢复将追加新修订','History is immutable; restoring adds a revision')} onClose={()=>{if(!busy){setHistoryOpen(false);setPreview(null);}}}><div className="ad-history">{versions?.items.map(item=><Btn key={item.revision} disabled={busy} onClick={()=>void viewRevision(item.revision)}>r{item.revision} · {new Date(item.createdAt).toLocaleString(en?'en-GB':'zh-CN')}</Btn>)}{versions?.nextBeforeRevision&&<Btn disabled={busy} onClick={()=>void history(versions.nextBeforeRevision!)}>{t('更早修订','Earlier revisions')}</Btn>}</div>{preview&&<><h3>{preview.snapshot.title} · r{preview.analysisRevision}</h3>{preview.snapshot.cards.map(card=><div key={card.id}><strong>{card.title}</strong><p className="ad-history-note">{card.note}</p></div>)}<Btn primary disabled={!writable||busy||dirty||preview.analysisRevision===(receipt?.headRevision??receipt?.analysisRevision)} onClick={()=>void commit(false,preview)}>{t('恢复为新修订','Restore as a new revision')}</Btn>{dirty&&<p>{t('先保存或放弃当前修改，再恢复历史。','Save or discard your edits before restoring.')}</p>}</>}</Modal>}
     {linkOpen&&draft&&<Modal title={t('添加人工关系','Add manual relationship')} description={t('记录两张笔记之间的依据','Record a reason connecting two notes')} onClose={()=>setLinkOpen(false)}><form className="ad-link-form" onSubmit={event=>{event.preventDefault();try{apply(addManualRelation(draft,{id:crypto.randomUUID(),from:selected,to:target,kind:relationKind,origin:'manual',reason}));setLinkOpen(false);}catch(value){failure(value);}}}><label>{t('关联笔记','Related note')}<select value={target} onChange={event=>setTarget(event.target.value)}>{draft.cards.filter(card=>card.id!==selected).map(card=><option key={card.id} value={card.id}>{card.title}</option>)}</select></label><label>{t('关系类型','Relation type')}<select value={relationKind} onChange={event=>setRelationKind(event.target.value as RelationKind)}>{[['reference','资料引用','Reference'],['hypothesis','原因假设','Hypothesis'],['supports','支持依据','Supports'],['contradicts','反证','Contradicts']].map(([key,zh,eng])=><option key={key} value={key}>{t(zh,eng)}</option>)}</select></label><label>{t('关系依据','Reason')}<textarea maxLength={1000} required value={reason} onChange={event=>setReason(event.target.value)}/></label><button type="submit" className="ov-btn primary">{t('添加关系','Add relationship')}</button></form></Modal>}
   </section>;
