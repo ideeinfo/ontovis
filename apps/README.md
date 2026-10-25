@@ -6,6 +6,8 @@
 
 维护检查：`python3 -m unittest tests.test_workbench_server tests.test_session_server tests.test_installation_preview tests.test_model_assets tests.test_model_upload -v`；Node 22执行`npm --prefix apps/workbench run check`包含严格类型、时序/定位/语言检查和构建。上传限额与演示写入见[模型上传首切](../docs/plans/模型上传与演示关联切片.md)。本批服务及素材边界见[紧凑工作台切片](../docs/plans/紧凑工作台与模型接入切片.md)。部署模板为[正式会话服务](../deploy/ontovis-workbench.service)和[正式入口](../deploy/nginx-workbench.conf)；私有设备配置不含凭据，模型与UID映射不进入Git或静态发布目录。
 
+Q-13登记后端候选：`api/workbench_server.py --registry-backend postgres`使用私有`ONTOVIS_REGISTRY_DSN`及经过离线activate-new生成的整组目录，可选驱动为[requirements-registry.txt](api/requirements-registry.txt)。运行时PG仅管理项目/共享库登记，业务SQLite与私有文件保持，原权限和单进程保护继续生效。默认SQLite不依赖PG驱动，PG错误不自动回退；完整迁移、备份和恢复规则见[契约§6](../docs/contracts/项目登记PostgreSQL迁移准备契约.md#6-实际会话服务的-postgresql-登记候选)。当前在线服务尚未切换。
+
 ## 场景与地形开发切片
 
 Q-01已在原MagicPath工作台完成设计/服务基线；首批局部保存/地形服务见[原切片](../docs/plans/场景保存与地形服务切片.md)，当前新增[模型资源与地理保存](../docs/plans/模型资源与地理场景保存切片.md)。项目资源支持固定GLB版本、校准及模型使用去向；场景六个POST包含只读预检，配置GIS运行时后支持首次锚定、地理放置及固定修订重开。当前仅支持未关联布局，根/内部工程关联与换版明确拒绝，不能静默丢字段后保存。新116项隔离Linux检查无跳过；完整场景UI和部署仍未完成。

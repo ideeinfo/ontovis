@@ -155,4 +155,21 @@ stage/verify使用外部package SHA、原request-id及私有`ONTOVIS_REGISTRY_ST
 
 stage/verify只产生`staged_metadata_only`候选。restore-new另需原backup/manifest-sha256、全新destination及service-stopped：先核对包的来源与实际三表，再从同一只读PG快照回装登记，配回原完整资源，只在本次新目录重建SQLite登记并生成新清单。失败保留部分目录、撤下完整清单，不能覆盖或原地续写；新摘要只标识恢复副本，不取代来源/在线B1。DSN仍只由同一私有配置读取。
 
-最终16项包契约包含在33项真实PG范围内，本批新增9项包含其中，不与旧24项相加。既有1空间/247文件B1实际回装、标准工具再恢复及原生登记读取通过；原三表/UUID/状态和其余配对文件保持，PG暂存行/xmin不变。实际样本不声称真实源重新核权；原场景读取/撤权/只读写拒绝由隔离合成权限测试覆盖。不切换服务或变更工程权威，当前仍单进程SQLite；实际PG运行消费者/全业务库文件迁移及多进程运行留后续，见[切片](../docs/plans/存储与服务运行准备切片.md)。
+该回装轮最终16项包契约包含在33项真实PG范围内，新增9项包含其中，不与旧24项相加。既有1空间/247文件B1实际回装、标准工具再恢复及原生登记读取通过；原三表/UUID/状态和其余配对文件保持，PG暂存行/xmin不变。实际样本不声称真实源重新核权；原场景读取/撤权/只读写拒绝由隔离合成权限测试覆盖。后继运行消费者见下节；全业务库文件迁移及多进程运行仍后续，见[切片](../docs/plans/存储与服务运行准备切片.md)。
+
+## PostgreSQL 登记运行与配对备份
+
+`python -m tools.project_registry_runtime --help` 提供`activate-new`和`snapshot`。连接仅由私有`ONTOVIS_REGISTRY_DSN`读取；可选依赖见[requirements-registry.txt](../apps/api/requirements-registry.txt)。源备份及外部SHA验证完整配对文件，PG目标必须为ONTOVis专用库且不存在运行schema，目标目录必须全新。原暂存schema不转成可写运行库。
+
+```sh
+python -m tools.project_registry_runtime activate-new \
+  --backup "$ONTOVIS_SOURCE_BACKUP" \
+  --manifest-sha256 "$ONTOVIS_SOURCE_MANIFEST_SHA256" \
+  --destination "$ONTOVIS_NEW_RUNTIME" --service-stopped
+```
+
+以上非凭据变量需先指向已验证备份与新目录；DSN由私有环境配置提供。候选根下的project-spaces/workbench-library以及存在时的workbench-model必须整组使用；服务显式加`--registry-backend postgres`。目录身份绑定不允许复制标记后换目录启动；默认SQLite入口会拒绝该候选。单进程本机目录锁及PG连接所有权均保持。
+
+离线`snapshot`参数为project-root、library-root、可选model-root、destination、service-stopped。实际读取当前PG行及全部配对文件，在新备份重建标准SQLite登记；原`project_store_backup verify/restore-new`可继续使用新回执的manifest SHA，或再次activate-new到空PG运行schema。发生错误保留部分目录且撤下完整清单，不能覆写原根/复用失败目标，也不能用迁移前旧备份覆盖新数据。
+
+最终69项Linux相关检查、30项真实PG检查分别通过；最新工单B2私有副本及运行期合成新增后的恢复验证见[契约§6](../docs/contracts/项目登记PostgreSQL迁移准备契约.md#6-实际会话服务的-postgresql-登记候选)。此候选尚未切换在线服务，业务库仍SQLite。

@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 import sys
@@ -890,6 +891,7 @@ def main():
     parser.add_argument('--project-code')
     parser.add_argument('--installation-context-id')
     parser.add_argument('--workspace-root', type=Path)
+    parser.add_argument('--registry-backend', choices=('sqlite', 'postgres'), default='sqlite')
     parser.add_argument('--ontobase-connection-id', default='ontobase-primary')
     parser.add_argument('--source', default='http://127.0.0.1:18001')
     parser.add_argument('--origin', default='https://vis.ontobase.ai')
@@ -911,6 +913,7 @@ def main():
         with storage_lease((args.library_root, workspace_root), create=True):
             sessions = ProjectSessions(args.source, args.project_code, args.installation_context_id, model_root=args.model_root,
                 workspace_root=workspace_root,
+                registry_backend=args.registry_backend, registry_database_url=os.environ.get('ONTOVIS_REGISTRY_DSN'),
                 library_root=args.library_root, terrain_python=args.terrain_python, terrain_max_upload_bytes=args.terrain_max_upload_bytes,
                 ontobase_connection_id=args.ontobase_connection_id, thumbnail_renderer=args.thumbnail_renderer,
                 thumbnail_node=args.thumbnail_node, thumbnail_browser=args.thumbnail_browser)
@@ -925,6 +928,8 @@ def main():
                 sessions.close()
     except StorageInUse:
         parser.exit(2, 'STORAGE_IN_USE: this SQLite runtime permits one service process per private store.\n')
+    except PreviewError as error:
+        parser.exit(2, error.code + '\n')
 
 
 if __name__ == '__main__': main()

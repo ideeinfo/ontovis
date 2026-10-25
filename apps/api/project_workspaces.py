@@ -30,12 +30,21 @@ def real_directory(value):
 
 class ProjectWorkspaces:
     def __init__(self, root, connection_id, *, legacy_root=None, legacy_project=None, legacy_context=None):
+        self._storage(root, connection_id, legacy_root)
+        if (self.root / 'registry-postgres.json').exists() or (self.root / 'registry-postgres.json').is_symlink():
+            raise ValueError('REGISTRY_POSTGRES_REQUIRED')
+        self._initialize_sqlite()
+        self._prepare_legacy(legacy_project, legacy_context)
+
+    def _storage(self, root, connection_id, legacy_root):
         self.root = real_directory(root)
         self.connection_id = text(connection_id)
         self.legacy_root = Path(legacy_root).resolve() if legacy_root else None
         if self.legacy_root and (self.root.is_relative_to(self.legacy_root) or self.legacy_root.is_relative_to(self.root)):
             raise ValueError('Project registry and legacy storage must be disjoint')
         self.lock = RLock()
+
+    def _initialize_sqlite(self):
         if (self.root / 'registry.sqlite3').is_symlink():
             raise ValueError('Invalid project registry')
         with self.connect() as db:
@@ -54,12 +63,25 @@ class ProjectWorkspaces:
             if tuple(db.execute('select schema_version,connection_id from registry_meta').fetchone()) != (1, self.connection_id):
                 raise ValueError('Registry belongs to a different connection or schema')
         os.chmod(self.root / 'registry.sqlite3', 0o600)
+
+    def _prepare_legacy(self, legacy_project, legacy_context):
         if legacy_project and self.legacy_root and (self.legacy_root / 'library.sqlite3').is_file():
             with closing(sqlite3.connect(self.legacy_root / 'library.sqlite3')) as db:
                 scope = db.execute('select project_code,context_id from library where id=1').fetchone()
                 if scope != (legacy_project, legacy_context):
                     raise ValueError('Legacy project scope does not match the configured source')
             self.prepare(legacy_project, storage_key='legacy', legacy_context=legacy_context)
+
+    def ensure_shared_model_store(self):
+        with self.connect() as db:
+            db.execute('''create table if not exists shared_model_store (
+                id integer primary key check(id=1), connection_id text not null, scope_version integer not null)''')
+            db.execute('insert or ignore into shared_model_store values(1,?,1)', (self.connection_id,))
+            if tuple(db.execute('select connection_id,scope_version from shared_model_store where id=1').fetchone()) != (self.connection_id, 1):
+                raise ValueError('Shared model registry belongs to a different source connection')
+
+    def close(self):
+        pass
 
     @contextmanager
     def connect(self):

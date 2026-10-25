@@ -1,6 +1,6 @@
 # 项目登记 PostgreSQL 迁移准备契约
 
-2026-10-25，Q-13 的固定迁移候选。工具为 [project_registry_postgres.py](../../tools/project_registry_postgres.py)，承接[存储与运行切片](../plans/存储与服务运行准备切片.md)。已验证固定登记暂存及配回原完整文件的新SQLite恢复目录；尚未让ProjectSessions运行时改读PostgreSQL，也未完成业务库/文件迁移、会话、任务和多HTTP实例运行。首轮24项见§4，恢复补充后的最终33项见§5。
+2026-10-25，Q-13 的登记迁移与运行候选，承接[存储与运行切片](../plans/存储与服务运行准备切片.md)。固定暂存/回装工具为 [project_registry_postgres.py](../../tools/project_registry_postgres.py)，当前实际ProjectSessions的PG登记候选与配对备份入口为 [project_registry_runtime.py](../../tools/project_registry_runtime.py)。业务库/资源文件仍本机SQLite与私有目录，会话、任务和多HTTP实例运行未完成。暂存24项见§4，回装33项见§5；后继运行候选见§6，各轮范围分别记录。
 
 ## 1. 来源与固定迁移包
 
@@ -53,3 +53,21 @@
 同一最终B1的1空间/247文件完成实际CLI回装、整组核对、既有标准restore-new再恢复和原生ProjectWorkspaces登记读取，场景数16；源三表/UUID/范围/状态及其余全部配对文件保持，PG暂存行/xmin不变。此固定样本仅回读登记/范围，不声称对真实源重新核权；当前授权由前述合成反例覆盖。原来源manifest仍b65c1fab6e60c675fc373c127feb95d5234489f1ab2170ab2b7993e7d9d3026e，新私有恢复manifest为d4a7efdda8d2bcb6f15544a6ff30d455f031edb2a14119ba7edb8f5670a17785。三份临时文件副本仍是同一固定样本，不加成多个工程数据样本；两自建PG库、唯一容器候选、三份完整文件副本及登记消费者小副本均已清理，原在线整组及配置保持。
 
 本切片未部署或启动PG运行后端，场景/资源业务DB、文件真值及当前在线服务仍原SQLite。后续实际PG消费者、运行期写入/备份恢复、会话/游标/名额/任务跨进程仍待实施。Q-08原页补验已于[记录§85](../plans/开发执行记录.md#85-q-08原页完整回执与最终重新登录补验2026-10-25)完成，不再保留待导出临时页。完整[本批证据](../../output/q13-registry-recovery-20261025/README.md)仅本机保存。
+
+## 6. 实际会话服务的 PostgreSQL 登记候选
+
+`ProjectSessions`显式选择`registry_backend=postgres`，服务CLI为`--registry-backend postgres`；私有连接仅从`ONTOVIS_REGISTRY_DSN`读取。默认SQLite行为保持，PG故障不回退SQLite。可选驱动固定于[requirements-registry.txt](../../apps/api/requirements-registry.txt)，普通SQLite运行不要求安装该依赖。共享模型范围登记改由两种具体登记实现各自处理，不向业务库引入通用SQL翻译层。
+
+运行schema独立为`ontovis_registry_runtime_v1`，与前述不可变暂存schema分开。原三表/字段保持，额外单例`runtime_binding`记录随机store_id、整组目录身份摘要及原备份SHA。`activate-new`只接受已完整验证的备份、外部manifest-sha256、全新目标目录、无该运行schema的ONTOVis专用库及显式service-stopped。通过原备份工具复制全部文件，再在单事务中创建明确表/外键/唯一范围/状态约束及原登记行；不改原备份或在线目录，不覆盖既有schema，不将业务表写入OntoBase数据库。
+
+新项目根的`registry-postgres.json`只含格式、storeId、connectionId，权限0600，不含DSN。运行候选撤下旧备份清单并移除其SQLite登记文件，其他文件保持；启动先核对PG表列、连接范围、storeId及项目/共享库/旧固定模型目录的绝对路径和设备/inode身份，之后才初始化业务服务。复制目录、错误模型根、错误连接、未知schema、标记缺失/错误及同时存在SQLite登记均拒绝。带PG标记的目录不能通过默认SQLite服务或旧SQLite快照工具打开；标记链接也拒绝。跨机器/目录搬迁必须经完整备份及新登记恢复，不直接复制旧标记启动。
+
+PG所有权与登记读写使用同一连接：全程持有数据库级会话advisory lock；15秒statement/5秒lock预算，连接丢失后拒绝后续请求，不自动重连越过所有权锁。服务启动仍先取得原本机目录独占锁；PG连接也排斥第二服务或离线快照，跨目录副本又须通过目录身份检查。初始化失败和正常close释放PG所有权。使用[PostgreSQL会话锁](https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS)及[psycopg显式事务](https://www.psycopg.org/psycopg3/docs/basic/transactions.html)的实际语义；这仍是单服务、本机业务存储候选，不是跨机器分布式租约或多实例生产能力。
+
+新项目按原当前OntoBase权限和服务写门创建，原连接＋项目唯一键保证登记幂等。初始化仍经过preparing→ready，冲突可记blocked；仅离线迁移能登记legacy根。登记上限10,000与固定恢复profile一致，达到上限后仍能读取/重用已有项目，但拒绝新增。状态更新核对完整原行及`xmin`短期并发令牌，陈旧行/错误范围拒绝；状态无变化不生成新行版本。`xmin`不作为工程或业务修订，恢复后重新建立；原workspace UUID、场景修订、请求摘要、工单修订和文件内容语义保持。当前授权、幂等和业务修订检查继续由现有ProjectSessions及业务服务执行。
+
+`snapshot`需要目标存储离线声明，同时持有本机目录共享锁与PG排他所有权。用真实READ ONLY / REPEATABLE READ事务读取全部登记行；复制配对文件，在新备份中以当前PG行重建标准SQLite登记并移除运行标记。副本的其他文件逐项与源一致，整组业务范围/共享引用仍由原`project_store_backup`检查。再次核对源文件字节/身份/mtime及新的PG快照行/xmin，均保持后才发布新manifest SHA；PG未写入任何行。写清单或最终验证失败时撤下清单，保留部分目录，换新目标重试。
+
+因此该快照可直接使用现有`verify/restore-new`恢复到新SQLite目录，也可用`activate-new`恢复到另一空运行schema及新配对目录。运行期新增项目和状态包含在新备份中，不用迁移前备份覆盖新数据。DDL与文件系统无法组成单一原子事务：中断留下的PG候选必须通过全部启动检查；提交结果不明时保留现场，另用新目标核对恢复，不自动drop、重建或接管既有schema。
+
+本轮验证和最新工单B2副本演练见[本机证据](../../output/q13-registry-runtime-20261025/README.md)。尚未切换vis.ontobase.ai或更改其unit/代理，生产选址、业务SQLite迁移、任务/会话/名额跨进程及容量/高可用继续分列。

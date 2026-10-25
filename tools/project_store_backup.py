@@ -16,6 +16,8 @@ FORMAT = 'ontovis-offline-project-stores-v1'
 
 
 def _capture(projects, library=None, model=None):
+    marker = projects / 'registry-postgres.json'
+    paired._require(not marker.exists() and not marker.is_symlink(), 'REGISTRY_POSTGRES_BACKUP_REQUIRED')
     entries, identities = paired._inventory(projects)
     paired._require('registry.sqlite3' in entries, 'INVALID_PROJECT_REGISTRY')
     db = sqlite3.connect((projects / 'registry.sqlite3').as_uri() + '?mode=ro', uri=True)

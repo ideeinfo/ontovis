@@ -28,17 +28,34 @@ METHODS = ('scene_request', 'scene_object_request', 'resource_request', 'resourc
 
 class ProjectSessions(UserSessions):
     def __init__(self, base_url, project_code=None, installation_context_id=None, *, library_root,
-                 workspace_root=None, model_root=None, ontobase_connection_id='ontobase-primary', **kwargs):
+                 workspace_root=None, model_root=None, ontobase_connection_id='ontobase-primary',
+                 registry_backend='sqlite', registry_database_url=None, **kwargs):
         identity_options = {key: kwargs.pop(key) for key in ('clock', 'factory') if key in kwargs}
         super().__init__(base_url, project_code or '', **identity_options)
         self.connection_id = text(ontobase_connection_id)
         self.options = kwargs
         self.model_root = model_root
-        self.registry = ProjectWorkspaces(workspace_root or Path(library_root).parent / 'workbench-projects',
+        registry_type = ProjectWorkspaces
+        registry_options = {}
+        if registry_backend == 'postgres':
+            from .postgres_project_workspaces import PostgresProjectWorkspaces
+            registry_type = PostgresProjectWorkspaces
+            registry_options['database_url'] = registry_database_url
+            registry_options['model_root'] = model_root
+        elif registry_backend != 'sqlite':
+            raise ValueError('REGISTRY_BACKEND_UNSUPPORTED')
+        self.registry = registry_type(workspace_root or Path(library_root).parent / 'workbench-projects',
             self.connection_id, legacy_root=library_root, legacy_project=project_code,
-            legacy_context=installation_context_id)
+            legacy_context=installation_context_id, **registry_options)
         self.services = {}
         self.readers = {}
+        try:
+            self._initialize_services(project_code, installation_context_id, library_root, model_root)
+        except BaseException:
+            self.close()
+            raise
+
+    def _initialize_services(self, project_code, installation_context_id, library_root, model_root):
         self.cursor_key = secrets.token_bytes(32)
         self.upload_slots, self.geometry_slots = BoundedSemaphore(1), BoundedSemaphore(1)
         self.terrain_slots, self.thumbnail_slots, self.fetch_slots = BoundedSemaphore(1), BoundedSemaphore(1), BoundedSemaphore(1)
@@ -55,12 +72,7 @@ class ProjectSessions(UserSessions):
             if tuple(db.execute('select connection_id,scope_version from shared_model_scope where id=1').fetchone()) != (self.connection_id, 1):
                 raise ValueError('Shared models belong to a different source connection')
         self.shared_access = SharedModelAccess(self)
-        with self.registry.connect() as db:
-            db.execute('''create table if not exists shared_model_store (
-                id integer primary key check(id=1), connection_id text not null, scope_version integer not null)''')
-            db.execute('insert or ignore into shared_model_store values(1,?,1)', (self.connection_id,))
-            if tuple(db.execute('select connection_id,scope_version from shared_model_store where id=1').fetchone()) != (self.connection_id, 1):
-                raise ValueError('Shared model registry belongs to a different source connection')
+        self.registry.ensure_shared_model_store()
         self.shared.model_authorization = self.shared_access.authorize
         self.shared.model_scope = 'shared_static_glb_resources'
         self.shared.scenes.use_shared_models(lambda identifier, db=None: self.shared.project_models.content_identity(identifier), self.connection_id)
@@ -304,8 +316,12 @@ class ProjectSessions(UserSessions):
                 item.close()
 
     def close(self):
-        for service in {self.shared, *self.services.values()}:
-            self._close(service)
+        try:
+            for service in {getattr(self, 'shared', None), *self.services.values(), *self.readers.values()}:
+                if service is not None:
+                    self._close(service)
+        finally:
+            self.registry.close()
 
     def _demo_order_targets(self, reader):
         model = self.shared.model.value if self.shared.model else None
