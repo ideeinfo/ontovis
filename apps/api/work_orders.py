@@ -8,6 +8,7 @@ from uuid import UUID
 
 from .authority import PreviewError
 from .demo_faults import BATCH, DEMO_PROJECT, RULE_REVISION, diagnosis, scenarios
+from .work_order_diagnosis import initial_plan, validate_plan, complete, reset_results
 
 STATES = ('open', 'diagnosing', 'investigating', 'review', 'closed')
 TRANSITIONS = {'accept': ('open', 'diagnosing'), 'investigate': ('diagnosing', 'investigating'),
@@ -25,7 +26,10 @@ def encoded(value):
 
 
 def digest(value):
-    return hashlib.sha256(encoded(value).encode()).hexdigest()
+    try:
+        return hashlib.sha256(encoded(value).encode()).hexdigest()
+    except (UnicodeError, ValueError):
+        raise PreviewError(422, 'INVALID_REQUEST') from None
 
 
 def text(value, limit=2000, *, empty=False):
@@ -55,6 +59,14 @@ class WorkOrders:
                     state text not null, note text not null, primary key(order_id, revision));
                 create table if not exists work_order_requests (
                     request_id text primary key, payload_sha256 text not null, response text not null);
+                create table if not exists work_order_diagnostics (
+                    order_id text not null references work_orders(order_id), order_revision integer not null,
+                    snapshot text not null, source_graph text not null, actor text not null, recorded_at text not null,
+                    primary key(order_id, order_revision));
+                create trigger if not exists work_order_diagnostics_no_update before update on work_order_diagnostics
+                    begin select raise(abort, 'immutable investigation revision'); end;
+                create trigger if not exists work_order_diagnostics_no_delete before delete on work_order_diagnostics
+                    begin select raise(abort, 'retained investigation revision'); end;
             ''')
 
     @staticmethod
@@ -104,7 +116,14 @@ class WorkOrders:
         batch = db.execute('select * from work_order_batches where batch_id=?', (row['batch_id'],)).fetchone()
         events = db.execute('select * from work_order_events where order_id=? order by revision', (identifier,)).fetchall()
         require(len(events) <= 100, 'WORK_ORDER_EVENT_LIMIT', 413)
-        return {**self._public(row), 'diagnosis': diagnosis(row['fault_code']),
+        record = db.execute('select * from work_order_diagnostics where order_id=? order by order_revision desc limit 1', (identifier,)).fetchone()
+        graph = json.loads(record['source_graph']) if record else diagnosis(row['fault_code'])
+        plan = json.loads(record['snapshot']) if record else initial_plan(row['fault_code'], graph)
+        return {**self._public(row), 'diagnosis': graph, 'investigation': plan,
+                'investigationRevision': record['order_revision'] if record else None,
+                'investigationComplete': bool(record) and complete(plan),
+                'investigationHistory': [{'orderRevision': saved['order_revision'], 'actor': saved['actor'], 'recordedAt': saved['recorded_at']}
+                    for saved in db.execute('select order_revision,actor,recorded_at from work_order_diagnostics where order_id=? order by order_revision desc', (identifier,))],
                 'createdRuleRevision': batch['revision'], 'targets': json.loads(batch['targets']),
                 'events': [{'revision': event['revision'], 'action': event['action'], 'actor': event['actor'],
                             'recordedAt': event['recorded_at'], 'from': event['previous_state'],
@@ -115,6 +134,16 @@ class WorkOrders:
         identifier = text(body['orderId'], 100)
         with self.library.connect() as db:
             return self._detail(db, identifier)
+
+    def diagnosis_history(self, body):
+        require(set(body) == {'orderId', 'orderRevision'} and type(body['orderRevision']) is int and body['orderRevision'] > 0)
+        identifier = text(body['orderId'], 100)
+        with self.library.connect() as db:
+            row = db.execute('select * from work_order_diagnostics where order_id=? and order_revision=?',
+                             (identifier, body['orderRevision'])).fetchone()
+            require(row is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
+            return {'orderId': identifier, 'orderRevision': row['order_revision'], 'investigation': json.loads(row['snapshot']),
+                    'diagnosis': json.loads(row['source_graph']), 'actor': row['actor'], 'recordedAt': row['recorded_at']}
 
     def _mutate(self, body, actor, guard, operation):
         text(actor, 200)
@@ -164,10 +193,10 @@ class WorkOrders:
 
     def action(self, body, actor, guard):
         fields = {'requestId', 'orderId', 'expectedOrderRevision', 'action', 'checks', 'note'}
-        require(set(body) == fields)
+        require(set(body) == fields | ({'investigation'} if body.get('action') == 'save_diagnosis' else set()))
         identifier = text(body['orderId'], 100)
         action = body['action']
-        require(isinstance(action, str) and action in (*TRANSITIONS, 'save'))
+        require(isinstance(action, str) and action in (*TRANSITIONS, 'save', 'save_diagnosis'))
         revision = body['expectedOrderRevision']
         require(type(revision) is int and revision > 0)
         note = text(body['note'], empty=action not in ('submit', 'return', 'close', 'reopen'))
@@ -180,18 +209,27 @@ class WorkOrders:
             require(revision < 100, 'WORK_ORDER_EVENT_LIMIT', 413)
             previous = value['state']
             state = previous
-            if action == 'save':
+            if action == 'save_diagnosis':
+                require(previous in ('diagnosing', 'investigating'), 'WORK_ORDER_STATE_CONFLICT', 409)
+            elif action == 'save':
                 require(previous in ('diagnosing', 'investigating', 'review'), 'WORK_ORDER_STATE_CONFLICT', 409)
             else:
                 source, state = TRANSITIONS[action]
                 require(previous == source, 'WORK_ORDER_STATE_CONFLICT', 409)
             if action in ('submit', 'close'):
                 require(len(checks) == 4, 'WORK_ORDER_CHECKS_REQUIRED', 422)
+                require(value['investigationComplete'], 'WORK_ORDER_DIAGNOSIS_REQUIRED', 422)
             saved_checks = [] if action in ('return', 'reopen') else checks
             stamp = datetime.now(timezone.utc).isoformat()
             db.execute('update work_orders set state=?,revision=?,updated_at=?,checks=?,note=? where order_id=? and revision=?',
                        (state, revision + 1, stamp, encoded(saved_checks), note, identifier, revision))
             db.execute('insert into work_order_events values(?,?,?,?,?,?,?,?)',
                        (identifier, revision + 1, action, actor, stamp, previous, state, note))
+            if action in ('save_diagnosis', 'return', 'reopen') or value['investigationRevision'] is None:
+                plan = validate_plan(body['investigation'], value['diagnosis']) if action == 'save_diagnosis' else value['investigation']
+                if action in ('return', 'reopen'):
+                    plan = reset_results(plan)
+                db.execute('insert into work_order_diagnostics values(?,?,?,?,?,?)',
+                           (identifier, revision + 1, encoded(plan), encoded(value['diagnosis']), actor, stamp))
             return self._detail(db, identifier)
         return self._mutate(body, actor, guard, operation)

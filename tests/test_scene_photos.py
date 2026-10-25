@@ -4,6 +4,7 @@ import hashlib
 from email.message import Message
 import io
 import unittest
+from unittest.mock import patch
 
 from apps.api.authority import Authority, PreviewError
 from apps.api.scene_engineering import SceneEngineeringReader
@@ -107,6 +108,15 @@ class ScenePhotoTests(unittest.TestCase):
         self.error('FORBIDDEN', self.reader.content, self.content_body())
         self.authority.allowed = True
         self.authority.after_photo = lambda source: source.objects[engineering.CABINET].update(entityRevision='changed:2')
+        self.error('ENGINEERING_CHANGED', self.reader.content, self.content_body())
+
+    def test_content_reads_identity_only_before_and_after_the_complete_operation(self):
+        with patch.object(self.reader, '_selected', wraps=self.reader._selected) as selected:
+            self.assertEqual(self.reader.content(self.content_body())['content'], PNG)
+        self.assertEqual(selected.call_count, 2)
+
+    def test_identity_change_during_metadata_still_prevents_releasing_bytes(self):
+        self.authority.edit = lambda _: self.authority.objects[engineering.CABINET].update(entityRevision='changed:2')
         self.error('ENGINEERING_CHANGED', self.reader.content, self.content_body())
 
     def test_real_transport_checks_fixed_version_digest_mime_and_region_header(self):

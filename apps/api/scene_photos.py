@@ -92,16 +92,19 @@ class ScenePhotoReader(SceneEvidenceReader):
             result.append(item)
         return {'items': result, 'complete': True, 'versionMode': 'fixed_content_version'}
 
-    def resolve(self, payload):
-        body = self._selection(payload)
-        selected = self._selected(body)
+    def _resolve_selected(self, body, selected):
         try:
             value = self.reader._request('POST', self.reader.prefix + '/object-evidence/photos/resolve', body)
         except PreviewError as error:
             if error.status == 404:
                 raise PreviewError(503, 'PHOTO_SOURCE_UNAVAILABLE') from None
             raise
-        result = self._photo_metadata(value, body, selected)
+        return self._photo_metadata(value, body, selected)
+
+    def resolve(self, payload):
+        body = self._selection(payload)
+        selected = self._selected(body)
+        result = self._resolve_selected(body, selected)
         self._unchanged(body, selected)
         return result
 
@@ -112,7 +115,9 @@ class ScenePhotoReader(SceneEvidenceReader):
         for key in ('expectedSourceRevision', 'expectedSourceSha256', 'expectedDisplayRevision'):
             _sha(payload[key], request=True)
         selected = self._selected(body)
-        metadata = self.resolve(body)
+        # Keep one identity snapshot around the whole read, including the bytes.
+        # Calling resolve() here repeated both identity reads inside this pair.
+        metadata = self._resolve_selected(body, selected)
         item = next((row for row in metadata['items'] if row['evidenceRef'] == payload['evidenceRef']), None)
         _require(item is not None and item['sourceRevision'] == payload['expectedSourceRevision']
                  and item['contentVersionId'] == payload['expectedContentVersionId']

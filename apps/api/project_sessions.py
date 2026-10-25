@@ -378,6 +378,8 @@ class ProjectSessions(UserSessions):
                 value = orders.listing(body, access.get('role') == 'admin')
             elif path.endswith('/detail'):
                 value = orders.detail(body)
+            elif path.endswith('/diagnosis-history'):
+                value = orders.diagnosis_history(body)
             elif path.endswith('/seed-demo'):
                 value = orders.seed(body, targets, row.authority.username, authorize)
             elif path.endswith('/action'):

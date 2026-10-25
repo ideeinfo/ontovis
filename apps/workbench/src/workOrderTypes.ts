@@ -8,7 +8,15 @@ export interface WorkOrder {
   sourceKind:'simulated';engineeringConfirmation:false;
 }
 export interface DiagnosticNode {id:string;kind:string;label:string;state:string;rds?:string;locateKey?:string}
+export interface Investigation {
+  hypotheses:{id:string;description:string;status:'candidate'|'supported'|'rejected';basis:string}[];
+  steps:{id:string;title:string;targetKey:string;outcome:'pending'|'observed'|'gap'|'not_applicable';result:string}[];
+  conclusion:string;reviewBasis:string;
+}
+export interface InvestigationHistory {orderRevision:number;actor:string;recordedAt:string}
 export interface WorkOrderDetail extends WorkOrder {
+  investigation:Investigation;investigationRevision:number|null;investigationComplete:boolean;
+  investigationHistory:InvestigationHistory[];
   createdRuleRevision:string;
   diagnosis:{revision:string;mode:'demonstration_rules';engineeringConfirmation:false;
     source:{projectCode:string;catalogue:string;manualPages:number[];applicability:string};gap:string;

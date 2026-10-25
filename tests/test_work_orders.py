@@ -1,8 +1,11 @@
 """Real project SQLite transactions; all alarms and engineering inputs are synthetic."""
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from apps.api.authority import PreviewError
@@ -35,6 +38,13 @@ class WorkOrderTests(unittest.TestCase):
 
     def first(self):
         return self.orders.detail({'orderId': 'DEMO-PDS-WO-001'})
+
+    def complete_plan(self, detail):
+        plan = deepcopy(detail['investigation'])
+        for step in plan['steps']:
+            step.update(outcome='gap', result='合成验收：资料适用性待核实，已记录证据缺口。')
+        plan.update(conclusion='演示流程完成；尚不确认现场根因。', reviewBasis='合成记录，仅验证人工复核流程。')
+        return self.action(detail, 'save_diagnosis', investigation=plan)
 
     def test_twenty_unique_orders_seven_typical_codes_and_reference_only_graph(self):
         self.assertEqual(self.seed()['created'], 20)
@@ -86,22 +96,126 @@ class WorkOrderTests(unittest.TestCase):
         for item in self.orders.listing({}, True)['items']:
             detail = self.action(item, 'accept')
             detail = self.action(detail, 'investigate')
+            detail = self.complete_plan(detail)
             detail = self.action(detail, 'submit', checks=[check['id'] for check in detail['diagnosis']['checks']])
             detail = self.action(detail, 'close')
             self.assertEqual(detail['state'], 'closed')
-            self.assertEqual([event['to'] for event in detail['events']], ['open', 'diagnosing', 'investigating', 'review', 'closed'])
+            self.assertEqual([event['to'] for event in detail['events']], ['open', 'diagnosing', 'investigating', 'investigating', 'review', 'closed'])
             self.assertEqual(self.orders.detail({'orderId': item['orderId']}), detail)
         reopened = self.action(self.first(), 'reopen')
         self.assertEqual((reopened['state'], reopened['checks']), ('investigating', []))
+        self.assertFalse(reopened['investigationComplete'])
+        self.assertTrue(all(step['outcome'] == 'pending' and not step['result'] for step in reopened['investigation']['steps']))
 
     def test_required_checks_and_review_notes_and_return(self):
         self.seed(); detail = self.action(self.action(self.first(), 'accept'), 'investigate')
         self.error('WORK_ORDER_CHECKS_REQUIRED', self.action, detail, 'submit', checks=[])
         self.error('INVALID_REQUEST', self.action, detail, 'submit', note='  ')
+        self.error('WORK_ORDER_DIAGNOSIS_REQUIRED', self.action, detail, 'submit', checks=[check['id'] for check in detail['diagnosis']['checks']])
+        detail = self.complete_plan(detail)
         reviewed = self.action(detail, 'submit', checks=[check['id'] for check in detail['diagnosis']['checks']])
         self.error('WORK_ORDER_CHECKS_REQUIRED', self.action, reviewed, 'close', checks=[])
         returned = self.action(reviewed, 'return')
         self.assertEqual((returned['state'], returned['checks']), ('investigating', []))
+        self.assertFalse(returned['investigationComplete'])
+        previous = self.orders.diagnosis_history({'orderId': detail['orderId'], 'orderRevision': detail['investigationRevision']})
+        self.assertEqual(previous['investigation'], detail['investigation'])
+
+    def test_per_order_edits_are_persisted_pinned_and_isolated(self):
+        self.seed(); detail = self.action(self.first(), 'accept')
+        other = self.orders.detail({'orderId': 'DEMO-PDS-WO-002'})
+        self.assertNotEqual(detail['investigation']['hypotheses'], other['investigation']['hypotheses'])
+        plan = deepcopy(detail['investigation'])
+        plan['hypotheses'][0].update(description='自定义原因候选', status='supported', basis='合成观察依据')
+        plan['steps'].append({'id': 'custom-step', 'title': '自定义核对', 'targetKey': 'CN2', 'outcome': 'pending', 'result': ''})
+        saved = self.action(detail, 'save_diagnosis', investigation=plan)
+        self.assertEqual(saved['investigation'], plan)
+        self.assertEqual(self.orders.detail({'orderId': other['orderId']}), other)
+        with patch('apps.api.work_orders.diagnosis', side_effect=AssertionError('pinned source must be read')):
+            self.assertEqual(WorkOrders(self.library, 'Demo-PDS').detail({'orderId': detail['orderId']}), saved)
+        self.error('WORK_ORDER_CHANGED', self.action, detail, 'save_diagnosis', investigation=plan)
+
+    def test_review_gate_rechecks_every_saved_diagnosis_requirement(self):
+        self.seed(); detail = self.complete_plan(self.action(self.action(self.first(), 'accept'), 'investigate'))
+        complete = deepcopy(detail['investigation'])
+        mutations = [lambda p: p.update(conclusion=''), lambda p: p.update(reviewBasis=''),
+            lambda p: p['steps'][0].update(outcome='pending'), lambda p: p['steps'][0].update(result=''),
+            lambda p: p['hypotheses'][0].update(status='supported', basis='')]
+        for mutate in mutations:
+            plan = deepcopy(complete); mutate(plan)
+            detail = self.action(detail, 'save_diagnosis', investigation=plan)
+            self.assertFalse(detail['investigationComplete'])
+            self.error('WORK_ORDER_DIAGNOSIS_REQUIRED', self.action, detail, 'submit', checks=[c['id'] for c in detail['diagnosis']['checks']])
+
+    def test_diagnosis_revisions_are_immutable_and_exact_reads_are_scoped(self):
+        self.seed(); detail = self.action(self.first(), 'accept'); saved = self.complete_plan(detail)
+        original = self.orders.diagnosis_history({'orderId': detail['orderId'], 'orderRevision': detail['investigationRevision']})
+        self.assertEqual(original['investigation'], detail['investigation'])
+        for sql in ('update work_order_diagnostics set actor=?', 'delete from work_order_diagnostics where actor=?'):
+            with self.assertRaises(sqlite3.IntegrityError), self.library.connect() as db:
+                db.execute(sql, ('synthetic-admin',))
+        other = WorkOrders(ModelLibrary(self.root / 'B', 'B', None), 'B')
+        self.error('NOT_FOUND_OR_FORBIDDEN', other.diagnosis_history, {'orderId': detail['orderId'], 'orderRevision': saved['investigationRevision']})
+        self.error('NOT_FOUND_OR_FORBIDDEN', self.orders.diagnosis_history, {'orderId': detail['orderId'], 'orderRevision': 99})
+        self.error('INVALID_REQUEST', self.orders.diagnosis_history, {'orderId': detail['orderId'], 'orderRevision': True})
+
+    def test_diagnosis_retry_concurrency_and_revocation_are_transactional(self):
+        self.seed(); detail = self.action(self.first(), 'accept'); plan = deepcopy(detail['investigation'])
+        plan['conclusion'] = '合成修订'
+        request = str(uuid4())
+        saved = self.action(detail, 'save_diagnosis', investigation=plan, requestId=request)
+        self.assertEqual(self.action(detail, 'save_diagnosis', investigation=plan, requestId=request), saved)
+        self.error('REQUEST_REUSE_CONFLICT', self.action, detail, 'save_diagnosis', investigation={**plan, 'conclusion': 'changed'}, requestId=request)
+        calls = []
+        def guard():
+            calls.append(1)
+            if len(calls) == 2: raise PreviewError(403, 'FORBIDDEN')
+        self.guard = guard
+        self.error('FORBIDDEN', self.action, saved, 'save_diagnosis', investigation=plan)
+        self.assertEqual(self.first(), saved)
+        self.guard = lambda: None
+        def submit(_):
+            try: return self.action(saved, 'save_diagnosis', investigation=plan)['orderRevision']
+            except PreviewError as error: return error.code
+        with ThreadPoolExecutor(2) as pool: result = list(pool.map(submit, range(2)))
+        self.assertCountEqual(result, [saved['orderRevision'] + 1, 'WORK_ORDER_CHANGED'])
+
+    def test_invalid_diagnosis_and_review_edits_never_modify_rows(self):
+        self.seed(); detail = self.action(self.first(), 'accept')
+        mutations = [lambda p: p.update(hypotheses=[]), lambda p: p.update(steps=[]),
+            lambda p: p.update(extra=True), lambda p: p['steps'][0].update(targetKey='foreign-object'),
+            lambda p: p['steps'][0].update(outcome=[]), lambda p: p['steps'][0].update(id='invalid.id'),
+            lambda p: p['hypotheses'][0].update(status='confirmed'),
+            lambda p: p['steps'].append(deepcopy(p['steps'][0])),
+            lambda p: p.update(conclusion='x' * 2001)]
+        for mutate in mutations:
+            plan = deepcopy(detail['investigation']); mutate(plan)
+            self.error('WORK_ORDER_DIAGNOSIS_INVALID', self.action, detail, 'save_diagnosis', investigation=plan)
+            self.assertEqual(self.first(), detail)
+        plan = deepcopy(detail['investigation']); plan['conclusion'] = '\ud800'
+        self.error('INVALID_REQUEST', self.action, detail, 'save_diagnosis', investigation=plan)
+        plan = deepcopy(detail['investigation'])
+        for i in range(12):
+            plan['steps'].append({**plan['steps'][0], 'id': 'huge-' + str(i), 'result': '字' * 2000})
+        plan['steps'] = plan['steps'][-12:]
+        self.error('WORK_ORDER_DIAGNOSIS_INVALID', self.action, detail, 'save_diagnosis', investigation=plan)
+        detail = self.complete_plan(self.action(detail, 'investigate'))
+        review = self.action(detail, 'submit', checks=[check['id'] for check in detail['diagnosis']['checks']])
+        self.error('WORK_ORDER_STATE_CONFLICT', self.action, review, 'save_diagnosis', investigation=review['investigation'])
+        closed = self.action(review, 'close')
+        self.error('WORK_ORDER_STATE_CONFLICT', self.action, closed, 'save_diagnosis', investigation=closed['investigation'])
+
+    def test_legacy_closed_orders_are_not_rewritten_on_read(self):
+        self.seed()
+        with self.library.connect() as db:
+            db.execute("update work_orders set state='closed' where order_id='DEMO-PDS-WO-001'")
+            before = [tuple(row) for row in db.execute('select * from work_orders')]
+        detail = WorkOrders(self.library, 'Demo-PDS').detail({'orderId': 'DEMO-PDS-WO-001'})
+        self.assertIsNone(detail['investigationRevision'])
+        self.assertFalse(detail['investigationComplete'])
+        with self.library.connect() as db:
+            self.assertEqual([tuple(row) for row in db.execute('select * from work_orders')], before)
+            self.assertEqual(db.execute('select count(*) from work_order_diagnostics').fetchone()[0], 0)
 
     def test_stale_version_illegal_transition_and_identity_change(self):
         self.seed(); original = self.first()

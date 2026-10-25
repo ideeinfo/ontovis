@@ -158,7 +158,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                            '/api/workbench/scenes/replacement-check','/api/workbench/scenes/locate')
             project_paths = ('/api/workbench/projects', '/api/workbench/projects/access')
             work_order_paths = tuple('/api/workbench/work-orders' + suffix
-                                     for suffix in ('', '/seed-demo', '/detail', '/action', '/locate'))
+                                     for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
                                   '/api/workbench/objects/evidence/content', '/api/workbench/objects/photos/resolve',
@@ -196,6 +196,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                          '/api/workbench/scenes/legacy-migration/activate')
             metadata_save = parts.path == '/api/workbench/resources/model/metadata/save'
             limit = (MAX_SCENE_BYTES if large_scene else MAX_METADATA_REQUEST_BYTES if metadata_save else
+                     32768 if parts.path == '/api/workbench/work-orders/action' else
                      16384 if parts.path in (*work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')

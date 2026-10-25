@@ -88,6 +88,38 @@ class WorkOrderHttpTests(unittest.TestCase):
         self.sessions._access = original
         self.assertEqual(self.request(ROOT + '/detail', self.body(orderId=item['orderId']))[1]['orderRevision'], 1)
 
+    def test_per_order_diagnosis_history_uses_current_project_and_permission(self):
+        self.seed()
+        order_id = 'DEMO-PDS-WO-001'
+        body = self.body(orderId=order_id, expectedOrderRevision=1, action='accept', checks=[], note='', requestId=str(uuid4()))
+        detail = self.request(ROOT + '/action', body)[1]
+        plan = detail['investigation']
+        plan['conclusion'] = '合成编辑验收'
+        saved = self.request(ROOT + '/action', {**body, 'action': 'save_diagnosis', 'expectedOrderRevision': 2,
+            'requestId': str(uuid4()), 'investigation': plan})
+        self.assertEqual((saved[0], saved[1]['investigation']['conclusion']), (200, '合成编辑验收'))
+        history_body = self.body(orderId=order_id, orderRevision=3)
+        reader = self.login('reader')
+        self.assertEqual(self.request(ROOT + '/diagnosis-history', history_body, client=reader)[0], 200)
+        denied = self.request(ROOT + '/action', {**body, 'action': 'save_diagnosis', 'expectedOrderRevision': 3,
+            'requestId': str(uuid4()), 'investigation': plan}, client=reader)
+        self.assertEqual((denied[0], denied[1]['code']), (403, 'WORK_ORDER_WRITE_FORBIDDEN'))
+        other = {'ontobaseConnectionId': 'ontobase-primary', 'projectCode': 'B'}
+        self.assertEqual(self.request(ROOT + '/diagnosis-history', {**history_body, 'projectRef': other}, client=self.admin)[0], 404)
+        ProjectsAuthority.permissions['reader'].pop('Demo-PDS')
+        self.assertEqual(self.request(ROOT + '/diagnosis-history', history_body, client=reader)[0], 403)
+
+    def test_diagnosis_transport_budget_accepts_bounded_long_results(self):
+        self.seed()
+        body = self.body(orderId='DEMO-PDS-WO-001', expectedOrderRevision=1, action='accept', checks=[], note='', requestId=str(uuid4()))
+        detail = self.request(ROOT + '/action', body)[1]
+        plan = detail['investigation']
+        plan['steps'] = [{**plan['steps'][0], 'id': 'step-' + str(i), 'result': 'x' * 1900} for i in range(10)]
+        saved = self.request(ROOT + '/action', {**body, 'action': 'save_diagnosis', 'expectedOrderRevision': 2,
+            'requestId': str(uuid4()), 'investigation': plan})
+        self.assertEqual(saved[0], 200)
+        self.assertEqual(len(saved[1]['investigation']['steps']), 10)
+
     def test_exact_project_electrical_tag_can_be_read_without_accepting_pending_identity(self):
         self.seed()
         identity={'value':'=WEC+CN1-1B4','role':'primary','scheme':'electrical_tag',

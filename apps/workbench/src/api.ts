@@ -186,6 +186,8 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     WORK_ORDER_CHANGED:['工单已变化，请重新读取后再操作。','This work order changed. Reload before continuing.'],
     WORK_ORDER_STATE_CONFLICT:['当前工单状态不允许此操作，请重新读取。','This action is not available in the current state. Reload.'],
     WORK_ORDER_CHECKS_REQUIRED:['请完成全部演示排查项，再提交或关闭。','Complete all exercise checks before submitting or closing.'],
+    WORK_ORDER_DIAGNOSIS_REQUIRED:['请先保存逐项排查结果、结论和复核依据；支持或排除的原因也需要依据。','Save all step results, conclusion and review basis. Supported or rejected hypotheses also need a basis.'],
+    WORK_ORDER_DIAGNOSIS_INVALID:['排查方案内容无效或超过上限，请检查后再保存。','The investigation plan is invalid or exceeds its limits.'],
     DEMO_TARGETS_UNAVAILABLE:['演示柜体身份需要重新核对，尚未生成工单。','The demo cabinet identities require review. No orders were created.'],
     WORK_ORDER_TARGET_CHANGED:['工单保留的柜体依据已变化，请重新核对。','The stored cabinet basis changed and requires review.'],
     DIAGNOSTIC_OBJECT_UNRESOLVED:['该完整主位号尚无唯一可读取对象，请核对项目定义和资料。','This full primary tag has no unique readable object. Review the project definition.'],
