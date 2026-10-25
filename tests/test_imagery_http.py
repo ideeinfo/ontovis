@@ -26,7 +26,7 @@ class ImageryHttpTests(unittest.TestCase):
     def test_segmented_upload_http_confirms_bytes_and_publishes_only_once(self):
         self.transfer_data=image_bytes(self.root/'segmented.tif');self.transfer_metadata=metadata()
         status,row,headers=self.start_transfer();self.assertEqual(status,200,row)
-        self.assertEqual(headers['Cache-Control'],'no-store');self.assertEqual(row['limits']['maxChunkBytes'],262144)
+        self.assertEqual(headers['Cache-Control'],'no-store');self.assertEqual(row['limits']['maxChunkBytes'],131072)
         self.assertEqual(self.request('/api/workbench/imagery',{})[1]['uploads'][0]['uploadId'],row['uploadId'])
         status,next_row,_=self.transfer_chunk(row,self.transfer_data[:100]);self.assertEqual((status,next_row['receivedBytes']),(200,100))
         self.assertEqual(self.transfer_chunk(row,self.transfer_data[:100])[1]['uploadRevision'],next_row['uploadRevision'])

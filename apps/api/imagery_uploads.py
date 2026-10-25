@@ -14,7 +14,8 @@ from .imagery_library import MAX_BYTES, MAX_TOTAL_BYTES, metadata
 from .terrain_library import _canonical, _require, _sync_directory, _uuid
 from tools.model_probe import strict_json, ProbeError
 
-CHUNK_BYTES = 256 * 1024
+CHUNK_BYTES = 128 * 1024
+RETAINED_TAIL_BYTES = 256 * 1024
 MAX_PENDING = 2
 TTL_SECONDS = 24 * 60 * 60
 
@@ -76,7 +77,8 @@ class ImageryUploads:
         source = folder / 'source.part'
         if source.exists() or source.is_symlink():
             size = regular(source).st_size
-            _require(value['receivedBytes'] <= size <= min(value['bytes'], value['receivedBytes'] + CHUNK_BYTES),
+            # Accept an unacknowledged tail from the earlier 256KiB receiver.
+            _require(value['receivedBytes'] <= size <= min(value['bytes'], value['receivedBytes'] + RETAINED_TAIL_BYTES),
                      'RESOURCE_CHANGED', 409)
         else:
             _require(value['state'] == 'completed', 'RESOURCE_CHANGED', 409)
@@ -186,7 +188,10 @@ class ImageryUploads:
                 _require(payload['expectedUploadRevision'] == value['uploadRevision'], 'IMAGERY_UPLOAD_CHANGED', 409)
             data = bytearray()
             while len(data) < length:
-                piece = stream.read(min(65536, length - len(data)))
+                try:
+                    piece = stream.read(min(65536, length - len(data)))
+                except (TimeoutError, ConnectionError):
+                    raise PreviewError(504, 'SOURCE_UNAVAILABLE') from None
                 _require(type(piece) is bytes and 0 < len(piece) <= length - len(data), 'UNSUPPORTED_IMAGERY')
                 data.extend(piece)
             _require(hashlib.sha256(data).hexdigest() == payload['expectedChunkSha256'], 'IMAGERY_CHUNK_CHANGED', 409)

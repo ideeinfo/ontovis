@@ -141,6 +141,27 @@ receiver.chunk(io.BytesIO(bytes.fromhex(sys.argv[3])),100,json.loads(sys.argv[2]
         self.assertEqual(self.transfers.listing(self.actor, lambda: None), [])
         self.assertFalse(self.transfers.root.exists())
 
+    def test_network_read_interruption_is_not_reported_as_storage_failure(self):
+        row = self.start()
+        for failure in (TimeoutError(), ConnectionResetError()):
+            with self.subTest(failure=type(failure).__name__):
+                stream = io.BytesIO(self.data)
+                with patch.object(stream, 'read', side_effect=failure):
+                    self.expect('SOURCE_UNAVAILABLE', lambda: self.transfers.chunk(stream, len(self.data), {
+                        'uploadId': row['uploadId'], 'offset': 0, 'expectedUploadRevision': row['uploadRevision'],
+                        'expectedChunkSha256': self.sha}, self.actor, lambda: None))
+                self.assertEqual(self.status(row)['receivedBytes'], 0)
+
+    def test_earlier_large_unconfirmed_tail_is_rewritten_after_limit_reduction(self):
+        data = b'x' * (256 * 1024 + 1)
+        row = self.start(size=len(data), sha256=hashlib.sha256(data).hexdigest())
+        source = self.transfers.root / row['uploadId'] / 'source.part'
+        source.write_bytes(b'z' * (256 * 1024))
+        self.assertEqual(self.status(row)['receivedBytes'], 0)
+        row = self.chunk(row, data[:CHUNK_BYTES])
+        self.assertEqual(row['receivedBytes'], CHUNK_BYTES)
+        self.assertEqual(source.read_bytes(), data[:CHUNK_BYTES])
+
     def test_authority_revoked_after_bytes_before_receipt_leaves_offset_unconfirmed(self):
         row = self.start()
         calls = []

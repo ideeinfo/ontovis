@@ -116,7 +116,8 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         from apps.api.imagery_uploads import CHUNK_BYTES
         body=location_for('/api/workbench/imagery/uploads/chunk')
         self.assertIn(f'client_max_body_size {CHUNK_BYTES};',body)
-        self.assertIn('proxy_request_buffering off;',body)
+        self.assertIn('proxy_request_buffering on;',body)
+        self.assertIn('client_body_buffer_size 128k;',body)
         self.assertIn('client_body_timeout 30s;',body)
         for action in ('start','status','complete','cancel'):
             self.assertIn('client_max_body_size 16k;',location_for('/api/workbench/imagery/uploads/'+action))
