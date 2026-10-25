@@ -57,12 +57,12 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         legacy = tuple('/api/workbench/scenes/legacy-migration/' + action for action in ('sources', 'check', 'activate', 'entry'))
         large = {'/api/workbench/scenes/' + action for action in ('save', 'check', 'replacement-check')}
         large.update('/api/workbench/scenes/legacy-migration/' + action for action in ('check', 'activate'))
-        orders = tuple('/api/workbench/work-orders' + suffix for suffix in ('', '/seed-demo', '/detail', '/action', '/locate'))
+        orders = tuple('/api/workbench/work-orders' + suffix for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history'))
         routes = [path for paths in groups.values() for path in paths] + list(legacy) + list(orders)
         for path in routes:
             with self.subTest(path=path):
                 body = location_for(path)
-                limit = '1m' if path in large else '72k' if path.endswith('/model/metadata/save') else '16k'
+                limit = '1m' if path in large else '72k' if path.endswith('/model/metadata/save') else '32k' if path.endswith('/work-orders/action') else '16k'
                 self.assertIn('client_max_body_size ' + limit + ';', body)
                 self.assertIn('proxy_buffering off;', body)
                 if path.startswith('/api/workbench/scenes'):
@@ -80,7 +80,9 @@ class WorkbenchDeploymentTests(unittest.TestCase):
                      '/api/workbench/resources/model/inspection/extra', '/api/workbench/resources/model/inspection/',
                      '/api/workbench/resources/model/thumbnail/extra', '/api/workbench/resources/model/thumbnail/content/',
                      '/api/workbench/resources/model/thumbnail/ensure/extra',
-                     '/api/workbench/resources/model/metadata/save/extra', '/api/workbench/resources/model/metadata/save/'):
+                     '/api/workbench/resources/model/metadata/save/extra', '/api/workbench/resources/model/metadata/save/',
+                     '/api/workbench/work-orders/diagnosis-history/extra', '/api/workbench/work-orders/diagnosis-history/',
+                     '/api/workbench/work-orders/action/extra', '/api/workbench/work-orders/action/'):
             with self.subTest(path=path), self.assertRaises(AssertionError):
                 location_for(path)
 
