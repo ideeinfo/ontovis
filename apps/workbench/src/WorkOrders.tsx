@@ -50,6 +50,7 @@ function PhotoPanel({en,location,photos,chosen,image,reading,error,onOpen,onImag
     const offset=photoFocusScroll(focusBox,node.clientWidth,node.clientHeight,view.clientWidth,view.clientHeight);
     view.scrollLeft=offset.left;view.scrollTop=offset.top;
   },[zoom,dimensions,chosen?.evidenceRef]);
+  useLayoutEffect(()=>{if(dimensions[0])viewer.current?.scrollIntoView({block:'center',inline:'nearest'});},[dimensions]);
   return <section className="wo-card"><header><Image size={16}/><h3>{en?'Object & photo location':'工程对象与照片定位'}</h3>{location&&<span className="wo-tag">{location.item.objectScope==='installation'?(en?'Demo installation':'演示安装对象'):location.item.objectScope==='definition'?(en?'Definition reference':'定义对象参照'):(en?'Project object reference':'项目对象参照')}</span>}</header>
     {!location?<p className="wo-empty">{en?'Select a graph object or cabinet to inspect its identity and photos.':'点击图谱中的对象或柜体，查看身份与照片位置。'}</p>:<>
       <div className="wo-object"><strong>{location.item.displayName}</strong><span className="wo-mono">{location.item.entityUid}</span><small>{location.context?.displayName||(en?'No installation assignment':'未分配安装范围')}{location.context&&' · '+(en?'Assumed hierarchy':'假定物理关系')}</small></div>
