@@ -44,6 +44,23 @@ Q-09增补的报告为schemaVersion 2，目录保留每个节点的原始`source
 
 成功退出码0只表示本工具范围内技术检查通过；结构/映射/控制点错误退出码1并保存failed报告，绝不覆盖已有输出。所有结果的`releaseReadiness.eligible`和`G2Passed`仍为false：工程UID/物理链、现场控制点、许可及评审不由该工具确认。实际结果与下一步见[开发执行记录](../docs/plans/开发执行记录.md)。
 
+## 本机批量模型核验与恢复
+
+[model_probe_batch.py](model_probe_batch.py)逐文件调用上述源模型核验，提供私有检查点、JSON行进度、取消和中断恢复。输入清单必须预先给出每份文件的SHA；格式和预算见[批量切片](../docs/plans/模型批量核验与中断恢复切片.md)。仅使用标准库和POSIX文件锁，不连接服务器或改写工程数据。
+
+```bash
+python3 -m unittest discover -s tests -p 'test_model_probe_batch.py' -v
+python3 tools/model_probe_batch.py start \
+  --manifest output/q09-batch-processing-20261025/_work/models.json \
+  --output output/q09-batch-processing-20261025/run-new
+python3 tools/model_probe_batch.py cancel \
+  --output output/q09-batch-processing-20261025/run-new
+python3 tools/model_probe_batch.py resume \
+  --output output/q09-batch-processing-20261025/run-new
+```
+
+start须用新目录；cancel在另一终端执行，也可向主进程发SIGINT/SIGTERM。resume先核对全部源输入、处理器和已完成输出SHA，再复用完成项；中断项保留原目录、用新尝试重跑，失败项保留并继续其他文件。计划、输入或已完成报告变化时拒绝复用，需选择清单另开新批次。退出码0/1/130分别为全通过、失败/输入错误、取消。批次通过仍为本机技术结果，工程发布资格始终false；在线处理、产品报告和工程换版另验。
+
 ## 三柜与无几何子设备的合同验证
 
 [location_contract.py](location_contract.py)把[OV-C05逻辑契约](../docs/contracts/三柜绑定与子设备定位契约.md#5-定位算法与响应)变成离线可执行样例；使用Python标准库，不连接OntoBase、不创建HTTP服务、不写工程事实或绑定。它是当前提案的参考求值器，后续生产实现仍需在已冻结的服务边界内实现和验证。
