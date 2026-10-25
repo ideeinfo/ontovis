@@ -25,3 +25,5 @@
 - [外围背景自动海陆显示与定位边界验证](surrounding-background-20261024/README.md)
 
 - [水纹设置前置、来源末位与海上默认动态](water-controls-20261024/README.md)
+
+- [Q-20 分析画布与会话页面契约](q20-analysis-canvas-20261025/README.md)：同一MagicPath的P04/P05预演、8项逻辑及浏览器证据；正式服务尚未上线。
