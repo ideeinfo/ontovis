@@ -1,0 +1,244 @@
+"""Snapshot and restore the isolated manual-analysis storage candidate.
+
+This is not the whole-workbench paired backup. No source files, authentication
+tokens, source references or live project registry are included.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+from uuid import uuid4
+
+from apps.api import analysis_drafts as draft
+from apps.api.authority import PreviewError
+
+MAX_PACKAGE_BYTES = 48 * 1024 * 1024
+MANIFEST_FORMAT = 'ontovis-analysis-draft-snapshot-v1'
+
+
+def sha(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+
+def hex_digest(value):
+    draft.require(type(value) is str and re.fullmatch('[0-9a-f]{64}', value) is not None)
+
+
+def validate_package(package):
+    draft.require(type(package) is dict and set(package) == {'format', 'sourceStoreId', 'connectionId', 'tables'})
+    draft.require(package['format'] == draft.FORMAT)
+    draft.identifier(package['sourceStoreId']); draft.text(package['connectionId'])
+    tables = package['tables']
+    draft.require(type(tables) is dict and set(tables) == set(draft.COLUMNS))
+    for name, columns in draft.COLUMNS.items():
+        rows = tables[name]
+        draft.require(type(rows) is list and len(rows) <= 10000, 'ANALYSIS_PACKAGE_LIMIT', 413)
+        draft.require(all(type(row) is dict and set(row) == set(columns) for row in rows))
+    meta = tables['store_meta']
+    draft.require(len(meta) == 1 and type(meta[0]['id']) is int and meta[0]['id'] == 1
+                  and type(meta[0]['schema_version']) is int and meta[0]['schema_version'] == 1
+                  and meta[0]['connection_id'] == package['connectionId'] and meta[0]['store_id'] == package['sourceStoreId'])
+    sessions, revisions, requests = {}, {}, set()
+    for row in tables['analysis_sessions']:
+        key = draft.identifier(row['session_id']); draft.identifier(row['owner_id'])
+        draft.require(key not in sessions and row['connection_id'] == package['connectionId'])
+        draft.text(row['project_code']); draft.text(row['title'])
+        draft.require(type(row['head_revision']) is int and 1 <= row['head_revision'] <= 1000)
+        draft.utc(row['created_at']); draft.utc(row['updated_at']); sessions[key] = row
+    for row in tables['analysis_revisions']:
+        draft.identifier(row['session_id'])
+        owner = sessions.get(row['session_id'])
+        draft.require(owner is not None and type(row['revision']) is int and 1 <= row['revision'] <= owner['head_revision'])
+        key = (row['session_id'], row['revision'])
+        draft.require(key not in revisions and row['actor_id'] == owner['owner_id'])
+        draft.utc(row['created_at']); hex_digest(row['content_sha256'])
+        draft.require(type(row['snapshot_json']) is str and len(row['snapshot_json'].encode()) <= draft.MAX_BYTES)
+        try:
+            snapshot = json.loads(row['snapshot_json'])
+        except (TypeError, ValueError, RecursionError):
+            raise PreviewError(422, 'ANALYSIS_PACKAGE_INVALID') from None
+        raw = draft.validate_snapshot(snapshot, package['connectionId'], owner['project_code'])
+        draft.require(raw == row['snapshot_json'] and sha(raw.encode()) == row['content_sha256'])
+        draft.require(row['operation'] in ('create', 'save', 'restore'))
+        draft.require((row['revision'] == 1) == (row['operation'] == 'create'))
+        if row['operation'] == 'restore':
+            draft.require(type(row['restored_from']) is int and 1 <= row['restored_from'] < row['revision'])
+        else:
+            draft.require(row['restored_from'] is None)
+        revisions[key] = row
+    for key, row in revisions.items():
+        if row['operation'] == 'restore':
+            source = revisions.get((row['session_id'], row['restored_from']))
+            draft.require(source is not None and source['snapshot_json'] == row['snapshot_json'])
+    draft.require(sum(len(row['snapshot_json'].encode()) for row in revisions.values()) <= draft.MAX_STORE_BYTES,
+                  'ANALYSIS_PACKAGE_LIMIT', 413)
+    for key, row in sessions.items():
+        draft.require(all((key, revision) in revisions for revision in range(1, row['head_revision'] + 1)))
+        head = json.loads(revisions[(key, row['head_revision'])]['snapshot_json'])
+        draft.require(head['title'] == row['title'] and head['status'] == row['status'])
+    seen_receipts = set()
+    for row in tables['analysis_requests']:
+        draft.require(row['connection_id'] == package['connectionId'])
+        draft.identifier(row['request_id']); draft.identifier(row['actor_id']); draft.text(row['project_code'])
+        draft.utc(row['created_at']); hex_digest(row['fingerprint'])
+        key = (row['connection_id'], row['project_code'], row['actor_id'], row['request_id'])
+        draft.require(key not in requests); requests.add(key)
+        draft.require(type(row['result_json']) is str and len(row['result_json'].encode()) <= 2048)
+        try:
+            result = json.loads(row['result_json'])
+        except (TypeError, ValueError, RecursionError):
+            raise PreviewError(422, 'ANALYSIS_PACKAGE_INVALID') from None
+        draft.require(type(result) is dict and set(result) == {'analysisSessionId', 'analysisRevision',
+                      'contentSha256', 'operation', 'restoredFromRevision'} and draft.canonical(result) == row['result_json'])
+        draft.require(type(result['analysisSessionId']) is str and type(result['analysisRevision']) is int)
+        owner = sessions.get(result['analysisSessionId'])
+        version_key = (result['analysisSessionId'], result['analysisRevision'])
+        revision = revisions.get(version_key)
+        draft.require(owner is not None and revision is not None and version_key not in seen_receipts)
+        draft.require(owner['owner_id'] == row['actor_id'] and owner['project_code'] == row['project_code'])
+        draft.require(result['contentSha256'] == revision['content_sha256'] and result['operation'] == revision['operation']
+                      and result['restoredFromRevision'] == revision['restored_from'])
+        seen_receipts.add(version_key)
+    draft.require(seen_receipts == set(revisions))
+    raw = draft.canonical(package).encode()
+    draft.require(len(raw) <= MAX_PACKAGE_BYTES, 'ANALYSIS_PACKAGE_LIMIT', 413)
+    return raw
+
+
+def export_package(database_url):
+    connection = draft.AnalysisConnection(database_url)
+    try:
+        with connection.transaction(readonly=True) as cursor:
+            draft.profile(cursor)
+            tables = {}
+            for name in draft.COLUMNS:
+                cursor.execute(f'select count(*) from {draft.SCHEMA}.{name}')
+                draft.require(cursor.fetchone()[0] <= 10000, 'ANALYSIS_PACKAGE_LIMIT', 413)
+            cursor.execute(f'select coalesce(sum(octet_length(snapshot_json)),0) from {draft.SCHEMA}.analysis_revisions')
+            draft.require(cursor.fetchone()[0] <= draft.MAX_STORE_BYTES, 'ANALYSIS_PACKAGE_LIMIT', 413)
+            for name in draft.COLUMNS:
+                cursor.execute(f'select to_jsonb(t) from {draft.SCHEMA}.{name} t order by to_jsonb(t)::text')
+                tables[name] = [row[0] for row in cursor.fetchall()]
+            draft.require(len(tables['store_meta']) == 1, 'ANALYSIS_STORAGE_INVALID', 409)
+            meta = tables['store_meta'][0]
+            package = {'format': draft.FORMAT, 'sourceStoreId': meta['store_id'], 'connectionId': meta['connection_id'], 'tables': tables}
+            validate_package(package)
+            return package
+    finally:
+        connection.close()
+
+
+def _safe_directory(path, new=False):
+    path = Path(path).absolute()
+    draft.require(not any(parent.is_symlink() for parent in (path, *path.parents)), 'ANALYSIS_PATH_INVALID', 409)
+    if new:
+        draft.require(not path.exists(), 'ANALYSIS_TARGET_OCCUPIED', 409)
+        path.mkdir(mode=0o700)
+    draft.require(path.is_dir(), 'ANALYSIS_PATH_INVALID', 409)
+    return path
+
+
+def _write_new(path, raw):
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'wb') as stream:
+        stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+
+
+def _read(path, limit):
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        draft.require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= limit, 'ANALYSIS_PACKAGE_INVALID', 409)
+        raw = stream.read(limit + 1)
+    draft.require(len(raw) <= limit, 'ANALYSIS_PACKAGE_LIMIT', 413)
+    return raw
+
+
+def snapshot(database_url, destination):
+    package = export_package(database_url)
+    raw = validate_package(package)
+    root = _safe_directory(destination, new=True)
+    _write_new(root/'analysis.json', raw)
+    manifest = {'format': MANIFEST_FORMAT, 'contentSha256': sha(raw), 'bytes': len(raw),
+                'sourceStoreId': package['sourceStoreId'], 'connectionId': package['connectionId'],
+                'counts': {name: len(rows) for name, rows in package['tables'].items()}}
+    encoded = draft.canonical(manifest).encode()
+    _write_new(root/'manifest.json', encoded)
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(descriptor)
+    finally: os.close(descriptor)
+    return {'manifestSha256': sha(encoded), **manifest}
+
+
+def verified_package(root, expected_manifest_sha256):
+    hex_digest(expected_manifest_sha256)
+    root = _safe_directory(root)
+    manifest_raw, raw = _read(root/'manifest.json', 4096), _read(root/'analysis.json', MAX_PACKAGE_BYTES)
+    draft.require(sha(manifest_raw) == expected_manifest_sha256, 'ANALYSIS_MANIFEST_CHANGED', 409)
+    try:
+        manifest, package = json.loads(manifest_raw), json.loads(raw)
+    except (ValueError, TypeError, RecursionError):
+        raise PreviewError(422, 'ANALYSIS_PACKAGE_INVALID') from None
+    draft.require(type(manifest) is dict and set(manifest) == {'format', 'contentSha256', 'bytes', 'sourceStoreId', 'connectionId', 'counts'})
+    draft.require(manifest['format'] == MANIFEST_FORMAT and draft.canonical(manifest).encode() == manifest_raw)
+    draft.require(type(manifest['bytes']) is int and manifest['bytes'] == len(raw) and manifest['contentSha256'] == sha(raw), 'ANALYSIS_CONTENT_CHANGED', 409)
+    draft.require(type(manifest['counts']) is dict and all(type(value) is int for value in manifest['counts'].values()))
+    checked = validate_package(package)
+    draft.require(checked == raw and manifest['sourceStoreId'] == package['sourceStoreId']
+                  and manifest['connectionId'] == package['connectionId']
+                  and manifest['counts'] == {name: len(rows) for name, rows in package['tables'].items()})
+    return package
+
+
+def restore_new(root, expected_manifest_sha256, database_url):
+    package = verified_package(root, expected_manifest_sha256)
+    connection = draft.AnalysisConnection(database_url)
+    try:
+        with connection.transaction() as cursor:
+            cursor.execute('select to_regnamespace(%s)', (draft.SCHEMA,))
+            draft.require(cursor.fetchone()[0] is None, 'ANALYSIS_TARGET_OCCUPIED', 409)
+            cursor.execute(draft.DDL)
+            store_id = str(uuid4())
+            cursor.execute(f'insert into {draft.SCHEMA}.store_meta values(1,1,%s,%s)', (package['connectionId'], store_id))
+            for name in ('analysis_sessions', 'analysis_revisions', 'analysis_requests'):
+                columns = draft.COLUMNS[name]
+                for row in package['tables'][name]:
+                    cursor.execute(f'insert into {draft.SCHEMA}.{name} ('+','.join(columns)+') values ('+','.join(['%s']*len(columns))+')', tuple(row[column] for column in columns))
+            draft.profile(cursor)
+            # Verify actual rows, preserving canonical JSON text and fixed IDs.
+            for name in ('analysis_sessions', 'analysis_revisions', 'analysis_requests'):
+                cursor.execute(f'select to_jsonb(t) from {draft.SCHEMA}.{name} t order by to_jsonb(t)::text')
+                actual = sorted((draft.canonical(row[0]) for row in cursor.fetchall()))
+                draft.require(actual == sorted(draft.canonical(row) for row in package['tables'][name]), 'ANALYSIS_RESTORE_MISMATCH', 409)
+        return {'storeId': store_id, 'sourceStoreId': package['sourceStoreId'], 'connectionId': package['connectionId'],
+                'manifestSha256': expected_manifest_sha256, 'counts': {name: len(rows) for name, rows in package['tables'].items()}}
+    finally:
+        connection.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--database-env', default='ONTOVIS_ANALYSIS_DSN')
+    sub = parser.add_subparsers(dest='command', required=True)
+    init = sub.add_parser('init'); init.add_argument('--connection-id', required=True)
+    snap = sub.add_parser('snapshot'); snap.add_argument('--destination', required=True)
+    restore = sub.add_parser('restore'); restore.add_argument('--source', required=True); restore.add_argument('--manifest-sha256', required=True)
+    args = parser.parse_args()
+    try:
+        dsn = os.environ.get(args.database_env)
+        draft.require(bool(dsn), 'ANALYSIS_DATABASE_REQUIRED', 503)
+        if args.command == 'init': result = draft.provision(dsn, args.connection_id)
+        elif args.command == 'snapshot': result = snapshot(dsn, args.destination)
+        else: result = restore_new(args.source, args.manifest_sha256, dsn)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    except (PreviewError, OSError) as error:
+        print(json.dumps({'error': getattr(error, 'code', 'ANALYSIS_IO_FAILED')}))
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
