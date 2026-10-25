@@ -1,18 +1,40 @@
 import type {PhotoBox,PhotoSelector} from './workOrderTypes';
 
 export const MAX_PHOTO_ZOOM=16;
+export const MIN_PHOTO_ZOOM=.5;
+
+export function clampPhotoZoom(value:number,precision=2){
+  return Number(Math.max(MIN_PHOTO_ZOOM,Math.min(MAX_PHOTO_ZOOM,Number.isFinite(value)?value:1)).toFixed(precision));
+}
+
+export function photoBaseSize(viewportWidth:number,viewportHeight:number,imageWidth:number,imageHeight:number){
+  if(![viewportWidth,viewportHeight,imageWidth,imageHeight].every(v=>Number.isFinite(v)&&v>0))return {width:1,height:1};
+  const width=Math.max(1,Math.min(viewportWidth-32,(viewportHeight-32)*imageWidth/imageHeight));
+  return {width,height:width*imageHeight/imageWidth};
+}
+
+export function photoWheelZoom(current:number,deltaY:number,deltaMode:number,viewportHeight:number){
+  const pixels=deltaY*(deltaMode===1?16:deltaMode===2?viewportHeight:1);
+  return clampPhotoZoom(current*Math.exp(-pixels*.001),4);
+}
+
+export function photoZoomScroll(current:number,next:number,baseWidth:number,baseHeight:number,viewportWidth:number,viewportHeight:number,left:number,top:number,x:number,y:number){
+  const axis=(base:number,viewport:number,scroll:number,pointer:number)=>Math.max(0,
+    (scroll+pointer-Math.max(16,(viewport-base*current)/2))*next/current+Math.max(16,(viewport-base*next)/2)-pointer);
+  return {left:axis(baseWidth,viewportWidth,left,x),top:axis(baseHeight,viewportHeight,top,y)};
+}
 
 export function photoFocusZoom(box:PhotoBox|undefined, viewportWidth:number, viewportHeight:number, imageWidth:number, imageHeight:number):number {
   if(!box||![viewportWidth,viewportHeight,imageWidth,imageHeight].every(v=>Number.isFinite(v)&&v>0))return 1;
-  const baseHeight=viewportWidth*imageHeight/imageWidth;
-  const zoom=Math.min(.72/box.width,viewportHeight*.6/(box.height*baseHeight));
-  return Math.max(1,Math.min(MAX_PHOTO_ZOOM,zoom,48000/Math.max(viewportWidth,baseHeight)));
+  const base=photoBaseSize(viewportWidth,viewportHeight,imageWidth,imageHeight);
+  // Match OntoBase's photo focus: retain context around the source annotation.
+  return clampPhotoZoom(Math.min(viewportWidth*.09/(box.width*base.width),viewportHeight*.09/(box.height*base.height)));
 }
 
 export function photoFocusScroll(box:PhotoBox|undefined,width:number,height:number,viewportWidth:number,viewportHeight:number){
   if(!box)return {left:0,top:0};
-  return {left:Math.max(0,Math.min(width-viewportWidth,(box.x+box.width/2)*width-viewportWidth/2)),
-    top:Math.max(0,Math.min(height-viewportHeight,(box.y+box.height/2)*height-viewportHeight/2))};
+  return {left:Math.max(0,Math.min(width+32-viewportWidth,16+(box.x+box.width/2)*width-viewportWidth/2)),
+    top:Math.max(0,Math.min(height+32-viewportHeight,16+(box.y+box.height/2)*height-viewportHeight/2))};
 }
 
 export function photoBoxes(selector:PhotoSelector|null):PhotoBox[] {

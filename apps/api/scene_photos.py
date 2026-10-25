@@ -43,6 +43,17 @@ def selector(value):
 
 
 class ScenePhotoReader(SceneEvidenceReader):
+    def _selected(self, body):
+        if body['installationContextId'] is None:
+            item = self.reader._resolve([body['entityUid']])[body['entityUid']]
+            _require(item['entityRevision'] == body['expectedEntityRevision']
+                     and item['installationContextId'] is None, 'ENGINEERING_CHANGED', 409)
+            if item['objectScope'] != 'installation':
+                # The outer before/after pair already checks the complete read.
+                # A project object has no installation path to traverse twice.
+                return {'item': item, 'context': None}
+        return super()._selected(body)
+
     def __init__(self, reader):
         self.reader = reader
 

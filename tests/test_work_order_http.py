@@ -120,6 +120,31 @@ class WorkOrderHttpTests(unittest.TestCase):
         self.assertEqual(saved[0], 200)
         self.assertEqual(len(saved[1]['investigation']['steps']), 10)
 
+    def test_locate_brackets_grants_without_remote_permission_per_source_read(self):
+        self.seed()
+        identity = {'value': '=WEC+CN1-1B4', 'role': 'primary', 'scheme': 'electrical_tag',
+                    'status': 'needs_review', 'scopeType': 'project', 'scopeKey': 'Demo-PDS'}
+        item = {'entityUid': 'synthetic-formal', 'entityRevision': 'r1', 'identifiers': [identity]}
+        revoke = False
+        def factory(authority, connection, code, guard):
+            def read(*args):
+                for _ in range(10): guard()
+                return {'projectCode': code, 'items': [item], 'nextCursor': None}
+            def detail(*args):
+                guard()
+                if revoke: ProjectsAuthority.permissions['member'].pop('Demo-PDS')
+                return {'item': item, 'context': None}
+            return Mock(prefix='/api/v1/projects/Demo-PDS', _request=read, context_for_object=detail)
+        body = self.body(orderId='DEMO-PDS-WO-001', locateKey='part-0')
+        with patch('apps.api.project_sessions.SceneEngineeringReader', side_effect=factory):
+            with patch.object(self.sessions, '_access', wraps=self.sessions._access) as access:
+                self.assertEqual(self.request(ROOT + '/locate', body)[0], 200)
+                self.assertEqual(access.call_count, 2)
+            revoke = True
+            status, value, _ = self.request(ROOT + '/locate', body)
+            self.assertEqual((status, value['code']), (403, 'FORBIDDEN'))
+            self.assertNotIn('item', value)
+
     def test_exact_project_electrical_tag_can_be_read_without_accepting_pending_identity(self):
         self.seed()
         identity={'value':'=WEC+CN1-1B4','role':'primary','scheme':'electrical_tag',

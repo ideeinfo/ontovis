@@ -1,0 +1,78 @@
+import {useEffect,useLayoutEffect,useRef,useState,type PointerEvent} from 'react';
+import {Focus,ZoomIn,ZoomOut} from 'lucide-react';
+import type {PhotoSelector} from './workOrderTypes';
+import {clampPhotoZoom,MAX_PHOTO_ZOOM,MIN_PHOTO_ZOOM,photoBaseSize,photoBoxes,photoFocusScroll,photoFocusZoom,photoWheelZoom,photoZoomScroll} from './workOrderPhoto';
+
+export function WorkOrderPhotoViewport({image,selector,label,en,onError}:{image:string;selector:PhotoSelector|null;label:string;en:boolean;onError:()=>void}){
+  const viewer=useRef<HTMLDivElement>(null);
+  const [size,setSize]=useState({width:600,height:500}),[natural,setNatural]=useState({width:0,height:0});
+  const [zoom,setZoom]=useState(1),[panning,setPanning]=useState(false);
+  const zoomRef=useRef(1),pending=useRef<{left:number;top:number}|null>(null);
+  const pan=useRef<{id:number;x:number;y:number;left:number;top:number}|null>(null);
+  const boxes=photoBoxes(selector),box=boxes.reduce<(typeof boxes)[number]|undefined>((best,value)=>!best||value.width*value.height>best.width*best.height?value:best,undefined);
+  const base=photoBaseSize(size.width,size.height,natural.width,natural.height);
+  function cancelPan(){
+    const view=viewer.current,start=pan.current;pan.current=null;
+    if(start&&view?.hasPointerCapture(start.id))view.releasePointerCapture(start.id);
+    setPanning(false);
+  }
+  function applyZoom(next:number,x?:number,y?:number){
+    const view=viewer.current;if(!view||!natural.width)return;
+    cancelPan();
+    pending.current=photoZoomScroll(zoomRef.current,next,base.width,base.height,view.clientWidth,view.clientHeight,view.scrollLeft,view.scrollTop,x??view.clientWidth/2,y??view.clientHeight/2);
+    zoomRef.current=next;setZoom(next);
+    if(next===zoom){view.scrollTo(pending.current);pending.current=null;}
+  }
+  function focusPhoto(){
+    const view=viewer.current;if(!view||!natural.width)return;
+    cancelPan();const next=photoFocusZoom(box,size.width,size.height,natural.width,natural.height);
+    pending.current=photoFocusScroll(box,base.width*next,base.height*next,view.clientWidth,view.clientHeight);
+    zoomRef.current=next;setZoom(next);
+    if(next===zoom){view.scrollTo(pending.current);pending.current=null;}
+  }
+  useLayoutEffect(()=>{
+    const view=viewer.current;if(!view)return;
+    const observer=new ResizeObserver(([entry])=>{
+      const {inlineSize:width,blockSize:height}=entry.borderBoxSize[0];
+      setSize(current=>current.width===width&&current.height===height?current:{width,height});
+    });
+    observer.observe(view,{box:'border-box'});return()=>observer.disconnect();
+  },[]);
+  useLayoutEffect(()=>{focusPhoto();},[natural.width,natural.height,size.width,size.height]);
+  useLayoutEffect(()=>{if(pending.current&&zoomRef.current===zoom){viewer.current?.scrollTo(pending.current);pending.current=null;}},[zoom,base.width,base.height]);
+  useLayoutEffect(()=>{if(natural.width)viewer.current?.scrollIntoView({block:'center',inline:'nearest'});},[natural.width,natural.height]);
+  useEffect(()=>{
+    const view=viewer.current;if(!view)return;
+    const wheel=(event:WheelEvent)=>{
+      if(!natural.width)return;event.preventDefault();
+      const rect=view.getBoundingClientRect();
+      applyZoom(photoWheelZoom(zoomRef.current,event.deltaY,event.deltaMode,view.clientHeight),event.clientX-rect.left,event.clientY-rect.top);
+    };
+    view.addEventListener('wheel',wheel,{passive:false});return()=>view.removeEventListener('wheel',wheel);
+  },[natural.width,base.width,base.height,zoom]);
+  function start(event:PointerEvent<HTMLDivElement>){
+    if(event.button!==0||!natural.width)return;
+    event.preventDefault();event.currentTarget.focus({preventScroll:true});event.currentTarget.setPointerCapture(event.pointerId);
+    pan.current={id:event.pointerId,x:event.clientX,y:event.clientY,left:event.currentTarget.scrollLeft,top:event.currentTarget.scrollTop};setPanning(true);
+  }
+  return <>
+    <div className="wo-photo-tools"><span>{selector?.kind==='spherical_region'?(en?'Panorama · unfolded region':'球面全景 · 展开图区域'):(en?'Fixed display region':'固定显示资源区域')}</span>
+      <button type="button" aria-label={en?'Zoom out':'照片缩小'} disabled={!natural.width||zoom<=MIN_PHOTO_ZOOM} onClick={()=>applyZoom(clampPhotoZoom(zoom/1.3))}><ZoomOut size={15}/></button>
+      <button type="button" aria-label={en?'Zoom in':'照片放大'} disabled={!natural.width||zoom>=MAX_PHOTO_ZOOM} onClick={()=>applyZoom(clampPhotoZoom(zoom*1.3))}><ZoomIn size={15}/></button>
+      <output aria-label={en?'Photo zoom':'照片缩放比例'}>{Math.round(zoom*100)}%</output>
+      <button type="button" disabled={!natural.width} onClick={focusPhoto}><Focus size={14}/>{en?'Focus annotation':'定位标注'}</button>
+      <button type="button" disabled={!natural.width} onClick={()=>applyZoom(1)}>{en?'Fit photo':'适应窗口'}</button>
+    </div>
+    <p className="wo-photo-hint">{en?'Scroll to zoom · drag with the left mouse button to pan':'滚轮缩放 · 按住鼠标左键平移'}</p>
+    {!natural.width&&<p className="wo-empty" role="status">{en?'Preparing photo display…':'正在解码照片…'}</p>}
+    <div className={`wo-photo-scroll${panning?' panning':''}`} ref={viewer} role="region" aria-label={en?'Photo viewer':'照片查看器'} tabIndex={0}
+      onPointerDown={start} onPointerMove={event=>{const value=pan.current;if(value?.id===event.pointerId){event.currentTarget.scrollLeft=value.left-event.clientX+value.x;event.currentTarget.scrollTop=value.top-event.clientY+value.y;}}}
+      onPointerUp={cancelPan} onPointerCancel={cancelPan} onLostPointerCapture={cancelPan}
+      onKeyDown={event=>{if(['+','=','-'].includes(event.key)){event.preventDefault();applyZoom(clampPhotoZoom(zoom+(event.key==='-'?-.1:.1)));}else if(event.key==='Escape')cancelPan();}}>
+      <div className="wo-photo-stage"><div className="wo-photo-frame" style={{width:base.width*zoom,height:base.height*zoom,visibility:natural.width?'visible':'hidden'}}>
+        <img src={image} alt={label} draggable={false} onLoad={event=>setNatural({width:event.currentTarget.naturalWidth,height:event.currentTarget.naturalHeight})} onError={onError}/>
+        {boxes.map((region,index)=><span key={index} className="wo-photo-region" style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${region.width*100}%`,height:`${region.height*100}%`}}><span>{selector?.regionKind==='label_region'?(en?'Label region':'来源标签区域'):(en?'Object region':'来源对象区域')}</span></span>)}
+      </div></div>
+    </div>
+  </>;
+}

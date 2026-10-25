@@ -1,8 +1,8 @@
-import {useEffect,useLayoutEffect,useRef,useState} from 'react';
-import {AlertTriangle,ArrowRight,CheckCircle2,ClipboardList,Focus,GitBranch,Image,RefreshCw,Search,ZoomIn,ZoomOut} from 'lucide-react';
+import {useEffect,useRef,useState} from 'react';
+import {AlertTriangle,ArrowRight,CheckCircle2,ClipboardList,Focus,GitBranch,Image,RefreshCw,Search} from 'lucide-react';
 import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
 import type {DiagnosticNode,Investigation,ObjectPhoto,OrderListing,OrderLocation,OrderState,WorkOrderDetail} from './workOrderTypes';
-import {photoBoxes,photoFocusZoom,photoFocusScroll,MAX_PHOTO_ZOOM} from './workOrderPhoto';
+import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
 import {InvestigationPanel} from './InvestigationPanel';
 import {photoCitation} from './workOrderInvestigation';
 import './workOrders.css';
@@ -34,23 +34,6 @@ function DiagnosticGraph({detail,en,selected,onLocate,busy}:{detail:WorkOrderDet
 }
 
 function PhotoPanel({en,location,photos,chosen,image,reading,error,onOpen,onImageError}:{en:boolean;location:OrderLocation|null;photos:ObjectPhoto[]|null;chosen:ObjectPhoto|null;image:string;reading:boolean;error:string;onOpen:(photo:ObjectPhoto)=>void;onImageError:()=>void}){
-  const [zoom,setZoom]=useState(1),[dimensions,setDimensions]=useState<[number,number]>([0,0]);
-  const viewer=useRef<HTMLDivElement|null>(null),frame=useRef<HTMLDivElement|null>(null);
-  const boxes=photoBoxes(chosen?.selector??null);
-  const focusBox=boxes.reduce<(typeof boxes)[number]|undefined>((best,box)=>!best||box.width*box.height>best.width*best.height?box:best,undefined);
-  const maxZoom=dimensions[0]&&viewer.current?Math.max(1,Math.min(MAX_PHOTO_ZOOM,48000/Math.max(viewer.current.clientWidth,viewer.current.clientWidth*dimensions[1]/dimensions[0]))):MAX_PHOTO_ZOOM;
-  function focusPhoto(width=dimensions[0],height=dimensions[1]){
-    const view=viewer.current;if(!view)return;
-    setZoom(photoFocusZoom(focusBox,view.clientWidth,view.clientHeight,width,height));
-    if(frame.current){const offset=photoFocusScroll(focusBox,frame.current.clientWidth,frame.current.clientHeight,view.clientWidth,view.clientHeight);view.scrollLeft=offset.left;view.scrollTop=offset.top;}
-  }
-  useEffect(()=>{setZoom(1);setDimensions([0,0]);},[chosen?.evidenceRef,image]);
-  useLayoutEffect(()=>{
-    const view=viewer.current,node=frame.current;if(!view||!node||!dimensions[0])return;
-    const offset=photoFocusScroll(focusBox,node.clientWidth,node.clientHeight,view.clientWidth,view.clientHeight);
-    view.scrollLeft=offset.left;view.scrollTop=offset.top;
-  },[zoom,dimensions,chosen?.evidenceRef]);
-  useLayoutEffect(()=>{if(dimensions[0])viewer.current?.scrollIntoView({block:'center',inline:'nearest'});},[dimensions]);
   return <section className="wo-card"><header><Image size={16}/><h3>{en?'Object & photo location':'工程对象与照片定位'}</h3>{location&&<span className="wo-tag">{location.item.objectScope==='installation'?(en?'Demo installation':'演示安装对象'):location.item.objectScope==='definition'?(en?'Definition reference':'定义对象参照'):(en?'Project object reference':'项目对象参照')}</span>}</header>
     {!location?<p className="wo-empty">{en?'Select a graph object or cabinet to inspect its identity and photos.':'点击图谱中的对象或柜体，查看身份与照片位置。'}</p>:<>
       <div className="wo-object"><strong>{location.item.displayName}</strong><span className="wo-mono">{location.item.entityUid}</span><small>{location.context?.displayName||(en?'No installation assignment':'未分配安装范围')}{location.context&&' · '+(en?'Assumed hierarchy':'假定物理关系')}</small></div>
@@ -59,8 +42,7 @@ function PhotoPanel({en,location,photos,chosen,image,reading,error,onOpen,onImag
       {location.referenceMatch?.status==='needs_review'&&<p className="wo-caption">{en?'Recorded full primary tag · identifier review pending.':'完整主位号已记录，标识审核尚待完成。'}</p>}
       {photos?.length===0&&<p className="wo-empty">{en?'No stored photo association for this object. No region has been invented.':'该对象暂无已存照片关联，尚不能在照片中定位。'}</p>}
       {!!photos?.length&&<div className="wo-photo-list">{photos.map(photo=><button type="button" key={photo.evidenceRef} className="wo-photo-choice" aria-pressed={chosen?.evidenceRef===photo.evidenceRef} disabled={reading||!photo.selector||!!photo.unavailableReason} onClick={()=>onOpen(photo)}><Image size={14}/><span>{photo.title}<small>v{photo.versionNumber??'—'} · {photo.sourceRelation==='template_definition'?(en?'Fixed template reference':'固定型号来源'):(en?'Object association':'对象自身关联')}{photo.newerVersionAvailable?' · '+(en?'New version available':'有新版本'):''}{photo.anchorUnavailableReason?' · '+photo.anchorUnavailableReason:''}</small></span><ArrowRight size={13}/></button>)}</div>}
-      {chosen&&image&&<><div className="wo-photo-tools"><span>{chosen.selector?.kind==='spherical_region'?(en?'Panorama · region on unfolded image':'球面全景 · 展开图区域'):(en?'Fixed display region':'固定显示资源区域')}</span><button type="button" aria-label={en?'Zoom out':'照片缩小'} disabled={zoom<=1} onClick={()=>setZoom(v=>Math.max(1,v/1.5))}><ZoomOut size={15}/></button><button type="button" aria-label={en?'Zoom in':'照片放大'} disabled={zoom>=maxZoom} onClick={()=>setZoom(v=>Math.min(maxZoom,v*1.5))}><ZoomIn size={15}/></button><output aria-label={en?'Photo zoom':'照片缩放比例'}>{Math.round(zoom*100)}%</output><button type="button" onClick={()=>focusPhoto()}><Focus size={14}/>{en?'Focus annotation':'定位标注'}</button><button type="button" onClick={()=>setZoom(1)}>{en?'Full width':'整图宽度'}</button></div>
-        <div className="wo-photo-scroll" ref={viewer}><div className="wo-photo-frame" ref={frame} style={{width:`${zoom*100}%`}}><img src={image} onLoad={event=>{const img=event.currentTarget;setDimensions([img.naturalWidth,img.naturalHeight]);focusPhoto(img.naturalWidth,img.naturalHeight);}} alt={`${location.item.displayName} · ${chosen.title}`} onError={onImageError}/>{boxes.map((box,index)=><span key={index} className="wo-photo-region" style={{left:`${box.x*100}%`,top:`${box.y*100}%`,width:`${box.width*100}%`,height:`${box.height*100}%`}}><span>{chosen.selector?.regionKind==='label_region'?(en?'Label region':'来源标签区域'):(en?'Object region':'来源对象区域')}</span></span>)}</div></div>
+      {chosen&&image&&<><WorkOrderPhotoViewport key={chosen.evidenceRef+image} image={image} selector={chosen.selector} label={`${location.item.displayName} · ${chosen.title}`} en={en} onError={onImageError}/>
         <p className="wo-caption">{en?'Source annotation; applicability unverified. It does not confirm this installation or the root cause.':'区域来自已有标注，适用性待核实；不据此确认独立安装对象的现场一致性或故障根因。'}</p>
         <details className="wo-source"><summary>{en?'Fixed photo reference':'固定照片依据'}</summary><p>{chosen.contentVersionId}</p><p>{chosen.sourceRevision}</p><p>{chosen.selector?.displayRevision}</p></details></>}
     </>}

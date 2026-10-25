@@ -17,6 +17,19 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 FILES = {'login-background.mp4': 12 * 1024 * 1024,
          'login-background-poster.webp': 2 * 1024 * 1024}
+BUILD = ROOT / 'output/compact-workbench-20261021/workbench-dist'
+
+
+def verify_media_build(destination: Path, manifest: dict) -> None:
+    """Media files alone do not prove that the compiled login page uses them."""
+    bundles = '\n'.join(path.read_text() for path in (destination / 'assets').glob('*.js'))
+    if json.loads((destination / 'login-media-manifest.json').read_text()) != manifest:
+        raise ValueError('Login media manifest does not match this build.')
+    for item in manifest.values():
+        path = destination / item['url'].lstrip('/')
+        if (not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']
+                or item['url'] not in bundles):
+            raise ValueError('Compiled login media reference or file is missing or changed.')
 
 
 def stage_media(source: Path, destination: Path) -> dict:
@@ -62,6 +75,7 @@ def main():
             raise ValueError('Node 22 and npm are required.')
         subprocess.run([npm, 'run', 'check' if args.check else 'build'],
                        cwd=ROOT / 'apps/workbench', env=env, check=True)
+        verify_media_build(BUILD, result)
     print(json.dumps({'media': result, 'publicDirectory': str(public),
                       'built': not args.stage_only}, ensure_ascii=False))
 

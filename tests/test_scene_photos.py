@@ -119,6 +119,23 @@ class ScenePhotoTests(unittest.TestCase):
         self.authority.edit = lambda _: self.authority.objects[engineering.CABINET].update(entityRevision='changed:2')
         self.error('ENGINEERING_CHANGED', self.reader.content, self.content_body())
 
+    def test_project_photo_uses_one_identity_read_per_boundary_and_keeps_final_guards(self):
+        item = self.authority.objects['definition']
+        body = {'entityUid': item['entityUid'], 'expectedEntityRevision': item['entityRevision'],
+                'installationContextId': None, 'expectedHierarchyRevision': None}
+        row = self.authority.metadata(body)['items'][0]
+        payload = {**body, 'evidenceRef': row['evidenceRef'], 'expectedSourceRevision': row['sourceRevision'],
+                   'expectedContentVersionId': row['contentVersionId'], 'expectedSourceSha256': row['sourceSha256'],
+                   'expectedDisplayRevision': row['selector']['displayRevision']}
+        with patch.object(self.reader.reader, '_resolve', wraps=self.reader.reader._resolve) as resolve:
+            self.assertEqual(self.reader.content(payload)['content'], PNG)
+        self.assertEqual(resolve.call_count, 2)
+        self.authority.after_photo = lambda source: setattr(source, 'allowed', False)
+        self.error('FORBIDDEN', self.reader.content, payload)
+        self.authority.allowed = True
+        self.authority.after_photo = lambda source: source.objects['definition'].update(entityRevision='changed')
+        self.error('ENGINEERING_CHANGED', self.reader.content, payload)
+
     def test_real_transport_checks_fixed_version_digest_mime_and_region_header(self):
         source = Authority('http://127.0.0.1:1234'); source.token = 'synthetic-token'
         headers = {'Content-Type': 'image/png', 'X-Content-SHA256': hashlib.sha256(PNG).hexdigest(),

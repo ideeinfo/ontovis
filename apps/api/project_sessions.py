@@ -353,7 +353,10 @@ class ProjectSessions(UserSessions):
             order_require(current['accessRevision'] == access['accessRevision']
                           and (not writing or current.get('role') == 'admin'), 'ACCESS_CHANGED', 409)
         body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
-        reader = SceneEngineeringReader(row.authority, self.connection_id, code, authorize)
+        # Source reads enforce membership themselves. Bracket a read-only locate
+        # with full access revisions, without repeating a remote grant per node.
+        reader = SceneEngineeringReader(row.authority, self.connection_id, code,
+            (lambda: self.guard(sid, row)) if path.endswith('/locate') else authorize)
         workspace = self.registry.lookup(code)
         targets = None
         if path.endswith('/seed-demo'):
