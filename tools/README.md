@@ -149,8 +149,10 @@ python3 tools/model_store_backup.py restore-new \
 
 ## 项目登记 PostgreSQL 迁移候选
 
-`python -m tools.project_registry_postgres --help` 提供 export/stage/verify 三个固定操作，完整字段、预算及错误见[迁移准备契约](../docs/contracts/项目登记PostgreSQL迁移准备契约.md)。export先验证现有整组备份和外部manifest SHA，再只读导出当前三表登记；固定包只含原UUID、范围、状态和时间文本，不包含文件原件、会话或凭据。
+`python -m tools.project_registry_postgres --help` 提供 export/stage/verify/restore-new 四个固定操作，完整字段、预算及错误见[迁移准备契约](../docs/contracts/项目登记PostgreSQL迁移准备契约.md)。export先验证现有整组备份和外部manifest SHA，再只读导出当前三表登记；固定包只含原UUID、范围、状态和时间文本，不包含文件原件、会话或凭据。
 
 stage/verify使用外部package SHA、原request-id及私有`ONTOVIS_REGISTRY_STAGE_DSN`；目标须为独立ontovis/ontovis_*数据库。事务导入保留源记录，重复请求返回同一回执，冲突/未知目标不覆盖；verify实际只读。连接异常仅输出固定错误码，DSN不放入命令参数或日志。
 
-此工具只产生`staged_metadata_only`候选，不切换服务、复制资源或变更工程权威；当前仍单进程SQLite。24项合成/真实PG测试及既有1空间/247文件B1登记只读暂存通过，来源备份保持，实际消费者/全库文件迁移/恢复和多进程运行另做后续验收。现行[切片](../docs/plans/存储与服务运行准备切片.md)保留后续顺序。
+stage/verify只产生`staged_metadata_only`候选。restore-new另需原backup/manifest-sha256、全新destination及service-stopped：先核对包的来源与实际三表，再从同一只读PG快照回装登记，配回原完整资源，只在本次新目录重建SQLite登记并生成新清单。失败保留部分目录、撤下完整清单，不能覆盖或原地续写；新摘要只标识恢复副本，不取代来源/在线B1。DSN仍只由同一私有配置读取。
+
+最终16项包契约包含在33项真实PG范围内，本批新增9项包含其中，不与旧24项相加。既有1空间/247文件B1实际回装、标准工具再恢复及原生登记读取通过；原三表/UUID/状态和其余配对文件保持，PG暂存行/xmin不变。实际样本不声称真实源重新核权；原场景读取/撤权/只读写拒绝由隔离合成权限测试覆盖。不切换服务或变更工程权威，当前仍单进程SQLite；实际PG运行消费者/全业务库文件迁移及多进程运行留后续，见[切片](../docs/plans/存储与服务运行准备切片.md)。

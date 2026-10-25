@@ -1,11 +1,12 @@
-"""Stage exact project registry metadata from a verified offline backup.
+"""Stage and recover exact registry metadata from a verified offline backup.
 
-This fixed migration profile does not activate PostgreSQL in the service, copy
-resource bytes or change engineering authority. The source backup stays intact.
+Staging does not copy resources. Recovery pairs the fixed snapshot with source
+files in a new SQLite backup; neither action activates PostgreSQL in the service.
 """
 from __future__ import annotations
 
 import argparse
+import copy
 from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
@@ -99,11 +100,7 @@ def _package(value):
     return value
 
 
-def export_package(backup_root, manifest_sha256, destination):
-    backup = paired._directory(backup_root)
-    destination = Path(destination).absolute()
-    _require(not destination.is_relative_to(backup), 'REGISTRY_SOURCE_OUTPUT_OVERLAP')
-    paired._directory(destination.parent)
+def _source_registry(backup, manifest_sha256):
     try:
         report = backups.verify(backup, manifest_sha256)
     except (sqlite3.Error, KeyError, TypeError):
@@ -127,15 +124,24 @@ def export_package(backup_root, manifest_sha256, destination):
     except sqlite3.Error:
         raise MigrationError('REGISTRY_SOURCE_INVALID') from None
     _require(paired._fingerprint(source) == (before, identity), 'REGISTRY_SOURCE_CHANGED')
+    return report, _registry(registry), before['sha256']
+
+
+def export_package(backup_root, manifest_sha256, destination):
+    backup = paired._directory(backup_root)
+    destination = Path(destination).absolute()
+    _require(not destination.is_relative_to(backup), 'REGISTRY_SOURCE_OUTPUT_OVERLAP')
+    paired._directory(destination.parent)
+    _, registry, source_sha256 = _source_registry(backup, manifest_sha256)
     value = _package(dict(format=FORMAT, schemaVersion=1, sourceManifestSha256=manifest_sha256,
-                          sourceRegistrySha256=before['sha256'], registry=registry))
+                          sourceRegistrySha256=source_sha256, registry=registry))
     raw = paired._canonical(value) + b'\n'
     _require(len(raw) <= MAX_PACKAGE_BYTES, 'REGISTRY_BUDGET_EXCEEDED')
     with os.fdopen(paired._open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL), 'wb') as stream:
         stream.write(raw); stream.flush(); os.fsync(stream.fileno())
     paired._sync(destination.parent)
     return {'packageSha256': hashlib.sha256(raw).hexdigest(), 'sourceManifestSha256': manifest_sha256,
-            'sourceRegistrySha256': before['sha256'], 'workspaces': len(registry['project_workspaces']),
+            'sourceRegistrySha256': source_sha256, 'workspaces': len(registry['project_workspaces']),
             'status': 'exported_metadata_only'}
 
 
@@ -204,7 +210,7 @@ def _read_rows(cur):
     return _registry(result)
 
 
-def _verified(cur, value, package_sha256, request_id):
+def _verified(cur, value, package_sha256, request_id, *, capture_rows=False):
     cur.execute('select table_name from information_schema.tables where table_schema=%s', (SCHEMA,))
     _require({row[0] for row in cur.fetchall()} == set(COLUMNS) | {'migration_receipt'}, 'REGISTRY_TARGET_PROFILE_CHANGED')
     cur.execute('select request_id::text,package_sha256,registry_digest,source_manifest_sha256,source_registry_sha256,staged_at from '
@@ -216,13 +222,19 @@ def _verified(cur, value, package_sha256, request_id):
     registry = _read_rows(cur)
     _require(registry == value['registry'] and paired._digest(registry) == row[2]
              and row[3] == value['sourceManifestSha256'] and row[4] == value['sourceRegistrySha256'], 'REGISTRY_TARGET_CHANGED')
-    return {'status': 'staged_metadata_only', 'stageReceiptId': row[0], 'packageSha256': row[1],
+    receipt = {'status': 'staged_metadata_only', 'stageReceiptId': row[0], 'packageSha256': row[1],
             'registryDigest': row[2], 'sourceManifestSha256': row[3], 'sourceRegistrySha256': row[4],
             'stagedAt': row[5], 'tables': {name: len(rows) for name, rows in registry.items()},
             'runtimeActivated': False, 'resourceFilesCopied': False, 'engineeringAuthorityChanged': False}
+    return (receipt, registry) if capture_rows else receipt
 
 
 def postgres_package(path, package_sha256, request_id, database_url, *, verify_only=False):
+    return _postgres_result(path, package_sha256, request_id, database_url, verify_only=verify_only)
+
+
+def _postgres_result(path, package_sha256, request_id, database_url, *, verify_only=False, capture_rows=False):
+    _require(not capture_rows or verify_only, 'REGISTRY_READ_ONLY_REQUIRED')
     value = load_package(path, package_sha256)
     _require(_uuid(request_id), 'REGISTRY_REQUEST_ID_REQUIRED')
     _require(type(database_url) is str and database_url, 'REGISTRY_DATABASE_CONFIG_REQUIRED')
@@ -249,6 +261,8 @@ def postgres_package(path, package_sha256, request_id, database_url, *, verify_o
                     cur.execute('insert into '+SCHEMA+'.migration_receipt values (1,%s,%s,%s,%s,%s,%s)',
                                 (request_id, package_sha256, paired._digest(value['registry']), value['sourceManifestSha256'],
                                  value['sourceRegistrySha256'], datetime.now(timezone.utc).isoformat()))
+                if capture_rows:
+                    return _verified(cur, value, package_sha256, request_id, capture_rows=True)
                 return _verified(cur, value, package_sha256, request_id)
     except MigrationError:
         raise
@@ -256,16 +270,106 @@ def postgres_package(path, package_sha256, request_id, database_url, *, verify_o
         raise MigrationError('REGISTRY_TARGET_BUSY' if error.sqlstate in ('55P03','57014') else 'REGISTRY_POSTGRES_UNAVAILABLE') from None
 
 
+def _sqlite_registry(path, registry):
+    """Rebuild just the fixed registry in a newly owned restore, never the source."""
+    _registry(registry)
+    os.close(paired._open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
+    with closing(sqlite3.connect(path)) as db, db:
+        db.executescript('''
+            create table registry_meta (
+                id integer primary key check(id=1), schema_version integer not null,
+                connection_id text not null);
+            create table project_workspaces (
+                workspace_id text primary key, ontobase_connection_id text not null,
+                project_code text not null, storage_key text not null unique,
+                legacy_context_id text, state text not null check(state in ('preparing','ready','blocked')),
+                block_reason text, created_at text not null,
+                unique(ontobase_connection_id,project_code));
+            create table shared_model_store (
+                id integer primary key check(id=1), connection_id text not null, scope_version integer not null);
+        ''')
+        for name, columns in COLUMNS.items():
+            db.executemany('insert into '+name+' ('+','.join(columns)+') values ('
+                           + ','.join(['?']*len(columns))+')',
+                           [tuple(row[column] for column in columns) for row in registry[name]])
+        db.row_factory = sqlite3.Row
+        restored = {name: [dict(row) for row in db.execute('select * from '+name+' order by '
+                    + ('workspace_id' if name == 'project_workspaces' else 'id'))] for name in COLUMNS}
+        _require(restored == registry and [tuple(row) for row in db.execute('pragma quick_check')] == [('ok',)],
+                 'REGISTRY_RESTORE_MISMATCH')
+    with os.fdopen(paired._open(path, os.O_RDONLY), 'rb') as stream:
+        os.fsync(stream.fileno())
+
+
+def restore_staged_new(backup_root, manifest_sha256, path, package_sha256, request_id, database_url,
+                       destination, *, service_stopped=False):
+    """Recover an immutable staging snapshot into a full, new SQLite backup."""
+    paired._require(service_stopped, 'SERVICE_MUST_BE_STOPPED')
+    value = load_package(path, package_sha256)
+    packet_before = paired._fingerprint(Path(path).absolute())
+    backup = paired._directory(backup_root)
+    target = paired._destination(destination, (backup,))
+    _require(value['sourceManifestSha256'] == manifest_sha256, 'REGISTRY_PACKAGE_SOURCE_MISMATCH')
+    before = paired._inventory(backup)
+    report, registry, source_sha256 = _source_registry(backup, manifest_sha256)
+    _require(source_sha256 == value['sourceRegistrySha256'] and registry == value['registry'],
+             'REGISTRY_PACKAGE_SOURCE_MISMATCH')
+    staged, snapshot = _postgres_result(path, package_sha256, request_id, database_url,
+                                       verify_only=True, capture_rows=True)
+    copied = backups.restore_new(backup, target, manifest_sha256, service_stopped=True)
+    manifest = target / 'manifest.json'
+    # A partial reconstruction must not retain the copied source manifest.
+    manifest.unlink()
+    try:
+        candidate = target / 'project-spaces/.registry-from-postgres.sqlite3'
+        try:
+            _sqlite_registry(candidate, snapshot)
+        except sqlite3.Error:
+            raise MigrationError('REGISTRY_RESTORE_FAILED') from None
+        os.replace(candidate, target / 'project-spaces/registry.sqlite3')
+        paired._sync(target / 'project-spaces')
+        expected = copy.deepcopy(report)
+        expected['projects']['registry.sqlite3'] = paired._fingerprint(target / 'project-spaces/registry.sqlite3')[0]
+        actual, _ = backups._capture(target / 'project-spaces',
+            target / 'workbench-library' if report['legacy'] or report.get('sharedModels') else None,
+            target / 'workbench-model' if report['legacy'] else None)
+        _require(actual == expected, 'REGISTRY_RESTORE_MISMATCH')
+        _require(paired._inventory(backup) == before, 'REGISTRY_SOURCE_CHANGED')
+        _require(paired._fingerprint(Path(path).absolute()) == packet_before, 'REGISTRY_PACKAGE_CHANGED')
+        raw = paired._canonical(actual)
+        with os.fdopen(paired._open(manifest, os.O_WRONLY | os.O_CREAT | os.O_EXCL), 'wb') as stream:
+            stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+        paired._sync(target)
+        digest = hashlib.sha256(raw).hexdigest()
+        _require(backups.verify(target, digest) == expected, 'REGISTRY_RESTORE_MISMATCH')
+    except BaseException:
+        manifest.unlink(missing_ok=True)
+        raise
+    return {'status': 'restored_sqlite_from_staged_metadata', 'manifestSha256': digest,
+            'sourceManifestSha256': manifest_sha256, 'sourceRegistrySha256': source_sha256,
+            'restoredRegistrySha256': expected['projects']['registry.sqlite3']['sha256'],
+            'packageSha256': package_sha256, 'registryDigest': paired._digest(snapshot),
+            'stageReceiptId': staged['stageReceiptId'], 'spaces': copied['spaces'], 'fileCount': copied['fileCount'],
+            'registryRebuiltFromPostgres': True, 'sourceBackupUnchanged': True, 'postgresWrites': 0,
+            'resourceFilesCopied': True, 'runtimeActivated': False, 'engineeringAuthorityChanged': False}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('export', 'stage', 'verify'))
+    parser.add_argument('action', choices=('export', 'stage', 'verify', 'restore-new'))
     parser.add_argument('--backup', type=Path); parser.add_argument('--manifest-sha256')
     parser.add_argument('--package', type=Path, required=True); parser.add_argument('--package-sha256')
     parser.add_argument('--request-id')
+    parser.add_argument('--destination', type=Path)
+    parser.add_argument('--service-stopped', action='store_true')
     args = parser.parse_args()
     try:
         if args.action == 'export':
             result = export_package(args.backup, args.manifest_sha256, args.package)
+        elif args.action == 'restore-new':
+            result = restore_staged_new(args.backup, args.manifest_sha256, args.package, args.package_sha256,
+                args.request_id, os.environ.get('ONTOVIS_REGISTRY_STAGE_DSN'), args.destination,
+                service_stopped=args.service_stopped)
         else:
             result = postgres_package(args.package, args.package_sha256, args.request_id,
                                       os.environ.get('ONTOVIS_REGISTRY_STAGE_DSN'), verify_only=args.action == 'verify')

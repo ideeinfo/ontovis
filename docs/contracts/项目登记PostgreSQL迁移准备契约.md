@@ -1,6 +1,6 @@
 # 项目登记 PostgreSQL 迁移准备契约
 
-2026-10-25，Q-13 的固定迁移候选。工具为 [project_registry_postgres.py](../../tools/project_registry_postgres.py)，承接[存储与运行切片](../plans/存储与服务运行准备切片.md)。本切片仅验证已有项目登记的迁移，尚未让ProjectSessions改读PostgreSQL，也未完成全库/文件、会话、任务和多HTTP实例运行。
+2026-10-25，Q-13 的固定迁移候选。工具为 [project_registry_postgres.py](../../tools/project_registry_postgres.py)，承接[存储与运行切片](../plans/存储与服务运行准备切片.md)。已验证固定登记暂存及配回原完整文件的新SQLite恢复目录；尚未让ProjectSessions运行时改读PostgreSQL，也未完成业务库/文件迁移、会话、任务和多HTTP实例运行。首轮24项见§4，恢复补充后的最终33项见§5。
 
 ## 1. 来源与固定迁移包
 
@@ -37,3 +37,19 @@
 另对现有最终B1（1空间、247文件）实际只读导出，在新独立PG库暂存、重放和只读核对，原登记三表/UUID/状态逐字段一致。收尾补齐输入拒绝后，24项及该固定B1实测均再次执行，导出包摘要相同；两轮是同一固定样本，不加为2空间/494文件。两份合成集成库/两份登记实测库均删除，完整B1摘要及文件字节/身份/mtime保持。该实测只对应固定B1登记元数据，不是当前权限、资源复制、全库恢复或多进程生产验收。证据见[本机索引](../../output/q13-registry-postgres-20261025/README.md)。
 
 后续接入实际ProjectSessions读取前，仍需迁移/备份/新目录恢复、共享模型和项目文件配对、当前授权、会话/游标密钥、处理名额及任务所有权等完整链路。保留单进程保护，当前线上仍a17f3fa；本批未部署、修改UI或使用浏览器，Q-08原临时页与最终回读保留。
+
+## 5. 固定登记回装与完整新目录恢复
+
+`restore-new` 接受原backup/manifest-sha256、固定package/package-sha256、原request-id、同一私有DSN、全新destination及显式service-stopped。先验证完整备份、包内来源摘要及实际三表逐字段相等；仅声明相同源SHA而登记行不同也拒绝。目标已存在、嵌套来源、链接或未声明目标存储离线均在读取PG前拒绝。离线声明针对该备份/恢复副本，不代表在线测试站已经停服。
+
+以真实REPEATABLE READ / READ ONLY事务核对暂存回执/摘要，取得同一事务中的实际PG行；不重新stage、不更新暂存行或xmin。原UUID、连接/项目范围、storage_key、preparing/ready/blocked与原因、原带时区时间文本均保持。随后使用既有整组restore-new复制配对文件，仅在本次新目录重建SQLite三表登记；不能覆盖既有库或自动接管在线目录。
+
+重建先撤下复制的旧清单，再创建0600登记候选、核对全部行、替换本次新登记；除registry.sqlite3的物理字节及对应清单项外，整组报告必须和原备份相等。来源全文件字节/身份/mtime、包指纹保持后才生成新外部manifest SHA，并再次完整verify。新清单兼容既有project_store_backup.verify/restore-new；新SHA不能冒作原来源或在线B1的SHA。
+
+回执为restored_sqlite_from_staged_metadata，包含原/新登记和清单摘要、包/登记摘要、原stageReceiptId及计数，固定postgresWrites=0、resourceFilesCopied=true、registryRebuiltFromPostgres=true、runtimeActivated=false、engineeringAuthorityChanged=false。失败保留本次部分目录，撤下本次重建的完整清单，不能原地重试/自动删证据；应保留原来源与原请求并换新目录。源/包不匹配、重建失败、恢复不一致分别为REGISTRY_PACKAGE_SOURCE_MISMATCH、REGISTRY_RESTORE_FAILED、REGISTRY_RESTORE_MISMATCH，既有备份错误码保持。
+
+最终本机16项与容器16项包契约通过，均含在真实PG完整33项中；本批新增9项（4包/5PG）包含其中，不与首轮24项或其他环境相加。覆盖真实只读快照、同目标两CLI进程唯一成功、来源声明/实际行不符拒绝、失败目录及换目录重试、未完成状态保持。合成权限测试通过现有ProjectSessions登录、读取原场景/UUID、撤权后拒绝及只读角色写入拒绝，不把旧备份中的权限当当前授权。
+
+同一最终B1的1空间/247文件完成实际CLI回装、整组核对、既有标准restore-new再恢复和原生ProjectWorkspaces登记读取，场景数16；源三表/UUID/范围/状态及其余全部配对文件保持，PG暂存行/xmin不变。此固定样本仅回读登记/范围，不声称对真实源重新核权；当前授权由前述合成反例覆盖。原来源manifest仍b65c1fab6e60c675fc373c127feb95d5234489f1ab2170ab2b7993e7d9d3026e，新私有恢复manifest为d4a7efdda8d2bcb6f15544a6ff30d455f031edb2a14119ba7edb8f5670a17785。三份临时文件副本仍是同一固定样本，不加成多个工程数据样本；两自建PG库、唯一容器候选、三份完整文件副本及登记消费者小副本均已清理，原在线整组及配置保持。
+
+本切片未部署或启动PG运行后端，场景/资源业务DB、文件真值及当前在线服务仍原SQLite。后续实际PG消费者、运行期写入/备份恢复、会话/游标/名额/任务跨进程仍待实施。Q-08原页补验已于[记录§85](../plans/开发执行记录.md#85-q-08原页完整回执与最终重新登录补验2026-10-25)完成，不再保留待导出临时页。完整[本批证据](../../output/q13-registry-recovery-20261025/README.md)仅本机保存。

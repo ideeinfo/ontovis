@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import sqlite3
 from pathlib import Path
 import subprocess
 import sys
@@ -9,6 +10,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
+from apps.api.authority import PreviewError
 from tests import test_project_registry_postgres as fixture
 from tools import model_store_backup as paired, project_store_backup as backups
 from tools import project_registry_postgres as migration
@@ -189,6 +191,117 @@ class RegistryPostgresIntegrationTests(unittest.TestCase):
             with self.subTest(statement=statement),self.assertRaises(self.driver.IntegrityError):
                 with self.driver.connect(self.target_url) as connection:connection.execute(statement)
         self.assertEqual(self.stage(verify_only=True)['stageReceiptId'],self.request)
+
+    def refresh_source(self):
+        self.backup=self.root/'recovery-B1'
+        self.receipt=backups.snapshot(self.sessions.registry.root,self.backup,
+            library_root=self.sessions.shared.library.root,service_stopped=True)
+        self.package=self.root/'recovery-package.json'
+        self.exported=self.export();self.sha=self.exported['packageSha256']
+
+    def restore(self, target):
+        return migration.restore_staged_new(self.backup,self.receipt['manifestSha256'],self.package,
+            self.sha,self.request,self.target_url,target,service_stopped=True)
+
+    def test_rebuilt_pg_snapshot_is_consumed_by_native_sessions_with_current_authorization(self):
+        service=self.sessions._workspace(self.sessions.registry.lookup('SYNTHETIC-A'))
+        scene=service.scenes.create({'displayName':'Synthetic fixed source scene','clientRequestId':str(uuid4())},
+            'fixture',lambda:None,lambda _:None,lambda *_:None)
+        self.refresh_source();self.stage();before=self.rows();source=paired._inventory(self.backup)
+        target=self.root/'restored';receipt=self.restore(target)
+        self.assertEqual(receipt['postgresWrites'],0)
+        self.assertEqual(before,self.rows());self.assertEqual(source,paired._inventory(self.backup))
+        backups.verify(target,receipt['manifestSha256'])
+        class RestoredAuthority(fixture.ProjectsAuthority):
+            projects={'SYNTHETIC-A':'Synthetic fixed source project'}
+            permissions={'member':{'SYNTHETIC-A':'admin'}}
+        sessions=fixture.ProjectSessions('http://127.0.0.1:1',library_root=target/'workbench-library',
+            workspace_root=target/'project-spaces',factory=RestoredAuthority)
+        self.addCleanup(sessions.close)
+        sid,row=sessions.anonymous()
+        sid,view=sessions.login(sid,{'username':'member','password':'synthetic-only',
+            'expectedSessionRevision':row.revision},'synthetic-recovery')
+        body={'expectedSessionRevision':view['sessionRevision'],
+              'projectRef':{'ontobaseConnectionId':'ontobase-primary','projectCode':'SYNTHETIC-A'}}
+        opened=sessions.scene_request(sid,'/api/workbench/scenes/open',{**body,'sceneId':scene['sceneId']})
+        self.assertEqual(opened['sceneRevision'],scene['sceneRevision'])
+        self.assertEqual(opened['workspaceId'],self.workspace['workspace_id'])
+        RestoredAuthority.permissions['member']={}
+        with self.assertRaises(PreviewError) as caught:
+            sessions.scene_request(sid,'/api/workbench/scenes/open',{**body,'sceneId':scene['sceneId']})
+        self.assertEqual(caught.exception.code,'FORBIDDEN')
+        self.assertEqual(sessions.inspect(sid)['state'],'active')
+        RestoredAuthority.permissions['member']={'SYNTHETIC-A':'member'}
+        with self.assertRaises(PreviewError) as caught:
+            sessions.scene_request(sid,'/api/workbench/scenes/create',
+                {**body,'displayName':'Must not be created','clientRequestId':str(uuid4())})
+        self.assertEqual(caught.exception.code,'SCENE_WRITE_FORBIDDEN')
+        self.assertEqual(source,paired._inventory(self.backup));self.assertEqual(before,self.rows())
+
+    def test_restored_preparing_and_blocked_rows_keep_original_ids_state_and_reasons(self):
+        preparing=self.sessions.registry.prepare('SYNTHETIC-B')
+        blocked=self.sessions.registry.prepare('SYNTHETIC-C')
+        self.sessions.registry.mark(blocked,'blocked','SYNTHETIC_NOT_CONFIRMED')
+        self.refresh_source();self.stage();before=self.rows()
+        target=self.root/'restored';receipt=self.restore(target)
+        source=migration.load_package(self.package,self.sha)['registry']
+        self.assertEqual(migration._source_registry(target,receipt['manifestSha256'])[1],source)
+        with sqlite3.connect(target/'project-spaces/registry.sqlite3') as db:
+            self.assertEqual(db.execute('select state,block_reason from project_workspaces where workspace_id=?',
+                (preparing['workspace_id'],)).fetchone(),('preparing',None))
+            self.assertEqual(db.execute('select state,block_reason from project_workspaces where workspace_id=?',
+                (blocked['workspace_id'],)).fetchone(),('blocked','SYNTHETIC_NOT_CONFIRMED'))
+        self.assertFalse((target/'project-spaces/libraries'/preparing['storage_key']).exists())
+        self.assertFalse((target/'project-spaces/libraries'/blocked['storage_key']).exists())
+        self.assertEqual(before,self.rows())
+
+    def test_changed_pg_target_is_rejected_before_any_restore_directory_is_created(self):
+        self.stage()
+        with self.driver.connect(self.target_url) as connection:
+            connection.execute("update "+migration.SCHEMA+".project_workspaces set state='blocked'")
+        before=self.rows();source=paired._inventory(self.backup);target=self.root/'must-not-exist'
+        with self.assertRaises(migration.MigrationError) as caught:self.restore(target)
+        self.assertEqual(caught.exception.code,'REGISTRY_TARGET_CHANGED');self.assertFalse(target.exists())
+        self.assertEqual(before,self.rows());self.assertEqual(source,paired._inventory(self.backup))
+
+    def test_two_actual_restore_cli_processes_cannot_overwrite_the_same_destination(self):
+        self.stage();before=self.rows();target=self.root/'one-target'
+        command=[sys.executable,'-m','tools.project_registry_postgres','restore-new',
+            '--backup',str(self.backup),'--manifest-sha256',self.receipt['manifestSha256'],
+            '--package',str(self.package),'--package-sha256',self.sha,'--request-id',self.request,
+            '--destination',str(target),'--service-stopped']
+        environment={**os.environ,'ONTOVIS_REGISTRY_STAGE_DSN':self.target_url};processes=[]
+        try:
+            for _ in range(2):processes.append(subprocess.Popen(command,cwd=Path(__file__).resolve().parents[1],
+                env=environment,stdout=subprocess.PIPE,stderr=subprocess.PIPE))
+            results=[(*process.communicate(timeout=35),process.returncode) for process in processes]
+            self.assertEqual(sorted(result[2] for result in results),[0,2])
+            success=next(json.loads(out) for out,_err,code in results if code==0)
+            self.assertEqual(success['status'],'restored_sqlite_from_staged_metadata')
+            backups.verify(target,success['manifestSha256']);self.assertEqual(before,self.rows())
+        finally:
+            for process in processes:
+                if process.poll() is None:process.kill();process.wait(timeout=5)
+                if process.stdout:process.stdout.close()
+                if process.stderr:process.stderr.close()
+
+    def test_restore_snapshot_is_read_only_and_late_failure_never_publishes_a_valid_manifest(self):
+        self.stage();before=self.rows();source=paired._inventory(self.backup);observed=[]
+        original=migration._verified
+        def observe(cur,*args,**kwargs):
+            cur.execute('show transaction_read_only');readonly=cur.fetchone()[0]
+            cur.execute('show transaction_isolation');observed.append((readonly,cur.fetchone()[0]))
+            return original(cur,*args,**kwargs)
+        target=self.root/'interrupted'
+        with patch.object(migration,'_verified',observe),patch.object(migration,'_sqlite_registry',
+                side_effect=sqlite3.OperationalError('synthetic rebuild failure')):
+            with self.assertRaises(migration.MigrationError) as caught:self.restore(target)
+        self.assertEqual(caught.exception.code,'REGISTRY_RESTORE_FAILED')
+        self.assertEqual(observed,[('on','repeatable read')]);self.assertFalse((target/'manifest.json').exists())
+        self.assertTrue(target.is_dir());self.assertEqual(before,self.rows())
+        self.assertEqual(source,paired._inventory(self.backup))
+        result=self.restore(self.root/'new-target')
+        self.assertEqual(result['stageReceiptId'],self.request);self.assertFalse(result['runtimeActivated'])
 
 
 if __name__=='__main__':unittest.main()

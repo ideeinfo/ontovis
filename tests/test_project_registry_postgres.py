@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import os
+import sqlite3
 from pathlib import Path
 import subprocess
 import sys
@@ -151,6 +152,77 @@ class RegistryPackageTests(unittest.TestCase):
         self.assertNotIn(b'never-print-this',result.stderr+result.stdout)
         self.assertNotIn(b'postgresql://',result.stderr+result.stdout)
         self.assertIn(result.stderr.strip(),(b'REGISTRY_POSTGRES_DRIVER_REQUIRED',b'REGISTRY_POSTGRES_UNAVAILABLE'))
+
+    def restore_args(self, exported, target):
+        return (self.backup,self.receipt['manifestSha256'],self.package,exported['packageSha256'],
+                str(uuid4()),'synthetic-unused-database-config',target)
+
+    def test_restore_refuses_missing_stop_declaration_and_existing_or_linked_destinations_before_pg(self):
+        exported=self.export();target=self.root/'restored';args=self.restore_args(exported,target)
+        with patch.object(migration,'_postgres_result') as pg:
+            with self.assertRaises(paired.BackupError):migration.restore_staged_new(*args)
+            self.assertFalse(target.exists())
+            target.mkdir();(target/'sentinel').write_text('preserved')
+            before=paired._inventory(target)
+            with self.assertRaises((paired.BackupError,FileExistsError)):
+                migration.restore_staged_new(*args,service_stopped=True)
+            self.assertEqual(before,paired._inventory(target))
+            link=self.root/'linked-target';link.symlink_to(target,target_is_directory=True)
+            with self.assertRaises((paired.BackupError,FileExistsError)):
+                migration.restore_staged_new(*self.restore_args(exported,link),service_stopped=True)
+            pg.assert_not_called()
+
+    def test_restore_requires_exact_source_manifest_bytes_and_registry_rows_not_just_claimed_sha(self):
+        exported=self.export();original=migration.load_package(self.package,exported['packageSha256'])
+        before=paired._inventory(self.backup)
+        for field,value in [('sourceManifestSha256','0'*64),('registry','changed')]:
+            packet=copy.deepcopy(original)
+            if field=='registry':packet['registry']['project_workspaces'][0]['block_reason']='SYNTHETIC_FORGED_ROW'
+            else:packet[field]=value
+            raw=paired._canonical(packet);self.package.write_bytes(raw)
+            with self.subTest(field=field),patch.object(migration,'_postgres_result') as pg:
+                with self.assertRaises(migration.MigrationError) as caught:
+                    migration.restore_staged_new(self.backup,self.receipt['manifestSha256'],self.package,
+                        hashlib.sha256(raw).hexdigest(),str(uuid4()),'unused',self.root/'must-not-exist',service_stopped=True)
+                self.assertEqual(caught.exception.code,'REGISTRY_PACKAGE_SOURCE_MISMATCH');pg.assert_not_called()
+                self.assertFalse((self.root/'must-not-exist').exists())
+        self.assertEqual(before,paired._inventory(self.backup))
+
+    def test_restore_builds_an_independently_verifiable_full_backup_and_preserves_source(self):
+        exported=self.export();value=migration.load_package(self.package,exported['packageSha256'])
+        before=paired._inventory(self.backup);packet=paired._fingerprint(self.package)
+        target=self.root/'restored';args=self.restore_args(exported,target)
+        with patch.object(migration,'_postgres_result',return_value=({'stageReceiptId':args[4]},value['registry'])) as pg:
+            result=migration.restore_staged_new(*args,service_stopped=True)
+        self.assertTrue(pg.call_args.kwargs['verify_only']);self.assertTrue(pg.call_args.kwargs['capture_rows'])
+        self.assertTrue(result['registryRebuiltFromPostgres']);self.assertTrue(result['resourceFilesCopied'])
+        self.assertFalse(result['runtimeActivated']);self.assertEqual(result['postgresWrites'],0)
+        original=backups.verify(self.backup,self.receipt['manifestSha256'])
+        restored=backups.verify(target,result['manifestSha256'])
+        original['projects']['registry.sqlite3']=restored['projects']['registry.sqlite3']
+        self.assertEqual(restored,original)
+        self.assertEqual(migration._source_registry(target,result['manifestSha256'])[1],value['registry'])
+        self.assertEqual((target/'project-spaces/registry.sqlite3').stat().st_mode & 0o777,0o600)
+        self.assertEqual(before,paired._inventory(self.backup));self.assertEqual(packet,paired._fingerprint(self.package))
+
+    def test_failed_reconstruction_keeps_partial_evidence_without_a_valid_manifest_and_requires_new_target(self):
+        exported=self.export();value=migration.load_package(self.package,exported['packageSha256'])
+        before=paired._inventory(self.backup);target=self.root/'interrupted';args=self.restore_args(exported,target)
+        def fail(path,_registry):
+            path.write_bytes(b'SYNTHETIC_PARTIAL_REGISTRY')
+            raise sqlite3.OperationalError('synthetic disk failure')
+        with patch.object(migration,'_postgres_result',return_value=({'stageReceiptId':args[4]},value['registry'])):
+            with patch.object(migration,'_sqlite_registry',fail),self.assertRaises(migration.MigrationError) as caught:
+                migration.restore_staged_new(*args,service_stopped=True)
+            self.assertEqual(caught.exception.code,'REGISTRY_RESTORE_FAILED')
+            self.assertFalse((target/'manifest.json').exists())
+            partial=paired._inventory(target)
+            with self.assertRaises((paired.BackupError,FileExistsError)):
+                migration.restore_staged_new(*args,service_stopped=True)
+            self.assertEqual(partial,paired._inventory(target))
+            recovered=migration.restore_staged_new(*self.restore_args(exported,self.root/'new-target'),service_stopped=True)
+            self.assertEqual(recovered['status'],'restored_sqlite_from_staged_metadata')
+        self.assertEqual(before,paired._inventory(self.backup))
 
 
 if __name__=='__main__':unittest.main()
