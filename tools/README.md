@@ -146,3 +146,11 @@ python3 tools/model_store_backup.py restore-new \
 失败返回非零并保留私有未完成目标，不自动删数据。出现 `manifest.partial`、缺少 `manifest.json`、seal失败的双链接或任何清单差异均不可使用，`verify` 会拒绝；不能仅凭清单文件名存在认定成功。中断后保留证据，重试使用新目录。外部期望 SHA 必须来自独立保存的成功回执。
 
 恢复只生成新目录，不启用服务、不覆写原根。切换后须由操作者比较当前库与恢复回执中的 registry/全表摘要，保持同一 active gate 和全部新数据；不得以切换前旧备份倒回库或让不识别 gate 的旧后端启动。失败回退优先保留兼容后端、只退兼容前端；无法保持旧写关闭则停服维护。真实停服、恢复演练、旧写拒绝与部署回退另行验收，不由本工具的合成测试代替。
+
+## 项目登记 PostgreSQL 迁移候选
+
+`python -m tools.project_registry_postgres --help` 提供 export/stage/verify 三个固定操作，完整字段、预算及错误见[迁移准备契约](../docs/contracts/项目登记PostgreSQL迁移准备契约.md)。export先验证现有整组备份和外部manifest SHA，再只读导出当前三表登记；固定包只含原UUID、范围、状态和时间文本，不包含文件原件、会话或凭据。
+
+stage/verify使用外部package SHA、原request-id及私有`ONTOVIS_REGISTRY_STAGE_DSN`；目标须为独立ontovis/ontovis_*数据库。事务导入保留源记录，重复请求返回同一回执，冲突/未知目标不覆盖；verify实际只读。连接异常仅输出固定错误码，DSN不放入命令参数或日志。
+
+此工具只产生`staged_metadata_only`候选，不切换服务、复制资源或变更工程权威；当前仍单进程SQLite。24项合成/真实PG测试及既有1空间/247文件B1登记只读暂存通过，来源备份保持，实际消费者/全库文件迁移/恢复和多进程运行另做后续验收。现行[切片](../docs/plans/存储与服务运行准备切片.md)保留后续顺序。
