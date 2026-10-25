@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 from threading import Thread
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from apps.api.authority import PreviewError
@@ -87,6 +87,85 @@ class WorkOrderHttpTests(unittest.TestCase):
         self.assertEqual((status, result['code']), (409, 'ACCESS_CHANGED'))
         self.sessions._access = original
         self.assertEqual(self.request(ROOT + '/detail', self.body(orderId=item['orderId']))[1]['orderRevision'], 1)
+
+    def test_exact_project_electrical_tag_can_be_read_without_accepting_pending_identity(self):
+        self.seed()
+        identity={'value':'=WEC+CN1-1B4','role':'primary','scheme':'electrical_tag',
+                  'status':'needs_review','scopeType':'project','scopeKey':'Demo-PDS'}
+        item={'entityUid':'synthetic-formal','entityRevision':'r1','identifiers':[identity]}
+        reader=Mock(prefix='/api/v1/projects/Demo-PDS')
+        reader._request.return_value={'projectCode':'Demo-PDS','items':[item],'nextCursor':None}
+        reader.context_for_object.return_value={'item':item,'context':None}
+        body=self.body(orderId='DEMO-PDS-WO-001',locateKey='part-0')
+        with patch('apps.api.project_sessions.SceneEngineeringReader',return_value=reader):
+            status,result,_=self.request(ROOT+'/locate',body)
+            self.assertEqual(status,200,result)
+            self.assertEqual(result['referenceMatch']['status'],'needs_review')
+            self.assertFalse(result['engineeringConfirmation'])
+            reader.context_for_object.assert_called_once_with('synthetic-formal','r1')
+            for changes in ({'role':'alias'},{'scopeKey':'B'},{'scopeType':'drawing'},
+                            {'value':'+CN1-1B4'},{'status':'retired'},{'scheme':'unknown'}):
+                with self.subTest(changes=changes):
+                    reader._request.return_value={'projectCode':'Demo-PDS','items':[
+                        {**item,'identifiers':[{**identity,**changes}]}],'nextCursor':None}
+                    status,result,_=self.request(ROOT+'/locate',body)
+                    self.assertEqual((status,result['code']),(409,'DIAGNOSTIC_OBJECT_UNRESOLVED'))
+            reader._request.return_value={'projectCode':'Demo-PDS','items':[item,{**item,'entityUid':'another'}],'nextCursor':None}
+            self.assertEqual(self.request(ROOT+'/locate',body)[0],409)
+            reader._request.return_value={'projectCode':'Demo-PDS','items':[item],'nextCursor':None}
+            reader.context_for_object.return_value={'item':{**item,'identifiers':[]},'context':None}
+            self.assertEqual(self.request(ROOT+'/locate',body)[1]['code'],'ENGINEERING_CHANGED')
+
+    def cabinet(self):
+        return {'entityUid':'synthetic-cabinet','entityRevision':'r1','objectKind':'cabinet',
+                'objectScope':'definition','installationContextId':None,
+                'identifiers':[{'value':'=WEC+CN2','role':'primary','scheme':'electrical_tag','status':'needs_review',
+                                'scopeType':'project','scopeKey':'Demo-PDS'}]}
+
+    def test_cn2_reads_formal_cabinet_definition_and_server_paged_members(self):
+        self.seed();item=self.cabinet()
+        reader=Mock(prefix='/api/v1/projects/Demo-PDS')
+        reader._request.return_value={'projectCode':'Demo-PDS','items':[item],'nextCursor':None}
+        reader.context_for_object.return_value={'item':item,'context':None}
+        reader.cabinet_members.return_value={'items':[],'total':264,'nextCursor':'synthetic-next','snapshotRevision':'s1','basisKind':'user_declared'}
+        body=self.body(orderId='DEMO-PDS-WO-007',locateKey='CN2')
+        with patch('apps.api.project_sessions.SceneEngineeringReader',return_value=reader):
+            status,result,_=self.request(ROOT+'/locate',body)
+            self.assertEqual(status,200,result)
+            self.assertEqual(result['cabinetReference'],{'code':'CN2','purpose':'project_definition'})
+            self.assertEqual(result['cabinetMembers']['total'],264)
+            reader.context_for_object.assert_called_once_with('synthetic-cabinet','r1')
+            self.assertIn('primaryIdentifier=%3DWEC%2BCN2',reader._request.call_args.args[1])
+            self.assertEqual(self.request(ROOT+'/locate',{**body,'memberCursor':'synthetic-next'})[0],200)
+            reader.cabinet_members.assert_called_with(item,'synthetic-next')
+            for fields in ({'objectScope':'installation'},{'objectKind':'unknown'}):
+                reader.context_for_object.return_value={'item':{**item,**fields},'context':None}
+                self.assertEqual(self.request(ROOT+'/locate',body)[1]['code'],'DIAGNOSTIC_OBJECT_UNRESOLVED')
+
+    def test_cabinet_full_tag_requires_the_recorded_parent_and_rejects_bad_inputs(self):
+        self.seed();rds='=WEC+CN2-SYNTHETIC';parent=self.cabinet()
+        identity={'value':rds,'role':'primary','scheme':'electrical_tag','status':'needs_review',
+                  'scopeType':'project','scopeKey':'Demo-PDS'}
+        item={'entityUid':'synthetic-cabinet-member','entityRevision':'r1','identifiers':[identity],
+              'definitionParentEntityUid':parent['entityUid']}
+        reader=Mock(prefix='/api/v1/projects/Demo-PDS')
+        reader._request.return_value={'projectCode':'Demo-PDS','items':[item],'nextCursor':None}
+        reader.context_for_object.side_effect=lambda uid,*args:{'item':parent if uid==parent['entityUid'] else item,'context':None}
+        body=self.body(orderId='DEMO-PDS-WO-007',locateKey='CN2',referenceRds=rds)
+        with patch('apps.api.project_sessions.SceneEngineeringReader',return_value=reader):
+            status,result,_=self.request(ROOT+'/locate',body)
+            self.assertEqual(status,200,result)
+            self.assertEqual(result['referenceMatch']['value'],rds)
+            self.assertEqual(result['definitionParent'],parent)
+            for changes in ({'referenceRds':'=WEC+CN1-SYNTHETIC'},{'referenceRds':'+CN2-SYNTHETIC'},
+                            {'referenceRds':'=WEC+CN2-'},{'referenceRds':rds+'\n'},
+                            {'locateKey':'part-0'},{'extra':True},{'memberCursor':'extra'}):
+                with self.subTest(changes=changes):
+                    self.assertEqual(self.request(ROOT+'/locate',{**body,**changes})[0],422)
+            item['definitionParentEntityUid']=None
+            self.assertEqual(self.request(ROOT+'/locate',body)[1]['code'],'CABINET_MEMBERSHIP_UNRESOLVED')
+            item['definitionParentEntityUid']=parent['entityUid'];parent['identifiers'][0]['value']='=WEC+CN1'
+            self.assertEqual(self.request(ROOT+'/locate',body)[1]['code'],'CABINET_MEMBERSHIP_UNRESOLVED')
 
 
 if __name__ == '__main__': unittest.main()

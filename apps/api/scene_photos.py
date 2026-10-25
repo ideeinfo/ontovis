@@ -74,6 +74,8 @@ class ScenePhotoReader(SceneEvidenceReader):
                      and row.get('verificationState') == 'association_record_only'
                      and row.get('applicabilityState') == 'recorded_unverified'
                      and row.get('versionMode') == 'fixed_content_version')
+            basis = row.get('associationIdentityBasis', 'not_reported')
+            _require(basis in ('formal_uid', 'accepted_primary', 'formal_drawing_primary_needs_review', 'not_reported'))
             item = {key: row.get(key) for key in ('evidenceRef', 'sourceRevision', 'sourceRelation', 'sourceEntityUid',
                 'sourceEntityRevision', 'documentId', 'contentVersionId', 'title', 'sourceSha256', 'versionNumber',
                 'newerVersionAvailable', 'documentStatus', 'unavailableReason', 'anchorUnavailableReason',
@@ -83,6 +85,7 @@ class ScenePhotoReader(SceneEvidenceReader):
             if item['sourceSha256'] is not None: _sha(item['sourceSha256'])
             _require(type(item['newerVersionAvailable']) is bool)
             item['selector'] = selector(row.get('selector'))
+            item['associationIdentityBasis'] = basis
             _require((item['selector'] is None) == (row.get('anchorAppliesTo') is None))
             if item['selector'] is not None:
                 _require(row.get('anchorAppliesTo') == 'display_rendition')

@@ -55,6 +55,11 @@ def _object(value):
         result[key] = _description(value.get(key), limit) if key == 'displayName' else _text(value.get(key), limit)
     _require(type(value.get('hasChildren')) is bool)
     result['hasChildren'] = value['hasChildren']
+    parent = value.get('definitionParentEntityUid')
+    if parent is not None: _text(parent)
+    count = value.get('definitionChildCount', 0)
+    _require(type(count) is int and 0 <= count <= 100000)
+    result.update(definitionParentEntityUid=parent, definitionChildCount=count)
     if result['sourceTemplateEntityUid'] is not None: _text(result['sourceTemplateEntityUid'])
     _require(result['installationPurpose'] in (None, 'demonstration', 'engineering'))
     classification = value.get('classification')
@@ -89,6 +94,29 @@ class SceneEngineeringReader:
         self.authorize()
         _require(type(value) is dict)
         return value
+
+    def cabinet_members(self, parent, cursor=None):
+        query = {'parentEntityUid': parent['entityUid'], 'limit': 50}
+        if cursor is not None: query['cursor'] = _argument(cursor, 8192)
+        value = self._request('GET', self.prefix + '/object-definitions/cabinets/children?' + urlencode(query))
+        _require(value.get('projectCode') == self.project_code
+            and value.get('relationKind') == 'project_definition_membership'
+            and value.get('engineeringConfirmation') is False)
+        _require(_object(value.get('parent')) == parent, 'ENGINEERING_CHANGED', 409)
+        _require(type(value.get('total')) is int and 0 <= value['total'] <= 100000
+            and type(value.get('items')) is list and len(value['items']) <= 50)
+        items = []
+        for row in value['items']:
+            _require(type(row) is dict and row.get('basisKind') == 'user_declared')
+            item = _object(row.get('object'))
+            _require(item['installationContextId'] is None and item['definitionParentEntityUid'] == parent['entityUid'])
+            items.append(item)
+        _require(len({item['entityUid'] for item in items}) == len(items))
+        token = value.get('nextCursor')
+        if token is not None: _text(token, 8192)
+        _text(value.get('snapshotRevision'), 200)
+        return {'items': items, 'total': value['total'], 'nextCursor': token,
+                'snapshotRevision': value['snapshotRevision'], 'basisKind': 'user_declared'}
 
     def _resolve(self, identifiers, context_id=None):
         _require(0 < len(identifiers) <= 50 and len(set(identifiers)) == len(identifiers), 'INVALID_REQUEST', 422)

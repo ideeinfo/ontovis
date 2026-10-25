@@ -367,30 +367,61 @@ class ProjectSessions(UserSessions):
             elif path.endswith('/action'):
                 value = orders.action(body, row.authority.username, authorize)
             elif path.endswith('/locate'):
-                order_require(set(body) == {'orderId', 'locateKey'})
+                order_require(set(body) in ({'orderId', 'locateKey'}, {'orderId', 'locateKey', 'referenceRds'},
+                                               {'orderId', 'locateKey', 'memberCursor'}))
                 detail = orders.detail({'orderId': body['orderId']})
                 key = body['locateKey']
                 order_require(isinstance(key, str) and 0 < len(key) <= 100)
-                if key in detail['targets']:
-                    target = detail['targets'][key]
-                    value = reader.context_for_object(target['entityUid'], target['entityRevision'])
-                    order_require(value['context'] and value['context']['installationContextId'] == target['installationContextId']
-                        and value['context']['hierarchyRevision'] == target['hierarchyRevision'], 'ENGINEERING_CHANGED', 409)
+                key = 'CN2' if key == 'CN' else key
+                cabinet = key if key in ('CN1', 'CN2') else None
+                if 'referenceRds' in body:
+                    rds = body['referenceRds']
+                    prefix = '=WEC+' + key + '-'
+                    order_require(cabinet and isinstance(rds, str) and rds == rds.strip()
+                        and len(prefix) < len(rds) <= 200 and rds.startswith(prefix)
+                        and all(ord(character) >= 32 for character in rds))
+                elif cabinet:
+                    rds = '=WEC+' + cabinet
                 else:
+                    order_require('memberCursor' not in body)
                     node = next((node for node in detail['diagnosis']['nodes'] if node.get('locateKey') == key), None)
                     order_require(node is not None and 'rds' in node)
-                    from urllib.parse import urlencode
-                    catalog = reader._request('GET', reader.prefix + '/objects?' + urlencode({'q': node['rds'], 'limit': 50}))
-                    order_require(catalog.get('projectCode') == code, 'SOURCE_UNAVAILABLE', 502)
-                    order_require(type(catalog.get('items')) is list and len(catalog['items']) <= 50
-                        and all(type(item) is dict and type(item.get('identifiers')) is list
-                            and all(type(identifier) is dict for identifier in item['identifiers'])
-                            for item in catalog['items']), 'SOURCE_UNAVAILABLE', 502)
-                    matches = [item for item in catalog.get('items', []) if any(identifier.get('value') == node['rds']
-                        and identifier.get('role') == 'primary' and identifier.get('status') == 'accepted'
-                        and identifier.get('scheme') == 'RDS' for identifier in item.get('identifiers', []))]
-                    order_require(catalog.get('nextCursor') is None and len(matches) == 1, 'DIAGNOSTIC_OBJECT_UNRESOLVED', 409)
-                    value = reader.context_for_object(matches[0]['entityUid'], matches[0]['entityRevision'])
+                    rds = node['rds']
+                if 'memberCursor' in body:
+                    token = body['memberCursor']
+                    order_require(isinstance(token, str) and 0 < len(token) <= 8192)
+                from urllib.parse import urlencode
+                catalog = reader._request('GET', reader.prefix + '/objects?' + urlencode({'primaryIdentifier': rds, 'limit': 50}))
+                order_require(catalog.get('projectCode') == code, 'SOURCE_UNAVAILABLE', 502)
+                order_require(type(catalog.get('items')) is list and len(catalog['items']) <= 50
+                    and all(type(item) is dict and type(item.get('identifiers')) is list
+                        and all(type(identifier) is dict for identifier in item['identifiers'])
+                        for item in catalog['items']), 'SOURCE_UNAVAILABLE', 502)
+                def matching(identifier, tag=rds):
+                    return (identifier.get('value') == tag and identifier.get('role') == 'primary'
+                        and identifier.get('status') in ('accepted', 'needs_review')
+                        and identifier.get('scheme') in ('RDS', 'electrical_tag')
+                        and identifier.get('scopeType') == 'project' and identifier.get('scopeKey') == code)
+                matches = [item for item in catalog['items'] if any(matching(identifier) for identifier in item['identifiers'])]
+                order_require(catalog.get('nextCursor') is None and len(matches) == 1, 'DIAGNOSTIC_OBJECT_UNRESOLVED', 409)
+                value = reader.context_for_object(matches[0]['entityUid'], matches[0]['entityRevision'])
+                identity = next(identifier for identifier in matches[0]['identifiers'] if matching(identifier))
+                order_require(identity in value['item']['identifiers'], 'ENGINEERING_CHANGED', 409)
+                value['referenceMatch'] = {field: identity[field] for field in ('scheme', 'status', 'value', 'scopeType', 'scopeKey')}
+                if cabinet and 'referenceRds' not in body:
+                    order_require(value['item']['objectScope'] == 'definition' and value['item']['objectKind'] == 'cabinet'
+                        and value['item']['installationContextId'] is None, 'DIAGNOSTIC_OBJECT_UNRESOLVED', 409)
+                    value['cabinetReference'] = {'code': cabinet, 'purpose': 'project_definition'}
+                    value['cabinetMembers'] = reader.cabinet_members(value['item'], body.get('memberCursor'))
+                elif cabinet:
+                    parent_uid = value['item'].get('definitionParentEntityUid')
+                    order_require(isinstance(parent_uid, str) and parent_uid, 'CABINET_MEMBERSHIP_UNRESOLVED', 409)
+                    parent = reader.context_for_object(parent_uid)['item']
+                    order_require(parent['objectScope'] == 'definition' and parent['objectKind'] == 'cabinet'
+                        and parent['installationContextId'] is None
+                        and any(matching(identifier, '=WEC+' + cabinet) for identifier in parent['identifiers']),
+                        'CABINET_MEMBERSHIP_UNRESOLVED', 409)
+                    value['definitionParent'] = parent
                 value = {**value, 'locateKey': key, 'engineeringConfirmation': False}
             else:
                 raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')

@@ -10,7 +10,8 @@ const states:OrderState[]=['open','diagnosing','investigating','review','closed'
 const labels:Record<OrderState,[string,string]>={open:['待受理','Open'],diagnosing:['诊断中','Diagnosing'],investigating:['排查中','Investigating'],review:['待复核','In review'],closed:['已关闭','Closed']};
 const nextAction:Record<OrderState,[string,string,string]>={open:['accept','受理并诊断','Accept & diagnose'],diagnosing:['investigate','开始排查','Start investigation'],investigating:['submit','提交复核','Submit for review'],review:['close','复核并关闭演练','Review & close exercise'],closed:['reopen','重新排查','Reopen']};
 type OrderApi=Pick<WorkbenchApi,'request'|'content'|'revision'|'epoch'>;
-const positions:Record<string,[number,number]>={alarm:[12,82],hypothesis:[205,82],'part-0':[400,10],'part-1':[400,108],'part-2':[400,206],CN1:[625,52],CN:[625,172],gap:[205,280]};
+const cabinetCode=(value:string)=>value==='CN'?'CN2':value;
+const positions:Record<string,[number,number]>={alarm:[12,82],hypothesis:[205,82],'part-0':[400,10],'part-1':[400,108],'part-2':[400,206],CN1:[625,52],CN2:[625,172],gap:[205,280]};
 
 function DiagnosticGraph({detail,en,selected,onLocate,busy}:{detail:WorkOrderDetail;en:boolean;selected:string;onLocate:(key:string)=>void;busy:boolean}){
   const graph=detail.diagnosis;
@@ -33,9 +34,12 @@ function DiagnosticGraph({detail,en,selected,onLocate,busy}:{detail:WorkOrderDet
 function PhotoPanel({en,location,photos,chosen,image,reading,error,onOpen,onImageError}:{en:boolean;location:OrderLocation|null;photos:ObjectPhoto[]|null;chosen:ObjectPhoto|null;image:string;reading:boolean;error:string;onOpen:(photo:ObjectPhoto)=>void;onImageError:()=>void}){
   const [zoom,setZoom]=useState(1);
   useEffect(()=>setZoom(1),[chosen?.evidenceRef,image]);
-  return <section className="wo-card"><header><Image size={16}/><h3>{en?'Object & photo location':'工程对象与照片定位'}</h3>{location&&<span className="wo-tag">{location.item.objectScope==='installation'?(en?'Demo installation':'演示安装对象'):(en?'Definition reference':'定义对象参照')}</span>}</header>
+  return <section className="wo-card"><header><Image size={16}/><h3>{en?'Object & photo location':'工程对象与照片定位'}</h3>{location&&<span className="wo-tag">{location.item.objectScope==='installation'?(en?'Demo installation':'演示安装对象'):location.item.objectScope==='definition'?(en?'Definition reference':'定义对象参照'):(en?'Project object reference':'项目对象参照')}</span>}</header>
     {!location?<p className="wo-empty">{en?'Select a graph object or cabinet to inspect its identity and photos.':'点击图谱中的对象或柜体，查看身份与照片位置。'}</p>:<>
       <div className="wo-object"><strong>{location.item.displayName}</strong><span className="wo-mono">{location.item.entityUid}</span><small>{location.context?.displayName||(en?'No installation assignment':'未分配安装范围')}{location.context&&' · '+(en?'Assumed hierarchy':'假定物理关系')}</small></div>
+      {location.cabinetReference&&<p className="wo-caption">{en?'Project cabinet definition. Select a recorded member below to open its original photo annotation.':'项目柜级定义；从下方已登记的柜内对象中选择，打开原有照片标注。'}</p>}
+      {location.definitionParent&&<p className="wo-caption">{en?'Recorded cabinet':'已登记所属柜体'}：{location.definitionParent.displayName} · {en?'User-provided project definition':'用户提供的项目定义归属'}</p>}
+      {location.referenceMatch?.status==='needs_review'&&<p className="wo-caption">{en?'Recorded full primary tag · identifier review pending.':'完整主位号已记录，标识审核尚待完成。'}</p>}
       {photos?.length===0&&<p className="wo-empty">{en?'No stored photo association for this object. No region has been invented.':'该对象暂无已存照片关联，尚不能在照片中定位。'}</p>}
       {!!photos?.length&&<div className="wo-photo-list">{photos.map(photo=><button type="button" key={photo.evidenceRef} className="wo-photo-choice" aria-pressed={chosen?.evidenceRef===photo.evidenceRef} disabled={reading||!photo.selector||!!photo.unavailableReason} onClick={()=>onOpen(photo)}><Image size={14}/><span>{photo.title}<small>v{photo.versionNumber??'—'} · {photo.sourceRelation==='template_definition'?(en?'Fixed template reference':'固定型号来源'):(en?'Object association':'对象自身关联')}{photo.newerVersionAvailable?' · '+(en?'New version available':'有新版本'):''}{photo.anchorUnavailableReason?' · '+photo.anchorUnavailableReason:''}</small></span><ArrowRight size={13}/></button>)}</div>}
       {chosen&&image&&<><div className="wo-photo-tools"><span>{chosen.selector?.kind==='spherical_region'?(en?'Panorama · region on unfolded image':'球面全景 · 展开图区域'):(en?'Fixed display region':'固定显示资源区域')}</span><button type="button" aria-label={en?'Zoom out':'照片缩小'} disabled={zoom<=1} onClick={()=>setZoom(v=>Math.max(1,v-.5))}><ZoomOut size={15}/></button><button type="button" aria-label={en?'Zoom in':'照片放大'} disabled={zoom>=3} onClick={()=>setZoom(v=>Math.min(3,v+.5))}><ZoomIn size={15}/></button><button type="button" onClick={()=>setZoom(1)}>{en?'Fit':'适合窗口'}</button></div>
@@ -55,6 +59,8 @@ export function WorkOrders({api,locale='zh'}:{api:OrderApi;locale?:string}){
   const [note,setNote]=useState(''),[checks,setChecks]=useState<string[]>([]);
   const [location,setLocation]=useState<OrderLocation|null>(null),[photos,setPhotos]=useState<ObjectPhoto[]|null>(null);
   const [chosen,setChosen]=useState<ObjectPhoto|null>(null),[image,setImage]=useState(''),[photoError,setPhotoError]=useState<unknown>(null),[reading,setReading]=useState(false),[locateKey,setLocateKey]=useState('');
+  const [cabinet,setCabinet]=useState(''),[referenceRds,setReferenceRds]=useState('');
+  const [members,setMembers]=useState<OrderLocation['cabinetMembers']>();
   const alive=useRef(true),selectedRef=useRef(selected);selectedRef.current=selected;
   const picture=useRef(''),photoAbort=useRef<AbortController|null>(null),actionAbort=useRef<AbortController|null>(null);
   const pending=useRef<{fingerprint:string;body:object}|null>(null);
@@ -68,7 +74,7 @@ export function WorkOrders({api,locale='zh'}:{api:OrderApi;locale?:string}){
     return()=>abort.abort();
   },[api,api.revision,api.epoch,filter,refresh]);
   useEffect(()=>{
-    const abort=new AbortController();setDetail(null);setLocation(null);setPhotos(null);setLocateKey('');clearPhoto();setError(null);pending.current=null;
+    const abort=new AbortController();setDetail(null);setLocation(null);setPhotos(null);setLocateKey('');setCabinet('');setReferenceRds('');setMembers(undefined);clearPhoto();setError(null);pending.current=null;
     if(selected)void api.request<WorkOrderDetail>(ROOT+'/detail',{orderId:selected},abort.signal).then(value=>{if(!abort.signal.aborted)useDetail(value);})
       .catch(value=>{if(!abort.signal.aborted&&!cancelled(value))setError(value);});
     return()=>abort.abort();
@@ -88,12 +94,14 @@ export function WorkOrders({api,locale='zh'}:{api:OrderApi;locale?:string}){
     try{const value=await api.request<WorkOrderDetail>(ROOT+'/action',pending.current.body,abort.signal);if(alive.current&&selectedRef.current===content.orderId){pending.current=null;useDetail(value);setList(previous=>previous?{...previous,items:previous.items.map(item=>item.orderId===value.orderId?value:item)}:previous);}}
     catch(value){if(alive.current&&!cancelled(value))setError(value);}finally{if(alive.current)setBusy(false);}
   }
-  async function locate(key:string){
-    if(!detail)return;clearPhoto();setLocation(null);setPhotos(null);setLocateKey(key);setReading(true);
+  async function locate(key:string,referenceRds?:string,memberCursor?:string){
+    if(!detail)return;
+    if(!referenceRds&&!memberCursor){setMembers(undefined);setCabinet(['CN2','CN1'].includes(key)?key:'');setReferenceRds(['CN2','CN1'].includes(key)?'=WEC+'+key+'-':'');}
+    clearPhoto();setLocation(null);setPhotos(null);setLocateKey(key);setReading(true);
     const abort=new AbortController();photoAbort.current=abort;
     try{
-      const value=await api.request<OrderLocation>(ROOT+'/locate',{orderId:detail.orderId,locateKey:key},abort.signal);
-      if(abort.signal.aborted)return;setLocation(value);
+      const value=await api.request<OrderLocation>(ROOT+'/locate',{orderId:detail.orderId,locateKey:key,...(referenceRds?{referenceRds}:{}),...(memberCursor?{memberCursor}:{})},abort.signal);
+      if(abort.signal.aborted)return;setLocation(value);if(value.cabinetMembers)setMembers(value.cabinetMembers);
       const body={entityUid:value.item.entityUid,expectedEntityRevision:value.item.entityRevision,installationContextId:value.item.installationContextId,
         expectedHierarchyRevision:value.context?.hierarchyRevision??null};
       const result=await api.request<{items:ObjectPhoto[]}>('/api/workbench/objects/photos/resolve',body,abort.signal);
@@ -122,14 +130,18 @@ export function WorkOrders({api,locale='zh'}:{api:OrderApi;locale?:string}){
       <label className="wo-filter">{en?'Status':'状态'}<select value={filter.state} onChange={event=>setFilter(value=>({...value,state:event.target.value}))}><option value="">{en?'All':'全部'}</option>{states.map(state=><option value={state} key={state}>{labels[state][en?1:0]}</option>)}</select></label>
       {loading&&<p className="wo-empty" role="status">{en?'Loading…':'正在读取…'}</p>}
       {!loading&&list?.total===0&&<div className="wo-empty"><p>{en?'No work orders in this project':'当前项目暂无工单'}</p>{list.capabilities.canSeedDemo&&<button type="button" className="wo-button primary" disabled={busy} onClick={()=>void seed()}>{en?'Create 20 demo orders':'生成20条演示工单'}</button>}</div>}
-      <div className="wo-order-list">{list?.items.map(item=><button type="button" key={item.orderId} className={`wo-order ${selected===item.orderId?'selected':''}`} aria-pressed={selected===item.orderId} onClick={()=>setSelected(item.orderId)}><span className="wo-order-top"><span className="wo-mono">{item.faultCode}</span><span className={`wo-status ${item.state}`}>{labels[item.state][en?1:0]}</span></span><strong>{item.title}</strong><small>{String(item.number).padStart(3,'0')} · {item.cabinet} · {new Date(item.alarmAt).toLocaleString(en?'en-GB':'zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></button>)}</div>
+      <div className="wo-order-list">{list?.items.map(item=><button type="button" key={item.orderId} className={`wo-order ${selected===item.orderId?'selected':''}`} aria-pressed={selected===item.orderId} onClick={()=>setSelected(item.orderId)}><span className="wo-order-top"><span className="wo-mono">{item.faultCode}</span><span className={`wo-status ${item.state}`}>{labels[item.state][en?1:0]}</span></span><strong>{item.title}</strong><small>{String(item.number).padStart(3,'0')} · {cabinetCode(item.cabinet)} · {new Date(item.alarmAt).toLocaleString(en?'en-GB':'zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></button>)}</div>
     </aside>
     <div className="wo-main">{!!error&&<div className="wo-error" role="alert">{failureMessage(error,locale)} <button type="button" onClick={()=>setRefresh(v=>v+1)}>{en?'Reload':'重新读取'}</button></div>}
       {!detail?<div className="wo-empty wo-welcome"><ClipboardList size={30}/><h2>{en?'Alarm to object evidence':'从报警走到对象证据'}</h2><p>{en?'Select an order to diagnose, investigate, locate photos and review.':'选择工单，沿诊断图谱排查、核对照片位置并完成复核。'}</p></div>:<>
         <header className="wo-detail-head"><div><span className="wo-tag">{en?'Simulated alarm · demo work order':'模拟报警 · 演示工单'}</span><h2>{detail.title}</h2><small className="wo-mono">{detail.orderId} · r{detail.orderRevision}</small></div><span className={`wo-status ${detail.state}`}>{labels[detail.state][en?1:0]}</span></header>
         <ol className="wo-progress" aria-label={en?'Work order lifecycle':'工单流程'}>{states.map((state,index)=><li key={state} aria-current={detail.state===state?'step':undefined} className={states.indexOf(detail.state)>=index?'done':''}><span>{states.indexOf(detail.state)>index?<CheckCircle2 size={14}/>:index+1}</span>{labels[state][en?1:0]}</li>)}</ol>
-        <section className="wo-alarm"><AlertTriangle size={19}/><div><strong>{en?'Alarm':'故障报警'} {detail.faultCode}</strong><span>{new Date(detail.alarmAt).toLocaleString(en?'en-GB':'zh-CN')} · {en?'Demo unit 07':'7号演示机组'} · {detail.cabinet}</span></div><span className="wo-tag">{en?'Simulated · no live source':'模拟数据 · 未接真实源'}</span></section>
+        <section className="wo-alarm"><AlertTriangle size={19}/><div><strong>{en?'Alarm':'故障报警'} {detail.faultCode}</strong><span>{new Date(detail.alarmAt).toLocaleString(en?'en-GB':'zh-CN')} · {en?'Demo unit 07':'7号演示机组'} · {cabinetCode(detail.cabinet)}</span></div><span className="wo-tag">{en?'Simulated · no live source':'模拟数据 · 未接真实源'}</span></section>
         <DiagnosticGraph detail={detail} en={en} selected={locateKey} onLocate={key=>void locate(key)} busy={reading}/>
+        {cabinet&&<section className="wo-card"><header><Search size={16}/><h3>{cabinet} · {en?'Cabinet objects':'柜内对象'}</h3>{members&&<span className="wo-tag">{members.total} {en?'recorded':'已登记'}</span>}</header>
+          <form className="wo-search" onSubmit={event=>{event.preventDefault();void locate(cabinet,referenceRds.trim());}}><input aria-label={en?'Full cabinet object tag':'柜内对象完整位号'} maxLength={200} value={referenceRds} onChange={event=>setReferenceRds(event.target.value)}/><button type="submit" disabled={reading||!referenceRds.trim().startsWith('=WEC+'+cabinet+'-')||referenceRds.trim().length<('=WEC+'+cabinet+'-').length+1}>{en?'Read object':'查阅对象'}</button></form>
+          {members&&<><div className="wo-members">{members.items.map(item=>{const tag=item.identifiers?.find(identity=>identity.role==='primary'&&identity.value.startsWith('=WEC+'+cabinet+'-'))?.value;return <button type="button" className="wo-photo-choice" key={item.entityUid} disabled={reading||!tag} onClick={()=>{setReferenceRds(tag!);void locate(cabinet,tag);}}><span>{item.displayName}<small className="wo-mono">{tag}</small></span><ArrowRight size={13}/></button>;})}</div><div className="wo-actions"><button type="button" className="wo-button" disabled={reading} onClick={()=>void locate(cabinet)}>{en?'First page':'首屏'}</button>{members.nextCursor&&<button type="button" className="wo-button" disabled={reading} onClick={()=>void locate(cabinet,undefined,members.nextCursor!)}>{en?'Next page':'下一页'}</button>}</div></>}
+          <p className="wo-caption">{en?'Cabinet membership is recorded from the user-provided project definition. Field installation and photo applicability remain separate.':'柜内归属按用户提供的项目定义登记；现场安装与照片适用性另行核实。'}</p></section>}
         <PhotoPanel en={en} location={location} photos={photos} chosen={chosen} image={image} reading={reading} error={photoError?failureMessage(photoError,locale):''} onOpen={photo=>void openPhoto(photo)} onImageError={()=>{if(picture.current)URL.revokeObjectURL(picture.current);picture.current='';setImage('');setPhotoError(new ApiError(502,'IMAGE_INVALID'));}}/>
         <section className="wo-card"><header><CheckCircle2 size={16}/><h3>{en?'Investigation & review':'排查与复核'}</h3>{!canWrite&&<span className="wo-tag">{en?'Read only':'只读'}</span>}</header><div className="wo-checks">{detail.diagnosis.checks.map(check=><label key={check.id}><input type="checkbox" checked={checks.includes(check.id)} disabled={!canWrite||busy||detail.state==='open'||detail.state==='closed'} onChange={event=>setChecks(value=>event.target.checked?[...value,check.id]:value.filter(key=>key!==check.id))}/><span>{check.label}</span></label>)}</div>
           <label className="wo-note">{en?'Exercise findings / review note':'演示处理记录 / 复核说明'}<textarea value={note} maxLength={2000} rows={3} disabled={!canWrite||busy} placeholder={en?'Record the exercise result and remaining evidence gaps.':'记录本次演练的处理、核对结果与仍需补充的依据。'} onChange={event=>setNote(event.target.value)}/></label>

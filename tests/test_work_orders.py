@@ -41,7 +41,7 @@ class WorkOrderTests(unittest.TestCase):
         result = self.orders.listing({}, True)
         self.assertEqual((result['total'], len({item['orderId'] for item in result['items']})), (20, 20))
         self.assertEqual(len({item['faultCode'] for item in result['items']}), 7)
-        self.assertEqual({item['cabinet'] for item in result['items']}, {'CN', 'CN1'})
+        self.assertEqual({item['cabinet'] for item in result['items']}, {'CN2', 'CN1'})
         for item in result['items']:
             detail = self.orders.detail({'orderId': item['orderId']})
             self.assertEqual(detail['sourceKind'], 'simulated')
@@ -52,6 +52,26 @@ class WorkOrderTests(unittest.TestCase):
             identifiers = {node['id'] for node in graph['nodes']}
             self.assertTrue(all(edge['source'] in identifiers and edge['target'] in identifiers for edge in graph['edges']))
         self.assertIn('术语', diagnosis('13058')['gap'])
+
+    def test_legacy_cn_batch_reads_cn2_without_replacing_orders_or_events(self):
+        self.seed()
+        with self.library.connect() as db:
+            db.execute("update work_order_batches set revision='pds-diagnostic-rules:1'")
+            db.execute("update work_orders set cabinet='CN' where cabinet='CN2'")
+            before={table:[tuple(row) for row in db.execute('select * from '+table)]
+                    for table in ('work_order_batches','work_orders','work_order_events')}
+        reader=WorkOrders(self.library,'Demo-PDS')
+        listing=reader.listing({},False)
+        self.assertEqual(listing['total'],20)
+        signal=next(row for row in listing['items'] if row['cabinet']=='CN2')
+        detail=reader.detail({'orderId':signal['orderId']})
+        self.assertEqual(detail['createdRuleRevision'],'pds-diagnostic-rules:1')
+        self.assertEqual(detail['diagnosis']['revision'],'pds-diagnostic-rules:2')
+        self.assertIn('CN2',{node['id'] for node in detail['diagnosis']['nodes']})
+        self.assertEqual(self.seed()['created'],0)
+        with self.library.connect() as db:
+            after={table:[tuple(row) for row in db.execute('select * from '+table)] for table in before}
+        self.assertEqual(before,after)
 
     def test_seed_retry_and_another_request_do_not_duplicate_or_reset(self):
         body = {'requestId': str(uuid4()), 'expectedSnapshotRevision': 'work-orders:empty'}

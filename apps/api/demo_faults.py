@@ -9,7 +9,7 @@ from copy import deepcopy
 
 DEMO_PROJECT = 'Demo-PDS'
 BATCH = 'pds-cabinet-exercise-v1'
-RULE_REVISION = 'pds-diagnostic-rules:1'
+RULE_REVISION = 'pds-diagnostic-rules:2'
 
 # Code, manual name/page, candidate circuit objects, and unresolved evidence.
 FAULTS = (
@@ -27,7 +27,7 @@ def scenarios():
     result = []
     for index in range(20):
         code, name, page, parts, gap = FAULTS[index % len(FAULTS)]
-        cabinet = 'CN' if code == '13058' or code in ('13033', '13035') and index >= 7 else 'CN1'
+        cabinet = 'CN2' if code == '13058' or code in ('13033', '13035') and index >= 7 else 'CN1'
         result.append({'ordinal': index + 1, 'code': code, 'title': name,
                        'cabinet': cabinet, 'round': index // len(FAULTS) + 1})
     return result
@@ -45,7 +45,7 @@ def diagnosis(code):
                       'state': 'reference_only', 'locateKey': key})
         edges.append({'source': 'hypothesis' if index == 0 else 'part-' + str(index - 1),
                       'target': key, 'label': '参照链路'})
-    for key, label in (('CN1', '机舱动力柜'), ('CN', '机舱信号柜')):
+    for key, label in (('CN1', '机舱动力柜'), ('CN2', '机舱信号柜')):
         nodes.append({'id': key, 'kind': 'cabinet', 'label': key + ' · ' + label,
                       'state': 'demonstration', 'locateKey': key})
         edges.append({'source': 'part-0', 'target': key, 'label': '演示排查目标'})

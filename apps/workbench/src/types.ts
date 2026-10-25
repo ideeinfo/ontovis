@@ -5,6 +5,8 @@ export interface EngineeringObject {
   installationContextId: string | null; installationPurpose: string | null;
   objectScope: string; hasChildren: boolean;
   sourceTemplateEntityUid: string | null;
+  definitionParentEntityUid?: string | null; definitionChildCount?: number;
+  identifiers?: {scheme:string;value:string;role:string;status:string;scopeType:string;scopeKey:string}[];
   classification?: ObjectClassification | null;
 }
 export interface ObjectClassification {code:string; nameZh:string|null; nameEn:string|null; reviewState:string|null}

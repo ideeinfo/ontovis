@@ -1,13 +1,15 @@
 import type {SceneObjectContext} from './sceneEngineeringTypes';
+import type {EngineeringObject} from './types';
 
 export type OrderState = 'open'|'diagnosing'|'investigating'|'review'|'closed';
 export interface WorkOrder {
-  orderId:string;batchId:string;number:number;faultCode:string;title:string;cabinet:'CN'|'CN1';
+  orderId:string;batchId:string;number:number;faultCode:string;title:string;cabinet:'CN'|'CN1'|'CN2';
   state:OrderState;orderRevision:number;alarmAt:string;updatedAt:string;checks:string[];note:string;
   sourceKind:'simulated';engineeringConfirmation:false;
 }
 export interface DiagnosticNode {id:string;kind:string;label:string;state:string;rds?:string;locateKey?:string}
 export interface WorkOrderDetail extends WorkOrder {
+  createdRuleRevision:string;
   diagnosis:{revision:string;mode:'demonstration_rules';engineeringConfirmation:false;
     source:{projectCode:string;catalogue:string;manualPages:number[];applicability:string};gap:string;
     nodes:DiagnosticNode[];edges:{source:string;target:string;label:string}[];checks:{id:string;label:string}[]};
@@ -26,4 +28,8 @@ export interface ObjectPhoto {evidenceRef:string;sourceRevision:string;sourceRel
   sourceSha256:string|null;versionNumber:number|null;newerVersionAvailable:boolean;documentStatus:string;
   unavailableReason:string|null;anchorUnavailableReason:string|null;selector:PhotoSelector|null;
   engineeringConfirmation:false;versionMode:'fixed_content_version'}
-export interface OrderLocation extends SceneObjectContext {locateKey:string;engineeringConfirmation:false}
+export interface OrderLocation extends SceneObjectContext {locateKey:string;engineeringConfirmation:false;
+  referenceMatch?:{scheme:'RDS'|'electrical_tag';status:'accepted'|'needs_review';value:string;scopeType:string;scopeKey:string};
+  cabinetReference?:{code:'CN2'|'CN1';purpose:'project_definition'};
+  definitionParent?:EngineeringObject;
+  cabinetMembers?:{items:EngineeringObject[];total:number;nextCursor:string|null;snapshotRevision:string;basisKind:'user_declared'}}

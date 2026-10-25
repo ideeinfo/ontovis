@@ -70,7 +70,8 @@ class WorkOrders:
     @staticmethod
     def _public(row):
         return {'orderId': row['order_id'], 'batchId': row['batch_id'], 'number': row['ordinal'],
-                'faultCode': row['fault_code'], 'title': row['title'], 'cabinet': row['cabinet'],
+                'faultCode': row['fault_code'], 'title': row['title'],
+                'cabinet': 'CN2' if row['batch_id'] == BATCH and row['cabinet'] == 'CN' else row['cabinet'],
                 'state': row['state'], 'orderRevision': row['revision'], 'alarmAt': row['alarm_at'],
                 'updatedAt': row['updated_at'], 'checks': json.loads(row['checks']), 'note': row['note'],
                 'sourceKind': 'simulated', 'engineeringConfirmation': False}
@@ -103,7 +104,8 @@ class WorkOrders:
         batch = db.execute('select * from work_order_batches where batch_id=?', (row['batch_id'],)).fetchone()
         events = db.execute('select * from work_order_events where order_id=? order by revision', (identifier,)).fetchall()
         require(len(events) <= 100, 'WORK_ORDER_EVENT_LIMIT', 413)
-        return {**self._public(row), 'diagnosis': diagnosis(row['fault_code']), 'targets': json.loads(batch['targets']),
+        return {**self._public(row), 'diagnosis': diagnosis(row['fault_code']),
+                'createdRuleRevision': batch['revision'], 'targets': json.loads(batch['targets']),
                 'events': [{'revision': event['revision'], 'action': event['action'], 'actor': event['actor'],
                             'recordedAt': event['recorded_at'], 'from': event['previous_state'],
                             'to': event['state'], 'note': event['note']} for event in events]}
@@ -142,7 +144,7 @@ class WorkOrders:
         def operation(db):
             batch = db.execute('select * from work_order_batches where batch_id=?', (BATCH,)).fetchone()
             if batch:
-                require(batch['revision'] == RULE_REVISION and json.loads(batch['targets']) == targets,
+                require(batch['revision'] in ('pds-diagnostic-rules:1', RULE_REVISION) and json.loads(batch['targets']) == targets,
                         'WORK_ORDER_TARGET_CHANGED', 409)
                 return {'batchId': BATCH, 'created': 0, 'total': 20, 'snapshotRevision': self._snapshot(db)}
             require(body['expectedSnapshotRevision'] == self._snapshot(db), 'WORK_ORDER_CHANGED', 409)

@@ -6,6 +6,7 @@ nearest-parent-first paths and independent per-request snapshots.
 import copy
 from urllib.parse import parse_qs, urlsplit
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from apps.api.authority import PreviewError
@@ -345,6 +346,35 @@ class SceneEngineeringTests(unittest.TestCase):
             lambda: self.reader.children(CTX, CABINET, CTX+':7', cursor='x'*8193)):
             self.expect('INVALID_REQUEST', call, 422)
         self.assertEqual(self.authority.calls, [])
+
+    def cabinet_page(self):
+        raw_parent = self.authority.objects['definition']
+        raw_parent.update(objectKind='cabinet', definitionChildCount=1)
+        parent = self.reader.context_for_object('definition')['item']
+        child = {**self.authority.objects['unclassified'], 'definitionParentEntityUid': 'definition'}
+        page = {'projectCode': PROJECT, 'parent': raw_parent, 'total': 1, 'items': [{'object': child, 'basisKind': 'user_declared'}],
+                'snapshotRevision': 'synthetic-catalog', 'nextCursor': 'synthetic-next',
+                'relationKind': 'project_definition_membership', 'engineeringConfirmation': False}
+        return parent, page
+
+    def test_cabinet_members_keep_recorded_parent_and_drop_private_fields(self):
+        parent, page = self.cabinet_page()
+        with patch.object(self.reader, '_request', return_value=page) as request:
+            result = self.reader.cabinet_members(parent, 'synthetic-cursor')
+        self.assertEqual(result['items'][0]['definitionParentEntityUid'], parent['entityUid'])
+        self.assertEqual(result['total'], 1)
+        self.assertNotIn('privateServerPath', repr(result))
+        self.assertIn('cursor=synthetic-cursor', request.call_args.args[1])
+
+    def test_cabinet_page_rejects_wrong_project_changed_parent_and_unrecorded_child(self):
+        parent, page = self.cabinet_page()
+        variants = [{**page, 'projectCode': 'other'}, {**page, 'total': True}, {**page, 'nextCursor': 'x' * 8193},
+                    {**page, 'parent': {**page['parent'], 'entityRevision': 'changed'}},
+                    {**page, 'items': [{'basisKind': 'user_declared', 'object': {**page['items'][0]['object'],
+                                                                                 'definitionParentEntityUid': 'other'}}]}]
+        for variant in variants:
+            with self.subTest(variant=variant), patch.object(self.reader, '_request', return_value=variant):
+                with self.assertRaises(PreviewError): self.reader.cabinet_members(parent)
 
 
 if __name__ == '__main__': unittest.main()
