@@ -39,3 +39,5 @@
 - [项目入口按钮文案](project-entry-label-20261026/README.md)：统一“进入项目 / Enter project”，设计源、指南和公开页面验收。
 
 - [场景可恢复删除与编辑文案](scene-lifecycle-ui-20261026/README.md)：删除/回收站/恢复、版本与权限、全站草稿措辞审计及整组恢复验收。
+
+- [列表与上下文菜单统一](list-ui-standard-20261026/README.md)：共用规范、362项前端及隔离/公网交互、前端发布与数据保持证据。
