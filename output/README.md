@@ -33,3 +33,5 @@
 - [Q-21 本人分析画布首期](q21-analysis-drafts-20261026/README.md)：正式HTTP/保存历史、实际账号重登、MagicPath及整组恢复；界面统一“分析画布”，结论确认不启用。
 
 - [项目入口按钮文案](project-entry-label-20261026/README.md)：统一“进入项目 / Enter project”，设计源、指南和公开页面验收。
+
+- [场景可恢复删除与编辑文案](scene-lifecycle-ui-20261026/README.md)：删除/回收站/恢复、版本与权限、全站草稿措辞审计及整组恢复验收。
