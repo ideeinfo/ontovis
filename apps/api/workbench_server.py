@@ -69,7 +69,8 @@ class WorkbenchSessions(UserSessions):
         self.model_metadata = ModelResourceMetadata(self.project_models) if self.project_models else None
         self.thumbnails = ModelThumbnails(self.project_models,
             ThumbnailRenderer(thumbnail_renderer, thumbnail_node, thumbnail_browser)) if self.project_models and thumbnail_renderer else None
-        self.scenes = SceneLibrary(self.library, model_identity=self.project_models.content_identity) if self.library else None
+        self.scenes = SceneLibrary(self.library, model_identity=self.project_models.content_identity,
+            model_lock=self.project_models.lifecycle_lock) if self.library else None
         self.legacy_registry = LegacySceneRegistry(self.library) if self.library else None
         self.terrains = TerrainLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
         self.imagery = ImageryLibrary(self.library, python_executable=terrain_python) if self.library and terrain_python else None
@@ -220,6 +221,7 @@ class WorkbenchSessions(UserSessions):
             'canUpload': access.get('role') == 'admin', 'canCalibrate': access.get('role') == 'admin',
             'canWriteMetadata': access.get('role') == 'admin',
             'canEditInfo': access.get('role') == 'admin',
+            'canDeleteModels': access.get('role') == 'admin', 'modelLifecycleWriteVersion': 1,
             'canGenerateThumbnails': self.thumbnails is not None and access.get('role') == 'admin',
             'calibrationRequiredForGeographicPlacement': True, 'automaticLegacyAdoption': False}
         limits = ProjectModelLibrary.capabilities()
@@ -249,6 +251,7 @@ class WorkbenchSessions(UserSessions):
         writing = path in ('/api/workbench/resources/model/calibrate', '/api/workbench/resources/model/import-existing',
                            '/api/workbench/resources/model/preserve-legacy-display',
                            '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/info/save',
+                           '/api/workbench/resources/model/delete', '/api/workbench/resources/model/restore',
                            '/api/workbench/resources/model/thumbnail/ensure')
         row, authorize, access, actor = self.resource_authorization(sid, payload,
             writing=writing, read_capabilities=not path.endswith('/content'))
@@ -256,7 +259,7 @@ class WorkbenchSessions(UserSessions):
             raise PreviewError(503, 'MODEL_UNAVAILABLE')
         body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
         if path == '/api/workbench/resources/models' and set(body).issubset(
-                {'q', 'purpose', 'cursor', 'expectedLibraryRevision', 'limit'}):
+                {'q', 'purpose', 'cursor', 'expectedLibraryRevision', 'limit', 'state'}):
             options = dict(body)
             if 'expectedLibraryRevision' in options:
                 options['expected_library_revision'] = options.pop('expectedLibraryRevision')
@@ -274,6 +277,8 @@ class WorkbenchSessions(UserSessions):
             value = self.model_metadata.save(body, actor, authorize)
         elif path == '/api/workbench/resources/model/info/save':
             value = self.project_models.save_info(body, actor, authorize)
+        elif path in ('/api/workbench/resources/model/delete', '/api/workbench/resources/model/restore'):
+            value = self.project_models.lifecycle(body, actor, authorize, action=path.rsplit('/', 1)[1])
         elif path in ('/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',
                       '/api/workbench/resources/model/thumbnail/content'):
             if self.thumbnails is None: raise PreviewError(503, 'THUMBNAIL_UNAVAILABLE')

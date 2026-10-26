@@ -29,3 +29,5 @@ API以`--project-code`、`--installation-context-id`、`--model-root`和`--libra
 列表与菜单共用`ListMenus.tsx`和`listStandards.css`，规范见[列表与上下文菜单](../../docs/design/列表与上下文菜单规范.md)。更多菜单复用已有Radix Dropdown；新增Radix Context Menu 2.3.7（MIT），负责右键、长按、焦点和边界避让。菜单项沿用各模块已有处理函数和禁用条件，不增加后台能力。
 
 导航范围和顶栏由`workbenchNavigation.ts`与`Workbench.tsx`统一：登录后默认项目中心，未进入项目时仅两个全局中心可用；项目模块显示模块名和来源项目名。选中目录行只读取权限，进入项目后才建立上下文，后端授权保持原流程。
+
+模型可从更多/右键移至模型回收站并恢复，固定内容与已有场景保留；新增引用由场景保存最终阶段与共享生命周期锁复核。接口及存储边界见[模型删除与恢复契约](../../docs/contracts/模型删除与恢复契约.md)。

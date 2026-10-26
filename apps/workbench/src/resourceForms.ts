@@ -20,7 +20,8 @@ export function placementModelVersion(asset:ProjectModelAsset,geographic:boolean
     ?? versions.find(value=>value.calibrationState==='verified'&&usable(value))
     ?? versions.find(usable) ?? versions[0] ?? null;
 }
-export function modelPlacementIssue(model:Pick<ProjectModelVersion,'calibrationState'|'calibration'|'canPlace'|'canPlaceGeographic'>,geographic:boolean) {
+export function modelPlacementIssue(model:Pick<ProjectModelVersion,'calibrationState'|'calibration'|'canPlace'|'canPlaceGeographic'|'assetState'>,geographic:boolean) {
+  if(model.assetState==='deleted')return 'MODEL_DELETED';
   if(!model.canPlace||model.calibration.state!==model.calibrationState||!['verified','legacy_display'].includes(model.calibrationState))return 'MODEL_CALIBRATION_REQUIRED';
   return geographic&&model.canPlaceGeographic!==true?'MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED':null;
 }

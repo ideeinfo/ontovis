@@ -1,4 +1,5 @@
 import type {ModelResourceMetadata} from './modelResourceMetadata';
+import type {ModelLifecycleRequest,ModelLifecycleResult} from './resourceTypes';
 import {ApiError, type WorkbenchApi} from './api.ts';
 import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
   SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest, SceneLifecycle, SceneLifecycleRequest, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
@@ -87,6 +88,9 @@ export class SceneApi {
   }
   models(options: ProjectModelsRequest = {}, signal?: AbortSignal) {
     return this.api.request<ProjectModelCatalog>(ROOT + 'resources/models', options, signal);
+  }
+  modelLifecycle(action:'delete'|'restore',body:ModelLifecycleRequest,signal?:AbortSignal){
+    return this.api.request<ModelLifecycleResult>(ROOT+'resources/model/'+action,body,signal);
   }
   legacyModels(signal?: AbortSignal) {
     return this.api.request<LegacyModelCatalog>(ROOT + 'resources/models/legacy', {}, signal);

@@ -33,6 +33,7 @@ export interface ProjectModelVersion {
   report: ProjectModelReport; components: ProjectModelComponent[]; sourceModelVersionId: string | null;
   thumbnail?:ModelThumbnailInfo;
   assetRevision?:string; purpose?:ModelPurpose; description?:string; versionDisplayName?:string;
+  assetState?:'active'|'deleted';lifecycleRevision?:number;deletedAt?:string|null;
 }
 export interface ModelThumbnailInfo {
   state:'missing'|'queued'|'processing'|'ready'|'failed';thumbnailRevision:string|null;rendererVersion:string;
@@ -44,12 +45,14 @@ export interface ProjectModelAsset {
   modelAssetId: string; displayName: string; purpose: ModelPurpose; assetRevision: string;
   versions: ProjectModelVersionSummary[];
   description?:string;
+  assetState?:'active'|'deleted';lifecycleRevision?:number;deletedAt?:string|null;
 }
 export interface ResourceCapabilities {
   scope: 'project_static_glb_resources'|'shared_static_glb_resources'; canRead: true; canUpload: boolean; canCalibrate: boolean;
   calibrationRequiredForGeographicPlacement: true; automaticLegacyAdoption: false;
   canGenerateThumbnails?:boolean;
   canEditInfo?:boolean;
+  canDeleteModels?:boolean;modelLifecycleWriteVersion?:1;
 }
 export interface ResourceLimits {
   maxUploadBytes: number; maxVersions: number; maxLibraryBytes: number;
@@ -72,7 +75,14 @@ export interface ImportExistingModelRequest {
   legacyModelVersionId: string; expectedModelRevision: number; expectedSha256: string;
   expectedLibraryRevision: string; purpose: ModelPurpose; clientRequestId: string;
 }
-export interface ProjectModelsRequest {q?: string; purpose?: ModelPurpose; cursor?: string | null; expectedLibraryRevision?: string; limit?: number}
+export interface ProjectModelsRequest {q?: string; purpose?: ModelPurpose; cursor?: string | null; expectedLibraryRevision?: string; limit?: number;state?:'active'|'deleted'}
+export interface ModelLifecycleRequest {
+  modelAssetId:string;modelVersionId:string;expectedAssetRevision:string;expectedLifecycleRevision:number;clientRequestId:string;
+}
+export interface ModelLifecycleResult extends ResourceResponse {
+  modelAssetId:string;modelVersionId:string;assetState:'active'|'deleted';lifecycleRevision:number;
+  assetRevision:string;libraryRevision:string;changedAt:string;
+}
 export type ProjectModel = ProjectModelVersion & ResourceResponse;
 export type ProjectModelWrite = ProjectModel & {libraryRevision: string; assetRevision: string};
 export interface ModelInfoRequest {

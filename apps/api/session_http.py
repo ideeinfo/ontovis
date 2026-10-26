@@ -183,6 +183,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                               '/api/workbench/resources/model/import-existing',
                               '/api/workbench/resources/model/metadata', '/api/workbench/resources/model/metadata/save',
                               '/api/workbench/resources/model/info/save',
+                              '/api/workbench/resources/model/delete', '/api/workbench/resources/model/restore',
                               '/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',
                               '/api/workbench/resources/model/thumbnail/content')
             if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *project_paths, *analysis_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:

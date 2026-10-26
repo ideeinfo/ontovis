@@ -89,7 +89,8 @@ class ProjectSessions(UserSessions):
         self.registry.ensure_shared_model_store()
         self.shared.model_authorization = self.shared_access.authorize
         self.shared.model_scope = 'shared_static_glb_resources'
-        self.shared.scenes.use_shared_models(lambda identifier, db=None: self.shared.project_models.content_identity(identifier), self.connection_id)
+        self.shared.scenes.use_shared_models(lambda identifier, db=None: self.shared.project_models.content_identity(identifier), self.connection_id,
+                        model_lock=self.shared.project_models.lifecycle_lock)
         if project_code and self.registry.lookup(project_code):
             self._workspace(self.registry.lookup(project_code))
 
@@ -209,7 +210,8 @@ class ProjectSessions(UserSessions):
                             raise PreviewError(409, 'SHARED_MODEL_MIGRATION_REQUIRED')
                     service.project_models = self.shared.project_models
                     service.scenes.use_shared_models(
-                        lambda identifier, db=None: self.shared.project_models.content_identity(identifier), self.connection_id)
+                        lambda identifier, db=None: self.shared.project_models.content_identity(identifier), self.connection_id,
+                        model_lock=self.shared.project_models.lifecycle_lock)
             except PreviewError:
                 self.registry.mark(workspace, 'blocked', 'scope_mismatch')
                 self._close(service)

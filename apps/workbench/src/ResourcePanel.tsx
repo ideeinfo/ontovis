@@ -1,7 +1,7 @@
 import {createPortal} from 'react-dom';
 import type {ReactNode} from 'react';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {Eye, FileUp, LayoutGrid, List, MapPin, Plus, RefreshCw, Search} from 'lucide-react';
+import {Eye, FileUp, LayoutGrid, List, MapPin, Plus, RefreshCw, RotateCcw, Search, Trash2} from 'lucide-react';
 import {cancelled, type WorkbenchApi} from './api';
 import {Badge, Btn, IconBtn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
@@ -39,7 +39,10 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
   const [publicAcquisition,setPublicAcquisition]=useState(false),[resourceRefresh,setResourceRefresh]=useState(0);
   const [query,setQuery]=useState(''),[purpose,setPurpose]=useState<ModelPurpose|''>('');
-  const [filters,setFilters]=useState<{q:string;purpose:ModelPurpose|''}>({q:'',purpose:''});
+  const [filters,setFilters]=useState<{q:string;purpose:ModelPurpose|'';state:'active'|'deleted'}>({q:'',purpose:'',state:'active'});
+  const latestFilters=useRef(filters);latestFilters.current=filters;const recycled=filters.state==='deleted';
+  const [deleteTarget,setDeleteTarget]=useState<ProjectModelAsset|null>(null),[lifecycleBusy,setLifecycleBusy]=useState(false),[lifecycleError,setLifecycleError]=useState<unknown>(null),[lifecycleNotice,setLifecycleNotice]=useState('');
+  const lifecycleGate=useMemo(()=>new ResourceRequestGate(),[]),lifecycleId=useRef(new ResourceRequestId());
   const [catalogView,setCatalogView]=useState<'grid'|'list'>('grid');
   const text=(zh:string,en:string)=>locale==='zh'?zh:en;
   const [loading,setLoading]=useState(false),[error,setError]=useState<unknown>(null),[denied,setDenied]=useState(false);
@@ -60,7 +63,8 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const initialSelection=useRef(modelSelection),cardIntent=useRef(0);
   const cardCallbacks=useRef({canPlace,onPreview,onPlace});cardCallbacks.current={canPlace,onPreview,onPlace};
   const canUpload=!!catalog?.capabilities.canUpload&&!denied;
-  const canCalibrate=!!catalog?.capabilities.canCalibrate&&!!version?.capabilities.canCalibrate&&!denied;
+  const canCalibrate=!!catalog?.capabilities.canCalibrate&&!!version?.capabilities.canCalibrate&&version.assetState!=='deleted'&&!denied;
+  const canManageLifecycle=catalog?.capabilities.modelLifecycleWriteVersion===1&&catalog.capabilities.canDeleteModels===true&&!denied;
   const selectedAsset=catalog?.items.find(item=>item.modelAssetId===assetId);
   const selectedThumbnail=selectedAsset?.versions.find(item=>item.modelVersionId===version?.modelVersionId)?.thumbnail;
   const detailVersion=version&&selectedThumbnail?{...version,thumbnail:selectedThumbnail}:version;
@@ -70,7 +74,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     setVersion(previous=>previous?.sha256===sha256?{...previous,thumbnail}:previous);
   },[]);
   function clearPrivate() {
-    cardIntent.current++;
+    cardIntent.current++;lifecycleGate.cancel();setDeleteTarget(null);setLifecycleBusy(false);setLifecycleError(null);setLifecycleNotice('');
     setPublicAcquisition(false);setResourceRefresh(0);
     catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();setCatalog(null);setVersion(null);setAssetId(null);setVersionId('');
     previewCallback.current(null);setUpload(null);setFile(null);setName('');setSource('');setError(null);setUploadError(null);
@@ -85,10 +89,10 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     if(writeDenial(value))setDenied(true);
     if(inUpload)setUploadError(value);else setError(value);
   }
-  async function readCatalog(cursor?:string,choice=filters):Promise<string|null> {
+  async function readCatalog(cursor?:string,choice=latestFilters.current):Promise<string|null> {
     const request=catalogGate.start();setLoading(true);setError(null);
     try {
-      const value=await client.models({q:choice.q,...(choice.purpose?{purpose:choice.purpose}:{}),
+      const value=await client.models({q:choice.q,state:choice.state,...(choice.purpose?{purpose:choice.purpose}:{}),
         ...(cursor?{cursor,expectedLibraryRevision:catalog?.libraryRevision}:{})},request.signal);
       if(!request.isCurrent())return null;
       setCatalog(previous=>cursor&&previous?{...value,items:[...previous.items,...value.items]}:value);setDenied(false);
@@ -96,15 +100,15 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     }catch(value){if(request.isCurrent())failed(value);return null;}
     finally{if(request.isCurrent())setLoading(false);}
   }
-  useEffect(()=>{void readCatalog(undefined,{q:'',purpose:''}).then(revision=>{
+  useEffect(()=>{void readCatalog(undefined,{q:'',purpose:'',state:'active'}).then(revision=>{
     const selected=initialSelection.current;
     if(revision&&selected){setAssetId(selected.modelAssetId);void selectVersion(selected.modelAssetId,selected.modelVersionId);}
   });return()=>{
-    cardIntent.current++;catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();previewCallback.current(null);
+    cardIntent.current++;lifecycleGate.cancel();catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();previewCallback.current(null);
   };},[client,catalogGate,detailGate,uploadGate,legacyGate,importGate]);
-  function changeFilters(q:string,nextPurpose:ModelPurpose|'') {
+  function changeFilters(q:string,nextPurpose:ModelPurpose|'',state:'active'|'deleted'=latestFilters.current.state) {
     cardIntent.current++;
-    const next={q:q.trim(),purpose:nextPurpose};setFilters(next);setCatalog(null);setVersion(null);setVersionId('');setAssetId(null);
+    const next={q:q.trim(),purpose:nextPurpose,state};latestFilters.current=next;setFilters(next);setLifecycleNotice('');setCatalog(null);setVersion(null);setVersionId('');setAssetId(null);
     detailGate.cancel();setDetailLoading(false);onPreview(null);void readCatalog(undefined,next);
   }
   function selectAsset(value:string) {
@@ -135,7 +139,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     else if(callbacks.canPlace&&!modelPlacementIssue(value,geographic)){callbacks.onPreview(null);callbacks.onPlace(value);}
   }
   function openUpload(asset?:ProjectModelAsset) {
-    if(!catalog||!canUpload)return;
+    if(!catalog||!canUpload||asset?.assetState==='deleted'||lifecycleBusy)return;
     setUpload({asset,revision:catalog.libraryRevision});setName(asset?.displayName||'');setUse(asset?.purpose||'equipment');
     setSource('');setFile(null);setUploadError(null);setNotice('');requestId.current.reset();
   }
@@ -153,6 +157,20 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
       }catch(value){if(request.isCurrent())failed(value,true);}
       finally{if(request.isCurrent())setUploading(false);}
     }catch(value){failed(value,true);}
+  }
+  function closeDelete(){if(lifecycleBusy)return;setDeleteTarget(null);if(lifecycleError)void readCatalog();setLifecycleError(null);}
+  async function changeLifecycle(action:'delete'|'restore',asset:ProjectModelAsset){
+    if(!canManageLifecycle||lifecycleBusy||!asset.versions[0])return;
+    const body={modelAssetId:asset.modelAssetId,modelVersionId:asset.versions[0].modelVersionId,
+      expectedAssetRevision:asset.assetRevision,expectedLifecycleRevision:asset.lifecycleRevision??0};
+    const clientRequestId=lifecycleId.current.forPayload({action,...body}),request=lifecycleGate.start();
+    setLifecycleBusy(true);setLifecycleError(null);setError(null);
+    try{await client.modelLifecycle(action,{...body,clientRequestId},request.signal);if(!request.isCurrent())return;
+      cardIntent.current++;detailGate.cancel();setDeleteTarget(null);setVersion(null);setAssetId(null);setVersionId('');setDetailLoading(false);onPreview(null);onModelSelected?.(null);
+      setLifecycleNotice(text(action==='delete'?'模型已移至回收站':'模型已恢复',action==='delete'?'Model moved to recycle bin':'Model restored'));
+      await readCatalog();
+    }catch(value){if(request.isCurrent()){if(action==='delete')setLifecycleError(value);failed(value);}}
+    finally{if(request.isCurrent())setLifecycleBusy(false);}
   }
   function updated(value:ProjectModelWrite) {
     detailGate.cancel();setAssetId(value.modelAssetId);setVersionId(value.modelVersionId);setVersion(value);onPreview(null);
@@ -209,31 +227,35 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
           <button type="button" aria-pressed={catalogView==='grid'} onClick={()=>setCatalogView('grid')}><LayoutGrid size={15}/>{text('缩略图','Thumbnails')}</button>
           <button type="button" aria-pressed={catalogView==='list'} onClick={()=>setCatalogView('list')}><List size={15}/>{text('列表','List')}</button>
         </div>}
-        <IconBtn label={t('refresh')} disabled={loading} onClick={()=>void readCatalog()}><RefreshCw size={14}/></IconBtn>
-        {modelsOnly?<Btn primary disabled={!canUpload} onClick={()=>openUpload()}><FileUp size={15}/>{t('uploadModel')}</Btn>:<IconBtn label={t('uploadModel')} disabled={!canUpload} onClick={()=>openUpload()}><Plus size={16}/></IconBtn>}
+        {catalog?.capabilities.modelLifecycleWriteVersion===1&&<Btn disabled={lifecycleBusy||loading} onClick={()=>changeFilters(query,purpose,recycled?'active':'deleted')}><Trash2 size={14}/>{recycled?text('返回模型目录','Back to models'):text('模型回收站','Model recycle bin')}</Btn>}
+        <IconBtn label={t('refresh')} disabled={loading||lifecycleBusy} onClick={()=>void readCatalog()}><RefreshCw size={14}/></IconBtn>
+        {!recycled&&(modelsOnly?<Btn primary disabled={!canUpload||lifecycleBusy} onClick={()=>openUpload()}><FileUp size={15}/>{t('uploadModel')}</Btn>:<IconBtn label={t('uploadModel')} disabled={!canUpload} onClick={()=>openUpload()}><Plus size={16}/></IconBtn>)}
       </div></div>
       {modelsOnly&&<div className="pm-library-filter-bar"><div className="pm-category-filter" role="group" aria-label={text('模型分类','Model category')}>
         <span>{text('用途分类','Purpose')}</span>{(['',...purposes] as const).map(value=><button type="button" key={value} aria-pressed={purpose===value} onClick={()=>{setPurpose(value);changeFilters(query,value);}}>{value?t(value):text('全部','All')}</button>)}
       </div><span className="ov-resource-caption" role="status">{loading?t('loading'):text(`已显示 ${catalog?.items.length||0} 个模型资源`,`${catalog?.items.length||0} model resources shown`)}</span></div>}
       {catalog&&!canUpload&&<div className="ov-resource-readonly"><Badge>{t('readonly')}</Badge><span>{t('readOnlyDescription')}</span></div>}
+      {lifecycleNotice&&<p className="ov-resource-caption" role="status">{lifecycleNotice}</p>}
+      {recycled&&<p className="ov-resource-caption">{text('模型文件和已用场景保留，恢复后可再次选用。','Files and existing scenes are retained. Restore a model to use it again.')}</p>}
       {!!error&&<p className="ov-resource-error" role="alert">{resourceFailure(error,locale)}</p>}
       {loading&&!catalog&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
-      {catalog?.items.length===0&&!loading&&<p className="ov-resource-empty">{t('noModels')}</p>}
+      {catalog?.items.length===0&&!loading&&<p className="ov-resource-empty">{recycled?text('回收站为空','The recycle bin is empty'):t('noModels')}</p>}
       {modelsOnly&&catalogView==='list'&&<div className="pm-catalog-columns" aria-hidden="true"><span>{t('models')}</span><span>{text('用途分类','Purpose')}</span><span>{t('versions')}</span><span className="pm-meta-size">{t('size')}</span><span className="pm-meta-created">{text('版本创建时间','Version created')}</span></div>}
       <ul className="ov-resource-model-list" aria-label={modelsOnly?text('模型资源目录','Model resource catalog'):undefined}>{catalog?.items.map(asset=>{
         const active=assetId===asset.modelAssetId,choice=placementModelVersion(asset,geographic,active?versionId:
           modelSelection?.modelAssetId===asset.modelAssetId?modelSelection.modelVersionId:undefined);
-        const usable=!!choice&&choice.canPlace&&(!geographic||choice.canPlaceGeographic);
+        const usable=asset.assetState!=='deleted'&&!!choice&&choice.canPlace&&(!geographic||choice.canPlaceGeographic);
         const waiting=active&&detailLoading;
-        const actions:ListAction[]=[{id:'preview',label:t('preview'),icon:<Eye/>,disabled:waiting,onSelect:()=>void activateCard(asset,'preview')},
-          ...(!modelsOnly?[{id:'place',label:t('place'),icon:<MapPin/>,disabled:!canPlace||!usable||waiting,onSelect:()=>void activateCard(asset,'place')}]:[]),
-          {id:'update-file',opensDialog:true,label:t('appendVersion'),icon:<FileUp/>,disabled:!canUpload,onSelect:()=>openUpload(asset)}];
+        const actions:ListAction[]=[{id:'preview',label:t('preview'),icon:<Eye/>,disabled:waiting||lifecycleBusy,onSelect:()=>void activateCard(asset,'preview')},
+          ...(!modelsOnly&&!recycled?[{id:'place',label:t('place'),icon:<MapPin/>,disabled:!canPlace||!usable||waiting,onSelect:()=>void activateCard(asset,'place')}]:[]),
+          ...(!recycled?[{id:'update-file',opensDialog:true,label:t('appendVersion'),icon:<FileUp/>,disabled:!canUpload||lifecycleBusy,onSelect:()=>openUpload(asset)}]:[]),
+          ...(catalog.capabilities.modelLifecycleWriteVersion===1?[recycled?{id:'restore',label:text('恢复','Restore'),icon:<RotateCcw/>,disabled:!canManageLifecycle||lifecycleBusy,onSelect:()=>void changeLifecycle('restore',asset)}:{id:'delete',opensDialog:true,label:text('移至回收站','Move to recycle bin'),icon:<Trash2/>,danger:true,disabled:!canManageLifecycle||lifecycleBusy,onSelect:()=>{lifecycleId.current.reset();setLifecycleError(null);setDeleteTarget(asset);}}]:[])];
         return <RowContext key={asset.modelAssetId} name={asset.displayName} actions={actions}><li className={`ov-resource-card ${active?'selected':''}`} aria-label={asset.displayName}>
           <button type="button" className="ov-resource-card-heading" aria-expanded={modelsOnly?undefined:active}
             aria-label={modelsOnly?`${t('preview')} ${asset.displayName}`:undefined}
             onClick={()=>modelsOnly?void activateCard(asset,'preview'):selectAsset(asset.modelAssetId)}>
             <ModelThumbnail api={client} version={choice} name={asset.displayName} onStatus={thumbnailUpdated}/>
-            <span className="ov-resource-card-label"><strong>{asset.displayName}</strong><span className={`ov-resource-card-state ${choice?.calibrationState==='verified'?'verified':'pending'}`}>{choice?t(resourceCalibrationKey(choice.calibrationState)):t('noModelVersion')}</span></span>
+            <span className="ov-resource-card-label"><strong>{asset.displayName}</strong><span className={`ov-resource-card-state ${recycled?'deleted':choice?.calibrationState==='verified'?'verified':'pending'}`}>{recycled?text('已删除','Deleted'):choice?t(resourceCalibrationKey(choice.calibrationState)):t('noModelVersion')}</span></span>
             {modelsOnly&&<><span className="pm-meta-purpose">{t(asset.purpose)}</span><span className="pm-meta-versions">{asset.versions.length}</span><span className="pm-meta-size">{choice?`${(choice.bytes/1048576).toFixed(2)} MiB`:'—'}</span><span className="pm-meta-created">{choice?new Date(choice.createdAt).toLocaleDateString(locale):'—'}</span></>}
           </button>
           {!modelsOnly&&<div className="ov-resource-card-actions">
@@ -245,10 +267,10 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
           </div>}
           <RowActions name={asset.displayName} actions={actions} locale={locale}/>
           {waiting&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
-          {active&&version&&detailVersion&&(!modelsOnly||detailsTarget)&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} hidePreview={modelsOnly} key={detailVersion.modelVersionId} api={client} version={detailVersion} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
-            versions={<details className="ov-resource-disclosure"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{const id=event.target.value;if(modelsOnly&&id)void activateCard(asset,'preview',id);else{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,id);}}}>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>}
-            canEditInfo={catalog?.capabilities.canEditInfo===true&&!denied} onInfoUpdated={infoUpdated}
-            canReplace={canReplace&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
+          {active&&version&&detailVersion&&(!modelsOnly||detailsTarget)&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} hidePreview={modelsOnly} key={detailVersion.modelVersionId} api={client} version={detailVersion} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace&&detailVersion.assetState!=='deleted'} geographic={geographic} canCalibrate={canCalibrate}
+            versions={<details className="ov-resource-disclosure"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{const id=event.target.value;if(modelsOnly&&id)void activateCard(asset,'preview',id);else{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,id);}}}>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&asset.assetState!=='deleted'&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>}
+            canEditInfo={catalog?.capabilities.canEditInfo===true&&detailVersion.assetState!=='deleted'&&!denied} onInfoUpdated={infoUpdated}
+            canReplace={canReplace&&detailVersion.assetState!=='deleted'&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
             onOpenScene={onOpenScene} onPreview={()=>onPreview(version)} onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
             canGenerateThumbnail={catalog?.capabilities.canGenerateThumbnails===true&&!denied} onThumbnailUpdated={thumbnailUpdated}
             onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/></ResourceDetailHost>}
@@ -256,15 +278,15 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
       })}</ul>
       {catalog?.nextCursor&&<Btn disabled={loading} onClick={()=>void readCatalog(catalog.nextCursor!)}>{t(loading?'loading':'more')}</Btn>}
       {!version&&!detailLoading&&selectedAsset&&<p className="ov-resource-caption">{t('chooseModel')}</p>}
-      <details className="ov-resource-disclosure" open={legacyOpen} onToggle={event=>{const value=event.currentTarget.open;setLegacyOpen(value);if(value&&!legacy&&!legacyLoading)void readLegacy();}}><summary>{t('existingModels')}</summary>
+      {!recycled&&<details className="ov-resource-disclosure" open={legacyOpen} onToggle={event=>{const value=event.currentTarget.open;setLegacyOpen(value);if(value&&!legacy&&!legacyLoading)void readLegacy();}}><summary>{t('existingModels')}</summary>
         {legacyLoading&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
         {!!legacyError&&<p className="ov-resource-error" role="alert">{resourceFailure(legacyError,locale)}</p>}
         {legacy?.items.length===0&&<p className="ov-resource-caption">{t('noExisting')}</p>}
         <ul className="ov-resource-existing-list">{legacy?.items.map(item=><li key={item.modelVersionId}><strong>{item.displayName}</strong><div className="ov-resource-caption">{t('existingBindings')} {item.legacyBindingCount}</div>
-          {item.importedResource?<Btn onClick={()=>{setAssetId(item.importedResource!.modelAssetId);void selectVersion(item.importedResource!.modelAssetId,item.importedResource!.modelVersionId);}}>{t('openResource')}</Btn>:
+          {item.importedResource?<Btn onClick={()=>{setAssetId(item.importedResource!.modelAssetId);void selectVersion(item.importedResource!.modelAssetId,item.importedResource!.modelVersionId).then(value=>{if(value?.assetState==='deleted'){setQuery('');setPurpose('');changeFilters('','','deleted');}});}}>{t('openResource')}</Btn>:
             item.canImport?<Btn disabled={!canUpload||!legacy.capabilities.canUpload} onClick={()=>{setExisting({model:item,revision:catalog?.libraryRevision||legacy.libraryRevision});setExistingPurpose('equipment');setImportError(null);importId.current.reset();}}>{t('useExisting')}</Btn>:<p className="ov-resource-caption">{t('sourcePending')}</p>}
         </li>)}</ul><Btn disabled={legacyLoading} onClick={()=>void readLegacy()}>{t('refresh')}</Btn>
-      </details>
+      </details>}
     </section>
     {!modelsOnly&&<><section id="ov-resource-terrains" role="tabpanel" aria-labelledby="ov-resource-terrain-tab" hidden={tab!=='terrains'} className="ov-resource-tab-body">
       <TerrainImport key={`${privacyEpoch}:${resourceRefresh}`} api={client} writeBlocked={denied} canUse={canPlace} activeTerrainVersion={activeTerrainVersion} onTerrainReady={onTerrainReady} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>
@@ -276,6 +298,11 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
       <PublicGeoDataPanel api={api} canWrite={canAcquire&&!denied} onClose={()=>setPublicAcquisition(false)}
         initialCenter={activeTerrainVersion?{longitude:(activeTerrainVersion.report.source.samplingCentreCoverageWgs84[0]+activeTerrainVersion.report.source.samplingCentreCoverageWgs84[2])/2,latitude:(activeTerrainVersion.report.source.samplingCentreCoverageWgs84[1]+activeTerrainVersion.report.source.samplingCentreCoverageWgs84[3])/2}:undefined}
         onImported={result=>{setResourceRefresh(value=>value+1);setTab(result.terrainVersionId?'terrains':'imagery');}}/>
+    </Modal>}
+    {deleteTarget&&<Modal title={text('删除模型','Delete model')} description={text('模型将移至回收站，已有场景与历史保留。','The model moves to the recycle bin. Existing scenes and history are retained.')} onClose={closeDelete}>
+      <p><strong>{deleteTarget.displayName}</strong></p><p className="ov-resource-caption">{text(`整个模型的 ${deleteTarget.versions.length} 个固定版本将移至回收站。已有场景和历史仍可打开，恢复后可再次选用。`,`All ${deleteTarget.versions.length} fixed versions move to the recycle bin. Existing scenes and history remain available; restore to use the model again.`)}</p>
+      {!!lifecycleError&&<p role="alert" className="ov-resource-error">{resourceFailure(lifecycleError,locale)}</p>}
+      <div className="ov-resource-actions end"><Btn disabled={lifecycleBusy} onClick={closeDelete}>{t('cancel')}</Btn>{!!lifecycleError&&<Btn disabled={lifecycleBusy} onClick={()=>{setDeleteTarget(null);setLifecycleError(null);void readCatalog();}}>{t('refresh')}</Btn>}<Btn primary disabled={!canManageLifecycle||lifecycleBusy} onClick={()=>void changeLifecycle('delete',deleteTarget)}><Trash2 size={14}/>{lifecycleBusy?t('saving'):text('删除模型','Delete model')}</Btn></div>
     </Modal>}
     {upload&&<Modal title={t(upload.asset?'appendVersion':'uploadModel')} description={t('glbLimit')} onClose={()=>{if(!uploading)setUpload(null);}}><div className="ov-resource-form">
       <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);setUploadError(null);requestId.current.reset();}}/></label>

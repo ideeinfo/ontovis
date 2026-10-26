@@ -226,6 +226,7 @@ class ModelResourceMetadata:
                 row = db.execute('select * from model_resource_metadata_revisions where revision=?',
                                  (prior['metadata_revision'],)).fetchone()
             else:
+                self.models._asset(db, body['modelAssetId'])
                 latest = db.execute('''select revision,sequence from model_resource_metadata_revisions
                     where project_code=? and asset_id=? and version_id=? order by sequence desc limit 1''',
                     (self.project_code, body['modelAssetId'], body['modelVersionId'])).fetchone()

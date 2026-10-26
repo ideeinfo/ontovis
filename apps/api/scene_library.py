@@ -12,6 +12,7 @@ import hmac
 import json
 import math
 import secrets
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Callable
 from uuid import UUID, uuid4
@@ -322,10 +323,11 @@ def _receipt_snapshot_digest(value):
 class SceneLibrary:
     """A bounded storage slice, not a public service or an authorization layer."""
 
-    def __init__(self, library: ModelLibrary, *, model_identity=None):
+    def __init__(self, library: ModelLibrary, *, model_identity=None, model_lock=None):
         self.library = library
         _require(model_identity is None or callable(model_identity))
         self.model_identity = model_identity
+        self.model_lock = model_lock
         self.shared_models = False
         with library.connect() as db:
             self.project_code = db.execute('select project_code from library where id=1').fetchone()[0]
@@ -392,7 +394,7 @@ class SceneLibrary:
             ''')
             db.execute('insert or ignore into scene_catalog values (1,0,?)', (secrets.token_hex(32),))
 
-    def use_shared_models(self, model_identity, connection_id):
+    def use_shared_models(self, model_identity, connection_id, *, model_lock=None):
         """Keep retained references, while resolving fixed versions in the connection's model library."""
         _require(callable(model_identity))
         with self.library.connect() as db:
@@ -423,6 +425,7 @@ class SceneLibrary:
                     _require(identity['sha256'] == ref['sha256'] and identity['contentRevision'] == ref['contentRevision'],
                              'RESOURCE_CHANGED', 409)
         self.model_identity, self.shared_models = model_identity, True
+        self.model_lock = model_lock
 
     @staticmethod
     def capabilities(*, geographic=False, engineering=False):
@@ -506,6 +509,20 @@ class SceneLibrary:
         db.execute('insert into scene_audit(project_code,actor,action,request_id,scene_id,revision,payload_sha256,created_at) values (?,?,?,?,?,?,?,?)',
                    (self.project_code, actor, action, request_id, result['sceneId'], result['sceneRevision'], payload_sha, result['savedAt']))
         db.execute('update scene_catalog set revision=revision+1 where id=1')
+
+    def _check_new_model_uses(self, db, previous, snapshot):
+        retained = {(item['sceneModelInstanceId'], item['modelVersionId']) for item in previous['instances']}
+        for item in snapshot['instances']:
+            if (item['sceneModelInstanceId'], item['modelVersionId']) in retained:
+                continue
+            if self.model_identity is not None:
+                identity = self.model_identity(item['modelVersionId']) if self.shared_models else self.model_identity(item['modelVersionId'], db=db)
+                _require(identity.get('assetState', 'active') != 'deleted', 'MODEL_DELETED', 410)
+            elif db.execute("select 1 from sqlite_master where name='project_model_lifecycle'").fetchone():
+                row = db.execute('''select l.state from project_model_versions v
+                    join project_model_lifecycle l on l.asset_id=v.asset_id where v.version_id=?''',
+                    (item['modelVersionId'],)).fetchone()
+                _require(row is None or row['state'] != 'deleted', 'MODEL_DELETED', 410)
 
     def _resource_refs(self, db, snapshot):
         refs = []
@@ -1065,6 +1082,7 @@ class SceneLibrary:
             validate_engineering(json.loads(_json(previous)), [], [])
         proposed, spatial, new_manifest = self._replacement_result(previous, operation, old_manifest, validate_resources,
                                                                   geometry_check, terrain_replacement, model_details, engineering=callable(engineering_check))
+        with self.library.connect() as db: self._check_new_model_uses(db, previous, proposed)
         if operation['kind'] == 'model':
             self._retain_height_basis(previous, proposed, spatial, previous_provenance, base_revision)
         else:
@@ -1133,6 +1151,7 @@ class SceneLibrary:
                          'SCENE_SCOPE_UNSUPPORTED')
             self._validate_changes(db, scene_id, previous, snapshot, anchor_draft=is_anchor,
                                    reject_model_changes=True)
+        with self.library.connect() as db: self._check_new_model_uses(db, previous, snapshot)
         local_manifest = self._manifest(snapshot, validate_resources)
         self._check_model_history(previous_refs, local_manifest['models'])
         if not callable(engineering_check):
@@ -1232,6 +1251,7 @@ class SceneLibrary:
                          'SCENE_SCOPE_UNSUPPORTED')
             if not replacing:
                 self._validate_changes(db, scene_id, previous, snapshot, anchored=anchored, reject_model_changes=True)
+        with self.library.connect() as db: self._check_new_model_uses(db, previous, snapshot)
         manifest = self._manifest(snapshot, validate_resources)
         self._check_model_history(previous_refs, manifest['models'])
         if not callable(engineering_check):
@@ -1271,7 +1291,8 @@ class SceneLibrary:
             self._merge_engineering(spatial, snapshot, facts)
         # GIS has finished. Only local compare-and-swap, fixed identities and
         # current authorization/resource callbacks run under the SQLite write lock.
-        with self.library.connect() as db:
+        # Serialize the final new-use check with shared model deletion, after GIS work.
+        with self.model_lock or nullcontext(), self.library.connect() as db:
             db.execute('begin immediate')
             prior = self._prior(db, actor, 'save', request_id, digest)
             if prior is not None:
@@ -1291,6 +1312,7 @@ class SceneLibrary:
             if anchored:
                 self._verify_receipt(db, change['receipt'], self._receipt_context(
                     actor, access_revision, scene_id, base_revision, previous, snapshot, manifest))
+            self._check_new_model_uses(db, previous, snapshot)
             _require(self._resource_refs(db, snapshot) == manifest['models'], 'RESOURCE_CHANGED', 409)
             revision, now = 'scene:' + str(uuid4()), datetime.now(timezone.utc).isoformat()
             self._insert_snapshot(db, scene_id, revision, snapshot, now, refs=manifest['models'], spatial=spatial)

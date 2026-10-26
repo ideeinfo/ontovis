@@ -256,3 +256,11 @@ test('new business failures have concise Chinese and English messages', () => {
   }
   assert.equal(failureMessage(new ApiError(403,'toString'),'zh'),'资料不可用或无权访问。');
 });
+
+test('model deletion and restoration permission denials keep the shared read identity',async()=>{
+ const api=new WorkbenchApi(async()=>new Response(JSON.stringify({code:'MODEL_WRITE_FORBIDDEN'}),{status:403}));
+ api.session('r1');let denied=false;api.onDenied=()=>{denied=true;};const epoch=api.epoch;
+ for(const action of ['delete','restore'])await assert.rejects(api.request('/api/workbench/resources/model/'+action,{}),error=>error.code==='MODEL_WRITE_FORBIDDEN');
+ assert.equal(denied,false);assert.equal(api.epoch,epoch);
+ assert.match(failureMessage(new ApiError(410,'MODEL_DELETED'),'zh'),/回收站/);
+});

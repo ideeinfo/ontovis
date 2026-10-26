@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import secrets
 import tempfile
+from threading import RLock
 from uuid import UUID, uuid4
 
 from .authority import PreviewError
@@ -109,6 +110,7 @@ def _calibrated_bounds(bounds, matrix):
 class ProjectModelLibrary:
     def __init__(self, library):
         self.library = library
+        self.lifecycle_lock = RLock()
         with library.connect() as db:
             self.project_code = db.execute('select project_code from library where id=1').fetchone()[0]
             db.executescript('''
@@ -130,6 +132,15 @@ class ProjectModelLibrary:
                     payload_sha256 text not null, created_at text not null);
                 create table if not exists project_model_catalog (
                     id integer primary key check(id=1), cursor_secret text not null);
+                create table if not exists project_model_lifecycle (
+                    asset_id text primary key references project_model_assets(id),
+                    state text not null check(state in ('active','deleted')),
+                    revision integer not null check(revision>0), changed_at text not null);
+                create trigger if not exists project_model_lifecycle_identity before update on project_model_lifecycle
+                    when new.asset_id!=old.asset_id or new.revision!=old.revision+1 or new.state=old.state
+                    begin select raise(abort, 'invalid model lifecycle transition'); end;
+                create trigger if not exists project_model_lifecycle_no_delete before delete on project_model_lifecycle
+                    begin select raise(abort, 'retained model lifecycle'); end;
                 create table if not exists project_model_info_revisions (
                     id text primary key, asset_id text not null references project_model_assets(id),
                     asset_revision integer not null, name text not null, purpose text not null,
@@ -155,14 +166,18 @@ class ProjectModelLibrary:
     def capabilities():
         return {'storageScope': 'project_static_glb', 'formats': ['glb'], 'unit': 'm',
                 'axes': 'Y_UP_RIGHT_HANDED', 'calibrationMethod': CALIBRATION_METHOD,
-                'supportsLegacyAdoption': False, 'supportsDelete': False,
+                'supportsLegacyAdoption': False, 'supportsDelete': True,
                 'maxCalibrationComponentMagnitude': 1_000_000,
                 'maxUploadBytes': MAX_BYTES, 'maxVersions': MAX_VERSIONS, 'maxLibraryBytes': MAX_TOTAL_BYTES}
 
-    def _asset(self, db, identifier):
-        row = db.execute('select * from project_model_assets where id=? and project_code=?',
+    def _asset(self, db, identifier, *, include_deleted=False):
+        row = db.execute('''select a.*,coalesce(l.state,'active') asset_state,
+            coalesce(l.revision,0) lifecycle_revision,l.changed_at
+            from project_model_assets a left join project_model_lifecycle l on l.asset_id=a.id
+            where a.id=? and a.project_code=?''',
                          (_uuid(identifier), self.project_code)).fetchone()
         _require(row is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
+        _require(include_deleted or row['asset_state'] == 'active', 'MODEL_DELETED', 410)
         return row
 
     def _version(self, db, identifier):
@@ -173,7 +188,7 @@ class ProjectModelLibrary:
         _require(row is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
         value = self._public(row)
         return {**value, 'versionDisplayName': value['displayName'],
-                **self._info(db, self._asset(db, value['modelAssetId']))}
+                **self._info(db, self._asset(db, value['modelAssetId'], include_deleted=True))}
 
     @staticmethod
     def _info(db, asset):
@@ -181,7 +196,48 @@ class ProjectModelLibrary:
             where asset_id=? order by asset_revision desc limit 1''', (asset['id'],)).fetchone()
         return {'displayName': asset['name'], 'purpose': asset['purpose'],
                 'description': latest['description'] if latest else '',
+                'assetState': asset['asset_state'], 'lifecycleRevision': asset['lifecycle_revision'],
+                'deletedAt': asset['changed_at'] if asset['asset_state'] == 'deleted' else None,
                 'assetRevision': 'asset:' + asset['id'] + ':' + str(asset['revision'])}
+
+    def lifecycle(self, body, actor, authorize, *, action):
+        _fields(body, ('modelAssetId', 'modelVersionId', 'expectedAssetRevision',
+                       'expectedLifecycleRevision', 'clientRequestId'))
+        _require(action in ('delete', 'restore')); actor = _text(actor)
+        _require(callable(authorize)); authorize()
+        for key in ('modelAssetId', 'modelVersionId', 'clientRequestId'): _uuid(body[key])
+        _text(body['expectedAssetRevision']); revision = body['expectedLifecycleRevision']
+        _require(type(revision) is int and 0 <= revision < 2**53)
+        digest = hashlib.sha256(_canonical(body).encode()).hexdigest()
+        with self.lifecycle_lock, self.library.connect() as db:
+            db.execute('begin immediate')
+            prior = self._prior(db, actor, action, body['clientRequestId'], digest)
+            if prior is not None:
+                authorize(); return prior
+            asset = self._asset(db, body['modelAssetId'], include_deleted=True)
+            version = self._version(db, body['modelVersionId'])
+            _require(version['modelAssetId'] == asset['id'], 'NOT_FOUND_OR_FORBIDDEN', 404)
+            _require(self._info(db, asset)['assetRevision'] == body['expectedAssetRevision']
+                     and asset['lifecycle_revision'] == revision
+                     and asset['asset_state'] == ('active' if action == 'delete' else 'deleted'),
+                     'MODEL_ASSET_CHANGED', 409)
+            now = _now(); state = 'deleted' if action == 'delete' else 'active'
+            db.execute('''insert into project_model_lifecycle values(?,?,?,?) on conflict(asset_id)
+                do update set state=excluded.state,revision=excluded.revision,changed_at=excluded.changed_at''',
+                (asset['id'], state, revision + 1, now))
+            db.execute('update project_model_assets set revision=revision+1 where id=?', (asset['id'],))
+            db.execute('update library set revision=revision+1 where id=1')
+            result = {'modelAssetId': asset['id'], 'modelVersionId': version['modelVersionId'],
+                'assetState': state, 'lifecycleRevision': revision + 1, 'changedAt': now,
+                'assetRevision': self._info(db, self._asset(db, asset['id'], include_deleted=True))['assetRevision'],
+                'libraryRevision': self.library.revision(db)}
+            db.execute('insert into project_model_requests values (?,?,?,?,?,?)',
+                (self.project_code, actor, action, body['clientRequestId'], digest, _canonical(result)))
+            db.execute('''insert into project_model_audit
+                (project_code,actor,action,request_id,version_id,payload_sha256,created_at) values (?,?,?,?,?,?,?)''',
+                (self.project_code, actor, action, body['clientRequestId'], version['modelVersionId'], digest, now))
+            authorize(); db.commit()
+            return result
 
     def save_info(self, body, actor, authorize):
         _fields(body, ('modelAssetId', 'modelVersionId', 'expectedAssetRevision', 'clientRequestId',
@@ -238,15 +294,18 @@ class ProjectModelLibrary:
     def content_identity(self, version_id, db=None):
         """Trusted transaction helper; authenticates nobody and never adopts legacy data."""
         with self.library.connect() if db is None else nullcontext(db) as connection:
-            row = connection.execute('''select v.id,v.sha256,p.asset_id,p.content_revision,p.calibration,a.project_code
+            row = connection.execute('''select v.id,v.sha256,p.asset_id,p.content_revision,p.calibration,a.project_code,
+                coalesce(l.state,'active') asset_state
                 from versions v left join project_model_versions p on p.version_id=v.id
-                left join project_model_assets a on a.id=p.asset_id where v.id=?''',
+                left join project_model_assets a on a.id=p.asset_id
+                left join project_model_lifecycle l on l.asset_id=a.id where v.id=?''',
                 (_uuid(version_id),)).fetchone()
             _require(row is not None and (row['content_revision'] is None or row['project_code'] == self.project_code),
                      'NOT_FOUND_OR_FORBIDDEN', 404)
             state = json.loads(row['calibration'])['state'] if row['calibration'] else (
                 'unverified' if row['content_revision'] else 'legacy_unverified')
             return {'modelVersionId': row['id'], 'modelAssetId': row['asset_id'], 'sha256': row['sha256'],
+                    'assetState': row['asset_state'],
                     'contentRevision': row['content_revision'] or 'sha256:' + row['sha256'],
                     'calibrationState': state, 'canPlace': state in ('verified', 'legacy_display'),
                     'canPlaceGeographic': state == 'verified',
@@ -264,7 +323,7 @@ class ProjectModelLibrary:
     def model(self, asset_id, version_id, authorize):
         _require(callable(authorize)); authorize()
         with self.library.connect() as db:
-            self._asset(db, asset_id)
+            self._asset(db, asset_id, include_deleted=True)
             value = self._version(db, version_id)
             _require(value['modelAssetId'] == asset_id, 'NOT_FOUND_OR_FORBIDDEN', 404)
         self._content(value); authorize()
@@ -287,12 +346,13 @@ class ProjectModelLibrary:
         return base64.urlsafe_b64encode(data + hmac.digest(secret, data, 'sha256')).decode()
 
     def listing(self, actor, authorize, *, access_revision, q='', purpose=None, cursor=None,
-                expected_library_revision=None, limit=50):
+                expected_library_revision=None, limit=50, state='active'):
         _text(actor); _text(access_revision); _require(callable(authorize)); authorize()
         _require(isinstance(q, str) and len(q) <= 200 and all(ord(character) >= 32 for character in q))
         if q: _text(q)
         _require(purpose is None or isinstance(purpose, str) and purpose in PURPOSES)
         _require(type(limit) is int and 1 <= limit <= 100)
+        _require(state in ('active', 'deleted'))
         if expected_library_revision is not None: _text(expected_library_revision)
         with self.library.connect() as db:
             db.execute('begin')
@@ -300,7 +360,7 @@ class ProjectModelLibrary:
             if expected_library_revision is not None:
                 _require(expected_library_revision == revision, 'SNAPSHOT_EXPIRED', 409)
             expected = {'actor': actor, 'accessRevision': access_revision, 'project': self.project_code,
-                        'q': q, 'purpose': purpose, 'revision': revision, 'limit': limit}
+                        'q': q, 'purpose': purpose, 'revision': revision, 'limit': limit, 'state': state}
             offset = 0
             if cursor is not None:
                 _require(isinstance(cursor, str) and len(cursor) <= 4096)
@@ -315,10 +375,13 @@ class ProjectModelLibrary:
                     _require(type(offset) is int and 0 <= offset <= MAX_VERSIONS)
                 except (ValueError, TypeError, UnicodeError, RecursionError):
                     raise PreviewError(422, 'INVALID_REQUEST') from None
-            rows = db.execute('''select * from project_model_assets where project_code=?
-                and instr(lower(name),lower(?))>0 and (? is null or purpose=?)
-                order by created_at desc,id limit ? offset ?''',
-                (self.project_code, q, purpose, purpose, limit + 1, offset)).fetchall()
+            rows = db.execute('''select a.*,coalesce(l.state,'active') asset_state,
+                coalesce(l.revision,0) lifecycle_revision,l.changed_at
+                from project_model_assets a left join project_model_lifecycle l on l.asset_id=a.id
+                where a.project_code=? and coalesce(l.state,'active')=?
+                and instr(lower(a.name),lower(?))>0 and (? is null or a.purpose=?)
+                order by a.created_at desc,a.id limit ? offset ?''',
+                (self.project_code, state, q, purpose, purpose, limit + 1, offset)).fetchall()
             items = []
             for row in rows[:limit]:
                 versions = db.execute('''select v.*,p.asset_id,p.content_revision,p.calibration,p.source_version_id

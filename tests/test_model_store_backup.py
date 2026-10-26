@@ -22,6 +22,30 @@ from apps.api.imagery_library import ImageryLibrary
 
 
 class ModelStoreBackupTests(unittest.TestCase):
+    def test_deleted_model_and_fixed_content_survive_paired_restore(self):
+        from apps.api.model_library import ModelLibrary
+        from apps.api.project_model_library import ProjectModelLibrary
+        from tests.test_model_upload import glb
+        fixture = self.fixture.fixture
+        data = glb(self.root/'lifecycle.glb').read_bytes()
+        value = fixture.models.upload(io.BytesIO(data), len(data), {
+            'expectedLibraryRevision': fixture.library.listing()['libraryRevision'],
+            'clientRequestId': str(uuid4()), 'displayName': 'Synthetic deleted model',
+            'purpose': 'equipment', 'sourceNote': 'Synthetic fixture', 'rightsDeclared': True,
+        }, 'synthetic-admin', lambda: None)
+        fixture.models.lifecycle({'modelAssetId':value['modelAssetId'],'modelVersionId':value['modelVersionId'],
+            'expectedAssetRevision':value['assetRevision'],'expectedLifecycleRevision':0,'clientRequestId':str(uuid4())},
+            'synthetic-admin',lambda:None,action='delete')
+        before=self.source_state();receipt=self.snapshot();target=self.root/'restored-model-lifecycle'
+        backup.restore_new(self.destination,target,receipt['manifestSha256'],service_stopped=True)
+        with fixture.library.connect() as db:scope=db.execute('select project_code,context_id from library').fetchone()
+        recovered=ProjectModelLibrary(ModelLibrary(target/'workbench-library',*scope))
+        version=recovered.model(value['modelAssetId'],value['modelVersionId'],lambda:None)
+        self.assertEqual((version['assetState'],version['lifecycleRevision']),('deleted',1))
+        self.assertEqual(recovered.content(value['modelVersionId'],value['contentRevision'],value['sha256'],lambda:None),
+            fixture.models.content(value['modelVersionId'],value['contentRevision'],value['sha256'],lambda:None))
+        self.assertEqual(self.source_state(),before)
+
     def add_thumbnail(self):
         from apps.api.model_thumbnails import ModelThumbnails
         from tests.test_model_thumbnails import png
