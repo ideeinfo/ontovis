@@ -159,9 +159,11 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                            '/api/workbench/scenes/delete','/api/workbench/scenes/restore')
             project_paths = ('/api/workbench/projects', '/api/workbench/projects/access')
             work_order_paths = tuple('/api/workbench/work-orders' + suffix
-                                     for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history'))
+                                     for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history', '/snapshot'))
             analysis_paths = tuple('/api/workbench/analysis-sessions' + suffix
-                                   for suffix in ('', '/create', '/detail', '/save', '/restore', '/revisions'))
+                                   for suffix in ('', '/create', '/detail', '/save', '/restore', '/revisions',
+                                                  '/evidence/register', '/evidence/detail', '/evidence/content',
+                                                  '/link-work-order', '/simulation/catalogue', '/simulation/qualify'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
                                   '/api/workbench/objects/evidence/content', '/api/workbench/objects/photos/resolve',
@@ -203,7 +205,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             limit = (MAX_SCENE_BYTES if large_scene else MAX_METADATA_REQUEST_BYTES if metadata_save else
                      270336 if parts.path in ('/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save') else
                      32768 if parts.path == '/api/workbench/work-orders/action' else
-                     16384 if parts.path in (*work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
+                     16384 if parts.path in (*analysis_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')
             try:
@@ -216,7 +218,10 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             if parts.path in project_paths:
                 return self.reply(200, sessions.projects_request(sid, parts.path, payload))
             if parts.path in analysis_paths:
-                return self.reply(200, sessions.analysis_request(sid, parts.path, payload))
+                value = sessions.analysis_request(sid, parts.path, payload)
+                if parts.path.endswith('/evidence/content'):
+                    return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'])
+                return self.reply(200, value)
             if parts.path in work_order_paths:
                 return self.reply(200, sessions.work_order_request(sid, parts.path, payload))
             if parts.path in scene_paths: return self.reply(200,sessions.scene_request(sid,parts.path,payload))

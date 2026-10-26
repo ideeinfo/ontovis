@@ -7,10 +7,12 @@ without a recovery receipt and must not be reused.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
 from pathlib import Path
+import sqlite3
 
 from apps.api import analysis_drafts as draft, postgres_project_workspaces as registry
 from apps.api.authority import PreviewError
@@ -29,6 +31,39 @@ def _paired(workbench, workbench_sha, package):
     projects = {row['project_code'] for row in rows['project_workspaces']}
     draft.require(all(row['project_code'] in projects for row in package['tables']['analysis_sessions']),
                   'ANALYSIS_PROJECT_NOT_REGISTERED', 409)
+    sessions = {row['session_id']: row for row in package['tables']['analysis_sessions']}
+    revisions = {(row['session_id'], row['revision']): row for row in package['tables']['analysis_revisions']}
+    libraries = {row['project_code']: Path(workbench)/('workbench-library' if row['storage_key'] == 'legacy'
+        else 'project-spaces/libraries/'+row['storage_key'])/'library.sqlite3' for row in rows['project_workspaces']}
+    def database(path):
+        return closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True))
+    for source in package['tables'].get('analysis_evidence_refs', []):
+        descriptor = json.loads(source['descriptor_json']); kind = source['source_kind']
+        if kind == 'work_order':
+            path = libraries[sessions[source['session_id']]['project_code']]
+            draft.require(path.is_file(), 'ANALYSIS_PAIR_SOURCE_MISMATCH', 409)
+            with database(path) as db:
+                exists = db.execute("select 1 from sqlite_master where name='work_order_snapshots' and type='table'").fetchone()
+                value = db.execute('select snapshot_json,content_sha256 from work_order_snapshots where order_id=? and order_revision=?',
+                    (descriptor['orderId'], descriptor['orderRevision'])).fetchone() if exists else None
+                draft.require(value and value[1] == descriptor['snapshotSha256']
+                    and analysis.sha(value[0].encode()) == value[1], 'ANALYSIS_PAIR_SOURCE_MISMATCH', 409)
+        elif kind == 'model':
+            with database(Path(workbench)/'workbench-library/library.sqlite3') as db:
+                value = db.execute('select p.asset_id,p.content_revision,v.sha256 from project_model_versions p join versions v on v.id=p.version_id where p.version_id=?',
+                    (descriptor['modelVersionId'],)).fetchone()
+                draft.require(value == (descriptor['modelAssetId'], descriptor['contentRevision'], descriptor['sha256']),
+                              'ANALYSIS_PAIR_SOURCE_MISMATCH', 409)
+    for project, path in libraries.items():
+        if not path.is_file(): continue
+        with database(path) as db:
+            if not db.execute("select 1 from sqlite_master where name='work_order_analysis_links' and type='table'").fetchone(): continue
+            for order, order_revision, session_id, revision, digest in db.execute('select * from work_order_analysis_links'):
+                session = sessions.get(session_id); saved = revisions.get((session_id, revision))
+                draft.require(session and saved and session['project_code'] == project and saved['content_sha256'] == digest,
+                              'ANALYSIS_PAIR_LINK_MISMATCH', 409)
+                event = db.execute('select action,actor from work_order_events where order_id=? and revision=?', (order, order_revision)).fetchone()
+                draft.require(event == ('link_analysis', session['owner_id']), 'ANALYSIS_PAIR_LINK_MISMATCH', 409)
     return report
 
 
@@ -60,10 +95,11 @@ def snapshot(project_root, destination, database_url, *, library_root, model_roo
     connection = draft.AnalysisConnection(database_url)
     try:
         with connection.transaction() as cursor:
-            draft.profile(cursor)
+            version = draft.profile(cursor)
             # These locks also block non-cooperating SQL writes while the paired
             # local files and registry are copied by the existing offline tool.
-            cursor.execute('lock table '+','.join(draft.SCHEMA+'.'+name for name in draft.COLUMNS)+' in share mode nowait')
+            columns = draft.V1_COLUMNS if version == 1 else draft.COLUMNS
+            cursor.execute('lock table '+','.join(draft.SCHEMA+'.'+name for name in columns)+' in share mode nowait')
             original = analysis.export_package(database_url)
             analysis._safe_directory(target, new=True)
             try:

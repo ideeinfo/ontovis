@@ -383,8 +383,9 @@ class ProjectSessions(UserSessions):
         require(row.subject_id is not None, 'ANALYSIS_IDENTITY_REQUIRED', 401)
         actor = identifier(row.subject_id)
         action = path.removeprefix('/api/workbench/analysis-sessions').removeprefix('/')
-        require(action in ('', 'create', 'detail', 'save', 'restore', 'revisions'))
-        writing = action in ('create', 'save', 'restore')
+        require(action in ('', 'create', 'detail', 'save', 'restore', 'revisions', 'evidence/register',
+                          'evidence/detail', 'evidence/content', 'link-work-order', 'simulation/catalogue', 'simulation/qualify'))
+        writing = action in ('create', 'save', 'restore', 'evidence/register', 'link-work-order')
         access = self._access(sid, row, code)
         if writing:
             require(access.get('role') == 'admin', 'ANALYSIS_WRITE_FORBIDDEN', 403)
@@ -414,7 +415,50 @@ class ProjectSessions(UserSessions):
         store = AnalysisDrafts(self.analysis_database_url, self.connection_id, code)
         try:
             require(store.store_id == self.analysis_store_id, 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)
-            if writing:
+            if action.startswith(('evidence/', 'simulation/')) or action == 'link-work-order':
+                from .analysis_evidence import AnalysisEvidence
+                from .analysis_source_reader import AnalysisSourceReader
+                from . import simulated_faults
+                workspace = self.registry.lookup(code)
+                require(workspace is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
+                service = self._workspace(workspace)
+                if not hasattr(service, 'work_orders'):
+                    with self.registry.lock:
+                        if not hasattr(service, 'work_orders'):
+                            service.work_orders = WorkOrders(service.library, code)
+                sources = AnalysisEvidence(store)
+                reader = AnalysisSourceReader(SceneEngineeringReader(row.authority, self.connection_id, code, authorize),
+                    self.shared.project_models, service.work_orders, authorize, actor)
+                if action == 'evidence/register':
+                    value = sources.register(actor, body, authorize, reader.resolve)
+                elif action in ('evidence/detail', 'evidence/content'):
+                    reference, descriptor = sources.descriptor(actor, body, authorize)
+                    if action == 'evidence/content':
+                        value = reader.content(reference['sourceKind'], descriptor)
+                    else:
+                        try:
+                            value = {**reference, 'availability': 'available', 'source': reader.read(reference['sourceKind'], descriptor)}
+                        except PreviewError as error:
+                            if error.status == 401: raise
+                            if error.status not in (403, 404, 409, 410, 502, 503, 504): raise
+                            value = {'availability': 'restricted' if error.status == 403 else 'changed' if error.status in (409, 410) else 'unavailable',
+                                     'reason': error.code}
+                elif action == 'simulation/catalogue':
+                    require(not body)
+                    value = simulated_faults.catalogue(code)
+                elif action == 'simulation/qualify':
+                    require(set(body) == {'faultCode'})
+                    value = reader.qualify(body['faultCode'])
+                else:
+                    require(store.schema_version == 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
+                    require(set(body) == {'analysisSessionId', 'analysisRevision', 'orderId', 'expectedOrderRevision', 'requestId'})
+                    fixed = store.detail(actor, body['analysisSessionId'], authorize, revision=body['analysisRevision'])
+                    def analysis_guard():
+                        current = store.detail(actor, body['analysisSessionId'], authorize, revision=body['analysisRevision'])
+                        require(current['contentSha256'] == fixed['contentSha256'], 'ANALYSIS_CHANGED', 409)
+                    value = service.work_orders.link_analysis({**body, 'analysisSha256': fixed['contentSha256']}, actor, authorize, analysis_guard)
+                authorize()
+            elif writing:
                 value = store.write(actor, access['role'], action, body, authorize)
             elif action == '':
                 value = store.listing(actor, body, authorize, cursor_key=self.cursor_key, session_revision=row.revision)
@@ -427,7 +471,8 @@ class ProjectSessions(UserSessions):
                                       before=body.get('before'), limit=body.get('limit', 25))
             return {**value, 'projectRef': payload['projectRef'], 'sessionRevision': row.revision,
                     'capabilities': {'canWrite': access.get('role') == 'admin', 'canConfirmConclusion': False,
-                                     'sourceCardsEnabled': False}}
+                                     'sourceCardsEnabled': False, 'sourceReferenceApiVersion': 1 if store.schema_version == 2 else 0,
+                                     'canLinkWorkOrder': store.schema_version == 2 and access.get('role') == 'admin'}}
         finally:
             store.close()
 
@@ -474,6 +519,8 @@ class ProjectSessions(UserSessions):
                 value = orders.detail(body)
             elif path.endswith('/diagnosis-history'):
                 value = orders.diagnosis_history(body)
+            elif path.endswith('/snapshot'):
+                value = orders.fixed_snapshot(body)
             elif path.endswith('/seed-demo'):
                 value = orders.seed(body, targets, row.authority.username, authorize)
             elif path.endswith('/action'):

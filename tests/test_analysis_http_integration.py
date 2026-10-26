@@ -177,7 +177,7 @@ class AnalysisHttpIntegrationTests(unittest.TestCase):
         for state in ('concluded', 'archived'):
             body['snapshot']['status'] = state
             self.assertEqual(self.request(ROOT+'/save', body)[1]['code'], 'ANALYSIS_REVIEW_NOT_CONFIGURED')
-        for route in ('confirm', 'archive', 'share', 'link-work-order'):
+        for route in ('confirm', 'archive', 'share'):
             self.assertEqual(self.request(ROOT+'/'+route, {})[0], 404)
         value = self.value(); value['cards'][0]['kind'] = 'photo'
         self.assertEqual(self.request(ROOT+'/create', self.body(requestId=str(uuid4()), snapshot=value))[1]['code'], 'ANALYSIS_SOURCE_NOT_CONNECTED')

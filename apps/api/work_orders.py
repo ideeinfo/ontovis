@@ -67,6 +67,22 @@ class WorkOrders:
                     begin select raise(abort, 'immutable investigation revision'); end;
                 create trigger if not exists work_order_diagnostics_no_delete before delete on work_order_diagnostics
                     begin select raise(abort, 'retained investigation revision'); end;
+                create table if not exists work_order_snapshots (
+                    order_id text not null references work_orders(order_id), order_revision integer not null,
+                    snapshot_json text not null, content_sha256 text not null, actor text not null, recorded_at text not null,
+                    primary key(order_id,order_revision));
+                create trigger if not exists work_order_snapshots_no_update before update on work_order_snapshots
+                    begin select raise(abort, 'immutable work order snapshot'); end;
+                create trigger if not exists work_order_snapshots_no_delete before delete on work_order_snapshots
+                    begin select raise(abort, 'retained work order snapshot'); end;
+                create table if not exists work_order_analysis_links (
+                    order_id text not null references work_orders(order_id), order_revision integer not null,
+                    analysis_session_id text not null, analysis_revision integer not null, analysis_sha256 text not null,
+                    primary key(order_id,order_revision));
+                create trigger if not exists work_order_analysis_links_no_update before update on work_order_analysis_links
+                    begin select raise(abort, 'immutable analysis link'); end;
+                create trigger if not exists work_order_analysis_links_no_delete before delete on work_order_analysis_links
+                    begin select raise(abort, 'retained analysis link'); end;
             ''')
 
     @staticmethod
@@ -125,6 +141,9 @@ class WorkOrders:
                 'investigationHistory': [{'orderRevision': saved['order_revision'], 'actor': saved['actor'], 'recordedAt': saved['recorded_at']}
                     for saved in db.execute('select order_revision,actor,recorded_at from work_order_diagnostics where order_id=? order by order_revision desc', (identifier,))],
                 'createdRuleRevision': batch['revision'], 'targets': json.loads(batch['targets']),
+                'analysisLinks': [{'orderRevision': link['order_revision'], 'analysisSessionId': link['analysis_session_id'],
+                    'analysisRevision': link['analysis_revision'], 'analysisSha256': link['analysis_sha256']}
+                    for link in db.execute('select * from work_order_analysis_links where order_id=? order by order_revision', (identifier,))],
                 'events': [{'revision': event['revision'], 'action': event['action'], 'actor': event['actor'],
                             'recordedAt': event['recorded_at'], 'from': event['previous_state'],
                             'to': event['state'], 'note': event['note']} for event in events]}
@@ -144,6 +163,70 @@ class WorkOrders:
             require(row is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
             return {'orderId': identifier, 'orderRevision': row['order_revision'], 'investigation': json.loads(row['snapshot']),
                     'diagnosis': json.loads(row['source_graph']), 'actor': row['actor'], 'recordedAt': row['recorded_at']}
+
+    def _retain(self, db, value, actor):
+        raw = encoded(value)
+        require(len(raw.encode()) <= 128 * 1024, 'WORK_ORDER_SNAPSHOT_LIMIT', 413)
+        db.execute('insert or ignore into work_order_snapshots values(?,?,?,?,?,?)',
+            (value['orderId'], value['orderRevision'], raw, digest(value), actor, value['updatedAt']))
+        stored = db.execute('select snapshot_json from work_order_snapshots where order_id=? and order_revision=?',
+                            (value['orderId'], value['orderRevision'])).fetchone()
+        require(stored[0] == raw, 'WORK_ORDER_SNAPSHOT_CHANGED', 409)
+
+    def capture(self, body, actor, guard):
+        require(set(body) == {'orderId', 'expectedOrderRevision'})
+        require(type(body['expectedOrderRevision']) is int and body['expectedOrderRevision'] > 0)
+        identifier = text(body['orderId'], 100); text(actor, 200)
+        with self.library.connect() as db:
+            db.execute('begin immediate'); guard()
+            value = self._detail(db, identifier)
+            require(value['orderRevision'] == body['expectedOrderRevision'], 'WORK_ORDER_CHANGED', 409)
+            self._retain(db, value, actor); guard()
+            return {'orderId': identifier, 'orderRevision': value['orderRevision'], 'snapshotSha256': digest(value)}
+
+    def fixed_snapshot(self, body):
+        require(set(body) == {'orderId', 'orderRevision', 'snapshotSha256'})
+        require(type(body['orderRevision']) is int and body['orderRevision'] > 0)
+        with self.library.connect() as db:
+            row = db.execute('select snapshot_json,content_sha256 from work_order_snapshots where order_id=? and order_revision=?',
+                (text(body['orderId'], 100), body['orderRevision'])).fetchone()
+            require(row is not None, 'WORK_ORDER_HISTORY_UNAVAILABLE', 404)
+            require(row['content_sha256'] == body['snapshotSha256'], 'WORK_ORDER_SNAPSHOT_CHANGED', 409)
+            value = json.loads(row['snapshot_json'])
+            require(digest(value) == row['content_sha256'], 'WORK_ORDER_STORAGE_INVALID', 409)
+            return value
+
+    def link_analysis(self, body, actor, guard, analysis_guard):
+        require(set(body) == {'requestId', 'orderId', 'expectedOrderRevision', 'analysisSessionId',
+                             'analysisRevision', 'analysisSha256'})
+        identifier = text(body['orderId'], 100)
+        require(type(body['expectedOrderRevision']) is int and 1 <= body['expectedOrderRevision'] < 100)
+        require(type(body['analysisRevision']) is int and 1 <= body['analysisRevision'] <= 1000)
+        try:
+            require(str(UUID(body['analysisSessionId'])) == body['analysisSessionId'])
+        except (ValueError, TypeError, AttributeError):
+            raise PreviewError(422, 'INVALID_REQUEST') from None
+        require(type(body['analysisSha256']) is str and len(body['analysisSha256']) == 64
+                and all(c in '0123456789abcdef' for c in body['analysisSha256']))
+        def operation(db):
+            value = self._detail(db, identifier)
+            require(value['orderRevision'] == body['expectedOrderRevision'], 'WORK_ORDER_CHANGED', 409)
+            self._retain(db, value, actor)
+            revision = value['orderRevision'] + 1; stamp = datetime.now(timezone.utc).isoformat()
+            analysis_guard()
+            db.execute('insert into work_order_analysis_links values(?,?,?,?,?)',
+                (identifier, revision, body['analysisSessionId'], body['analysisRevision'], body['analysisSha256']))
+            db.execute('update work_orders set revision=?,updated_at=? where order_id=?', (revision, stamp, identifier))
+            db.execute('insert into work_order_events values(?,?,?,?,?,?,?,?)',
+                (identifier, revision, 'link_analysis', actor, stamp, value['state'], value['state'], '关联已保存分析修订'))
+            value = self._detail(db, identifier); self._retain(db, value, actor)
+            analysis_guard()
+            return {'orderId': identifier, 'orderRevision': revision,
+                    'analysisSessionId': body['analysisSessionId'], 'analysisRevision': body['analysisRevision'],
+                    'analysisSha256': body['analysisSha256']}
+        def authorized():
+            guard(); analysis_guard()
+        return self._mutate(body, actor, authorized, operation)
 
     def _mutate(self, body, actor, guard, operation):
         text(actor, 200)
@@ -206,6 +289,7 @@ class WorkOrders:
         def operation(db):
             value = self._detail(db, identifier)
             require(value['orderRevision'] == revision, 'WORK_ORDER_CHANGED', 409)
+            self._retain(db, value, actor)
             require(revision < 100, 'WORK_ORDER_EVENT_LIMIT', 413)
             previous = value['state']
             state = previous
@@ -231,5 +315,7 @@ class WorkOrders:
                     plan = reset_results(plan)
                 db.execute('insert into work_order_diagnostics values(?,?,?,?,?,?)',
                            (identifier, revision + 1, encoded(plan), encoded(value['diagnosis']), actor, stamp))
-            return self._detail(db, identifier)
+            value = self._detail(db, identifier)
+            self._retain(db, value, actor)
+            return value
         return self._mutate(body, actor, guard, operation)

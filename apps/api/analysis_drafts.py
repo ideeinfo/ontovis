@@ -1,8 +1,4 @@
-"""Concrete PG storage candidate for owner-only manual analysis drafts.
-
-No HTTP route or source resolver is enabled here. Provisioning is explicit and
-offline; runtime never creates tables or falls back to another store.
-"""
+"""Owner-scoped analysis storage; schema changes are explicit and offline."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -17,7 +13,8 @@ from uuid import UUID, uuid4
 from .authority import PreviewError
 
 SCHEMA = 'ontovis_analysis_v1'
-FORMAT = 'ontovis-analysis-drafts-v1'
+FORMAT_V1 = 'ontovis-analysis-drafts-v1'
+FORMAT = 'ontovis-analysis-sources-v2'
 MAX_BYTES = 256 * 1024
 MAX_STORE_BYTES = 8 * 1024 * 1024
 MAX_STORE_REVISIONS = 10000
@@ -31,7 +28,21 @@ COLUMNS = {
     'analysis_requests': ('connection_id', 'project_code', 'actor_id', 'request_id', 'fingerprint',
                           'result_json', 'created_at'),
 }
-DDL = f'''
+V1_COLUMNS = dict(COLUMNS)
+COLUMNS['analysis_evidence_refs'] = ('evidence_ref_id', 'session_id', 'request_id', 'request_fingerprint',
+    'source_kind', 'descriptor_json', 'descriptor_sha256', 'actor_id', 'created_at')
+EVIDENCE_DDL = f'''
+create table {SCHEMA}.analysis_evidence_refs (
+ evidence_ref_id uuid primary key, session_id uuid not null references {SCHEMA}.analysis_sessions(session_id),
+ request_id uuid not null, request_fingerprint text not null check(length(request_fingerprint)=64),
+ source_kind text not null check(source_kind in ('object','drawing','document','photo','model','work_order','alarm','trend')),
+ descriptor_json text not null check(octet_length(descriptor_json)<=16384),
+ descriptor_sha256 text not null check(length(descriptor_sha256)=64),
+ actor_id uuid not null, created_at text not null, unique(session_id,request_id));
+create trigger immutable_analysis_evidence before update or delete on {SCHEMA}.analysis_evidence_refs
+ for each row execute function {SCHEMA}.immutable_record();
+'''
+DDL_V1 = f'''
 create schema {SCHEMA};
 create table {SCHEMA}.store_meta (
  id integer primary key check(id=1), schema_version integer not null check(schema_version=1),
@@ -72,6 +83,7 @@ end $$;
 create trigger analysis_fixed_owner before update on {SCHEMA}.analysis_sessions
  for each row execute function {SCHEMA}.fixed_owner();
 '''
+DDL = DDL_V1.replace('schema_version=1', 'schema_version=2') + EVIDENCE_DDL
 
 
 def require(condition, code='INVALID_REQUEST', status=422):
@@ -216,21 +228,28 @@ def profile(cursor):
     actual = {}
     for table, column in cursor.fetchall():
         actual.setdefault(table, []).append(column)
-    require(actual == {name: list(columns) for name, columns in COLUMNS.items()}, 'ANALYSIS_PROFILE_CHANGED', 409)
+    version = 1 if actual == {name: list(columns) for name, columns in V1_COLUMNS.items()} else 2
+    expected = V1_COLUMNS if version == 1 else COLUMNS
+    require(actual == {name: list(columns) for name, columns in expected.items()}, 'ANALYSIS_PROFILE_CHANGED', 409)
+    cursor.execute(f'select schema_version from {SCHEMA}.store_meta where id=1')
+    row = cursor.fetchone()
+    require(row and row[0] == version, 'ANALYSIS_PROFILE_CHANGED', 409)
+    return version
 
 
-def provision(database_url, connection_id):
+def provision(database_url, connection_id, *, version=2):
     text(connection_id)
+    require(type(version) is int and version in (1, 2))
     connection = AnalysisConnection(database_url)
     try:
         with connection.transaction() as cursor:
             cursor.execute('select to_regnamespace(%s)', (SCHEMA,))
             require(cursor.fetchone()[0] is None, 'ANALYSIS_TARGET_OCCUPIED', 409)
-            cursor.execute(DDL)
+            cursor.execute(DDL if version == 2 else DDL_V1)
             store_id = str(uuid4())
-            cursor.execute(f'insert into {SCHEMA}.store_meta values(1,1,%s,%s)', (connection_id, store_id))
+            cursor.execute(f'insert into {SCHEMA}.store_meta values(1,%s,%s,%s)', (version, connection_id, store_id))
             profile(cursor)
-        return {'storeId': store_id, 'connectionId': connection_id, 'schemaVersion': 1}
+        return {'storeId': store_id, 'connectionId': connection_id, 'schemaVersion': version}
     finally:
         connection.close()
 
@@ -242,7 +261,7 @@ class AnalysisDrafts:
         self.connection = AnalysisConnection(database_url)
         try:
             with self.connection.transaction(readonly=True) as cursor:
-                profile(cursor)
+                self.schema_version = profile(cursor)
                 cursor.execute(f'select connection_id,store_id::text from {SCHEMA}.store_meta where id=1')
                 row = cursor.fetchone()
                 require(row and row[0] == self.connection_id, 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)

@@ -43,6 +43,14 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         for suffix in ('/confirm', '/archive', '/share', '/save/extra', '/'):
             with self.assertRaises(AssertionError): location_for('/api/workbench/analysis-sessions'+suffix)
 
+    def test_analysis_source_preparation_and_fixed_work_order_routes_are_exact(self):
+        root = '/api/workbench/analysis-sessions/'
+        for suffix in ('evidence/register', 'evidence/detail', 'evidence/content', 'link-work-order', 'simulation/catalogue', 'simulation/qualify'):
+            self.assertIn('client_max_body_size 16k;', location_for(root+suffix))
+            for extra in ('/', '/extra'):
+                with self.assertRaises(AssertionError): location_for(root+suffix+extra)
+        self.assertIn('client_max_body_size 16k;', location_for('/api/workbench/work-orders/snapshot'))
+
     def test_only_successful_content_named_public_assets_are_cacheable(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
         block = nginx.split('map "$status:$uri" $ontovis_public_asset_cache_control {', 1)[1].split('\n}', 1)[0]

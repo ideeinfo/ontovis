@@ -1,7 +1,7 @@
 """Snapshot and restore the isolated manual-analysis storage candidate.
 
-This is not the whole-workbench paired backup. No source files, authentication
-tokens, source references or live project registry are included.
+This is not the whole-workbench paired backup. Fixed source descriptors are
+included; source files and the live project registry remain in the paired store.
 """
 from __future__ import annotations
 
@@ -21,6 +21,12 @@ MAX_PACKAGE_BYTES = 48 * 1024 * 1024
 MANIFEST_FORMAT = 'ontovis-analysis-draft-snapshot-v1'
 
 
+def package_profile(package):
+    version = 1 if package.get('format') == draft.FORMAT_V1 else 2
+    draft.require(package.get('format') == (draft.FORMAT_V1 if version == 1 else draft.FORMAT))
+    return version, draft.V1_COLUMNS if version == 1 else draft.COLUMNS
+
+
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
@@ -31,17 +37,17 @@ def hex_digest(value):
 
 def validate_package(package):
     draft.require(type(package) is dict and set(package) == {'format', 'sourceStoreId', 'connectionId', 'tables'})
-    draft.require(package['format'] == draft.FORMAT)
+    version, columns_by_table = package_profile(package)
     draft.identifier(package['sourceStoreId']); draft.text(package['connectionId'])
     tables = package['tables']
-    draft.require(type(tables) is dict and set(tables) == set(draft.COLUMNS))
-    for name, columns in draft.COLUMNS.items():
+    draft.require(type(tables) is dict and set(tables) == set(columns_by_table))
+    for name, columns in columns_by_table.items():
         rows = tables[name]
         draft.require(type(rows) is list and len(rows) <= 10000, 'ANALYSIS_PACKAGE_LIMIT', 413)
         draft.require(all(type(row) is dict and set(row) == set(columns) for row in rows))
     meta = tables['store_meta']
     draft.require(len(meta) == 1 and type(meta[0]['id']) is int and meta[0]['id'] == 1
-                  and type(meta[0]['schema_version']) is int and meta[0]['schema_version'] == 1
+                  and type(meta[0]['schema_version']) is int and meta[0]['schema_version'] == version
                   and meta[0]['connection_id'] == package['connectionId'] and meta[0]['store_id'] == package['sourceStoreId'])
     sessions, revisions, requests = {}, {}, set()
     for row in tables['analysis_sessions']:
@@ -105,6 +111,27 @@ def validate_package(package):
                       and result['restoredFromRevision'] == revision['restored_from'])
         seen_receipts.add(version_key)
     draft.require(seen_receipts == set(revisions))
+    if version == 2:
+        from apps.api.analysis_evidence import validate_descriptor, MAX_SOURCE_BYTES
+        ids, source_requests, counts = set(), set(), {}
+        used = 0
+        for row in tables['analysis_evidence_refs']:
+            key = draft.identifier(row['evidence_ref_id']); draft.identifier(row['request_id'])
+            owner = sessions.get(row['session_id'])
+            draft.require(owner is not None and owner['owner_id'] == row['actor_id'])
+            request = (row['session_id'], row['request_id'])
+            draft.require(key not in ids and request not in source_requests)
+            ids.add(key); source_requests.add(request)
+            counts[row['session_id']] = counts.get(row['session_id'], 0) + 1
+            draft.require(counts[row['session_id']] <= 100, 'ANALYSIS_SOURCE_LIMIT', 413)
+            draft.utc(row['created_at']); hex_digest(row['request_fingerprint']); hex_digest(row['descriptor_sha256'])
+            try:
+                raw = validate_descriptor(row['source_kind'], json.loads(row['descriptor_json']))
+            except (ValueError, TypeError, RecursionError):
+                raise PreviewError(422, 'ANALYSIS_PACKAGE_INVALID') from None
+            draft.require(raw == row['descriptor_json'] and sha(raw.encode()) == row['descriptor_sha256'])
+            used += len(raw.encode())
+        draft.require(used <= MAX_SOURCE_BYTES, 'ANALYSIS_PACKAGE_LIMIT', 413)
     raw = draft.canonical(package).encode()
     draft.require(len(raw) <= MAX_PACKAGE_BYTES, 'ANALYSIS_PACKAGE_LIMIT', 413)
     return raw
@@ -114,19 +141,20 @@ def export_package(database_url):
     connection = draft.AnalysisConnection(database_url)
     try:
         with connection.transaction(readonly=True) as cursor:
-            draft.profile(cursor)
+            version = draft.profile(cursor)
+            columns_by_table = draft.V1_COLUMNS if version == 1 else draft.COLUMNS
             tables = {}
-            for name in draft.COLUMNS:
+            for name in columns_by_table:
                 cursor.execute(f'select count(*) from {draft.SCHEMA}.{name}')
                 draft.require(cursor.fetchone()[0] <= 10000, 'ANALYSIS_PACKAGE_LIMIT', 413)
             cursor.execute(f'select coalesce(sum(octet_length(snapshot_json)),0) from {draft.SCHEMA}.analysis_revisions')
             draft.require(cursor.fetchone()[0] <= draft.MAX_STORE_BYTES, 'ANALYSIS_PACKAGE_LIMIT', 413)
-            for name in draft.COLUMNS:
+            for name in columns_by_table:
                 cursor.execute(f'select to_jsonb(t) from {draft.SCHEMA}.{name} t order by to_jsonb(t)::text')
                 tables[name] = [row[0] for row in cursor.fetchall()]
             draft.require(len(tables['store_meta']) == 1, 'ANALYSIS_STORAGE_INVALID', 409)
             meta = tables['store_meta'][0]
-            package = {'format': draft.FORMAT, 'sourceStoreId': meta['store_id'], 'connectionId': meta['connection_id'], 'tables': tables}
+            package = {'format': draft.FORMAT_V1 if version == 1 else draft.FORMAT, 'sourceStoreId': meta['store_id'], 'connectionId': meta['connection_id'], 'tables': tables}
             validate_package(package)
             return package
     finally:
@@ -200,16 +228,17 @@ def restore_new(root, expected_manifest_sha256, database_url):
         with connection.transaction() as cursor:
             cursor.execute('select to_regnamespace(%s)', (draft.SCHEMA,))
             draft.require(cursor.fetchone()[0] is None, 'ANALYSIS_TARGET_OCCUPIED', 409)
-            cursor.execute(draft.DDL)
+            version, columns_by_table = package_profile(package)
+            cursor.execute(draft.DDL if version == 2 else draft.DDL_V1)
             store_id = str(uuid4())
-            cursor.execute(f'insert into {draft.SCHEMA}.store_meta values(1,1,%s,%s)', (package['connectionId'], store_id))
-            for name in ('analysis_sessions', 'analysis_revisions', 'analysis_requests'):
-                columns = draft.COLUMNS[name]
+            cursor.execute(f'insert into {draft.SCHEMA}.store_meta values(1,%s,%s,%s)', (version, package['connectionId'], store_id))
+            for name in tuple(columns_by_table)[1:]:
+                columns = columns_by_table[name]
                 for row in package['tables'][name]:
                     cursor.execute(f'insert into {draft.SCHEMA}.{name} ('+','.join(columns)+') values ('+','.join(['%s']*len(columns))+')', tuple(row[column] for column in columns))
             draft.profile(cursor)
             # Verify actual rows, preserving canonical JSON text and fixed IDs.
-            for name in ('analysis_sessions', 'analysis_revisions', 'analysis_requests'):
+            for name in tuple(columns_by_table)[1:]:
                 cursor.execute(f'select to_jsonb(t) from {draft.SCHEMA}.{name} t order by to_jsonb(t)::text')
                 actual = sorted((draft.canonical(row[0]) for row in cursor.fetchall()))
                 draft.require(actual == sorted(draft.canonical(row) for row in package['tables'][name]), 'ANALYSIS_RESTORE_MISMATCH', 409)
