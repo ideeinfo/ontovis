@@ -27,6 +27,13 @@ def location_for(path):
 
 
 class WorkbenchDeploymentTests(unittest.TestCase):
+    def test_json_reads_are_compressed_without_enabling_api_caching(self):
+        nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
+        self.assertIn('application/json', re.search(r'gzip_types\s+([^;]+);', nginx)[1].split())
+        self.assertIn('gzip_vary on;', nginx)
+        self.assertIn('default "no-store";', nginx)
+        self.assertNotIn('proxy_cache ', nginx)
+
     def test_scene_delete_restore_are_bounded_and_purge_is_not_exposed(self):
         for action in ('delete', 'restore'):
             body = location_for('/api/workbench/scenes/'+action)

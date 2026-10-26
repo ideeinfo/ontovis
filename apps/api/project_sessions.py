@@ -379,17 +379,27 @@ class ProjectSessions(UserSessions):
         from .analysis_drafts import AnalysisDrafts, identifier, require, validate_snapshot
         row = self._session(sid, payload)
         code = self._ref(payload.get('projectRef'))
-        require(self.analysis_store_id is not None, 'ANALYSIS_NOT_ENABLED', 503)
-        require(row.subject_id is not None, 'ANALYSIS_IDENTITY_REQUIRED', 401)
-        actor = identifier(row.subject_id)
         action = path.removeprefix('/api/workbench/analysis-sessions').removeprefix('/')
         require(action in ('', 'create', 'detail', 'save', 'restore', 'revisions', 'evidence/register',
                           'evidence/detail', 'evidence/content', 'link-work-order', 'simulation/catalogue', 'simulation/detail', 'simulation/qualify'))
+        body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
+        if action in ('simulation/catalogue', 'simulation/detail'):
+            # These fixed, project-scoped reads have no analysis owner or storage.
+            # /access checks the current active user and membership on every read.
+            self._access(sid, row, code)
+            from . import simulated_faults
+            value = (simulated_faults.browser_catalogue(code, body) if action == 'simulation/catalogue'
+                     else simulated_faults.detail(code, body))
+            self.guard(sid, row)
+            return {**value, 'projectRef': payload['projectRef'], 'sessionRevision': row.revision,
+                    'capabilities': {'canWrite': False, 'canConfirmConclusion': False}}
+        require(self.analysis_store_id is not None, 'ANALYSIS_NOT_ENABLED', 503)
+        require(row.subject_id is not None, 'ANALYSIS_IDENTITY_REQUIRED', 401)
+        actor = identifier(row.subject_id)
         writing = action in ('create', 'save', 'restore', 'evidence/register', 'link-work-order')
         access = self._access(sid, row, code)
         if writing:
             require(access.get('role') == 'admin', 'ANALYSIS_WRITE_FORBIDDEN', 403)
-        body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
 
         def authorize():
             self.guard(sid, row)
@@ -415,15 +425,7 @@ class ProjectSessions(UserSessions):
         store = AnalysisDrafts(self.analysis_database_url, self.connection_id, code)
         try:
             require(store.store_id == self.analysis_store_id, 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)
-            if action in ('simulation/catalogue', 'simulation/detail'):
-                from . import simulated_faults
-                if action == 'simulation/catalogue':
-                    require(not body)
-                    value = simulated_faults.catalogue(code)
-                else:
-                    value = simulated_faults.detail(code, body)
-                authorize()
-            elif action.startswith(('evidence/', 'simulation/')) or action == 'link-work-order':
+            if action.startswith(('evidence/', 'simulation/')) or action == 'link-work-order':
                 from .analysis_evidence import AnalysisEvidence
                 from .analysis_source_reader import AnalysisSourceReader
                 from . import simulated_faults

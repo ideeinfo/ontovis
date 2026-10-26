@@ -125,8 +125,10 @@ class AnalysisSourceHttpTests(unittest.TestCase):
         self.source.projects['Demo-PDS']='Synthetic demo';self.source.permissions['writer']['Demo-PDS']='viewer'
         project={'ontobaseConnectionId':'ontobase-primary','projectCode':'Demo-PDS'}
         before=export_package(self.urls[0])
-        result=self.request(ROOT+'/simulation/catalogue',{'projectRef':project})
+        with patch('apps.api.analysis_drafts.AnalysisDrafts',side_effect=AssertionError('Unrelated analysis storage')):
+            result=self.request(ROOT+'/simulation/catalogue',{'projectRef':project,'includeDetail':True})
         self.assertEqual(result[0],200,result[1]);item=result[1]['items'][0]
+        self.assertEqual(result[1]['initialDetail']['dataset'],item)
         body={'projectRef':project,**{key:item[key] for key in ('datasetId','datasetRevision')}}
         result=self.request(ROOT+'/simulation/detail',body)
         self.assertEqual(result[0],200,result[1]);self.assertEqual(len(result[1]['trends']),5)

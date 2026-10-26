@@ -36,6 +36,18 @@ def catalogue(project_code):
                           for code in ('13001', '13002', '13033', '13035', '13058')]}
 
 
+def browser_catalogue(project_code, body):
+    require(type(body) is dict and set(body) in (set(), {'includeDetail'}, {'includeDetail', 'datasetId'}))
+    value = catalogue(project_code)
+    if body:
+        require(body['includeDetail'] is True)
+        selected = body.get('datasetId', value['items'][0]['datasetId'])
+        item = next((row for row in value['items'] if row['datasetId'] == selected), None)
+        require(item is not None, 'SIMULATION_DATASET_UNAVAILABLE', 404)
+        value['initialDetail'] = detail(project_code, {key: item[key] for key in ('datasetId', 'datasetRevision')})
+    return value
+
+
 def identity(code):
     require(type(code) is str and code in PROFILES, 'SIMULATION_FAULT_UNSUPPORTED', 422)
     profile = PROFILES[code]

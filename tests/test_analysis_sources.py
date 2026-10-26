@@ -14,6 +14,19 @@ from tests import test_work_orders as orders
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_browser_catalogue_can_include_one_fixed_replay_without_changing_plain_catalogue(self):
+        self.assertEqual(sim.browser_catalogue('Demo-PDS', {}), sim.catalogue('Demo-PDS'))
+        for code in sim.PROFILES:
+            body={'includeDetail':True, 'datasetId':'SIM-PDS-'+code}
+            value=sim.browser_catalogue('Demo-PDS',body);item=sim.identity(code)
+            self.assertEqual(value['initialDetail'],sim.detail('Demo-PDS',{key:item[key] for key in ('datasetId','datasetRevision')}))
+            self.assertEqual(len(value['items']),4)
+        self.assertEqual(sim.browser_catalogue('Demo-PDS',{'includeDetail':True})['initialDetail']['dataset']['faultCode'],'13001')
+        for body in ({'includeDetail':False},{'includeDetail':1},{'datasetId':'SIM-PDS-13001'},
+                     {'includeDetail':True,'datasetId':'unknown'},{'includeDetail':True,'url':'https://outside.invalid'}):
+            with self.assertRaises(PreviewError):sim.browser_catalogue('Demo-PDS',body)
+        with self.assertRaises(PreviewError):sim.browser_catalogue('B',{'includeDetail':True})
+
     def test_browser_detail_is_versioned_project_scoped_and_contains_all_replay_signals(self):
         for code, count in (('13001', 5), ('13004', 3)):
             item=sim.identity(code);body={key:item[key] for key in ('datasetId','datasetRevision')}

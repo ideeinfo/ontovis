@@ -10,7 +10,12 @@ export interface SimulatedAlarm {
 export interface TrendSample {sourceTime:string;value:number|null;quality:string}
 export interface SimulatedTrend {metricId:string;unit:string;timeFrom:string;timeTo:string;samples:TrendSample[]}
 export interface SimulationDetail {dataset:SimulatedDataset;alarms:SimulatedAlarm[];trends:SimulatedTrend[]}
-export interface SimulationCatalogue {items:SimulatedDataset[];sourceKind:'simulated'}
+export interface SimulationCatalogue {items:SimulatedDataset[];sourceKind:'simulated';initialDetail?:SimulationDetail}
+
+export function initialReplay(catalogue:SimulationCatalogue|null,dataset?:SimulatedDataset){
+  const detail=catalogue?.initialDetail;
+  return detail&&dataset&&detail.dataset.datasetId===dataset.datasetId&&detail.dataset.datasetRevision===dataset.datasetRevision?detail:null;
+}
 
 export function alarmAt(value:SimulationDetail,second:number):'pending'|'active'|'cleared'{
   const time=Date.parse(value.dataset.timeFrom)+second*1000;

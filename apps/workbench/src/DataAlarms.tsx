@@ -3,7 +3,7 @@ import {ClipboardList,Pause,Play,RefreshCw,Search} from 'lucide-react';
 import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
 import {Badge,Btn,IconBtn} from './Primitives';
 import {RowActions,RowContext} from './ListMenus';
-import {alarmAt,sampleAt,trendDomain,trendSegments,type SimulationCatalogue,type SimulationDetail} from './simulatedAlarms';
+import {alarmAt,initialReplay,sampleAt,trendDomain,trendSegments,type SimulationCatalogue,type SimulationDetail} from './simulatedAlarms';
 import './dataAlarms.css';
 
 const ROOT='/api/workbench/analysis-sessions/simulation';
@@ -16,7 +16,7 @@ export function DataAlarms({api,locale='zh',onOpenWorkOrders}:{api:DataApi;local
   const [reading,setReading]=useState(false);
   useEffect(()=>{
     const abort=new AbortController();setCatalogue(null);setDetail(null);setLoading(true);setError(null);setUnavailable(false);setPlaying(false);
-    void api.request<SimulationCatalogue>(ROOT+'/catalogue',{},abort.signal).then(value=>{
+    void api.request<SimulationCatalogue>(ROOT+'/catalogue',{includeDetail:true,...(selected?{datasetId:selected}:{})},abort.signal).then(value=>{
       if(!abort.signal.aborted){setCatalogue(value);setSelected(previous=>value.items.some(row=>row.datasetId===previous)?previous:value.items[0]?.datasetId||'');}
     }).catch(value=>{if(!abort.signal.aborted&&!cancelled(value)){
       if(value instanceof ApiError&&value.code==='SIMULATION_PROJECT_REQUIRED')setUnavailable(true);else setError(value);
@@ -26,12 +26,15 @@ export function DataAlarms({api,locale='zh',onOpenWorkOrders}:{api:DataApi;local
   const profile=catalogue?.items.find(row=>row.datasetId===selected);
   useEffect(()=>{
     const abort=new AbortController();setDetail(null);setError(null);setPlaying(false);setSecond(60);
-    if(profile){setReading(true);void api.request<SimulationDetail>(ROOT+'/detail',{datasetId:profile.datasetId,datasetRevision:profile.datasetRevision},abort.signal)
+    const initial=initialReplay(catalogue,profile);
+    if(initial){setDetail(initial);setMetric(initial.trends[0]?.metricId||'');setReading(false);}
+    else if(profile){setReading(true);void api.request<SimulationDetail>(ROOT+'/detail',{datasetId:profile.datasetId,datasetRevision:profile.datasetRevision},abort.signal)
       .then(value=>{if(!abort.signal.aborted){setDetail(value);setMetric(value.trends[0]?.metricId||'');}})
       .catch(value=>{if(!abort.signal.aborted&&!cancelled(value))setError(value);})
       .finally(()=>{if(!abort.signal.aborted)setReading(false);});}
+    else setReading(false);
     return()=>abort.abort();
-  },[api,api.revision,api.epoch,profile?.datasetId,profile?.datasetRevision]);
+  },[api,api.revision,api.epoch,profile?.datasetId,profile?.datasetRevision,catalogue?.initialDetail]);
   const visible=detail&&detail.dataset.datasetId===profile?.datasetId&&detail.dataset.datasetRevision===profile.datasetRevision?detail:null;
   useEffect(()=>{
     if(!playing||!visible)return;

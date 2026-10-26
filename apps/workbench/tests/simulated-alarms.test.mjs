@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {alarmAt,sampleAt,trendDomain,trendSegments} from '../src/simulatedAlarms.ts';
+import {alarmAt,initialReplay,sampleAt,trendDomain,trendSegments} from '../src/simulatedAlarms.ts';
 const start='2026-10-25T00:00:00Z',stamp=second=>new Date(Date.parse(start)+second*1000).toISOString();
 const trend={metricId:'temperature',unit:'degC',timeFrom:start,timeTo:stamp(3),samples:[
   {sourceTime:stamp(0),value:24,quality:'good'},{sourceTime:stamp(1),value:999,quality:'bad'},
   {sourceTime:stamp(2),value:null,quality:'bad'},{sourceTime:stamp(3),value:72,quality:'good'}]};
+test('combined first replay is reused only for the selected fixed dataset and revision',()=>{
+  const dataset={datasetId:'SIM-PDS-13001',datasetRevision:'fixed:1'};
+  const initialDetail={dataset,alarms:[],trends:[trend]},catalogue={items:[dataset],initialDetail};
+  assert.equal(initialReplay(catalogue,dataset),initialDetail);
+  assert.equal(initialReplay(catalogue,{...dataset,datasetId:'SIM-PDS-13002'}),null);
+  assert.equal(initialReplay(catalogue,{...dataset,datasetRevision:'fixed:2'}),null);
+  assert.equal(initialReplay(null,dataset),null);assert.equal(initialReplay(catalogue),null);
+  assert.equal(initialReplay({items:[dataset]},dataset),null);
+});
 test('replay status follows source lifecycle times, not the current wall clock',()=>{
   const value={dataset:{timeFrom:start},alarms:[{updatedAt:stamp(150),state:'cleared'},{updatedAt:stamp(30),state:'active'}]};
   for(const [second,state] of [[0,'pending'],[29,'pending'],[30,'active'],[149,'active'],[150,'cleared'],[180,'cleared']])assert.equal(alarmAt(value,second),state);
