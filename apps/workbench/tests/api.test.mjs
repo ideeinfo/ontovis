@@ -149,7 +149,7 @@ test('write-only endpoint pairs preserve reads; shared model denials stay local'
   const allowed = {
     ANALYSIS_WRITE_FORBIDDEN:['analysis-sessions/create','analysis-sessions/save','analysis-sessions/restore'],
     MODEL_WRITE_FORBIDDEN:['models/upload','models/binding','resources/model/upload','resources/model/calibrate'],
-    SCENE_WRITE_FORBIDDEN:['scenes/create','scenes/save','terrains/upload','terrains/job/cancel','public-geodata/start','public-geodata/cancel'],
+    SCENE_WRITE_FORBIDDEN:['scenes/create','scenes/save','scenes/delete','scenes/restore','terrains/upload','terrains/job/cancel','public-geodata/start','public-geodata/cancel'],
   };
   for (const [code, paths] of Object.entries(allowed)) {
     for (const path of paths) {

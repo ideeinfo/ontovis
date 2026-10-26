@@ -438,7 +438,8 @@ class WorkbenchSessions(UserSessions):
         body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
         if self.scenes is None or self.library is None:
             raise PreviewError(503, 'MODEL_UNAVAILABLE')
-        writing = path in ('/api/workbench/scenes/create', '/api/workbench/scenes/save')
+        writing = path in ('/api/workbench/scenes/create', '/api/workbench/scenes/save',
+                           '/api/workbench/scenes/delete', '/api/workbench/scenes/restore')
         try:
             baseline = self.scene_access(authority)
             current_access = baseline
@@ -561,7 +562,7 @@ class WorkbenchSessions(UserSessions):
                 return self.geometry.process({'kind': 'terrain_replacement', 'snapshot': snapshot,
                     'candidateTerrainVersionId': candidate, 'strategy': strategy, 'trustedTerrains': manifests}, authorize)
 
-            if path == '/api/workbench/scenes' and set(body).issubset({'q','cursor','limit'}):
+            if path == '/api/workbench/scenes' and set(body).issubset({'q','cursor','limit','state'}):
                 value = self.scenes.listing(authority.username, authorize,
                     access_revision=baseline['accessRevision'], **body)
             elif path == '/api/workbench/scenes/create':
@@ -597,6 +598,8 @@ class WorkbenchSessions(UserSessions):
                     validate_geometry=validate_geometry if self.geometry is not None else None,
                     access_revision=baseline['accessRevision'],
                     terrain_replacement=terrain_replacement, model_details=model_details, engineering_check=engineering_check)
+            elif path in ('/api/workbench/scenes/delete', '/api/workbench/scenes/restore'):
+                value = self.scenes.lifecycle(body, authority.username, authorize, action=path.rsplit('/', 1)[1])
             elif path == '/api/workbench/scenes/check':
                 value = self.scenes.check(body, authority.username, authorize, validate_resources, validate_engineering,
                     preview_geometry if self.geometry is not None else None,

@@ -1,7 +1,7 @@
 import type {ModelResourceMetadata} from './modelResourceMetadata';
 import {ApiError, type WorkbenchApi} from './api.ts';
 import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
-  SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
+  SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest, SceneLifecycle, SceneLifecycleRequest, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
 import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelRequest, LegacyModelCatalog, ModelThumbnailInfo, ModelThumbnailReference, ModelUses, ModelUsesRequest,
   ProjectModel, ProjectModelCatalog, ProjectModelsRequest, ProjectModelVersion, ProjectModelWrite,
   TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
@@ -48,6 +48,9 @@ export class SceneApi {
   }
   create(body: SceneCreateRequest, signal?: AbortSignal) {
     return this.api.request<SceneOpen>(ROOT + 'scenes/create', body, signal);
+  }
+  lifecycle(action:'delete'|'restore',body:SceneLifecycleRequest,signal?:AbortSignal) {
+    return this.api.request<SceneLifecycle>(ROOT+'scenes/'+action,body,signal);
   }
   open(sceneId: string, sceneRevision?: string, signal?: AbortSignal) {
     return this.api.request<SceneOpen>(ROOT + 'scenes/open',

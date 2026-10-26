@@ -357,7 +357,7 @@ class SceneHttpTests(unittest.TestCase):
         for changes in ({'Origin': 'https://foreign.invalid'}, {'Origin': None}, {'Host': 'foreign.invalid'},
                         {'Sec-Fetch-Site': 'cross-site'}):
             self.assert_response(self.request('/api/workbench/scenes', headers=changes), 403, 'FORBIDDEN')
-        for path in ('/api/workbench/scenes/delete', '/api/workbench/scenes?project=other'):
+        for path in ('/api/workbench/scenes/purge', '/api/workbench/scenes?project=other'):
             self.assert_response(self.request(path), 404, 'NOT_FOUND')
         self.assert_response(self.request('/api/workbench/scenes/locate'), 422, 'INVALID_REQUEST')
 
@@ -441,6 +441,47 @@ class SceneHttpTests(unittest.TestCase):
     def test_upstream_outage_is_a_failure_not_an_empty_scene_list(self):
         with patch.object(self.account(), 'request', side_effect=PreviewError(502, 'SOURCE_UNAVAILABLE')):
             self.assert_response(self.request('/api/workbench/scenes'), 502, 'SOURCE_UNAVAILABLE')
+
+
+    def test_scene_delete_restore_http_authorization_and_fixed_history(self):
+        scene = self.create()
+        body = {'sceneId':scene['sceneId'], 'expectedSceneRevision':scene['sceneRevision'],
+                'expectedLifecycleRevision':0, 'clientRequestId':str(uuid4())}
+        member = self.login('fixture-reader'); self.account(member).role = 'reader'
+        self.assert_response(self.request('/api/workbench/scenes/delete', body, client=member), 403, 'SCENE_WRITE_FORBIDDEN')
+        self.assert_response(self.request('/api/workbench/scenes/delete', body, client=False), 401, 'SESSION_EXPIRED')
+        self.assert_response(self.request('/api/workbench/scenes/delete', body, headers={'Origin':'https://foreign.invalid'}), 403, 'FORBIDDEN')
+        result = self.request('/api/workbench/scenes/delete', body)
+        self.assertEqual(result[0], 200, result)
+        self.assertEqual(result[1]['lifecycleRevision'], 1)
+        self.assertEqual(self.request('/api/workbench/scenes/delete', body)[1], result[1])
+        self.assertEqual(self.request('/api/workbench/scenes')[1]['items'], [])
+        recycled = self.request('/api/workbench/scenes', {'state':'deleted'})
+        self.assertEqual(recycled[1]['items'][0]['sceneId'], scene['sceneId'])
+        self.assert_response(self.open(scene), 410, 'SCENE_DELETED')
+        restore = {**body, 'expectedLifecycleRevision':1, 'clientRequestId':str(uuid4())}
+        self.assert_response(self.request('/api/workbench/scenes/restore', restore, client=member), 403, 'SCENE_WRITE_FORBIDDEN')
+        self.assertEqual(self.request('/api/workbench/scenes/restore', restore)[0], 200)
+        self.assertEqual(self.open(scene)[1]['snapshot'], scene['snapshot'])
+        self.assert_response(self.request('/api/workbench/scenes/delete', {**body,'clientRequestId':str(uuid4())}), 409, 'SCENE_CHANGED')
+        current = self.open(scene)[1]
+        self.assertEqual(current['lifecycleRevision'], 2)
+        save = self.save_body(current)
+        self.assert_response(self.save(save), 409, 'SCENE_CHANGED')
+        save['expectedLifecycleRevision'] = 2
+        self.assertEqual(self.save(save)[0], 200)
+
+    def test_scene_lifecycle_unknown_ids_payload_and_revoked_replay(self):
+        scene = self.create()
+        body = {'sceneId':scene['sceneId'], 'expectedSceneRevision':scene['sceneRevision'],
+                'expectedLifecycleRevision':0, 'clientRequestId':str(uuid4())}
+        self.assert_response(self.request('/api/workbench/scenes/delete', {**body,'sceneId':str(uuid4())}), 404, 'NOT_FOUND_OR_FORBIDDEN')
+        self.assert_response(self.request('/api/workbench/scenes/delete', {**body,'owner':'forged'}), 422, 'INVALID_REQUEST')
+        self.assertEqual(self.request('/api/workbench/scenes/delete', body)[0], 200)
+        self.account().role = 'reader'
+        self.assert_response(self.request('/api/workbench/scenes/delete', body), 403, 'SCENE_WRITE_FORBIDDEN')
+        self.account().allowed = False
+        self.assert_response(self.request('/api/workbench/scenes', {'state':'deleted'}), 403, 'FORBIDDEN')
 
 
 if __name__ == '__main__':

@@ -22,6 +22,7 @@ const writeOnlyDenials: Record<string, readonly string[]> = {
     '/api/workbench/resources/model/upload', '/api/workbench/resources/model/calibrate',
     '/api/workbench/resources/model/import-existing', '/api/workbench/resources/model/thumbnail/ensure', '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/preserve-legacy-display'],
   SCENE_WRITE_FORBIDDEN: ['/api/workbench/scenes/create', '/api/workbench/scenes/save',
+    '/api/workbench/scenes/delete', '/api/workbench/scenes/restore',
     '/api/workbench/terrains/upload', '/api/workbench/terrains/job/cancel',
     '/api/workbench/public-geodata/start', '/api/workbench/public-geodata/cancel'],
 };
@@ -221,6 +222,7 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     MODEL_STORAGE_UNAVAILABLE:['模型暂存或保存失败，请重试；不要重复创建版本。','Model storage failed. Retry the same request.'],
     SCENE_WRITE_FORBIDDEN:['当前仅可查看，未保存的修改仍保留。','You can currently view this scene. Unsaved edits are retained.'],
     SCENE_CHANGED:['场景已有新版本，保留当前修改后重新读取。','A newer scene exists. Keep your edits and reload before retrying.'],
+    SCENE_DELETED:['场景已移到回收站，恢复后可继续查看和编辑。','This scene is in the recycle bin. Restore it to view or edit.'],
     INVALID_SCENE_ENVIRONMENT:['环境参数不符合范围，请检查后重试。','Check the environment parameter ranges and retry.'],
     UNSUPPORTED_SCENE_ENVIRONMENT:['当前版本不支持此环境配置，请更新工作台。','This environment configuration requires a newer workbench.'],
     WATER_SURFACE_NOT_SUPPORTED:['水面需要当前平坦的相对定位面，不能用于起伏地形或已知高程基准。','Water requires the active flat relative positioning surface.'],

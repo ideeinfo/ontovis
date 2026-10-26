@@ -155,7 +155,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                '/api/workbench/evidence/resolve','/api/workbench/evidence/content')
             scene_paths = ('/api/workbench/scenes','/api/workbench/scenes/create','/api/workbench/scenes/open',
                            '/api/workbench/scenes/head','/api/workbench/scenes/save','/api/workbench/scenes/check',
-                           '/api/workbench/scenes/replacement-check','/api/workbench/scenes/locate')
+                           '/api/workbench/scenes/replacement-check','/api/workbench/scenes/locate',
+                           '/api/workbench/scenes/delete','/api/workbench/scenes/restore')
             project_paths = ('/api/workbench/projects', '/api/workbench/projects/access')
             work_order_paths = tuple('/api/workbench/work-orders' + suffix
                                      for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history'))

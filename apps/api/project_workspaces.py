@@ -190,5 +190,7 @@ class ProjectWorkspaces:
         count = 0
         if workspace['state'] == 'ready' and path.is_file() and not path.is_symlink():
             with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as db:
-                count = db.execute('select count(*) from scenes where project_code=?', (project_code,)).fetchone()[0]
+                lifecycle = db.execute("select 1 from sqlite_master where name='scene_lifecycle' and type='table'").fetchone()
+                active = " and not exists(select 1 from scene_lifecycle l where l.scene_id=scenes.id and l.state='deleted')" if lifecycle else ''
+                count = db.execute('select count(*) from scenes where project_code=?' + active, (project_code,)).fetchone()[0]
         return {'workspaceId': workspace['workspace_id'], 'workspaceState': workspace['state'], 'sceneCount': count}

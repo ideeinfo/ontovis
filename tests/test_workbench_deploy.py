@@ -27,6 +27,14 @@ def location_for(path):
 
 
 class WorkbenchDeploymentTests(unittest.TestCase):
+    def test_scene_delete_restore_are_bounded_and_purge_is_not_exposed(self):
+        for action in ('delete', 'restore'):
+            body = location_for('/api/workbench/scenes/'+action)
+            self.assertIn('client_max_body_size 16k;', body)
+            self.assertIn('proxy_read_timeout 120s;', body)
+        for action in ('purge', 'delete/extra', 'restore/extra', 'restore/'):
+            with self.assertRaises(AssertionError):location_for('/api/workbench/scenes/'+action)
+
     def test_analysis_drafts_have_bounded_routes_without_conclusion_or_sharing(self):
         for suffix in ('', '/create', '/save', '/detail', '/restore', '/revisions'):
             body = location_for('/api/workbench/analysis-sessions'+suffix)
@@ -104,7 +112,7 @@ class WorkbenchDeploymentTests(unittest.TestCase):
             body = location_for(path)
             self.assertIn('client_max_body_size 20m;', body)
             self.assertIn('proxy_request_buffering off;', body)
-        for path in ('/api/workbench/scenes/delete', '/api/workbench/resources/secret',
+        for path in ('/api/workbench/scenes/purge', '/api/workbench/resources/secret',
                      '/api/workbench/terrains/upload/extra', '/api/workbench/scenes/open/',
                      '/api/workbench/imagery/delete', '/api/workbench/imagery/upload/extra',
                      '/api/workbench/imagery/upload-result/extra',

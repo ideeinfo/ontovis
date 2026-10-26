@@ -84,7 +84,7 @@ export type ResourceUseScope = 'current' | 'retained' | 'current_or_retained';
 export interface ModelUsesRequest {versionId: string; scope?: ResourceUseScope; cursor?: string | null; limit?: number}
 export interface ModelUseCounts {currentInstanceCount: number; retainedInstanceCount: number; retainedReferenceCount: number}
 export interface ModelUses extends ResourceResponse, ModelUseCounts {
-  versionId: string; items: (ModelUseCounts & {sceneId: string; displayName: string;projectRef?:ProjectRef;projectName?:string})[];
+  versionId: string; items: (ModelUseCounts & {sceneId: string; displayName: string;sceneState?:'active'|'deleted';projectRef?:ProjectRef;projectName?:string})[];
   nextCursor: string | null; snapshotRevision: string;
 }
 

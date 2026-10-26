@@ -85,6 +85,22 @@ class ProjectWorkspaceTests(unittest.TestCase):
         self.assertEqual(self.sessions.projects_request(sid, '/api/workbench/projects',
             {'expectedSessionRevision': view['sessionRevision']})['items'], [])
 
+    def test_recycle_count_and_delete_restore_cannot_cross_projects(self):
+        a, b = self.create('A'), self.create('B')
+        body = {'sceneId':a['sceneId'], 'expectedSceneRevision':a['sceneRevision'],
+                'expectedLifecycleRevision':0, 'clientRequestId':str(uuid4())}
+        self.assertCode('NOT_FOUND_OR_FORBIDDEN', lambda:self.call('scenes/delete', 'B', **body))
+        self.assertEqual(self.sessions.registry.summary('A')['sceneCount'], 1)
+        self.call('scenes/delete', 'A', **body)
+        self.assertEqual(self.sessions.registry.summary('A')['sceneCount'], 0)
+        self.assertEqual(self.sessions.registry.summary('B')['sceneCount'], 1)
+        self.assertEqual(self.call('scenes', 'A')['items'], [])
+        self.assertEqual(self.call('scenes', 'A', state='deleted')['items'][0]['sceneId'], a['sceneId'])
+        body.update(expectedLifecycleRevision=1, clientRequestId=str(uuid4()))
+        self.call('scenes/restore', 'A', **body)
+        self.assertEqual(self.sessions.registry.summary('A')['sceneCount'], 1)
+        self.assertEqual(self.call('scenes/open', 'A', sceneId=a['sceneId'])['snapshot'], a['snapshot'])
+
     def test_required_scope_new_project_without_installation_and_two_spaces(self):
         self.assertCode('PROJECT_REQUIRED', lambda: self.create(None))
         request = str(uuid4())

@@ -335,6 +335,15 @@ class SceneLibrary:
                 create table if not exists scenes (
                     id text primary key, project_code text not null, display_name text not null,
                     head_revision text not null, updated_at text not null, instance_count integer not null);
+                create table if not exists scene_lifecycle (
+                    scene_id text primary key references scenes(id),
+                    state text not null check(state in ('active','deleted')),
+                    revision integer not null check(revision>0), changed_at text not null);
+                create trigger if not exists scene_lifecycle_identity before update on scene_lifecycle
+                    when new.scene_id!=old.scene_id or new.revision!=old.revision+1 or new.state=old.state
+                    begin select raise(abort, 'invalid scene lifecycle transition'); end;
+                create trigger if not exists scene_lifecycle_no_delete before delete on scene_lifecycle
+                    begin select raise(abort, 'retained scene lifecycle'); end;
                 create table if not exists scene_revisions (
                     revision text primary key, scene_id text not null references scenes(id),
                     snapshot text not null, resource_refs text not null, saved_at text not null);
@@ -420,18 +429,59 @@ class SceneLibrary:
         return {'storageScope': 'project_scenes' if engineering else 'projected_site_unbound' if geographic else 'local_plane_unbound', 'supportsGeographic': geographic,
                 'supportsEngineeringBindings': engineering, 'maxInstances': MAX_INSTANCES,
                 'environmentSchemaVersions': [1], 'waterModes': ['normal-waves'], 'surroundingBackgroundModes': ['auto', 'off'], 'cloudModes': ['procedural-cumulus-v1'], 'sceneInfoWriteVersion': 1,
+                'sceneLifecycleWriteVersion': 1,
                 'maxSnapshotBytes': MAX_SCENE_BYTES, 'maxCheckJsonBytes': MAX_SCENE_BYTES}
 
     @staticmethod
     def _callbacks(authorize, validate_resources, validate_engineering):
         _require(all(callable(callback) for callback in (authorize, validate_resources, validate_engineering)))
 
-    def _scope(self, db, scene_id):
-        row = db.execute('select * from scenes where id=? and project_code=?',
+    def _scope(self, db, scene_id, *, include_deleted=False):
+        row = db.execute('''select s.*,coalesce(l.state,'active') scene_state,
+                         coalesce(l.revision,0) lifecycle_revision from scenes s
+                         left join scene_lifecycle l on l.scene_id=s.id
+                         where s.id=? and s.project_code=?''',
                          (_uuid(scene_id), self.project_code)).fetchone()
         if row is None:
             raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
+        _require(include_deleted or row['scene_state'] == 'active', 'SCENE_DELETED', 410)
         return row
+
+    @staticmethod
+    def _expected_lifecycle(body, scene):
+        value = body.get('expectedLifecycleRevision', 0)
+        _require(type(value) is int and 0 <= value < 2**53)
+        _require(value == scene['lifecycle_revision'], 'SCENE_CHANGED', 409)
+
+    def lifecycle(self, body, actor, authorize: Authorize, *, action):
+        _text(actor); _require(callable(authorize)); authorize()
+        _require(action in ('delete', 'restore'))
+        _fields(body, ('sceneId','expectedSceneRevision','expectedLifecycleRevision','clientRequestId'))
+        scene_id, request_id = _uuid(body['sceneId']), _uuid(body['clientRequestId'])
+        expected = _text(body['expectedSceneRevision'])
+        version = body['expectedLifecycleRevision']
+        _require(type(version) is int and 0 <= version < 2**53)
+        digest = _digest(body)
+        with self.library.connect() as db:
+            db.execute('begin immediate')
+            scene = self._scope(db, scene_id, include_deleted=True)
+            prior = self._prior(db, actor, action, request_id, digest)
+            if prior is not None:
+                authorize()
+                return prior
+            _require(scene['head_revision'] == expected and scene['lifecycle_revision'] == version
+                     and scene['scene_state'] == ('active' if action == 'delete' else 'deleted'),
+                     'SCENE_CHANGED', 409)
+            state = 'deleted' if action == 'delete' else 'active'
+            now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            db.execute('''insert into scene_lifecycle values(?,?,?,?) on conflict(scene_id)
+                       do update set state=excluded.state,revision=excluded.revision,changed_at=excluded.changed_at''',
+                       (scene_id, state, version + 1, now))
+            result = {'sceneId': scene_id, 'sceneRevision': expected, 'headRevision': expected,
+                      'state': state, 'lifecycleRevision': version + 1, 'savedAt': now}
+            self._finish(db, actor, action, request_id, digest, result)
+            authorize()
+        return result
 
     @staticmethod
     def _revision(db, scene_id, revision):
@@ -539,6 +589,7 @@ class SceneLibrary:
             db.execute('begin immediate')
             prior = self._prior(db, actor, 'create', request_id, digest)
             if prior is not None:
+                self._scope(db, prior['sceneId'])
                 authorize()
                 return prior
             snapshot = self._empty(name)
@@ -557,7 +608,7 @@ class SceneLibrary:
                            (identifier, self.project_code, name, revision, now, 0))
             self._insert_snapshot(db, identifier, revision, snapshot, now)
             result = {'sceneId': identifier, 'projectCode': self.project_code, 'sceneRevision': revision,
-                      'headRevision': revision, 'savedAt': now, 'snapshot': snapshot, 'resourceRefs': [],
+                      'headRevision': revision, 'lifecycleRevision': 0, 'savedAt': now, 'snapshot': snapshot, 'resourceRefs': [],
                       'validation': {'scope': 'local_plane_unbound', 'bindingIssues': []}}
             self._finish(db, actor, 'create', request_id, digest, result)
             validate_resources(json.loads(_json(snapshot)))
@@ -1131,7 +1182,7 @@ class SceneLibrary:
         authorize(); _json(body)
         required = {'sceneId', 'expectedSceneRevision', 'clientRequestId', 'snapshot',
                     'reviewedEngineering', 'rootBindingChanges'}
-        _require(type(body) is dict and required <= set(body) <= required | {'spatialChange','environmentWriteVersion','sceneInfoWriteVersion'})
+        _require(type(body) is dict and required <= set(body) <= required | {'spatialChange','environmentWriteVersion','sceneInfoWriteVersion','expectedLifecycleRevision'})
         actor, request_id, scene_id = _text(actor), _uuid(body['clientRequestId']), _uuid(body['sceneId'])
         base_revision = _text(body['expectedSceneRevision'])
         if not callable(engineering_check):
@@ -1161,6 +1212,7 @@ class SceneLibrary:
                 return prior
             scene = self._scope(db, scene_id)
             _require(scene['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
+            self._expected_lifecycle(body, scene)
             row = self._revision(db, scene_id, base_revision)
             previous = validate_snapshot(json.loads(row['snapshot']), geographic=True, engineering=callable(engineering_check))
             environment_write(body, previous)
@@ -1225,7 +1277,9 @@ class SceneLibrary:
             if prior is not None:
                 self._scope(db, scene_id); authorize()
                 return prior
-            _require(self._scope(db, scene_id)['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
+            current_scene = self._scope(db, scene_id)
+            _require(current_scene['head_revision'] == base_revision, 'SCENE_CHANGED', 409)
+            self._expected_lifecycle(body, current_scene)
             current = self._revision(db, scene_id, base_revision)
             _require(_digest(json.loads(current['snapshot'])) == _digest(previous), 'SCENE_CHANGED', 409)
             if replacing:
@@ -1277,6 +1331,7 @@ class SceneLibrary:
                         for item in db.execute('select * from scene_terrain_uses where revision=? order by terrain_version_id', (row['revision'],))]
             result = {'sceneId': scene['id'], 'projectCode': self.project_code,
                       'sceneRevision': row['revision'], 'headRevision': scene['head_revision'],
+                      'lifecycleRevision': scene['lifecycle_revision'],
                       'savedAt': row['saved_at'], 'snapshot': snapshot,
                       'resourceRefs': json.loads(row['resource_refs']),
                       'validation': spatial, 'heightProvenance': provenance, 'terrainRefs': terrains}
@@ -1318,16 +1373,17 @@ class SceneLibrary:
         except (ValueError, TypeError, UnicodeError):
             raise PreviewError(422, 'INVALID_REQUEST') from None
 
-    def listing(self, actor, authorize: Authorize, *, access_revision, q='', cursor=None, limit=50):
+    def listing(self, actor, authorize: Authorize, *, access_revision, q='', cursor=None, limit=50, state='active'):
         actor, access_revision = _text(actor), _text(access_revision)
         _require(callable(authorize)); authorize()
         _require(type(q) is str and len(q) <= 200 and type(limit) is int and 1 <= limit <= 100)
+        _require(state in ('active', 'deleted'))
         query = q.strip()
         with self.library.connect() as db:
             db.execute('begin')
             revision, key = self._catalog(db)
             context = {'kind': 'scenes', 'project': self.project_code, 'actor': actor,
-                       'accessRevision': access_revision, 'q': query, 'limit': limit}
+                       'accessRevision': access_revision, 'q': query, 'limit': limit, 'state': state}
             last = None
             if cursor is not None:
                 page = self._uncursor(cursor, key)
@@ -1337,18 +1393,23 @@ class SceneLibrary:
                 last = page['last']
                 _require(type(last) is list and len(last) == 2)
                 _text(last[0]); _uuid(last[1])
-            params = [self.project_code, query]
-            where = 'project_code=? and instr(lower(display_name),lower(?))>0'
+            params = [self.project_code, query, state]
+            where = 'project_code=? and instr(lower(display_name),lower(?))>0 and scene_state=?'
             if last:
                 where += ' and (updated_at<? or (updated_at=? and id>?))'
                 params.extend([last[0], last[0], last[1]])
-            rows = db.execute('select * from scenes where ' + where + ' order by updated_at desc,id asc limit ?',
+            rows = db.execute('''select * from (select s.*,coalesce(l.state,'active') scene_state,
+                              coalesce(l.revision,0) lifecycle_revision,l.changed_at from scenes s
+                              left join scene_lifecycle l on l.scene_id=s.id) where '''
+                              + where + ' order by updated_at desc,id asc limit ?',
                               (*params, limit + 1)).fetchall()
             visible = rows[:limit]
             next_cursor = self._cursor({**context, 'revision': revision,
                                         'last': [visible[-1]['updated_at'], visible[-1]['id']]}, key) if len(rows) > limit else None
             result = {'items': [{'sceneId': row['id'], 'displayName': row['display_name'],
                                  'headRevision': row['head_revision'], 'updatedAt': row['updated_at'],
+                                 'state': row['scene_state'], 'lifecycleRevision': row['lifecycle_revision'],
+                                 'deletedAt': row['changed_at'] if state == 'deleted' else None,
                                  'instanceCount': row['instance_count']} for row in visible],
                       'snapshotRevision': revision, 'nextCursor': next_cursor, 'capabilities': self.capabilities()}
             authorize()
@@ -1379,13 +1440,14 @@ class SceneLibrary:
                 _require(all(page[name] == value for name, value in context.items()))
                 _require(page['revision'] == revision, 'SNAPSHOT_EXPIRED', 409)
                 last = _uuid(page['last'])
-            grouped = '''select s.id,s.display_name,
-                    count(distinct case when r.revision=s.head_revision then u.instance_id end) current_instances,
-                    count(distinct case when r.revision!=s.head_revision then u.instance_id end) retained_instances,
-                    sum(case when r.revision!=s.head_revision then 1 else 0 end) retained_refs
+            grouped = '''select s.id,s.display_name,coalesce(l.state,'active') scene_state,
+                    count(distinct case when r.revision=s.head_revision and coalesce(l.state,'active')='active' then u.instance_id end) current_instances,
+                    count(distinct case when r.revision!=s.head_revision or l.state='deleted' then u.instance_id end) retained_instances,
+                    sum(case when r.revision!=s.head_revision or l.state='deleted' then 1 else 0 end) retained_refs
                 from scene_resource_uses u join scene_revisions r on r.revision=u.revision
                 join scenes s on s.id=r.scene_id
-                where s.project_code=? and u.model_version_id=? group by s.id,s.display_name'''
+                left join scene_lifecycle l on l.scene_id=s.id
+                where s.project_code=? and u.model_version_id=? group by s.id,s.display_name,l.state'''
             condition = {'current': 'current_instances>0', 'retained': 'retained_refs>0',
                          'current_or_retained': '1=1'}[scope]
             total_current, total_retained, total_retained_refs = db.execute(
@@ -1404,6 +1466,7 @@ class SceneLibrary:
                       'retainedInstanceCount': total_retained,
                       'retainedReferenceCount': total_retained_refs,
                       'items': [{'sceneId': row['id'], 'displayName': row['display_name'],
+                                 'sceneState': row['scene_state'],
                                  'currentInstanceCount': row['current_instances'],
                                  'retainedInstanceCount': row['retained_instances'],
                                  'retainedReferenceCount': row['retained_refs']} for row in visible],

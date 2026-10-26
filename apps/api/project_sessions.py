@@ -230,7 +230,7 @@ class ProjectSessions(UserSessions):
 
     def _empty(self, path, row, access, payload):
         body = {k: v for k, v in payload.items() if k != 'expectedSessionRevision'}
-        allowed = {'/api/workbench/scenes': {'q', 'cursor', 'limit'},
+        allowed = {'/api/workbench/scenes': {'q', 'cursor', 'limit', 'state'},
             '/api/workbench/resources/models': {'q', 'purpose', 'cursor', 'limit', 'expectedLibraryRevision'},
             '/api/workbench/resources/models/legacy': set(), '/api/workbench/terrains': {'q', 'cursor', 'limit'},
             '/api/workbench/imagery': {'q'}, '/api/workbench/scenes/legacy-migration/entry': {'sourceKind', 'sourceKey'}}
@@ -243,9 +243,12 @@ class ProjectSessions(UserSessions):
                 raise PreviewError(409, 'SNAPSHOT_EXPIRED')
         can_write = access.get('role') == 'admin'
         if path == '/api/workbench/scenes':
+            if payload.get('state', 'active') not in ('active', 'deleted'):
+                raise PreviewError(422, 'INVALID_REQUEST')
             return {'items': [], 'nextCursor': None, 'snapshotRevision': 'scenes:empty',
                 'capabilities': {**SceneLibrary.capabilities(geographic=bool(self.options.get('terrain_python')), engineering=True),
-                    'scope': 'project_scenes', 'canRead': True, 'canWrite': can_write, 'sceneInfoWriteVersion': 1},
+                    'scope': 'project_scenes', 'canRead': True, 'canWrite': can_write, 'sceneInfoWriteVersion': 1,
+                    'sceneLifecycleWriteVersion': 1},
                 'limits': {'maxInstances': MAX_INSTANCES, 'maxComponentBindings': MAX_COMPONENT_BINDINGS,
                     'maxSaveJsonBytes': MAX_SCENE_BYTES, 'maxCheckJsonBytes': MAX_SCENE_BYTES,
                     'maxReadJsonBytes': 16384, 'maxNameCharacters': 200, 'maxLocalCoordinateM': MAX_COORDINATE_M}}
@@ -300,13 +303,14 @@ class ProjectSessions(UserSessions):
         access = self._access(sid, row, code)
         clean = {k: v for k, v in payload.items() if k != 'projectRef'}
         writing = method.endswith('upload') or method == 'imagery_chunk' or path == '/api/workbench/imagery/uploads/complete' or path.endswith(('/create', '/save', '/calibrate', '/import-existing',
-            '/preserve-legacy-display', '/ensure', '/binding', '/cancel', '/start', '/activate'))
+            '/preserve-legacy-display', '/ensure', '/binding', '/cancel', '/start', '/activate', '/delete', '/restore'))
         if writing and access.get('role') != 'admin':
             raise PreviewError(403, 'SCENE_WRITE_FORBIDDEN' if '/scenes' in path or '/terrains' in path or '/public-geodata/' in path
                                else 'IMAGERY_WRITE_FORBIDDEN' if '/imagery' in path else 'MODEL_WRITE_FORBIDDEN')
         workspace = self.registry.lookup(code)
         if workspace is None and writing and path not in ('/api/workbench/imagery/uploads/chunk',
-                '/api/workbench/imagery/uploads/complete', '/api/workbench/imagery/uploads/cancel'):
+                '/api/workbench/imagery/uploads/complete', '/api/workbench/imagery/uploads/cancel',
+                '/api/workbench/scenes/delete', '/api/workbench/scenes/restore'):
             workspace = self.registry.prepare(code)
         if method == 'scene_object_request' or path == '/api/workbench/catalog':
             if code not in self.readers:
