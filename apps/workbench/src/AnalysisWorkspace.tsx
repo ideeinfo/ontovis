@@ -280,7 +280,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
       </div>}
       {uncertain&&<div className="ad-alert" role="status">{t('保存结果尚未确认。重试会使用同一请求，避免重复创建。','Save result is unknown. Retry reuses the same request.')}</div>}
       {draft?<>
-        <header className="ad-heading"><IconBtn label={t('返回列表','Back to list')} disabled={busy} onClick={()=>change(()=>{setDraft(null);setReceipt(null);setSaved('');})}><ArrowLeft size={16}/></IconBtn>
+        <header className="ad-heading"><IconBtn label={t('返回列表','Back to list')} disabled={busy} onClick={()=>change(()=>{setDraft(null);setReceipt(null);setSaved('');setLeft('list');})}><ArrowLeft size={16}/></IconBtn>
           <input aria-label={t('分析名称','Analysis title')} maxLength={120} value={draft.title} disabled={!editable} onChange={event=>apply({...draft,title:event.target.value})}/>
           <select aria-label={t('分析进度','Analysis progress')} value={draft.status} disabled={!editable} onChange={event=>apply({...draft,status:event.target.value as CanvasSnapshot['status']})}>{statuses.map(([value,zh,eng])=><option key={value} value={value}>{t(zh,eng)}</option>)}</select>
           <small aria-live="polite">{busy?t('处理中…','Working…'):dirty?t('未保存','Unsaved'):notice||t('已保存','Saved')}{receipt?' · r'+receipt.analysisRevision:''}</small>
