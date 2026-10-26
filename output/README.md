@@ -1,5 +1,7 @@
 # 本机交付与验证输出
 
+- [模型目录、基本信息编辑与39项名称清理](model-info-20261026/README.md)
+
 所有本机 HTML、截图、归档和中间脚本放入 output/<任务>-YYYYMMDD/；过程文件放 _work/。除本文件外不入 Git。维护中的产品设计在 docs/，用户提供的品牌资产在 assets/brand/。
 
 - [Q-52首页公开静态缓存、Logo预加载与刷新耗时](q52-home-loading-20261025/README.md)
