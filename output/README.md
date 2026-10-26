@@ -1,5 +1,9 @@
 # 本机交付与验证输出
 
+- [Q-23九类来源画布、完整13001案例与独立复发验收](q23-implementation-20261026/README.md)
+
+- [Q-23详细操作设计与Cognite演示逐步浏览](q23-operation-design-20261026/README.md)
+
 - [项目内模拟故障报警查看入口](simulated-alarms-view-20261026/README.md)
 
 - [Q-23实施准备、固定来源与正式模拟故障数据](q23-readiness-20261026/README.md)
