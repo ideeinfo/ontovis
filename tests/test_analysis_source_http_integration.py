@@ -179,5 +179,5 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             items=[{'key':'model','requestId':str(uuid4()),'sourceKind':'model','selector':body['selector']}])
         with patch.object(AnalysisSourceReader,'resolve',revoked):
             response=self.request(ROOT+'/evidence/register-batch',request)
-        self.assertEqual(response[0],403)
+        self.assertEqual((response[0],response[1]['code']),(409,'ACCESS_CHANGED'))
         self.assertEqual(export_package(self.urls[0]),before)
