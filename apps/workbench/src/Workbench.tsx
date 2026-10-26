@@ -23,6 +23,7 @@ import {LandingPage} from './LandingPage';
 import {ProjectsPanel} from './ProjectsPanel';
 import {ProjectObjects} from './ProjectObjects';
 import type {ProjectAccess,ProjectRef,ProjectSummary} from './projectTypes';
+import {canNavigate,isGlobalPage,workbenchHeader,type WorkbenchPage} from './workbenchNavigation';
 
 const api = new WorkbenchApi();
 const ModelViewport = lazy(() => import('./ModelViewport').then(module => ({default:module.ModelViewport})));
@@ -35,7 +36,7 @@ const navigation = [
   ['scene', 'sceneSettings', Layers], ['orders', 'projectWorkOrders', ClipboardList], ['analysis', 'analysisDrafts', GitBranch], ['data', 'dataAlarms', Database],
   ['ai', 'aiPolicy', Sparkles], ['audit', 'evidenceAudit', FileClock],
 ] as const;
-type Page = 'project' | 'models' | 'bindings' | 'hierarchy' | 'scene' | 'orders' | 'analysis';
+type Page = WorkbenchPage;
 export function Workbench() {
   const {t, locale, theme, setTheme, setLocale} = usePreferences();
   const [session, setSession] = useState<SessionView | null>(null);
@@ -81,7 +82,7 @@ export function Workbench() {
   const [pendingOrderLeave,setPendingOrderLeave]=useState<(()=>void)|null>(null);
   function leaveOrders(change:()=>void){if((page==='orders'||page==='analysis')&&ordersDirty)setPendingOrderLeave(()=>change);else change();}
   function navigate(next:Page,legacyVersionId:string|null=null){
-    if(next!=='project'&&next!=='models'&&!project)next='project';
+    if(!canNavigate(next,!!project))next='project';
     if(next==='bindings'&&legacyVersionId===null)next='scene';
     const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setResourceSceneId(undefined);setLegacyReady(null);
       api.selectProject(next==='models'?null:project?.projectRef||null);setError(null);
@@ -243,11 +244,12 @@ export function Workbench() {
     ['signedOut','expired'].includes(session.state)&&!mustSignOut.current&&!signingIn&&!signingOut;
   const location = modelLocation(detail,model);
   const host = bindingNeedsReview(detail,model) ? t('bindingChanged') : location ? location.mode === 'ancestor' ? t('ancestor') : location.binding.geometryQuality === 'proxy_schematic' ? t('proxy') : t('candidate') : !!model && detail?.item.entityUid === model.rootEntityUid ? t('modelReady') : t('unlocated');
-  const title = navigation.find(row => row[0] === page)![1];
+  const [,title,ModuleIcon] = navigation.find(row => row[0] === page)!;
+  const header=workbenchHeader(page,t(title),projectName||project?.displayName||'');
   const workspace = page === 'bindings';
   return <>{!active&&<LandingPage onLogin={()=>void openLogin()} videoSrc={import.meta.env.VITE_LOGIN_VIDEO_SRC} posterSrc={import.meta.env.VITE_LOGIN_POSTER_SRC} suspended={modal==='login'} loginButtonRef={loginButton}/>}{active&&<div className="ov-app ov-compact">
     <header className="cw-header"><a className="cw-brand" href="#project" onClick={event => {event.preventDefault();navigate('project');}} aria-label="ONTOVis"><img src={logo} alt="ONTOVis 本源数智" fetchPriority="high"/></a><span className="cw-divider"/>
-      {page==='models'?<span className="cw-project"><Boxes size={15}/><span>{locale==='zh'?'共享模型库':'Shared model library'}</span></span>:<button className="cw-project" type="button" onClick={() => navigate('project')}><Building2 size={15}/><span>{projectName || t('workbench')}</span><ChevronDown size={12}/></button>}<span className="cw-grow"/>
+      {isGlobalPage(page)?<span className="cw-project" title={header}><ModuleIcon size={15}/><span>{header}</span></span>:<button className="cw-project" type="button" title={header} onClick={() => navigate('project')}><ModuleIcon size={15}/><span>{header}</span><ChevronDown size={12}/></button>}<span className="cw-grow"/>
       {active ? <Dropdown.Root><Dropdown.Trigger asChild><button type="button" className="cw-avatar" aria-label={t('account')}>{session?.username?.slice(0,2).toUpperCase() || <User size={16}/>}</button></Dropdown.Trigger><Dropdown.Portal><Dropdown.Content className="cw-menu ov-list-menu" align="end" sideOffset={8}>
         <div className="cw-user-info"><strong>{session?.username}</strong><span className="cw-caption">{projectName}</span></div>
         <Dropdown.Item className="ov-list-menu-item" onSelect={() => setModal('account')}><User size={15}/>{t('account')}</Dropdown.Item><Dropdown.Separator className="ov-list-menu-separator"/>
@@ -258,7 +260,7 @@ export function Workbench() {
     </header>
     <div className="cw-shell"><nav className="cw-navigation" data-expanded={navExpanded} aria-label={t('projectManagement')} onKeyDown={event => {if (event.key === 'Escape' && navExpanded) {setNavExpanded(false);event.currentTarget.querySelector<HTMLButtonElement>('.cw-nav-toggle')?.focus();}}}>
       <div className="cw-nav-header"><span className="cw-nav-heading">{t('projectManagement')}</span><button type="button" className="cw-nav-toggle" aria-label={t(navExpanded ? 'collapseNavigation' : 'expandNavigation')} title={t(navExpanded ? 'collapseNavigation' : 'expandNavigation')} aria-expanded={navExpanded} aria-controls="cw-navigation-items" onClick={() => setNavExpanded(value => !value)}>{navExpanded ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={17}/>}</button></div>
-      <div className="cw-nav-items" id="cw-navigation-items">{navigation.map(([id,label,Icon]) => <button type="button" key={id} className={`cw-nav-item ${page === id ? 'active' : ''}`} aria-label={t(label)} aria-current={page === id ? 'page' : undefined} disabled={!['project','models','bindings','hierarchy','scene','orders','analysis'].includes(id)} title={t(label)} onClick={() => navigate(id as Page)}><Icon size={17} strokeWidth={1.7}/><span>{t(label)}</span></button>)}</div>
+      <div className="cw-nav-items" id="cw-navigation-items">{navigation.map(([id,label,Icon]) => <button type="button" key={id} className={`cw-nav-item ${page === id ? 'active' : ''}`} aria-label={t(label)} aria-current={page === id ? 'page' : undefined} disabled={!canNavigate(id,!!project)} title={t(label)} onClick={() => {if(canNavigate(id,!!project))navigate(id);}}><Icon size={17} strokeWidth={1.7}/><span>{t(label)}</span></button>)}</div>
     </nav>
       <main className="cw-main"><div className="cw-toolbar">{workspace && <IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn>}<div className="cw-page-title"><span className="cw-breadcrumb">{t('projectManagement')}<ChevronRight size={11}/>{t(title)}</span><h1>{t(title)}</h1></div>{workspace && <><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}</>}<span className="cw-grow"/>{workspace && <div className="cw-layout" role="group" aria-label={t('workbenchLayout')}>{(['balanced','modelLayout','drawingLayout'] as const).map(value => <button type="button" key={value} aria-pressed={layout === value} className={layout === value ? 'active' : ''} onClick={() => setLayout(value)}>{t(value)}</button>)}</div>}<IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn>{workspace && <IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn>}</div>
       {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}</div>}

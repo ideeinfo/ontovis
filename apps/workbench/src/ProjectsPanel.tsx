@@ -34,7 +34,7 @@ export function ProjectsPanel({api,onSelect}:{api:WorkbenchApi;onSelect:(project
     try{const next=await api.request<ProjectDirectory>('/api/workbench/projects',{q:query,cursor:value.nextCursor});setValue({...next,items:[...value.items,...next.items]});}
     catch(error){if(!cancelled(error))setError(error);}finally{setBusy(false);}
   }
-  return <section className="pv-directory" aria-label={en?'Projects and access':'项目与访问'}>
+  return <section className="pv-directory" aria-label={en?'Project center':'项目中心'}>
     <div className="pv-heading"><div><h2>{en?'OntoBase projects':'OntoBase 项目'}</h2><p>{en?'Choose a project to manage its scenes and model resources.':'选择项目，管理该项目的场景和模型资源。'}</p></div><form onSubmit={event=>{event.preventDefault();setAttempt(v=>v+1);}}><label><Search size={15}/><input aria-label={en?'Search projects':'搜索项目'} placeholder={en?'Project name or code':'项目名称或代码'} value={query} onChange={event=>setQuery(event.target.value)}/></label><Btn disabled={busy} onClick={()=>setAttempt(v=>v+1)}>{en?'Search':'搜索'}</Btn></form></div>
     {error?<p role="alert">{failureMessage(error,locale)} <Btn onClick={()=>setAttempt(v=>v+1)}>{en?'Retry':'重试'}</Btn></p>:null}
     {!value&&!error&&<p role="status">{en?'Loading projects…':'正在读取项目…'}</p>}
