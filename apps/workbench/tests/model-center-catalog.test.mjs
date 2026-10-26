@@ -28,6 +28,7 @@ export async function load(url,context,next){
 
 const {ProjectModelCenter}=await import('../src/ProjectModelCenter.tsx');
 const {ResourcePanel}=await import('../src/ResourcePanel.tsx');
+const {ModelBasicInfo}=await import('../src/ModelBasicInfo.tsx');
 const {PreferencesProvider}=await import('../src/Preferences.tsx');
 
 function render(Component,props={},locale='zh'){
@@ -62,4 +63,13 @@ test('scene resource sidebar retains its compact placement controls instead of t
  const html=render(ResourcePanel,{canPlace:false,onPlace(){},onPreview(){},onTerrainReady(){}});
  assert.doesNotMatch(html,/pm-model-browser|pm-view-switch|aria-label="模型分类"/);
  assert.match(html,/<select[^>]+aria-label="用途"/);
+});
+test('model basic information renders current fields and exposes editing only to maintainers',()=>{
+ const version={displayName:'Synthetic model',assetRevision:'asset:fixture:2',purpose:'equipment',description:'Saved description'};
+ for(const canEdit of [true,false]){
+  const html=render(ModelBasicInfo,{version,canEdit,onUpdated(){},onWriteDenied(){},onPrivateDenied(){}});
+  assert.match(html,/Synthetic model/);assert.match(html,/Saved description/);
+  assert.equal(html.includes('>编辑</button>'),canEdit);
+  assert.doesNotMatch(html,/<form\b/,'Reading basic information does not open an editor');
+ }
 });

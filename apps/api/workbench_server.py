@@ -219,6 +219,7 @@ class WorkbenchSessions(UserSessions):
         value['capabilities'] = {'scope': getattr(self, 'model_scope', 'project_static_glb_resources'), 'canRead': True,
             'canUpload': access.get('role') == 'admin', 'canCalibrate': access.get('role') == 'admin',
             'canWriteMetadata': access.get('role') == 'admin',
+            'canEditInfo': access.get('role') == 'admin',
             'canGenerateThumbnails': self.thumbnails is not None and access.get('role') == 'admin',
             'calibrationRequiredForGeographicPlacement': True, 'automaticLegacyAdoption': False}
         limits = ProjectModelLibrary.capabilities()
@@ -247,7 +248,8 @@ class WorkbenchSessions(UserSessions):
     def resource_request(self, sid, path, payload):
         writing = path in ('/api/workbench/resources/model/calibrate', '/api/workbench/resources/model/import-existing',
                            '/api/workbench/resources/model/preserve-legacy-display',
-                           '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/thumbnail/ensure')
+                           '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/info/save',
+                           '/api/workbench/resources/model/thumbnail/ensure')
         row, authorize, access, actor = self.resource_authorization(sid, payload,
             writing=writing, read_capabilities=not path.endswith('/content'))
         if self.project_models is None or self.scenes is None:
@@ -270,6 +272,8 @@ class WorkbenchSessions(UserSessions):
             value = self.model_inspection.read(body, authorize)
         elif path == '/api/workbench/resources/model/metadata/save':
             value = self.model_metadata.save(body, actor, authorize)
+        elif path == '/api/workbench/resources/model/info/save':
+            value = self.project_models.save_info(body, actor, authorize)
         elif path in ('/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',
                       '/api/workbench/resources/model/thumbnail/content'):
             if self.thumbnails is None: raise PreviewError(503, 'THUMBNAIL_UNAVAILABLE')

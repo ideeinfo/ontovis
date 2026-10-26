@@ -20,7 +20,7 @@ const writeOnlyDenials: Record<string, readonly string[]> = {
     '/api/workbench/imagery/uploads/chunk','/api/workbench/imagery/uploads/complete','/api/workbench/imagery/uploads/cancel'],
   MODEL_WRITE_FORBIDDEN: ['/api/workbench/models/upload', '/api/workbench/models/binding',
     '/api/workbench/resources/model/upload', '/api/workbench/resources/model/calibrate',
-    '/api/workbench/resources/model/import-existing', '/api/workbench/resources/model/thumbnail/ensure', '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/preserve-legacy-display'],
+    '/api/workbench/resources/model/import-existing', '/api/workbench/resources/model/info/save', '/api/workbench/resources/model/thumbnail/ensure', '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/preserve-legacy-display'],
   SCENE_WRITE_FORBIDDEN: ['/api/workbench/scenes/create', '/api/workbench/scenes/save',
     '/api/workbench/scenes/delete', '/api/workbench/scenes/restore',
     '/api/workbench/terrains/upload', '/api/workbench/terrains/job/cancel',

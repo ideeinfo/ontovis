@@ -130,6 +130,16 @@ class ProjectModelLibrary:
                     payload_sha256 text not null, created_at text not null);
                 create table if not exists project_model_catalog (
                     id integer primary key check(id=1), cursor_secret text not null);
+                create table if not exists project_model_info_revisions (
+                    id text primary key, asset_id text not null references project_model_assets(id),
+                    asset_revision integer not null, name text not null, purpose text not null,
+                    description text not null, previous_info text not null,
+                    actor text not null, created_at text not null,
+                    unique(asset_id,asset_revision));
+                create trigger if not exists project_model_info_no_update before update on project_model_info_revisions
+                    begin select raise(abort, 'immutable model information'); end;
+                create trigger if not exists project_model_info_no_delete before delete on project_model_info_revisions
+                    begin select raise(abort, 'retained model information'); end;
                 create trigger if not exists project_model_version_no_update before update on project_model_versions
                     begin select raise(abort, 'immutable project model version'); end;
                 create trigger if not exists project_model_version_no_delete before delete on project_model_versions
@@ -161,7 +171,57 @@ class ProjectModelLibrary:
             join project_model_assets a on a.id=p.asset_id where v.id=? and a.project_code=?''',
             (_uuid(identifier), self.project_code)).fetchone()
         _require(row is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
-        return self._public(row)
+        value = self._public(row)
+        return {**value, 'versionDisplayName': value['displayName'],
+                **self._info(db, self._asset(db, value['modelAssetId']))}
+
+    @staticmethod
+    def _info(db, asset):
+        latest = db.execute('''select description from project_model_info_revisions
+            where asset_id=? order by asset_revision desc limit 1''', (asset['id'],)).fetchone()
+        return {'displayName': asset['name'], 'purpose': asset['purpose'],
+                'description': latest['description'] if latest else '',
+                'assetRevision': 'asset:' + asset['id'] + ':' + str(asset['revision'])}
+
+    def save_info(self, body, actor, authorize):
+        _fields(body, ('modelAssetId', 'modelVersionId', 'expectedAssetRevision', 'clientRequestId',
+                       'displayName', 'purpose', 'description'))
+        actor = _text(actor); _require(callable(authorize)); authorize()
+        for key in ('modelAssetId', 'modelVersionId', 'clientRequestId'): _uuid(body[key])
+        _text(body['expectedAssetRevision']); name = _text(body['displayName'], 200)
+        _require(isinstance(body['purpose'], str) and body['purpose'] in PURPOSES)
+        description = body['description']
+        _require(isinstance(description, str) and len(description) <= 2000
+                 and all(ord(char) >= 32 or char in '\n\r\t' for char in description))
+        digest = hashlib.sha256(_canonical(body).encode()).hexdigest()
+        with self.library.connect() as db:
+            db.execute('begin immediate')
+            prior = self._prior(db, actor, 'update_info', body['clientRequestId'], digest)
+            if prior is not None:
+                authorize()
+                return prior
+            asset = self._asset(db, body['modelAssetId'])
+            version = self._version(db, body['modelVersionId'])
+            _require(version['modelAssetId'] == asset['id'], 'NOT_FOUND_OR_FORBIDDEN', 404)
+            previous = self._info(db, asset)
+            _require(previous['assetRevision'] == body['expectedAssetRevision'], 'MODEL_ASSET_CHANGED', 409)
+            authorize()
+            now = _now()
+            db.execute('''insert into project_model_info_revisions values (?,?,?,?,?,?,?,?,?)''',
+                (str(uuid4()), asset['id'], asset['revision'] + 1, name, body['purpose'], description,
+                 _canonical(previous), actor, now))
+            db.execute('update project_model_assets set name=?,purpose=?,revision=revision+1 where id=?',
+                       (name, body['purpose'], asset['id']))
+            db.execute('update library set revision=revision+1 where id=1')
+            value = {**self._version(db, body['modelVersionId']), 'libraryRevision': self.library.revision(db)}
+            db.execute('insert into project_model_requests values (?,?,?,?,?,?)',
+                (self.project_code, actor, 'update_info', body['clientRequestId'], digest, _canonical(value)))
+            db.execute('''insert into project_model_audit
+                (project_code,actor,action,request_id,version_id,payload_sha256,created_at) values (?,?,?,?,?,?,?)''',
+                (self.project_code, actor, 'update_info', body['clientRequestId'], body['modelVersionId'], digest, now))
+            authorize()
+            db.commit()
+            return value
 
     @staticmethod
     def _public(row):
@@ -264,9 +324,8 @@ class ProjectModelLibrary:
                 versions = db.execute('''select v.*,p.asset_id,p.content_revision,p.calibration,p.source_version_id
                     from versions v join project_model_versions p on p.version_id=v.id where p.asset_id=?
                     order by v.created_at desc,v.id''', (row['id'],)).fetchall()
-                items.append({'modelAssetId': row['id'], 'displayName': row['name'], 'purpose': row['purpose'],
-                    'assetRevision': 'asset:' + row['id'] + ':' + str(row['revision']),
-                    'versions': [{key: item for key, item in self._public(version).items()
+                items.append({'modelAssetId': row['id'], **self._info(db, row),
+                    'versions': [{key: item for key, item in {**self._public(version), 'displayName': row['name']}.items()
                                   if key not in ('report', 'components', 'calibration', 'sourceNote')}
                                  for version in versions]})
             next_cursor = self._cursor(db, {**expected, 'offset': offset + limit}) if len(rows) > limit else None

@@ -45,6 +45,22 @@ class SharedModelTests(unittest.TestCase):
             expectedSceneRevision=scene['sceneRevision'], snapshot=snapshot, clientRequestId=str(uuid4()),
             reviewedEngineering=[], rootBindingChanges=[], sceneInfoWriteVersion=1)
 
+    def test_shared_basic_info_is_editable_by_maintainer_and_readable_without_project(self):
+        model = self.calibrated()
+        body = {'modelAssetId': model['modelAssetId'], 'modelVersionId': model['modelVersionId'],
+            'expectedAssetRevision': model['assetRevision'], 'clientRequestId': str(uuid4()),
+            'displayName': 'Shared edited model', 'purpose': 'equipment', 'description': 'Shared description'}
+        value = self.resource('model/info/save', **body)
+        self.assertEqual(value['displayName'], 'Shared edited model')
+        self.assertNotIn('projectRef', value)
+        self.assertEqual(self.resource('models')['items'][0]['displayName'], value['displayName'])
+        ProjectsAuthority.permissions['member'] = {}
+        self.assertFalse(self.resource('models')['capabilities']['canEditInfo'])
+        self.assertEqual(self.resource('model', modelAssetId=model['modelAssetId'],
+            modelVersionId=model['modelVersionId'])['description'], value['description'])
+        self.assertCode('MODEL_WRITE_FORBIDDEN', lambda: self.resource('model/info/save', **body))
+        self.assertEqual(self.sessions.inspect(self.sid)['state'], 'active')
+
     def test_login_without_project_can_read_shared_models_but_not_write(self):
         model = self.calibrated()
         catalog = self.resource('models')

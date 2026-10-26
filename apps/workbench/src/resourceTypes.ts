@@ -32,6 +32,7 @@ export interface ProjectModelVersion {
   calibrationState: 'unverified' | 'verified' | 'legacy_display'; canPlace: boolean; canPlaceGeographic: boolean;
   report: ProjectModelReport; components: ProjectModelComponent[]; sourceModelVersionId: string | null;
   thumbnail?:ModelThumbnailInfo;
+  assetRevision?:string; purpose?:ModelPurpose; description?:string; versionDisplayName?:string;
 }
 export interface ModelThumbnailInfo {
   state:'missing'|'queued'|'processing'|'ready'|'failed';thumbnailRevision:string|null;rendererVersion:string;
@@ -42,11 +43,13 @@ export type ProjectModelVersionSummary = Omit<ProjectModelVersion, 'report' | 'c
 export interface ProjectModelAsset {
   modelAssetId: string; displayName: string; purpose: ModelPurpose; assetRevision: string;
   versions: ProjectModelVersionSummary[];
+  description?:string;
 }
 export interface ResourceCapabilities {
   scope: 'project_static_glb_resources'|'shared_static_glb_resources'; canRead: true; canUpload: boolean; canCalibrate: boolean;
   calibrationRequiredForGeographicPlacement: true; automaticLegacyAdoption: false;
   canGenerateThumbnails?:boolean;
+  canEditInfo?:boolean;
 }
 export interface ResourceLimits {
   maxUploadBytes: number; maxVersions: number; maxLibraryBytes: number;
@@ -72,6 +75,10 @@ export interface ImportExistingModelRequest {
 export interface ProjectModelsRequest {q?: string; purpose?: ModelPurpose; cursor?: string | null; expectedLibraryRevision?: string; limit?: number}
 export type ProjectModel = ProjectModelVersion & ResourceResponse;
 export type ProjectModelWrite = ProjectModel & {libraryRevision: string; assetRevision: string};
+export interface ModelInfoRequest {
+  modelAssetId:string;modelVersionId:string;expectedAssetRevision:string;clientRequestId:string;
+  displayName:string;purpose:ModelPurpose;description:string;
+}
 export interface UploadModelMetadata {
   expectedLibraryRevision: string; clientRequestId: string; displayName: string; purpose: ModelPurpose;
   sourceNote: string; rightsDeclared: true; modelAssetId?: string;

@@ -148,7 +148,7 @@ test('restricted uploads reject empty, over-budget and oversized metadata before
 test('write-only endpoint pairs preserve reads; shared model denials stay local', async () => {
   const allowed = {
     ANALYSIS_WRITE_FORBIDDEN:['analysis-sessions/create','analysis-sessions/save','analysis-sessions/restore'],
-    MODEL_WRITE_FORBIDDEN:['models/upload','models/binding','resources/model/upload','resources/model/calibrate'],
+    MODEL_WRITE_FORBIDDEN:['models/upload','models/binding','resources/model/upload','resources/model/calibrate','resources/model/info/save'],
     SCENE_WRITE_FORBIDDEN:['scenes/create','scenes/save','scenes/delete','scenes/restore','terrains/upload','terrains/job/cancel','public-geodata/start','public-geodata/cancel'],
   };
   for (const [code, paths] of Object.entries(allowed)) {

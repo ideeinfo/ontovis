@@ -158,6 +158,14 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     onModelSelected?.({modelAssetId:value.modelAssetId,modelVersionId:value.modelVersionId});
     setCatalog(previous=>previous?{...previous,libraryRevision:value.libraryRevision}:previous);void readCatalog();
   }
+  function infoUpdated(value:ProjectModelWrite) {
+    setVersion(value);
+    setCatalog(previous=>previous?{...previous,libraryRevision:value.libraryRevision,
+      items:previous.items.map(asset=>asset.modelAssetId===value.modelAssetId?{...asset,
+        displayName:value.displayName,purpose:value.purpose||asset.purpose,description:value.description,
+        assetRevision:value.assetRevision,versions:asset.versions.map(item=>({...item,displayName:value.displayName}))}:asset)}:previous);
+    if(modelsOnly)onPreview(value);
+  }
   async function updateFormLibrary() {
     const revision=await readCatalog();
     if(revision){setUpload(previous=>previous?{...previous,revision}:previous);setUploadError(null);setNotice(t('libraryUpdated'));}
@@ -232,9 +240,10 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
                 event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:asset.modelAssetId,modelVersionId:choice.modelVersionId}));
               }} onClick={()=>void activateCard(asset,'place')}><MapPin size={14}/>{t('place')}</Btn>}
           </div>}
-          <details className="ov-resource-disclosure ov-resource-card-history"><summary>{modelsOnly&&catalogView==='list'?text('版本与更新','Versions and updates'):resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><p className="ov-resource-caption">{t('modelVersionHint')}</p><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{const id=event.target.value;if(modelsOnly&&id)void activateCard(asset,'preview',id);else{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,id);}}}><option value="">{t('chooseVersion')}</option>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>
           {waiting&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
           {active&&version&&detailVersion&&(!modelsOnly||detailsTarget)&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} hidePreview={modelsOnly} key={detailVersion.modelVersionId} api={client} version={detailVersion} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
+            versions={<details className="ov-resource-disclosure"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{const id=event.target.value;if(modelsOnly&&id)void activateCard(asset,'preview',id);else{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,id);}}}>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>}
+            canEditInfo={catalog?.capabilities.canEditInfo===true&&!denied} onInfoUpdated={infoUpdated}
             canReplace={canReplace&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
             onOpenScene={onOpenScene} onPreview={()=>onPreview(version)} onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
             canGenerateThumbnail={catalog?.capabilities.canGenerateThumbnails===true&&!denied} onThumbnailUpdated={thumbnailUpdated}

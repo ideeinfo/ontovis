@@ -1,4 +1,6 @@
 import {ModelResourceMetadata} from './ModelMetadataDetails';
+import {ModelBasicInfo} from './ModelBasicInfo';
+import type {ReactNode} from 'react';
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {Eye, MapPin} from 'lucide-react';
 import {cancelled} from './api';
@@ -17,10 +19,11 @@ interface Props {
   onOpenScene?:(sceneId:string,projectRef?:ProjectRef)=>void;
   onRefreshLibrary: () => Promise<string|null>;
   canGenerateThumbnail?:boolean;onThumbnailUpdated?:(sha256:string,value:ModelThumbnailInfo)=>void;
+  versions?:ReactNode;canEditInfo?:boolean;onInfoUpdated?:(value:ProjectModelWrite)=>void;
 }
 
 export function ResourceDetails({api, version, libraryRevision, canPlace, canCalibrate,
-    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, hidePreview=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary,canGenerateThumbnail=false,onThumbnailUpdated}: Props) {
+    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, hidePreview=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary,canGenerateThumbnail=false,onThumbnailUpdated,versions,canEditInfo=false,onInfoUpdated}: Props) {
   const {locale} = usePreferences(), t = (key: Parameters<typeof resourceText>[1]) => resourceText(locale,key);
   const [uses,setUses] = useState<ModelUses|null>(null), [usesOpen,setUsesOpen] = useState(false);
   const [usesBusy,setUsesBusy] = useState(false), [usesError,setUsesError] = useState<unknown>(null);
@@ -92,6 +95,9 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
   return <section className="ov-resource-details" aria-label={version.displayName}>
     {!compact&&<div className="ov-resource-title"><strong>{version.displayName}</strong><Badge tone={version.calibrationState==='verified'?'success':'warning'}>{t(resourceCalibrationKey(version.calibrationState))}</Badge></div>}
     {version.components.some(item=>item.geometryQuality==='proxy_schematic')&&<p className="ov-resource-caption">{t('proxyGeometry')}</p>}
+    <ModelBasicInfo api={api} version={version} canEdit={canEditInfo}
+      onUpdated={onInfoUpdated||onUpdated} onWriteDenied={onWriteDenied} onPrivateDenied={onPrivateDenied}/>
+    {versions}
     <div className="ov-resource-actions">
       {!compact&&<>{!hidePreview&&<Btn onClick={onPreview}><Eye size={14}/>{t('preview')}</Btn>}
       {!hidePlacement&&<Btn primary disabled={!canPlace||!usable} title={!usable?placementHint:!canPlace?t('sceneEditRequired'):t('dragPlace')}

@@ -122,6 +122,7 @@ class WorkbenchDeploymentTests(unittest.TestCase):
                      '/api/workbench/resources/model/thumbnail/extra', '/api/workbench/resources/model/thumbnail/content/',
                      '/api/workbench/resources/model/thumbnail/ensure/extra',
                      '/api/workbench/resources/model/metadata/save/extra', '/api/workbench/resources/model/metadata/save/',
+                     '/api/workbench/resources/model/info/save/extra', '/api/workbench/resources/model/info/save/',
                      '/api/workbench/work-orders/diagnosis-history/extra', '/api/workbench/work-orders/diagnosis-history/',
                      '/api/workbench/work-orders/action/extra', '/api/workbench/work-orders/action/'):
             with self.subTest(path=path), self.assertRaises(AssertionError):

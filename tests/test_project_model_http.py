@@ -295,6 +295,33 @@ class ProjectModelHttpTests(unittest.TestCase):
         self.expect(self.request('/api/workbench/resources/model/upload', raw=b'',
             headers={'Content-Type': 'model/gltf-binary', 'X-Model-Metadata': header, 'Content-Length': str(MAX_BYTES + 1)}), 413, 'MODEL_LIMIT_EXCEEDED')
 
+    def test_model_basic_info_edit_is_versioned_and_persisted_without_a_new_file(self):
+        version = self.new_version(); before = list((self.root / 'private' / 'files').iterdir())
+        body = {key: version[key] for key in ('modelAssetId', 'modelVersionId')}
+        body.update(expectedAssetRevision=version['assetRevision'], clientRequestId=str(uuid4()),
+                    displayName='合成名称修改', purpose='environment', description='测试说明')
+        status, value, _ = self.request('/api/workbench/resources/model/info/save', body)
+        self.assertEqual(status, 200, value)
+        self.assertTrue(value['capabilities']['canEditInfo'])
+        self.assertNotEqual(value['assetRevision'], version['assetRevision'])
+        self.assertEqual(self.model(version)[1]['displayName'], '合成名称修改')
+        self.assertEqual(self.listing({'q': '合成名称修改', 'purpose': 'environment'})[1]['items'][0]['description'], '测试说明')
+        self.assertEqual(self.request('/api/workbench/resources/model/info/save', body)[1], value)
+        self.expect(self.request('/api/workbench/resources/model/info/save', {**body, 'clientRequestId': str(uuid4())}),
+                    409, 'MODEL_ASSET_CHANGED')
+        self.assertEqual(before, list((self.root / 'private' / 'files').iterdir()))
+
+    def test_model_info_route_preserves_auth_scope_and_small_exact_request_boundary(self):
+        path = '/api/workbench/resources/model/info/save'
+        self.expect(self.request(path, client=False), 401, 'SESSION_EXPIRED')
+        reader = self.login('fixture-reader')
+        self.authority(reader).role = 'reader'
+        self.expect(self.request(path, client=reader), 403, 'MODEL_WRITE_FORBIDDEN')
+        self.assertEqual(self.request('/api/session', method='GET', client=reader)[1]['state'], 'active')
+        self.expect(self.request(path, raw=b'x' * 16385), 413, 'INVALID_REQUEST')
+        for suffix in ('/', '/extra'):
+            self.expect(self.request(path + suffix), 404, 'NOT_FOUND')
+
     def test_duplicate_transport_headers_are_rejected_for_old_and_new_uploads(self):
         header = base64.b64encode(json.dumps(self.metadata()).encode()).decode()
         for path in ('/api/workbench/models/upload', '/api/workbench/resources/model/upload'):
