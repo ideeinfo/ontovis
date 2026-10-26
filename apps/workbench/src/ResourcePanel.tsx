@@ -8,6 +8,7 @@ import {usePreferences} from './Preferences';
 import {SceneApi} from './sceneApi';
 import {ResourceDetails} from './ResourceDetails';
 import {ModelThumbnail} from './ModelThumbnail';
+import {RowActions,RowContext,type ListAction} from './ListMenus';
 import type {ProjectRef} from './projectTypes';
 import {TerrainImport} from './TerrainImport';
 import {ImageryPanel} from './ImageryPanel';
@@ -224,7 +225,10 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
           modelSelection?.modelAssetId===asset.modelAssetId?modelSelection.modelVersionId:undefined);
         const usable=!!choice&&choice.canPlace&&(!geographic||choice.canPlaceGeographic);
         const waiting=active&&detailLoading;
-        return <li className={`ov-resource-card ${active?'selected':''}`} key={asset.modelAssetId} aria-label={asset.displayName}>
+        const actions:ListAction[]=[{id:'preview',label:t('preview'),icon:<Eye/>,disabled:waiting,onSelect:()=>void activateCard(asset,'preview')},
+          ...(!modelsOnly?[{id:'place',label:t('place'),icon:<MapPin/>,disabled:!canPlace||!usable||waiting,onSelect:()=>void activateCard(asset,'place')}]:[]),
+          {id:'update-file',opensDialog:true,label:t('appendVersion'),icon:<FileUp/>,disabled:!canUpload,onSelect:()=>openUpload(asset)}];
+        return <RowContext key={asset.modelAssetId} name={asset.displayName} actions={actions}><li className={`ov-resource-card ${active?'selected':''}`} aria-label={asset.displayName}>
           <button type="button" className="ov-resource-card-heading" aria-expanded={modelsOnly?undefined:active}
             aria-label={modelsOnly?`${t('preview')} ${asset.displayName}`:undefined}
             onClick={()=>modelsOnly?void activateCard(asset,'preview'):selectAsset(asset.modelAssetId)}>
@@ -233,13 +237,13 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
             {modelsOnly&&<><span className="pm-meta-purpose">{t(asset.purpose)}</span><span className="pm-meta-versions">{asset.versions.length}</span><span className="pm-meta-size">{choice?`${(choice.bytes/1048576).toFixed(2)} MiB`:'—'}</span><span className="pm-meta-created">{choice?new Date(choice.createdAt).toLocaleDateString(locale):'—'}</span></>}
           </button>
           {!modelsOnly&&<div className="ov-resource-card-actions">
-            <Btn disabled={!choice||waiting} onClick={()=>void activateCard(asset,'preview')}><Eye size={14}/>{t('preview')}</Btn>
             {!modelsOnly&&<Btn disabled={!canPlace||!usable||waiting} title={!usable?t(geographic?'geographicCalibrationRequired':'calibrationRequired'):!canPlace?t('sceneEditRequired'):t('dragPlace')}
               draggable={canPlace&&usable&&!waiting} onDragStart={event=>{
                 if(!canPlace||!usable||!choice||waiting){event.preventDefault();return;}
                 event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:asset.modelAssetId,modelVersionId:choice.modelVersionId}));
               }} onClick={()=>void activateCard(asset,'place')}><MapPin size={14}/>{t('place')}</Btn>}
           </div>}
+          <RowActions name={asset.displayName} actions={actions} locale={locale}/>
           {waiting&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
           {active&&version&&detailVersion&&(!modelsOnly||detailsTarget)&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} hidePreview={modelsOnly} key={detailVersion.modelVersionId} api={client} version={detailVersion} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace} geographic={geographic} canCalibrate={canCalibrate}
             versions={<details className="ov-resource-disclosure"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{const id=event.target.value;if(modelsOnly&&id)void activateCard(asset,'preview',id);else{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,id);}}}>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>}
@@ -248,7 +252,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
             onOpenScene={onOpenScene} onPreview={()=>onPreview(version)} onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
             canGenerateThumbnail={catalog?.capabilities.canGenerateThumbnails===true&&!denied} onThumbnailUpdated={thumbnailUpdated}
             onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/></ResourceDetailHost>}
-        </li>;
+        </li></RowContext>;
       })}</ul>
       {catalog?.nextCursor&&<Btn disabled={loading} onClick={()=>void readCatalog(catalog.nextCursor!)}>{t(loading?'loading':'more')}</Btn>}
       {!version&&!detailLoading&&selectedAsset&&<p className="ov-resource-caption">{t('chooseModel')}</p>}

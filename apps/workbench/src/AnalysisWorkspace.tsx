@@ -3,6 +3,7 @@ import {ArrowLeft,GitBranch,Hand,History,LayoutGrid,Maximize,MousePointer2,Pin,P
 import {Btn,IconBtn,Modal} from './Primitives';
 import {addManualRelation,arrangeCards,fitViewport,moveCard,removeCard,zoomAt,type CanvasSnapshot,type ProjectScope,type RelationKind} from './analysisCanvas';
 import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,type DraftReceipt,type PendingDraft} from './analysisDraftState';
+import {RowContext} from './ListMenus';
 import './analysisWorkspace.css';
 
 export interface DraftApi {revision:string;epoch:number;project:ProjectScope|null;request<T>(path:string,body?:object,signal?:AbortSignal):Promise<T>}
@@ -115,9 +116,9 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange}:{api:DraftApi;
     <aside className="ad-list"><header><strong>{t('我的分析','My analyses')}</strong><span>{list?.total??'—'}</span></header>
       <form className="ad-search" onSubmit={event=>{event.preventDefault();setFilter(query);}}><Search size={14}/><input aria-label={t('搜索分析','Search analyses')} placeholder={t('搜索名称','Search titles')} value={query} onChange={event=>setQuery(event.target.value)}/><button>{t('搜索','Search')}</button></form>
       <Btn primary disabled={!writable||busy} onClick={()=>change(fresh)}><Plus size={14}/>{t('新建分析','New analysis')}</Btn>
-      <div className="ad-list-items">{list?.items.map(item=><button type="button" key={item.analysisSessionId} disabled={busy} aria-current={receipt?.analysisSessionId===item.analysisSessionId?'page':undefined} onClick={()=>change(()=>void open(item.analysisSessionId))}><strong>{item.title}</strong><small>{t(statuses.find(s=>s[0]===item.status)?.[1]||'分析中',statuses.find(s=>s[0]===item.status)?.[2]||'Analyzing')} · r{item.analysisRevision}</small><time>{new Date(item.updatedAt).toLocaleString(en?'en-GB':'zh-CN')}</time></button>)}
-        {!loading&&list&&!list.total&&<p>{t('还没有分析','No analyses yet')}</p>}{loading&&<p role="status">{t('正在读取…','Loading…')}</p>}
-        {list?.nextCursor&&<Btn disabled={loading} onClick={()=>void more()}>{t('加载更多','Load more')}</Btn>}</div>
+      <ul className="ad-list-items ov-list" aria-label={t('我的分析','My analyses')}>{list?.items.map(item=><RowContext key={item.analysisSessionId} name={item.title} disabled={busy} actions={[{id:'open',label:t('打开分析','Open analysis'),icon:<GitBranch/>,disabled:busy,onSelect:()=>change(()=>void open(item.analysisSessionId))}]}><li className={`ov-list-item${receipt?.analysisSessionId===item.analysisSessionId?' selected':''}`}><button type="button" className="ov-list-main" disabled={busy} aria-current={receipt?.analysisSessionId===item.analysisSessionId?'page':undefined} onClick={()=>change(()=>void open(item.analysisSessionId))}><span className="ov-list-copy"><strong>{item.title}</strong><small>{t(statuses.find(s=>s[0]===item.status)?.[1]||'分析中',statuses.find(s=>s[0]===item.status)?.[2]||'Analyzing')} · r{item.analysisRevision}</small><time>{new Date(item.updatedAt).toLocaleString(en?'en-GB':'zh-CN')}</time></span></button></li></RowContext>)}
+        {!loading&&list&&!list.total&&<li><p>{t('还没有分析','No analyses yet')}</p></li>}{loading&&<li><p role="status">{t('正在读取…','Loading…')}</p></li>}
+        {list?.nextCursor&&<li><Btn disabled={loading} onClick={()=>void more()}>{t('加载更多','Load more')}</Btn></li>}</ul>
       <footer>{t('仅本人可见','Private to you')}</footer>
     </aside>
     <div className="ad-editor">

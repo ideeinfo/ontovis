@@ -3,6 +3,7 @@ import {FileUp, Mountain, RefreshCw, Search} from 'lucide-react';
 import {ApiError, cancelled} from './api';
 import {Badge, Btn, IconBtn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
+import {RowContext} from './ListMenus';
 import type {SceneApi} from './sceneApi';
 import type {TerrainCatalog, TerrainJob, TerrainSummary, TerrainVersion} from './resourceTypes';
 import type {VerticalDatum} from './sceneTypes';
@@ -119,7 +120,7 @@ export function TerrainImport({api,writeBlocked,canUse,activeTerrainVersion,onTe
     {!!catalogError&&<p className="ov-resource-error" role="alert">{resourceFailure(catalogError,locale)}</p>}
     {catalogLoading&&!catalog&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
     {catalog?.items.length===0&&!catalogLoading&&<p className="ov-resource-caption">{t('noTerrainResources')}</p>}
-    <ul className="ov-resource-model-list">{catalog?.items.map(item=><li key={item.terrainVersionId}><button type="button" className="ov-resource-row" aria-pressed={item.terrainVersionId===version?.terrainVersionId} onClick={()=>void selectVersion(item)}><Mountain size={15}/><span>{item.displayName}<small className="ov-resource-terrain-crs">{item.sourceHorizontalCrs||t('unknown')}</small></span></button></li>)}</ul>
+    <ul className="ov-resource-model-list" aria-label={t('terrains')}>{catalog?.items.map(item=><RowContext key={item.terrainVersionId} name={item.displayName} actions={[{id:'open',label:t('preview'),icon:<Mountain/>,onSelect:()=>void selectVersion(item)}]}><li><button type="button" className="ov-resource-row" aria-pressed={item.terrainVersionId===version?.terrainVersionId} onClick={()=>void selectVersion(item)}><Mountain size={15}/><span>{item.displayName}<small className="ov-resource-terrain-crs">{item.sourceHorizontalCrs||t('unknown')}</small></span></button></li></RowContext>)}</ul>
     {catalog?.nextCursor&&<Btn disabled={catalogLoading} onClick={()=>void readCatalog(catalog.nextCursor!)}>{t(catalogLoading?'loading':'more')}</Btn>}
     {job&&<div className="ov-resource-job" role="status">
       <div className="ov-resource-title"><strong>{job.displayName}</strong><Badge tone={job.state==='failed'?'critical':job.state==='ready'?'success':'neutral'}>{t(job.state)}</Badge></div>

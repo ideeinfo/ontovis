@@ -1,6 +1,8 @@
 import {useState} from 'react';
 import {usePreferences} from './Preferences';
 import {Btn} from './Primitives';
+import {Layers,Unlink} from 'lucide-react';
+import {RowActions,RowContext,type ListAction} from './ListMenus';
 import {groupSceneInstances,sceneOrganization,ungroupSceneInstances} from './sceneOrganization';
 import {organizationText} from './sceneOrganizationMessages';
 import type {EditableSceneSnapshot} from './sceneTypes';
@@ -23,7 +25,9 @@ export function SceneBatchPanel({snapshot,editable,selectedIds,onSelect,onCommit
       <p className="so-note">{t('selectionHint')}</p><label>{t('groupName')}<input value={groupName} maxLength={80} disabled={!editable} onChange={event=>setGroupName(event.target.value)}/></label>
       <Btn disabled={!editable||selected.length<2||grouped||!groupName.trim()||data.groups.length>=16} onClick={()=>{try{void onCommit(groupSceneInstances(snapshot,selectedIds,groupName,crypto.randomUUID())).then(ok=>{if(ok)setGroupName('');});}catch(error){onError(error);}}}>{t('group')}</Btn>
       {grouped&&<p className="so-note">{t('groupHint')}</p>}
-      {data.groups.map(group=><div className="so-row" key={group.groupId}><button type="button" className="so-text" onClick={()=>onSelect(group.instanceIds)}>{group.displayName} · {group.instanceIds.length}</button><Btn disabled={!editable} onClick={()=>void onCommit(ungroupSceneInstances(snapshot,group.groupId))}>{t('ungroup')}</Btn></div>)}
+      {data.groups.map(group=>{const actions:ListAction[]=[{id:'select',label:t('selection'),icon:<Layers/>,onSelect:()=>onSelect(group.instanceIds)},
+        {id:'ungroup',label:t('ungroup'),icon:<Unlink/>,disabled:!editable,onSelect:()=>void onCommit(ungroupSceneInstances(snapshot,group.groupId))}];
+        return <RowContext key={group.groupId} name={group.displayName} actions={actions}><div className="so-row ov-domain-list-row"><button type="button" className="so-text" onClick={()=>onSelect(group.instanceIds)}>{group.displayName} · {group.instanceIds.length}</button><RowActions name={group.displayName} actions={actions} locale={locale}/></div></RowContext>;})}
     </section>
     <section><h3>{t('move')}</h3><div className="sw-field-pair"><label>{t('dx')}<input type="number" value={x} disabled={!editable} onChange={event=>setX(event.target.value)}/></label><label>{t('dz')}<input type="number" value={z} disabled={!editable} onChange={event=>setZ(event.target.value)}/></label></div>
       <label>{t('heading')}<input type="number" value={heading} disabled={!editable} onChange={event=>setHeading(event.target.value)}/></label><Btn disabled={!editable||!selected.length} onClick={()=>void apply()}>{t('apply')}</Btn><p className="so-note">{t('moveHint')}</p>

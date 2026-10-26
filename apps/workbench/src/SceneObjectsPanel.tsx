@@ -4,6 +4,7 @@ import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
 import {Catalog} from './ObjectsPanel';
 import {usePreferences} from './Preferences';
 import {Btn,IconBtn} from './Primitives';
+import {RowContext} from './ListMenus';
 import {SceneApi} from './sceneApi';
 import {sceneEngineeringText} from './sceneEngineeringMessages';
 import type {SceneObjectChildren,SceneObjectContext} from './sceneEngineeringTypes';
@@ -50,7 +51,7 @@ function EquipmentNode({api,object,context,selectedUid,ancestorUids,onSelect,dep
   const expandable=object.hasChildren&&depth<31;
   return <div role="treeitem" aria-level={depth+1} aria-expanded={expandable?open:undefined}>
     <div className="se-tree-row">{expandable?<IconBtn label={`${open?'−':'+'} ${object.displayName}`} aria-expanded={open} onClick={()=>setOpen(value=>!value)}>{open?<ChevronDown size={12}/>:<ChevronRight size={12}/>}</IconBtn>:<span className="se-tree-spacer"/>}
-      <button type="button" className="se-tree-name" aria-pressed={selectedUid===object.entityUid} onClick={()=>onSelect(object.entityUid)}><Box size={14}/><span>{object.displayName}</span></button>
+      <RowContext name={object.displayName} actions={[{id:'view',label:locale==='zh'?'查看对象':'View object',icon:<Box/>,onSelect:()=>onSelect(object.entityUid)}]}><button type="button" className="se-tree-name" aria-pressed={selectedUid===object.entityUid} onClick={()=>onSelect(object.entityUid)}><Box size={14}/><span>{object.displayName}</span></button></RowContext>
     </div>
     {open&&object.hasChildren&&<div role="group" className="se-tree-children" style={depth>=6?{marginLeft:0,paddingLeft:0}:undefined}>
       {view?.items.map(row=><EquipmentNode key={row.object.entityUid} api={api} object={row.object} context={context} selectedUid={selectedUid} ancestorUids={ancestorUids} onSelect={onSelect} depth={depth+1}/>)}

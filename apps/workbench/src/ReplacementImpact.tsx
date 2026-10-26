@@ -49,7 +49,7 @@ export function ReplacementImpact({result,snapshot}:Props) {
   return <section className="ov-replacement-impact" aria-label={t('impactTitle')}>
     {kind==='model_replacement'?<>
       <strong className="ov-replacement-name">{name(impact?.sceneModelInstanceId)}</strong>
-      <table className="ov-replacement-comparison"><thead><tr><th scope="col">{t('impactProperty')}</th><th scope="col">{t('impactOld')}</th><th scope="col">{t('impactNew')}</th></tr></thead><tbody>
+      <table className="ov-replacement-comparison ov-list-table"><thead><tr><th scope="col">{t('impactProperty')}</th><th scope="col">{t('impactOld')}</th><th scope="col">{t('impactNew')}</th></tr></thead><tbody>
         {metricRows.map(([label,before,after])=><tr key={label}><th scope="row">{t(label)}</th><td>{before}</td><td>{after}</td></tr>)}
       </tbody></table>
       {result.validation.bindingIssues?.some(issue=>issue.kind==='model_version_changed'&&issue.sceneModelInstanceId===impact?.sceneModelInstanceId)&&<p className="ov-replacement-caption">{sceneEngineeringText(locale,'pendingLinks')} · {result.validation.bindingIssues.filter(issue=>issue.kind==='model_version_changed'&&issue.sceneModelInstanceId===impact?.sceneModelInstanceId).length}</p>}

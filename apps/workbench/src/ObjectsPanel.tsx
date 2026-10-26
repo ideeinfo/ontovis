@@ -4,6 +4,7 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { ApiError, cancelled, failureMessage, type WorkbenchApi } from './api';
 import { usePreferences } from './Preferences';
 import { Btn, IconBtn } from './Primitives';
+import {RowContext} from './ListMenus';
 import { categoryLabel } from './objectCatalog';
 import type { CatalogGroup, GroupedCatalogView, CatalogView, ChildrenView, ContextView, EngineeringObject, Installation } from './types';
 
@@ -32,7 +33,7 @@ function TreeNode({api, object, context, selected, ancestors, onSelect, seed, de
   }, [open, cursor, retry]);
   return <div className="cw-tree-node"><div className="cw-tree-row">
     {object.hasChildren && depth < 31 ? <IconBtn label={`${open ? '−' : '+'} ${object.displayName}`} aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}</IconBtn> : <span className="cw-leaf"/>}
-    <button className={`cw-tree-item ${selected === object.entityUid ? 'active' : ''}`} type="button" onClick={() => onSelect(object.entityUid)}><Box size={14}/><span>{object.displayName}</span></button>
+    <RowContext name={object.displayName} actions={[{id:'view',label:locale==='zh'?'查看对象':'View object',icon:<Box/>,onSelect:()=>onSelect(object.entityUid)}]}><button className={`cw-tree-item ${selected === object.entityUid ? 'active' : ''}`} aria-pressed={selected===object.entityUid} type="button" onClick={() => onSelect(object.entityUid)}><Box size={14}/><span>{object.displayName}</span></button></RowContext>
   </div>{open && object.hasChildren && <div className="cw-branch">
     {children?.items.map(row => <TreeNode key={row.object.entityUid} api={api} object={row.object} context={context} selected={selected} ancestors={ancestors} onSelect={onSelect} depth={depth + 1}/>)}
     {loading && <p className="cw-state" role="status">{t('loading')}</p>}
@@ -65,7 +66,7 @@ function Category({api, group, query, scope, snapshot, seed, selected, onSelect,
   return <section className="cw-category"><button type="button" className="cw-category-heading" aria-expanded={open} aria-controls={id} onClick={()=>setOpen(value=>!value)}>
     {open?<ChevronDown size={12}/>:<ChevronRight size={12}/>}<span>{categoryLabel(group,locale)}</span><small>{group.count}</small>
   </button>{open && <div className="cw-category-items" id={id}>
-    {!error && view?.items.map(item=><button type="button" className={`cw-list-item ${selected===item.entityUid?'active':''}`} key={item.entityUid} onClick={()=>onSelect(item.entityUid)}><Box size={14}/><span>{item.displayName}</span></button>)}
+    {!error && view?.items.map(item=><RowContext key={item.entityUid} name={item.displayName} actions={[{id:'view',label:locale==='zh'?'查看对象':'View object',icon:<Box/>,onSelect:()=>onSelect(item.entityUid)}]}><button type="button" className={`cw-list-item ${selected===item.entityUid?'active':''}`} aria-pressed={selected===item.entityUid} onClick={()=>onSelect(item.entityUid)}><Box size={14}/><span>{item.displayName}</span></button></RowContext>)}
     {loading && <p className="cw-state" role="status">{t('loading')}</p>}
     {error ? <div className="cw-state" role="alert">{failureMessage(error,locale)}<Btn onClick={()=>error instanceof ApiError && error.status===409 ? onReload() : setAttempt(value=>value+1)}>{t(error instanceof ApiError && error.status===409?'refresh':'retry')}</Btn></div> : null}
     {!loading && !error && view?.nextCursor && <Btn onClick={()=>setCursor(view.nextCursor)}>{t('more')}</Btn>}

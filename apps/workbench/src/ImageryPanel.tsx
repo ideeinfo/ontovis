@@ -3,6 +3,7 @@ import {Image,RefreshCw} from 'lucide-react';
 import {ApiError,cancelled} from './api';
 import {Btn,IconBtn,Modal} from './Primitives';
 import {usePreferences} from './Preferences';
+import {RowContext} from './ListMenus';
 import {privateDenial,ResourceRequestGate,ResourceRequestId,writeDenial} from './resourceForms';
 import type {SceneApi} from './sceneApi';
 import type {ImageryCatalog,ImageryRecord,ImageryVersion,UploadImageryMetadata,ImageryUploadSession} from './resourceTypes';
@@ -76,7 +77,7 @@ export function ImageryPanel({api,canUse,writeBlocked,onUse,onPrivateDenied,onWr
     <form className="ov-resource-search" onSubmit={e=>{e.preventDefault();void read();}}><input aria-label={t('search')} placeholder={t('search')} value={query} maxLength={120} onChange={e=>setQuery(e.target.value)}/></form>
     {!!error&&<p role="alert" className="ov-resource-error">{error instanceof Error&&error.message===t('fileInvalid')?error.message:imageryFailure(error,locale)}</p>}
     {busy&&<p role="status" className="ov-resource-caption">{t('loading')}</p>}{catalog?.items.length===0&&<p className="ov-resource-empty">{t('empty')}</p>}
-    <ul className="ov-resource-model-list">{catalog?.items.map(item=><li key={item.imageryVersionId}><button className="ov-resource-row" aria-pressed={version?.imageryVersionId===item.imageryVersionId} onClick={()=>void select(item)}><Image size={15}/><span>{item.displayName}<small className="ov-resource-terrain-crs">{item.metadata.acquiredAt} · {item.report.horizontalCrs}</small></span></button></li>)}</ul>
+    <ul className="ov-resource-model-list" aria-label={t('imagery')}>{catalog?.items.map(item=><RowContext key={item.imageryVersionId} name={item.displayName} actions={[{id:'open',label:locale==='zh'?'查看影像':'View imagery',icon:<Image/>,onSelect:()=>void select(item)}]}><li><button type="button" className="ov-resource-row" aria-pressed={version?.imageryVersionId===item.imageryVersionId} onClick={()=>void select(item)}><Image size={15}/><span>{item.displayName}<small className="ov-resource-terrain-crs">{item.metadata.acquiredAt} · {item.report.horizontalCrs}</small></span></button></li></RowContext>)}</ul>
     {version&&<section className="ov-resource-details"><strong>{version.displayName}</strong><p className="ov-resource-caption">{t('precision')}</p><Btn primary disabled={!canUse||busy||writeBlocked} title={!canUse?t('editRequired'):undefined} onClick={()=>onUse(version)}>{t('use')}</Btn><ImageryFacts value={version}/></section>}
     {open&&<Modal title={t('import')} description={t('fileHint')} onClose={()=>{if(uploading)pause();setOpen(false);}}><fieldset className="ov-resource-form" disabled={uploading}>
       <label>{t('file')}<input type="file" disabled={!!pending} accept=".tif,.tiff,image/tiff" onChange={e=>{setFile(e.target.files?.[0]??null);if(!resuming){setForm(v=>({...v,rightsDeclared:false}));id.current.reset();}}}/></label>

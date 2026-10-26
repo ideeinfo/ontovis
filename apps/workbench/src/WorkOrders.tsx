@@ -5,6 +5,7 @@ import type {DiagnosticNode,Investigation,ObjectPhoto,OrderListing,OrderLocation
 import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
 import {InvestigationPanel} from './InvestigationPanel';
 import {photoCitation} from './workOrderInvestigation';
+import {RowContext} from './ListMenus';
 import './workOrders.css';
 
 const ROOT='/api/workbench/work-orders';
@@ -138,7 +139,7 @@ export function WorkOrders({api,locale='zh',onDirtyChange}:{api:OrderApi;locale?
       <label className="wo-filter">{en?'Status':'状态'}<select value={filter.state} onChange={event=>setFilter(value=>({...value,state:event.target.value}))}><option value="">{en?'All':'全部'}</option>{states.map(state=><option value={state} key={state}>{labels[state][en?1:0]}</option>)}</select></label>
       {loading&&<p className="wo-empty" role="status">{en?'Loading…':'正在读取…'}</p>}
       {!loading&&list?.total===0&&<div className="wo-empty"><p>{en?'No work orders in this project':'当前项目暂无工单'}</p>{list.capabilities.canSeedDemo&&<button type="button" className="wo-button primary" disabled={busy} onClick={()=>void seed()}>{en?'Create 20 demo orders':'生成20条演示工单'}</button>}</div>}
-      <div className="wo-order-list">{list?.items.map(item=><button type="button" key={item.orderId} className={`wo-order ${selected===item.orderId?'selected':''}`} aria-pressed={selected===item.orderId} disabled={busy||dirty} onClick={()=>setSelected(item.orderId)}><span className="wo-order-top"><span className="wo-mono">{item.faultCode}</span><span className={`wo-status ${item.state}`}>{labels[item.state][en?1:0]}</span></span><strong>{item.title}</strong><small>{String(item.number).padStart(3,'0')} · {cabinetCode(item.cabinet)} · {new Date(item.alarmAt).toLocaleString(en?'en-GB':'zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></button>)}</div>
+      <ul className="wo-order-list ov-list" aria-label={en?'Project work orders':'项目工单'}>{list?.items.map(item=><RowContext key={item.orderId} name={item.title} disabled={busy||dirty} actions={[{id:'open',label:en?'Open work order':'打开工单',icon:<ClipboardList/>,disabled:busy||dirty,onSelect:()=>setSelected(item.orderId)}]}><li className={`ov-list-item${selected===item.orderId?' selected':''}`}><button type="button" className="wo-order ov-list-main" aria-pressed={selected===item.orderId} disabled={busy||dirty} onClick={()=>setSelected(item.orderId)}><span className="wo-order-top"><span className="wo-mono">{item.faultCode}</span><span className={`wo-status ${item.state}`}>{labels[item.state][en?1:0]}</span></span><span className="ov-list-copy"><strong>{item.title}</strong><small>{String(item.number).padStart(3,'0')} · {cabinetCode(item.cabinet)} · {new Date(item.alarmAt).toLocaleString(en?'en-GB':'zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></span></button></li></RowContext>)}</ul>
     </aside>
     <div className="wo-main">{!!error&&<div className="wo-error" role="alert">{failureMessage(error,locale)} <button type="button" disabled={dirty||busy} onClick={()=>setRefresh(v=>v+1)}>{en?'Reload':'重新读取'}</button></div>}
       {!detail?<div className="wo-empty wo-welcome"><ClipboardList size={30}/><h2>{en?'Alarm to object evidence':'从报警走到对象证据'}</h2><p>{en?'Select an order to diagnose, investigate, locate photos and review.':'选择工单，沿诊断图谱排查、核对照片位置并完成复核。'}</p></div>:<>
