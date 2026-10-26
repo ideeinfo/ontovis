@@ -1,5 +1,7 @@
 # 本机交付与验证输出
 
+- [Q-23实施准备、固定来源与正式模拟故障数据](q23-readiness-20261026/README.md)
+
 - [vis.ontobase.ai DNS路由修复与访问恢复](site-access-20261026/README.md)
 
 - [模型目录、基本信息编辑与39项名称清理](model-info-20261026/README.md)
