@@ -51,10 +51,10 @@ function PhotoPanel({en,location,photos,chosen,image,reading,error,onOpen,onImag
   </section>;
 }
 
-export function WorkOrders({api,locale='zh',onDirtyChange}:{api:OrderApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void}){
+export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange}:{api:OrderApi;locale?:string;initialQuery?:string;onDirtyChange?:(dirty:boolean)=>void}){
   const en=locale==='en';
   const [list,setList]=useState<OrderListing|null>(null),[detail,setDetail]=useState<WorkOrderDetail|null>(null);
-  const [selected,setSelected]=useState(''),[query,setQuery]=useState(''),[filter,setFilter]=useState({q:'',state:''});
+  const [selected,setSelected]=useState(''),[query,setQuery]=useState(initialQuery),[filter,setFilter]=useState({q:initialQuery,state:''});
   const [refresh,setRefresh]=useState(0),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false);
   const [note,setNote]=useState(''),[checks,setChecks]=useState<string[]>([]);
   const [plan,setPlan]=useState<Investigation|null>(null),[history,setHistory]=useState<{orderRevision:number;investigation:Investigation}|null>(null);

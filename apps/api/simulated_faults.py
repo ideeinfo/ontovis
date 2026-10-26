@@ -75,6 +75,17 @@ def alarms(dataset_id, revision=None):
     } for index, (second, state) in enumerate(((30, 'active'), (150, 'cleared')))]}
 
 
+def detail(project_code, body):
+    catalogue(project_code)
+    require(type(body) is dict and set(body) == {'datasetId', 'datasetRevision'})
+    value = dataset(body['datasetId'], body['datasetRevision'])
+    metrics = ['device_feedback', 'supply_voltage', 'overcurrent']
+    if value['faultCode'] in ('13001', '13002'):
+        metrics = ['sensor_temperature', 'reference_temperature', *metrics]
+    return {'dataset': value, 'alarms': alarms(value['datasetId'], value['datasetRevision'])['items'],
+            'trends': [trend(value['datasetId'], metric, START, END, value['datasetRevision']) for metric in metrics]}
+
+
 def trend(dataset_id, metric, time_from, time_to, revision=None):
     value = dataset(dataset_id, revision)
     require(metric in ('device_feedback', 'supply_voltage', 'overcurrent', 'sensor_temperature', 'reference_temperature'), 'SIMULATION_METRIC_UNAVAILABLE', 404)

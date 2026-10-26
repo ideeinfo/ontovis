@@ -45,7 +45,7 @@ class WorkbenchDeploymentTests(unittest.TestCase):
 
     def test_analysis_source_preparation_and_fixed_work_order_routes_are_exact(self):
         root = '/api/workbench/analysis-sessions/'
-        for suffix in ('evidence/register', 'evidence/detail', 'evidence/content', 'link-work-order', 'simulation/catalogue', 'simulation/qualify'):
+        for suffix in ('evidence/register', 'evidence/detail', 'evidence/content', 'link-work-order', 'simulation/catalogue', 'simulation/detail', 'simulation/qualify'):
             self.assertIn('client_max_body_size 16k;', location_for(root+suffix))
             for extra in ('/', '/extra'):
                 with self.assertRaises(AssertionError): location_for(root+suffix+extra)

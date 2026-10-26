@@ -14,6 +14,18 @@ from tests import test_work_orders as orders
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_browser_detail_is_versioned_project_scoped_and_contains_all_replay_signals(self):
+        for code, count in (('13001', 5), ('13004', 3)):
+            item=sim.identity(code);body={key:item[key] for key in ('datasetId','datasetRevision')}
+            value=sim.detail('Demo-PDS',body)
+            self.assertEqual(value,sim.detail('Demo-PDS',body));self.assertEqual(len(value['alarms']),2)
+            self.assertEqual(len(value['trends']),count)
+            self.assertTrue(all(len(row['samples'])==181 for row in value['trends']))
+            self.assertFalse(value['dataset']['engineeringConfirmation'])
+            for project,change in (('B',body),('Demo-PDS',{**body,'url':'https://outside.invalid'}),
+                ('Demo-PDS',{**body,'datasetRevision':'changed'})):
+                with self.assertRaises(PreviewError):sim.detail(project,change)
+
     def test_simulated_fault_lifecycle_and_deterministic_history_have_separate_identity(self):
         result=sim.catalogue('Demo-PDS');self.assertEqual(len(result['items']),4)
         self.assertEqual(result['sourceKind'],'simulated');self.assertEqual(result['mode'],'replay')

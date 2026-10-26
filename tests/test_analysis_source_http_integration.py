@@ -119,3 +119,22 @@ class AnalysisSourceHttpTests(unittest.TestCase):
         for suffix in ('evidence/register/extra','simulation/qualify/','simulation/reset','evidence/delete','confirm'):
             self.assertEqual(self.request(ROOT+'/'+suffix,self.body())[0],404)
         self.assertEqual(self.request(ROOT+'/evidence/register',raw=b' '*16385)[0],413)
+
+    def test_replay_browser_reads_without_creating_analysis_or_project_workspace(self):
+        from tools.analysis_draft_backup import export_package
+        self.source.projects['Demo-PDS']='Synthetic demo';self.source.permissions['writer']['Demo-PDS']='viewer'
+        project={'ontobaseConnectionId':'ontobase-primary','projectCode':'Demo-PDS'}
+        before=export_package(self.urls[0])
+        result=self.request(ROOT+'/simulation/catalogue',{'projectRef':project})
+        self.assertEqual(result[0],200,result[1]);item=result[1]['items'][0]
+        body={'projectRef':project,**{key:item[key] for key in ('datasetId','datasetRevision')}}
+        result=self.request(ROOT+'/simulation/detail',body)
+        self.assertEqual(result[0],200,result[1]);self.assertEqual(len(result[1]['trends']),5)
+        self.assertFalse(result[1]['capabilities']['canWrite'])
+        self.assertEqual(export_package(self.urls[0]),before)
+        self.assertIsNone(self.sessions.registry.lookup('Demo-PDS'))
+        self.assertEqual(self.request(ROOT+'/simulation/detail',body,client=False)[0],401)
+        self.assertEqual(self.request(ROOT+'/simulation/detail',{**body,'datasetRevision':'changed'})[0],409)
+        self.assertEqual(self.request(ROOT+'/simulation/detail',{**body,'extra':True})[0],422)
+        self.assertEqual(self.request(ROOT+'/simulation/detail',{**body,'projectRef':self.body()['projectRef']})[0],404)
+        self.assertEqual(self.request(ROOT+'/simulation/detail/',body)[0],404)

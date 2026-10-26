@@ -1,4 +1,4 @@
-const implementedPages=['project','models','bindings','hierarchy','scene','orders','analysis'] as const;
+const implementedPages=['project','models','bindings','hierarchy','scene','orders','analysis','data'] as const;
 export type WorkbenchPage=typeof implementedPages[number];
 
 export function isGlobalPage(page:WorkbenchPage){return page==='project'||page==='models';}

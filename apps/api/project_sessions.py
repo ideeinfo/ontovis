@@ -384,7 +384,7 @@ class ProjectSessions(UserSessions):
         actor = identifier(row.subject_id)
         action = path.removeprefix('/api/workbench/analysis-sessions').removeprefix('/')
         require(action in ('', 'create', 'detail', 'save', 'restore', 'revisions', 'evidence/register',
-                          'evidence/detail', 'evidence/content', 'link-work-order', 'simulation/catalogue', 'simulation/qualify'))
+                          'evidence/detail', 'evidence/content', 'link-work-order', 'simulation/catalogue', 'simulation/detail', 'simulation/qualify'))
         writing = action in ('create', 'save', 'restore', 'evidence/register', 'link-work-order')
         access = self._access(sid, row, code)
         if writing:
@@ -415,7 +415,15 @@ class ProjectSessions(UserSessions):
         store = AnalysisDrafts(self.analysis_database_url, self.connection_id, code)
         try:
             require(store.store_id == self.analysis_store_id, 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)
-            if action.startswith(('evidence/', 'simulation/')) or action == 'link-work-order':
+            if action in ('simulation/catalogue', 'simulation/detail'):
+                from . import simulated_faults
+                if action == 'simulation/catalogue':
+                    require(not body)
+                    value = simulated_faults.catalogue(code)
+                else:
+                    value = simulated_faults.detail(code, body)
+                authorize()
+            elif action.startswith(('evidence/', 'simulation/')) or action == 'link-work-order':
                 from .analysis_evidence import AnalysisEvidence
                 from .analysis_source_reader import AnalysisSourceReader
                 from . import simulated_faults
@@ -443,9 +451,6 @@ class ProjectSessions(UserSessions):
                             if error.status not in (403, 404, 409, 410, 502, 503, 504): raise
                             value = {'availability': 'restricted' if error.status == 403 else 'changed' if error.status in (409, 410) else 'unavailable',
                                      'reason': error.code}
-                elif action == 'simulation/catalogue':
-                    require(not body)
-                    value = simulated_faults.catalogue(code)
                 elif action == 'simulation/qualify':
                     require(set(body) == {'faultCode'})
                     value = reader.qualify(body['faultCode'])
