@@ -15,6 +15,7 @@ export interface Investigation {
 }
 export interface InvestigationHistory {orderRevision:number;actor:string;recordedAt:string}
 export interface WorkOrderDetail extends WorkOrder {
+  analysisLinks?:{orderRevision:number;analysisSessionId:string;analysisRevision:number;analysisSha256:string}[];
   investigation:Investigation;investigationRevision:number|null;investigationComplete:boolean;
   investigationHistory:InvestigationHistory[];
   createdRuleRevision:string;

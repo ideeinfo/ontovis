@@ -6,8 +6,8 @@ import { usePreferences } from './Preferences';
 export function Badge({children, tone = 'neutral'}: {children: ReactNode; tone?: string}) {
   return <span className={`ov-badge ${tone}`}>{children}</span>;
 }
-export function Btn({children, primary, ...props}: ButtonHTMLAttributes<HTMLButtonElement> & {primary?: boolean}) {
-  return <button type="button" {...props} className={`ov-btn ${primary ? 'primary' : ''}`}>{children}</button>;
+export function Btn({children, primary, className='', ...props}: ButtonHTMLAttributes<HTMLButtonElement> & {primary?: boolean}) {
+  return <button type="button" {...props} className={`ov-btn ${primary ? 'primary' : ''} ${className}`}>{children}</button>;
 }
 export function IconBtn({label, children, ...props}: ButtonHTMLAttributes<HTMLButtonElement> & {label: string}) {
   return <button type="button" {...props} className="ov-icon-btn" aria-label={label} title={label}>{children}</button>;

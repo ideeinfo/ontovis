@@ -20,7 +20,7 @@ class SourceContractTests(unittest.TestCase):
             body={'includeDetail':True, 'datasetId':'SIM-PDS-'+code}
             value=sim.browser_catalogue('Demo-PDS',body);item=sim.identity(code)
             self.assertEqual(value['initialDetail'],sim.detail('Demo-PDS',{key:item[key] for key in ('datasetId','datasetRevision')}))
-            self.assertEqual(len(value['items']),4)
+            self.assertEqual(len(value['items']),5)
         self.assertEqual(sim.browser_catalogue('Demo-PDS',{'includeDetail':True})['initialDetail']['dataset']['faultCode'],'13001')
         for body in ({'includeDetail':False},{'includeDetail':1},{'datasetId':'SIM-PDS-13001'},
                      {'includeDetail':True,'datasetId':'unknown'},{'includeDetail':True,'url':'https://outside.invalid'}):
@@ -40,7 +40,7 @@ class SourceContractTests(unittest.TestCase):
                 with self.assertRaises(PreviewError):sim.detail(project,change)
 
     def test_simulated_fault_lifecycle_and_deterministic_history_have_separate_identity(self):
-        result=sim.catalogue('Demo-PDS');self.assertEqual(len(result['items']),4)
+        result=sim.catalogue('Demo-PDS');self.assertEqual(len(result['items']),5)
         self.assertEqual(result['sourceKind'],'simulated');self.assertEqual(result['mode'],'replay')
         for item in result['items']:
             first=sim.alarms(item['datasetId']);self.assertEqual(first,sim.alarms(item['datasetId']))
@@ -57,6 +57,18 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual([value['samples'][i]['value'] for i in (0,30,149,150)],[0,1,1,0])
         self.assertEqual(value['sourceKind'],'simulated');self.assertEqual(value['mode'],'replay')
         for row in value['samples']:self.assertLess(row['sourceTime'],row['receivedAt'])
+
+    def test_recurrence_preserves_original_version_and_has_its_own_event_and_window(self):
+        original=sim.identity('13001'); recurrence=sim.identity('13001',recurrence=True)
+        expected=sim.digest({'epoch':sim.EPOCH,'faultCode':'13001','profile':sim.PROFILES['13001'],'start':sim.START,'end':sim.END})
+        self.assertEqual(original['datasetRevision'],expected)
+        self.assertNotEqual(original['datasetId'],recurrence['datasetId'])
+        self.assertNotEqual(original['datasetRevision'],recurrence['datasetRevision'])
+        a=sim.alarms(original['datasetId'])['items'][0]; b=sim.alarms(recurrence['datasetId'])['items'][0]
+        self.assertNotEqual(a['sourceEventId'],b['sourceEventId']); self.assertLess(a['occurredAt'],b['occurredAt'])
+        detail=sim.detail('Demo-PDS',{k:recurrence[k] for k in ('datasetId','datasetRevision')})
+        self.assertEqual(detail['trends'][0]['samples'][0]['sourceTime'],recurrence['timeFrom'])
+        self.assertIsNone(detail['trends'][0]['samples'][90]['value'])
 
     def test_other_projects_unknown_faults_versions_and_times_are_rejected(self):
         for call in (lambda:sim.catalogue('B'),lambda:sim.identity('13999'),lambda:sim.dataset('SIM-PDS-13004','bad'),

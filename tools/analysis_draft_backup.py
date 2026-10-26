@@ -99,6 +99,15 @@ def validate_package(package):
             result = json.loads(row['result_json'])
         except (TypeError, ValueError, RecursionError):
             raise PreviewError(422, 'ANALYSIS_PACKAGE_INVALID') from None
+        if version==2 and isinstance(result,dict) and result.get('operation')=='evidence/register':
+            draft.require(set(result)=={'analysisSessionId','operation','evidenceRefId','sourceKind','sourceRevision'}
+                and draft.canonical(result)==row['result_json'])
+            owner=sessions.get(result['analysisSessionId'])
+            source=next((r for r in tables['analysis_evidence_refs'] if r['evidence_ref_id']==result['evidenceRefId']),None)
+            draft.require(owner and source and owner['owner_id']==row['actor_id'] and owner['project_code']==row['project_code']
+                and source['session_id']==result['analysisSessionId'] and source['actor_id']==row['actor_id']
+                and source['source_kind']==result['sourceKind'] and source['descriptor_sha256']==result['sourceRevision'])
+            continue
         draft.require(type(result) is dict and set(result) == {'analysisSessionId', 'analysisRevision',
                       'contentSha256', 'operation', 'restoredFromRevision'} and draft.canonical(result) == row['result_json'])
         draft.require(type(result['analysisSessionId']) is str and type(result['analysisRevision']) is int)
@@ -132,6 +141,23 @@ def validate_package(package):
             draft.require(raw == row['descriptor_json'] and sha(raw.encode()) == row['descriptor_sha256'])
             used += len(raw.encode())
         draft.require(used <= MAX_SOURCE_BYTES, 'ANALYSIS_PACKAGE_LIMIT', 413)
+        from apps.api.analysis_canvas import validate_registered
+        references = {}
+        for row in tables['analysis_evidence_refs']:
+            references.setdefault(row['session_id'],{})[row['evidence_ref_id']] = (
+                row['evidence_ref_id'],row['source_kind'],row['descriptor_sha256'],row['descriptor_json'])
+        for (session_id,_), row in revisions.items():
+            snapshot=json.loads(row['snapshot_json'])
+            if snapshot['schemaVersion']!=2:continue
+            origin=snapshot.get('inheritedFrom'); original=None
+            if origin:
+                owner=sessions[session_id]; source=sessions.get(origin['analysisSessionId'])
+                saved=revisions.get((origin['analysisSessionId'],origin['analysisRevision']))
+                draft.require(source and saved and source['owner_id']==owner['owner_id']
+                    and source['project_code']==owner['project_code'] and saved['content_sha256']==origin['contentSha256'],
+                    'ANALYSIS_PAIR_SOURCE_MISMATCH',409)
+                original=json.loads(saved['snapshot_json'])
+            validate_registered(snapshot,references.get(session_id,{}),original)
     raw = draft.canonical(package).encode()
     draft.require(len(raw) <= MAX_PACKAGE_BYTES, 'ANALYSIS_PACKAGE_LIMIT', 413)
     return raw

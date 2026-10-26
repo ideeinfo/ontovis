@@ -72,8 +72,8 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             response=connection.getresponse();self.assertEqual(response.status,200);self.assertEqual(response.read(),data)
             self.assertEqual(response.getheader('Cache-Control'),'no-store')
         finally:connection.close()
-        self.assertFalse(read[1]['capabilities']['sourceCardsEnabled'])
-        self.assertEqual(read[1]['capabilities']['sourceReferenceApiVersion'],1)
+        self.assertTrue(read[1]['capabilities']['sourceCardsEnabled'])
+        self.assertEqual(read[1]['capabilities']['sourceReferenceApiVersion'],2)
 
     def test_owner_project_origin_anonymous_and_write_denial_do_not_expose_sources(self):
         created,model,data,body,ref=self.register();payload=self.reference(created,ref)
@@ -114,7 +114,7 @@ class AnalysisSourceHttpTests(unittest.TestCase):
     def test_rehearsal_catalogue_is_project_scoped_and_extra_paths_are_closed(self):
         project,created,orders=self.demo()
         value=self.request(ROOT+'/simulation/catalogue',{'projectRef':project});self.assertEqual(value[0],200,value[1])
-        self.assertEqual(value[1]['sourceKind'],'simulated');self.assertEqual(len(value[1]['items']),4)
+        self.assertEqual(value[1]['sourceKind'],'simulated');self.assertEqual(len(value[1]['items']),5)
         self.assertEqual(self.request(ROOT+'/simulation/catalogue',self.body())[0],404)
         for suffix in ('evidence/register/extra','simulation/qualify/','simulation/reset','evidence/delete','confirm'):
             self.assertEqual(self.request(ROOT+'/'+suffix,self.body())[0],404)
@@ -140,3 +140,44 @@ class AnalysisSourceHttpTests(unittest.TestCase):
         self.assertEqual(self.request(ROOT+'/simulation/detail',{**body,'extra':True})[0],422)
         self.assertEqual(self.request(ROOT+'/simulation/detail',{**body,'projectRef':self.body()['projectRef']})[0],404)
         self.assertEqual(self.request(ROOT+'/simulation/detail/',body)[0],404)
+
+    def test_batch_registration_uses_owned_fixed_handles_and_current_write_grant(self):
+        created,model,data,body,ref=self.register()
+        request=self.body(analysisSessionId=created['analysisSessionId'],expectedAnalysisRevision=1,
+            items=[{'key':'model','requestId':str(uuid4()),'sourceKind':'model','selector':body['selector']}])
+        result=self.request(ROOT+'/evidence/register-batch',request)
+        self.assertEqual(result[0],200,result[1]);self.assertEqual(result[1]['items'][0]['reference']['evidenceRefId'],ref['evidenceRefId'])
+        batch=self.request(ROOT+'/evidence/batch',self.body(analysisSessionId=created['analysisSessionId'],evidenceRefIds=[ref['evidenceRefId']]))
+        self.assertEqual(batch[0],200,batch[1]);self.assertEqual(batch[1]['items'][0]['availability'],'available')
+        self.source.permissions['writer']['SYNTHETIC-A']='viewer'
+        self.assertEqual(self.request(ROOT+'/evidence/register-batch',request)[0],403)
+        # Read paths released their database slot before source work.
+        self.assertTrue(self.sessions.analysis_slots.acquire(blocking=False));self.assertTrue(self.sessions.analysis_slots.acquire(blocking=False))
+        self.assertFalse(self.sessions.analysis_slots.acquire(blocking=False));self.sessions.analysis_slots.release();self.sessions.analysis_slots.release()
+
+    def test_revoke_during_source_read_does_not_return_previously_read_content(self):
+        from apps.api.analysis_source_reader import AnalysisSourceReader
+        created,model,data,body,ref=self.register();original=AnalysisSourceReader.read
+        def revoked(reader,kind,descriptor):
+            value=original(reader,kind,descriptor)
+            del self.source.permissions['writer']['SYNTHETIC-A']
+            return value
+        with patch.object(AnalysisSourceReader,'read',revoked):
+            response=self.request(ROOT+'/evidence/batch',self.body(analysisSessionId=created['analysisSessionId'],evidenceRefIds=[ref['evidenceRefId']]))
+        self.assertEqual(response[0],403);self.assertNotIn('items',response[1]);self.assertNotIn('source',response[1])
+
+    def test_revoke_during_batch_resolution_cannot_commit_a_reference_receipt(self):
+        from apps.api.analysis_source_reader import AnalysisSourceReader
+        from tools.analysis_draft_backup import export_package
+        created,model,data,body,ref=self.register();original=AnalysisSourceReader.resolve
+        before=export_package(self.urls[0])
+        def revoked(reader,kind,selector):
+            value=original(reader,kind,selector)
+            self.source.permissions['writer']['SYNTHETIC-A']='viewer'
+            return value
+        request=self.body(analysisSessionId=created['analysisSessionId'],expectedAnalysisRevision=1,
+            items=[{'key':'model','requestId':str(uuid4()),'sourceKind':'model','selector':body['selector']}])
+        with patch.object(AnalysisSourceReader,'resolve',revoked):
+            response=self.request(ROOT+'/evidence/register-batch',request)
+        self.assertEqual(response[0],403)
+        self.assertEqual(export_package(self.urls[0]),before)

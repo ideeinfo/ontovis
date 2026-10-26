@@ -123,3 +123,19 @@ class Authority:
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             raise PreviewError(502, 'SOURCE_UNAVAILABLE') from None
 
+    def document_page(self, path: str) -> dict:
+        """GET a server-constructed fixed document page, never a client URL."""
+        request = urllib.request.Request(self.base_url + path, headers={
+            'Authorization': 'Bearer ' + self.token, 'Accept': 'image/png', 'Cache-Control': 'no-store'})
+        try:
+            with self.opener.open(request, timeout=30) as response:
+                raw = response.read(20 * 1024 * 1024 + 1)
+                if not raw.startswith(b'\x89PNG\r\n\x1a\n') or len(raw) > 20 * 1024 * 1024 or response.headers.get_content_type() != 'image/png':
+                    raise PreviewError(502, 'SOURCE_UNAVAILABLE')
+                return {'content': raw, 'mediaType': 'image/png', 'sha256': hashlib.sha256(raw).hexdigest()}
+        except urllib.error.HTTPError as error:
+            status = error.code if error.code in (401,403,404,409,410,413,422,503) else 502
+            error.close(); raise PreviewError(status, 'ANALYSIS_SOURCE_UNAVAILABLE') from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            raise PreviewError(502, 'SOURCE_UNAVAILABLE') from None
+

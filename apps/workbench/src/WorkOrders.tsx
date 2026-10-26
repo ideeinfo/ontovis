@@ -6,6 +6,7 @@ import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
 import {InvestigationPanel} from './InvestigationPanel';
 import {photoCitation} from './workOrderInvestigation';
 import {RowContext} from './ListMenus';
+import {Btn} from './Primitives';
 import './workOrders.css';
 
 const ROOT='/api/workbench/work-orders';
@@ -51,7 +52,7 @@ function PhotoPanel({en,location,photos,chosen,image,reading,error,onOpen,onImag
   </section>;
 }
 
-export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange}:{api:OrderApi;locale?:string;initialQuery?:string;onDirtyChange?:(dirty:boolean)=>void}){
+export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange,onAnalyze,onOpenAnalysis}:{api:OrderApi;locale?:string;initialQuery?:string;onDirtyChange?:(dirty:boolean)=>void;onAnalyze?:(orderId:string)=>void;onOpenAnalysis?:(id:string,revision:number)=>void}){
   const en=locale==='en';
   const [list,setList]=useState<OrderListing|null>(null),[detail,setDetail]=useState<WorkOrderDetail|null>(null);
   const [selected,setSelected]=useState(''),[query,setQuery]=useState(initialQuery),[filter,setFilter]=useState({q:initialQuery,state:''});
@@ -143,7 +144,8 @@ export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange}:{api:
     </aside>
     <div className="wo-main">{!!error&&<div className="wo-error" role="alert">{failureMessage(error,locale)} <button type="button" disabled={dirty||busy} onClick={()=>setRefresh(v=>v+1)}>{en?'Reload':'重新读取'}</button></div>}
       {!detail?<div className="wo-empty wo-welcome"><ClipboardList size={30}/><h2>{en?'Alarm to object evidence':'从报警走到对象证据'}</h2><p>{en?'Select an order to diagnose, investigate, locate photos and review.':'选择工单，沿诊断图谱排查、核对照片位置并完成复核。'}</p></div>:<>
-        <header className="wo-detail-head"><div><span className="wo-tag">{en?'Simulated alarm · demo work order':'模拟报警 · 演示工单'}</span><h2>{detail.title}</h2><small className="wo-mono">{detail.orderId} · r{detail.orderRevision}</small></div><span className={`wo-status ${detail.state}`}>{labels[detail.state][en?1:0]}</span></header>
+        <header className="wo-detail-head"><div><span className="wo-tag">{en?'Simulated alarm · demo work order':'模拟报警 · 演示工单'}</span><h2>{detail.title}</h2><small className="wo-mono">{detail.orderId} · r{detail.orderRevision}</small></div>{onAnalyze&&['13001','13002','13003','13004'].includes(detail.faultCode)&&<Btn onClick={()=>onAnalyze(detail.orderId)}>{en?'Analyze in canvas':'进入分析画布'}</Btn>}<span className={`wo-status ${detail.state}`}>{labels[detail.state][en?1:0]}</span></header>
+        {!!detail.analysisLinks?.length&&<section className="wo-panel"><header><strong>{en?'Linked analyses':'关联分析'}</strong></header><div className="wo-step-actions">{detail.analysisLinks.slice().reverse().map(link=><Btn key={link.orderRevision} onClick={()=>onOpenAnalysis?.(link.analysisSessionId,link.analysisRevision)}>{en?'Open linked analysis':'打开关联分析'} · r{link.analysisRevision}<small> · {en?'Work order':'工单'} r{link.orderRevision}</small></Btn>)}</div></section>}
         <ol className="wo-progress" aria-label={en?'Work order lifecycle':'工单流程'}>{states.map((state,index)=><li key={state} aria-current={detail.state===state?'step':undefined} className={states.indexOf(detail.state)>=index?'done':''}><span>{states.indexOf(detail.state)>index?<CheckCircle2 size={14}/>:index+1}</span>{labels[state][en?1:0]}</li>)}</ol>
         <section className="wo-alarm"><AlertTriangle size={19}/><div><strong>{en?'Alarm':'故障报警'} {detail.faultCode}</strong><span>{new Date(detail.alarmAt).toLocaleString(en?'en-GB':'zh-CN')} · {en?'Demo unit 07':'7号演示机组'} · {cabinetCode(detail.cabinet)}</span></div><span className="wo-tag">{en?'Simulated · no live source':'模拟数据 · 未接真实源'}</span></section>
         {plan&&<InvestigationPanel detail={detail} plan={plan} en={en} canWrite={canWrite} busy={busy} dirty={dirty} onChange={setPlan} onSave={()=>void action('save_diagnosis')} onDiscard={()=>setPlan(structuredClone(detail.investigation))} onLocate={key=>void locate(key)} citation={chosen&&location&&image?photoCitation(chosen,location):''}/>}

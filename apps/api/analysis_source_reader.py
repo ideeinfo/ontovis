@@ -60,6 +60,9 @@ class AnalysisSourceReader:
             draft.require(set(selector) == fields)
             value = dict(selector)
             self.read(kind, value)
+        elif kind == 'document':
+            value = dict(selector)
+            self.read(kind, value)
         else:
             raise PreviewError(503, 'ANALYSIS_SOURCE_NOT_CONNECTED')
         validate_descriptor(kind, value); self.authorize()
@@ -86,6 +89,21 @@ class AnalysisSourceReader:
             draft.require(value['contentRevision'] == descriptor['contentRevision'] and value['sha256'] == descriptor['sha256'], 'RESOURCE_CHANGED', 409)
         elif kind == 'work_order':
             value = self.orders.fixed_snapshot(descriptor)
+        elif kind == 'document':
+            prefix = self.reader.prefix + '/documents/' + descriptor['documentId']
+            document = self.reader._request('GET', prefix)['item']
+            draft.require(document['status'] != 'recycled', 'ANALYSIS_SOURCE_UNAVAILABLE', 410)
+            version = self.reader._request('GET', prefix + '/versions/' + descriptor['contentVersionId'])['item']
+            draft.require(version['source_sha256'] == descriptor['sourceSha256'], 'SOURCE_CHANGED', 409)
+            draft.require(version['preview_kind'] == 'pdf' and 1 <= descriptor['pageNumber'] <= (version.get('page_count') or 0), 'ANALYSIS_DOCUMENT_PAGE_UNAVAILABLE', 409)
+            value = {'title': document['name'], 'documentId': descriptor['documentId'], 'contentVersionId': descriptor['contentVersionId'],
+                'pageNumber': descriptor['pageNumber'], 'pageCount': version['page_count'], 'versionNumber': version['version_number'],
+                'sourceSha256': version['source_sha256'], 'mediaType': 'application/pdf', 'kind': document['kind'],
+                'newerVersionAvailable': document['current_version_id'] != descriptor['contentVersionId']}
+            navigation = self.reader._request('GET',prefix+'/versions/'+descriptor['contentVersionId']+'/navigation')
+            value['outline'] = [{'title':row['title'],'page':row['page']}
+                for row in navigation.get('outline',[])[:200]
+                if isinstance(row.get('page'),int) and 1 <= row['page'] <= version['page_count']]
         elif kind in ('alarm', 'trend'):
             simulated.catalogue(self.reader.project_code)
             dataset = simulated.dataset(descriptor['datasetId'], descriptor['datasetRevision'])
@@ -111,6 +129,13 @@ class AnalysisSourceReader:
         if kind == 'model':
             content = self.models.content(descriptor['modelVersionId'], descriptor['contentRevision'], descriptor['sha256'], self.authorize)
             return {'content': content, 'mediaType': 'model/gltf-binary', 'sha256': descriptor['sha256']}
+        if kind == 'document':
+            self.read(kind, descriptor)
+            path = self.reader.prefix + '/documents/' + descriptor['documentId'] + '/content?' + urlencode({
+                'version_id': descriptor['contentVersionId'], 'page': descriptor['pageNumber'], 'rendition': 'display'})
+            value = self.reader.authority.document_page(path)
+            self.authorize()
+            return value
         raise PreviewError(422, 'ANALYSIS_SOURCE_CONTENT_UNSUPPORTED')
 
     def _rds(self, rds):

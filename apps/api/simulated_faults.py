@@ -31,7 +31,7 @@ PROFILES = {
 def catalogue(project_code):
     require(project_code == 'Demo-PDS', 'SIMULATION_PROJECT_REQUIRED', 404)
     return {'sourceConnectionId': SOURCE_ID, 'sourceKind': 'simulated', 'mode': 'replay',
-        'engineeringConfirmation': False, 'items': [identity(code) for code in PROFILES],
+        'engineeringConfirmation': False, 'items': [identity(code) for code in PROFILES] + [identity('13001', recurrence=True)],
         'negativeCases': [{'faultCode': code, 'branch': 'unresolved_reference_chain', 'reason': diagnosis(code)['gap']}
                           for code in ('13001', '13002', '13033', '13035', '13058')]}
 
@@ -48,41 +48,49 @@ def browser_catalogue(project_code, body):
     return value
 
 
-def identity(code):
+def identity(code, *, recurrence=False):
     require(type(code) is str and code in PROFILES, 'SIMULATION_FAULT_UNSUPPORTED', 422)
     profile = PROFILES[code]
     revision = digest({'epoch': EPOCH, 'faultCode': code, 'profile': profile, 'start': START, 'end': END})
-    return {'datasetId': 'SIM-PDS-'+code, 'datasetRevision': revision, 'faultCode': code,
+    value = {'datasetId': 'SIM-PDS-'+code, 'datasetRevision': revision, 'faultCode': code,
             'sourceKind': 'simulated', 'sourceConnectionId': SOURCE_ID, 'epoch': EPOCH,
             'title': profile['title'], 'presetCause': profile['preset'], 'cabinet': profile['cabinet'],
             'primaryRds': profile['primaryRds'], 'timeFrom': START, 'timeTo': END,
             'branch': profile.get('branch', 'status_feedback'), 'retainedEvidenceGap': diagnosis(code)['gap'],
             'wholeFaultDiagnosisComplete': False, 'engineeringConfirmation': False, 'testChainQualification': 'separate'}
+    if recurrence:
+        require(code == '13001')
+        value.update(datasetId='SIM-PDS-13001-recurrence-1', timeFrom='2026-10-26T00:00:00Z', timeTo='2026-10-26T00:03:00Z',
+                     title='柜温高报警 · 独立复发演练')
+        value['datasetRevision'] = digest({'originalRevision': revision, 'recurrence': 1,
+            'start': value['timeFrom'], 'end': value['timeTo']})
+    return value
 
 
 def dataset(dataset_id, revision=None):
     text(dataset_id)
     code = dataset_id.removeprefix('SIM-PDS-')
-    value = identity(code)
+    value = identity('13001', recurrence=True) if code == '13001-recurrence-1' else identity(code)
     require(dataset_id == value['datasetId'], 'SIMULATION_DATASET_UNAVAILABLE', 404)
     require(revision is None or revision == value['datasetRevision'], 'SIMULATION_DATASET_CHANGED', 409)
     return value
 
 
-def stamp(seconds):
-    return (utc(START) + timedelta(seconds=seconds)).isoformat(timespec='seconds').replace('+00:00', 'Z')
+def stamp(seconds, start=START):
+    return (utc(start) + timedelta(seconds=seconds)).isoformat(timespec='seconds').replace('+00:00', 'Z')
 
 
 def alarms(dataset_id, revision=None):
     value = dataset(dataset_id, revision); code = value['faultCode']; profile = PROFILES[code]
+    at = lambda seconds: stamp(seconds, value['timeFrom'])
     return {'dataset': value, 'watermark': 180, 'items': [{
         'sourceConnectionId': SOURCE_ID, 'sourceKind': 'simulated', 'sourceEventId': dataset_id+'-event-1',
         'sourceRevision': str(index+1), 'epoch': EPOCH, 'sequence': second,
         'externalAssetId': profile['primaryRds'], 'faultCode': code, 'severityRaw': profile['severity'],
         'severity': profile['severity'], 'severityMappingRevision': 'sim-severity:1',
-        'state': state, 'acknowledgement': 'unknown', 'occurredAt': stamp(30),
-        'updatedAt': stamp(second), 'clearedAt': stamp(second) if state == 'cleared' else None,
-        'sourceTime': stamp(second), 'receivedAt': stamp(second+1), 'quality': 'good',
+        'state': state, 'acknowledgement': 'unknown', 'occurredAt': at(30),
+        'updatedAt': at(second), 'clearedAt': at(second) if state == 'cleared' else None,
+        'sourceTime': at(second), 'receivedAt': at(second+1), 'quality': 'good',
         'engineeringConfirmation': False,
     } for index, (second, state) in enumerate(((30, 'active'), (150, 'cleared')))]}
 
@@ -95,7 +103,7 @@ def detail(project_code, body):
     if value['faultCode'] in ('13001', '13002'):
         metrics = ['sensor_temperature', 'reference_temperature', *metrics]
     return {'dataset': value, 'alarms': alarms(value['datasetId'], value['datasetRevision'])['items'],
-            'trends': [trend(value['datasetId'], metric, START, END, value['datasetRevision']) for metric in metrics]}
+            'trends': [trend(value['datasetId'], metric, value['timeFrom'], value['timeTo'], value['datasetRevision']) for metric in metrics]}
 
 
 def trend(dataset_id, metric, time_from, time_to, revision=None):
@@ -103,10 +111,11 @@ def trend(dataset_id, metric, time_from, time_to, revision=None):
     require(metric in ('device_feedback', 'supply_voltage', 'overcurrent', 'sensor_temperature', 'reference_temperature'), 'SIMULATION_METRIC_UNAVAILABLE', 404)
     require(metric not in ('sensor_temperature', 'reference_temperature') or value['faultCode'] in ('13001', '13002'), 'SIMULATION_METRIC_UNAVAILABLE', 404)
     start, end = utc(time_from), utc(time_to)
-    require(utc(START) <= start < end <= utc(END))
+    require(utc(value['timeFrom']) <= start < end <= utc(value['timeTo']))
+    at = lambda seconds: stamp(seconds, value['timeFrom'])
     samples = []
     for second in range(181):
-        time = utc(stamp(second))
+        time = utc(at(second))
         if not start <= time <= end:
             continue
         # A fixed quality gap exercises missing data rather than interpolating it.
@@ -114,7 +123,7 @@ def trend(dataset_id, metric, time_from, time_to, revision=None):
         number = (24 + (second % 5-2)*.03) if metric == 'supply_voltage' else int(30 <= second < 150) if metric == 'device_feedback' else 0
         if metric == 'reference_temperature': number = 24 + (second % 5-2)*.05
         if metric == 'sensor_temperature': number = (72 if value['faultCode'] == '13001' else -18) if 30 <= second < 150 else 24
-        samples.append({'sourceTime': stamp(second), 'receivedAt': stamp(second+1), 'sequence': second,
+        samples.append({'sourceTime': at(second), 'receivedAt': at(second+1), 'sequence': second,
                         'value': round(number, 2) if quality == 'good' else None, 'quality': quality})
     return {'dataset': value, 'metricId': metric, 'unit': 'degC' if metric.endswith('_temperature') else 'V' if metric == 'supply_voltage' else '1',
             'valueType': 'number', 'epoch': EPOCH, 'sourceKind': 'simulated', 'mode': 'replay',

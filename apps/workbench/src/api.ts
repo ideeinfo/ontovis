@@ -14,7 +14,7 @@ export interface BinaryDescriptor {
 type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk';
 const MIB = 1024 * 1024;
 const writeOnlyDenials: Record<string, readonly string[]> = {
-  ANALYSIS_WRITE_FORBIDDEN: ['/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/restore', '/api/workbench/analysis-sessions/evidence/register', '/api/workbench/analysis-sessions/link-work-order'],
+  ANALYSIS_WRITE_FORBIDDEN: ['/api/workbench/analysis-sessions/import-history','/api/workbench/analysis-sessions/evidence/register-batch','/api/workbench/analysis-sessions/start', '/api/workbench/analysis-sessions/copy', '/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/restore', '/api/workbench/analysis-sessions/evidence/register', '/api/workbench/analysis-sessions/link-work-order'],
   WORK_ORDER_WRITE_FORBIDDEN: ['/api/workbench/work-orders/seed-demo', '/api/workbench/work-orders/action'],
   IMAGERY_WRITE_FORBIDDEN:['/api/workbench/imagery/upload','/api/workbench/imagery/uploads/start',
     '/api/workbench/imagery/uploads/chunk','/api/workbench/imagery/uploads/complete','/api/workbench/imagery/uploads/cancel'],
@@ -122,12 +122,12 @@ export class WorkbenchApi {
     return this.send<Blob>(path, body, signal, descriptor);
   }
 
-  async request<T>(path: string, body?: object, signal?: AbortSignal, image: boolean | 'model' = false, upload?:Blob): Promise<T> {
+  async request<T>(path: string, body?: object, signal?: AbortSignal, image: boolean | 'model' | 'source' = false, upload?:Blob): Promise<T> {
     return this.send<T>(path, body, signal, image, upload ? {file:upload, kind:'legacyModel'} : undefined);
   }
 
   private async send<T>(path: string, body?: object, signal?: AbortSignal,
-    image: boolean | 'model' | BinaryDescriptor = false, upload?: {file: Blob; kind: UploadKind}): Promise<T> {
+    image: boolean | 'model' | 'source' | BinaryDescriptor = false, upload?: {file: Blob; kind: UploadKind}): Promise<T> {
     const epoch = this.epoch, revision = this.revision,project=this.project?{...this.project}:null;
     const guard = () => {
       if (epoch !== this.epoch || revision !== this.revision || signal?.aborted) {
@@ -174,7 +174,7 @@ export class WorkbenchApi {
     if (image) {
       const blob = await response.blob();
       guard();
-      if (response.headers.get('X-Session-Revision') !== revision || blob.type !== (image === 'model' ? 'model/gltf-binary' : 'image/png')
+      if (response.headers.get('X-Session-Revision') !== revision || (image==='source'?!['image/png','image/jpeg','image/webp','model/gltf-binary'].includes(blob.type):blob.type !== (image === 'model' ? 'model/gltf-binary' : 'image/png'))
           || blob.size > 20 * 1024 * 1024) throw new ApiError(502, 'SOURCE_UNAVAILABLE');
       return blob as T;
     }

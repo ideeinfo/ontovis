@@ -53,6 +53,9 @@ class ProjectSessions(UserSessions):
         self.services = {}
         self.readers = {}
         self.analysis_store_id, self.analysis_database_url = analysis_store_id, registry_database_url
+        # Leave room for the registry and a side-by-side acceptance service in
+        # the dedicated account's connection budget. No cross-user grant cache.
+        self.analysis_slots = BoundedSemaphore(2)
         try:
             if registry_backend == 'postgres':
                 from .analysis_drafts import SCHEMA, identifier, profile, require
@@ -381,7 +384,8 @@ class ProjectSessions(UserSessions):
         code = self._ref(payload.get('projectRef'))
         action = path.removeprefix('/api/workbench/analysis-sessions').removeprefix('/')
         require(action in ('', 'create', 'detail', 'save', 'restore', 'revisions', 'evidence/register',
-                          'evidence/detail', 'evidence/content', 'link-work-order', 'simulation/catalogue', 'simulation/detail', 'simulation/qualify'))
+                          'evidence/detail', 'evidence/content', 'evidence/batch', 'start', 'copy', 'recommendations', 'history-candidates', 'import-history', 'evidence/register-batch',
+                          'link-work-order', 'simulation/catalogue', 'simulation/detail', 'simulation/qualify'))
         body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
         if action in ('simulation/catalogue', 'simulation/detail'):
             # These fixed, project-scoped reads have no analysis owner or storage.
@@ -396,7 +400,7 @@ class ProjectSessions(UserSessions):
         require(self.analysis_store_id is not None, 'ANALYSIS_NOT_ENABLED', 503)
         require(row.subject_id is not None, 'ANALYSIS_IDENTITY_REQUIRED', 401)
         actor = identifier(row.subject_id)
-        writing = action in ('create', 'save', 'restore', 'evidence/register', 'link-work-order')
+        writing = action in ('create', 'save', 'restore', 'evidence/register', 'start', 'copy', 'import-history', 'evidence/register-batch', 'link-work-order')
         access = self._access(sid, row, code)
         if writing:
             require(access.get('role') == 'admin', 'ANALYSIS_WRITE_FORBIDDEN', 403)
@@ -415,17 +419,25 @@ class ProjectSessions(UserSessions):
                 if error.status == 401: self.invalidate(sid, row)
                 raise
 
-        if action == 'create':
-            require(set(body) == {'requestId', 'snapshot'})
-            identifier(body['requestId']); validate_snapshot(body['snapshot'], self.connection_id, code)
+        if action in ('create','start'):
+            if action == 'create':
+                require(set(body) == {'requestId', 'snapshot'})
+                identifier(body['requestId']); validate_snapshot(body['snapshot'], self.connection_id, code)
             authorize()
             workspace = self.registry.lookup(code)
             if workspace is None: workspace = self.registry.prepare(code)
             self._workspace(workspace)
-        store = AnalysisDrafts(self.analysis_database_url, self.connection_id, code)
+        require(self.analysis_slots.acquire(timeout=5),'ANALYSIS_BUSY',503)
+        store, held = None, True
+        def release_store():
+            nonlocal held
+            if held:
+                if store is not None:store.close()
+                held=False;self.analysis_slots.release()
         try:
+            store = AnalysisDrafts(self.analysis_database_url, self.connection_id, code)
             require(store.store_id == self.analysis_store_id, 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)
-            if action.startswith(('evidence/', 'simulation/')) or action == 'link-work-order':
+            if action.startswith(('evidence/', 'simulation/')) or action in ('link-work-order','start','recommendations','history-candidates','import-history'):
                 from .analysis_evidence import AnalysisEvidence
                 from .analysis_source_reader import AnalysisSourceReader
                 from . import simulated_faults
@@ -437,12 +449,59 @@ class ProjectSessions(UserSessions):
                         if not hasattr(service, 'work_orders'):
                             service.work_orders = WorkOrders(service.library, code)
                 sources = AnalysisEvidence(store)
-                reader = AnalysisSourceReader(SceneEngineeringReader(row.authority, self.connection_id, code, authorize),
-                    self.shared.project_models, service.work_orders, authorize, actor)
+                # The request is bracketed by live access checks. Each OntoBase
+                # source also enforces membership; inner operations only need the
+                # local session guard, not another remote grant per card/node.
+                if writing:authorize()
+                else:self.guard(sid,row)
+                guard = lambda: self.guard(sid, row)
+                reader = AnalysisSourceReader(SceneEngineeringReader(row.authority, self.connection_id, code, guard),
+                    self.shared.project_models, service.work_orders, guard, actor)
                 if action == 'evidence/register':
                     value = sources.register(actor, body, authorize, reader.resolve)
+                elif action == 'start':
+                    from .analysis_queries import start_analysis
+                    with self.registry.lock:
+                        value = start_analysis(store, actor, reader, body, authorize)
+                elif action == 'history-candidates':
+                    from .analysis_queries import history_candidates
+                    value = history_candidates(store,actor,reader,body,guard)
+                elif action == 'import-history':
+                    from .analysis_queries import import_history
+                    value = import_history(store,actor,body,authorize)
+                elif action == 'evidence/register-batch':
+                    require(set(body)=={'analysisSessionId','expectedAnalysisRevision','items'} and type(body['items']) is list and 1<=len(body['items'])<=12)
+                    results=[]
+                    for item in body['items']:
+                        require(type(item) is dict and set(item)=={'key','requestId','sourceKind','selector'})
+                        try:
+                            result=sources.register(actor,{k:v for k,v in body.items() if k!='items'}|{k:v for k,v in item.items() if k!='key'},authorize,reader.resolve)
+                            results.append({'key':item['key'],'reference':result})
+                        except PreviewError as error:
+                            if error.status in (401,403) or error.code=='ANALYSIS_CHANGED':raise
+                            results.append({'key':item['key'],'error':error.code})
+                    value={'items':results}
+                elif action == 'recommendations':
+                    from .analysis_queries import recommendations
+                    release_store()
+                    value = recommendations(reader, body)
+                elif action == 'evidence/batch':
+                    require(set(body) == {'analysisSessionId','evidenceRefIds'} and type(body['evidenceRefIds']) is list
+                            and 1 <= len(body['evidenceRefIds']) <= 12)
+                    values = []
+                    fixed = [sources.descriptor(actor, {'analysisSessionId':body['analysisSessionId'], 'evidenceRefId':evidence_id}, guard) for evidence_id in body['evidenceRefIds']]
+                    release_store()
+                    for evidence_id,(reference,descriptor) in zip(body['evidenceRefIds'],fixed):
+                        try:
+                            values.append({**reference,'availability':'available','source':reader.read(reference['sourceKind'],descriptor)})
+                        except PreviewError as error:
+                            if error.status == 401: raise
+                            if error.status not in (403,404,409,410,502,503,504): raise
+                            values.append({'evidenceRefId':evidence_id,'availability':'restricted' if error.status == 403 else 'unavailable','reason':error.code})
+                    value = {'items':values}
                 elif action in ('evidence/detail', 'evidence/content'):
-                    reference, descriptor = sources.descriptor(actor, body, authorize)
+                    reference, descriptor = sources.descriptor(actor, body, guard)
+                    release_store()
                     if action == 'evidence/content':
                         value = reader.content(reference['sourceKind'], descriptor)
                     else:
@@ -465,6 +524,9 @@ class ProjectSessions(UserSessions):
                         require(current['contentSha256'] == fixed['contentSha256'], 'ANALYSIS_CHANGED', 409)
                     value = service.work_orders.link_analysis({**body, 'analysisSha256': fixed['contentSha256']}, actor, authorize, analysis_guard)
                 authorize()
+            elif action == 'copy':
+                from .analysis_queries import copy_analysis
+                value = copy_analysis(store,actor,body,authorize)
             elif writing:
                 value = store.write(actor, access['role'], action, body, authorize)
             elif action == '':
@@ -478,10 +540,10 @@ class ProjectSessions(UserSessions):
                                       before=body.get('before'), limit=body.get('limit', 25))
             return {**value, 'projectRef': payload['projectRef'], 'sessionRevision': row.revision,
                     'capabilities': {'canWrite': access.get('role') == 'admin', 'canConfirmConclusion': False,
-                                     'sourceCardsEnabled': False, 'sourceReferenceApiVersion': 1 if store.schema_version == 2 else 0,
+                                     'sourceCardsEnabled': store.schema_version == 2, 'sourceReferenceApiVersion': 2 if store.schema_version == 2 else 0,
                                      'canLinkWorkOrder': store.schema_version == 2 and access.get('role') == 'admin'}}
         finally:
-            store.close()
+            release_store()
 
     def work_order_request(self, sid, path, payload):
         row = self._session(sid, payload)

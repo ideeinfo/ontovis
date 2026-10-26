@@ -58,6 +58,14 @@ class WorkbenchDeploymentTests(unittest.TestCase):
                 with self.assertRaises(AssertionError): location_for(root+suffix+extra)
         self.assertIn('client_max_body_size 16k;', location_for('/api/workbench/work-orders/snapshot'))
 
+    def test_canvas_routes_allow_bounded_snapshots_and_batches_only(self):
+        root='/api/workbench/analysis-sessions/'
+        large=('copy','import-history','evidence/register-batch')
+        for suffix in (*large,'start','recommendations','history-candidates','evidence/batch'):
+            self.assertIn('client_max_body_size '+('264k' if suffix in large else '16k')+';',location_for(root+suffix))
+            for extra in ('/','/extra'):
+                with self.assertRaises(AssertionError):location_for(root+suffix+extra)
+
     def test_only_successful_content_named_public_assets_are_cacheable(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
         block = nginx.split('map "$status:$uri" $ontovis_public_asset_cache_control {', 1)[1].split('\n}', 1)[0]

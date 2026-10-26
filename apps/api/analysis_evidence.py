@@ -22,7 +22,8 @@ def sha(value):
 def validate_descriptor(kind, value):
     draft.require(kind in KINDS and type(value) is dict)
     fields = {
-        'object': SELECTION, 'drawing': SELECTION | DRAWING, 'document': SELECTION | DRAWING,
+        'object': SELECTION, 'drawing': SELECTION | DRAWING,
+        'document': {'documentId', 'contentVersionId', 'sourceSha256', 'pageNumber'},
         'photo': SELECTION | PHOTO,
         'model': {'modelAssetId', 'modelVersionId', 'contentRevision', 'sha256'},
         'work_order': {'orderId', 'orderRevision', 'snapshotSha256'},
@@ -33,16 +34,20 @@ def validate_descriptor(kind, value):
     for key, item in value.items():
         if key in ('installationContextId', 'expectedHierarchyRevision') and item is None:
             continue
-        if key == 'orderRevision':
+        if key == 'pageNumber':
+            draft.require(type(item) is int and 1 <= item <= 10000)
+        elif key == 'orderRevision':
             draft.require(type(item) is int and 1 <= item <= 100)
-        elif key in ('sha256', 'snapshotSha256', 'expectedSourceRevision', 'expectedSourceSha256', 'expectedDisplayRevision', 'expectedContentSha256'):
+        elif key in ('sha256', 'sourceSha256', 'snapshotSha256', 'expectedSourceRevision', 'expectedSourceSha256', 'expectedDisplayRevision', 'expectedContentSha256'):
             sha(item)
         else:
             draft.text(item, 512)
-    if kind in ('object', 'drawing', 'document', 'photo'):
+    if kind in ('object', 'drawing', 'photo'):
         draft.require((value['installationContextId'] is None) == (value['expectedHierarchyRevision'] is None))
     if kind == 'model':
         draft.identifier(value['modelAssetId']); draft.identifier(value['modelVersionId'])
+    if kind == 'document':
+        draft.identifier(value['documentId']); draft.identifier(value['contentVersionId'])
     if kind == 'trend':
         draft.require(draft.utc(value['timeFrom']) < draft.utc(value['timeTo']))
     raw = draft.canonical(value)
@@ -74,7 +79,18 @@ class AnalysisEvidence:
         draft.require(type(body['expectedAnalysisRevision']) is int and 1 <= body['expectedAnalysisRevision'] <= 1000)
         draft.require(body['sourceKind'] in KINDS and type(body['selector']) is dict)
         fingerprint = draft.digest(body); authorize()
+        scope=(self.store.connection_id,self.store.project_code,actor_id,request_id)
+        def alias(cursor):
+            cursor.execute(f'select fingerprint,result_json from {draft.SCHEMA}.analysis_requests where connection_id=%s and project_code=%s and actor_id=%s and request_id=%s',scope)
+            row=cursor.fetchone()
+            if row:
+                draft.require(row[0]==fingerprint,'ANALYSIS_REQUEST_CONFLICT',409)
+                result=json.loads(row[1]);draft.require(result.get('operation')=='evidence/register' and result.get('analysisSessionId')==session_id,'ANALYSIS_REQUEST_CONFLICT',409)
+                self.store._session(cursor,session_id,actor_id)
+                return {k:result[k] for k in ('evidenceRefId','sourceKind','sourceRevision')}
         with self.store.connection.transaction(readonly=True) as cursor:
+            repeated=alias(cursor)
+            if repeated:authorize();return repeated
             prior = self._row(cursor, session_id, actor_id, request_id=request_id)
             if prior:
                 draft.require(prior[2] == fingerprint, 'ANALYSIS_REQUEST_CONFLICT', 409)
@@ -86,11 +102,25 @@ class AnalysisEvidence:
         with self.store.connection.transaction() as cursor:
             cursor.execute('select pg_advisory_xact_lock(%s)', (draft.WRITE_LOCK,))
             head = self.store._session(cursor, session_id, actor_id, lock=True)[0]
+            repeated=alias(cursor)
+            if repeated:authorize();return repeated
             prior = self._row(cursor, session_id, actor_id, request_id=request_id)
             if prior:
                 draft.require(prior[2] == fingerprint, 'ANALYSIS_REQUEST_CONFLICT', 409)
                 authorize(); return self.public(prior)
             draft.require(head == body['expectedAnalysisRevision'], 'ANALYSIS_CHANGED', 409)
+            cursor.execute(f'''select evidence_ref_id::text,request_id::text,request_fingerprint,source_kind,
+                descriptor_json,descriptor_sha256 from {draft.SCHEMA}.analysis_evidence_refs
+                where session_id=%s and source_kind=%s and descriptor_sha256=%s order by created_at limit 1''',
+                (session_id,body['sourceKind'],digest))
+            same = cursor.fetchone()
+            if same:
+                result=self.public(same)
+                cursor.execute(f'select count(*) from {draft.SCHEMA}.analysis_requests')
+                draft.require(cursor.fetchone()[0]<draft.MAX_STORE_REVISIONS,'ANALYSIS_STORE_LIMIT',413)
+                cursor.execute(f'insert into {draft.SCHEMA}.analysis_requests values(%s,%s,%s,%s,%s,%s,%s)',
+                    (*scope,fingerprint,draft.canonical({**result,'operation':'evidence/register','analysisSessionId':session_id}),self.store.clock()))
+                authorize(); return result
             cursor.execute(f'select count(*),coalesce(sum(octet_length(descriptor_json)),0) from {draft.SCHEMA}.analysis_evidence_refs')
             count, used = cursor.fetchone()
             draft.require(count < 10000 and used + len(raw.encode()) <= MAX_SOURCE_BYTES, 'ANALYSIS_STORE_LIMIT', 413)

@@ -83,7 +83,10 @@ end $$;
 create trigger analysis_fixed_owner before update on {SCHEMA}.analysis_sessions
  for each row execute function {SCHEMA}.fixed_owner();
 '''
-DDL = DDL_V1.replace('schema_version=1', 'schema_version=2') + EVIDENCE_DDL
+CANVAS_INDEX_DDL = f'''create index if not exists analysis_fault_context on {SCHEMA}.analysis_revisions
+ ((snapshot_json::jsonb #>> '{{context,sourceConnectionId}}'),(snapshot_json::jsonb #>> '{{context,faultCode}}'),session_id,revision)
+ where snapshot_json::jsonb->>'schemaVersion'='2';'''
+DDL = DDL_V1.replace('schema_version=1', 'schema_version=2') + EVIDENCE_DDL + CANVAS_INDEX_DDL
 
 
 def require(condition, code='INVALID_REQUEST', status=422):
@@ -138,7 +141,10 @@ def utc(value):
 
 
 def validate_snapshot(value, connection_id, project_code):
-    """Only manual draft cards are admitted until a protected source resolver exists."""
+    """V1 notes remain immutable; V2 sources are checked against owned handles on write."""
+    if type(value) is dict and value.get('schemaVersion') == 2:
+        from .analysis_canvas import validate_canvas
+        return validate_canvas(value, connection_id, project_code)
     text(connection_id); text(project_code)
     require(type(value) is dict and set(value) == {'schemaVersion', 'ontobaseConnectionId', 'projectCode',
         'title', 'status', 'context', 'cards', 'relations', 'viewport'})
@@ -399,6 +405,9 @@ class AnalysisDrafts:
                     _, stored = self._revision(cursor, session_id, restored_from)
                     raw = stored[0]
             snapshot = json.loads(raw)
+            if snapshot.get('schemaVersion') == 2:
+                from .analysis_canvas import validate_handles
+                validate_handles(cursor, session_id, snapshot, self.schema_version)
             sha = hashlib.sha256(raw.encode()).hexdigest()
             cursor.execute(f'select count(*),coalesce(sum(octet_length(snapshot_json)),0) from {SCHEMA}.analysis_revisions')
             count, used = cursor.fetchone()
@@ -414,6 +423,8 @@ class AnalysisDrafts:
                     (revision, snapshot['title'], snapshot['status'], timestamp, session_id))
             result = {'analysisSessionId': session_id, 'analysisRevision': revision, 'contentSha256': sha,
                       'operation': action, 'restoredFromRevision': restored_from}
+            cursor.execute(f'select count(*) from {SCHEMA}.analysis_requests')
+            require(cursor.fetchone()[0]<MAX_STORE_REVISIONS,'ANALYSIS_STORE_LIMIT',413)
             cursor.execute(f'insert into {SCHEMA}.analysis_requests values(%s,%s,%s,%s,%s,%s,%s)',
                 (*scope, fingerprint, canonical(result), timestamp))
             authorize()

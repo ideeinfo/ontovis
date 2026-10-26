@@ -162,7 +162,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                      for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history', '/snapshot'))
             analysis_paths = tuple('/api/workbench/analysis-sessions' + suffix
                                    for suffix in ('', '/create', '/detail', '/save', '/restore', '/revisions',
-                                                  '/evidence/register', '/evidence/detail', '/evidence/content',
+                                                  '/evidence/register', '/evidence/detail', '/evidence/content', '/evidence/batch', '/start', '/copy', '/recommendations', '/history-candidates', '/import-history', '/evidence/register-batch',
                                                   '/link-work-order', '/simulation/catalogue', '/simulation/detail', '/simulation/qualify'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
@@ -203,7 +203,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                          '/api/workbench/scenes/legacy-migration/activate')
             metadata_save = parts.path == '/api/workbench/resources/model/metadata/save'
             limit = (MAX_SCENE_BYTES if large_scene else MAX_METADATA_REQUEST_BYTES if metadata_save else
-                     270336 if parts.path in ('/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save') else
+                     270336 if parts.path in ('/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/copy',
+                                             '/api/workbench/analysis-sessions/import-history', '/api/workbench/analysis-sessions/evidence/register-batch') else
                      32768 if parts.path == '/api/workbench/work-orders/action' else
                      16384 if parts.path in (*analysis_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:

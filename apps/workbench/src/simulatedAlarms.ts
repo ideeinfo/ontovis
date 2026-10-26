@@ -8,7 +8,7 @@ export interface SimulatedAlarm {
   updatedAt:string;sourceTime:string;receivedAt:string;acknowledgement:string;
 }
 export interface TrendSample {sourceTime:string;value:number|null;quality:string}
-export interface SimulatedTrend {metricId:string;unit:string;timeFrom:string;timeTo:string;samples:TrendSample[]}
+export interface SimulatedTrend {metricId:string;unit:string;timeFrom:string;timeTo:string;samples:TrendSample[];dataset?:SimulatedDataset}
 export interface SimulationDetail {dataset:SimulatedDataset;alarms:SimulatedAlarm[];trends:SimulatedTrend[]}
 export interface SimulationCatalogue {items:SimulatedDataset[];sourceKind:'simulated';initialDetail?:SimulationDetail}
 
@@ -32,7 +32,7 @@ export function trendDomain(trends:SimulatedTrend[]):[number,number]{
   const low=Math.min(...values),high=Math.max(...values),padding=Math.max((high-low)*.12,.1);
   return [low-padding,high+padding];
 }
-export function trendSegments(trend:SimulatedTrend,domain:[number,number]){
+export function trendSegments(trend:SimulatedTrend,domain:[number,number],stepped=false){
   const span=Date.parse(trend.timeTo)-Date.parse(trend.timeFrom),height=domain[1]-domain[0];
   if(!(span>0&&height>0))return [];
   const result:string[][]=[];let segment:string[]=[];
@@ -40,7 +40,9 @@ export function trendSegments(trend:SimulatedTrend,domain:[number,number]){
     if(point.quality!=='good'||point.value===null||!Number.isFinite(point.value)){
       if(segment.length)result.push(segment);segment=[];continue;
     }
-    segment.push(`${40+(Date.parse(point.sourceTime)-Date.parse(trend.timeFrom))/span*640},${190-(point.value-domain[0])/height*160}`);
+    const x=40+(Date.parse(point.sourceTime)-Date.parse(trend.timeFrom))/span*640,y=190-(point.value-domain[0])/height*160;
+    if(stepped&&segment.length)segment.push(`${x},${segment[segment.length-1].split(',')[1]}`);
+    segment.push(`${x},${y}`);
   }
   if(segment.length)result.push(segment);
   return result.map(points=>points.join(' '));
