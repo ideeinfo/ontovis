@@ -1,7 +1,8 @@
 import { translate, type Locale, type MessageKey } from './messages.ts';
 import type { CatalogGroup, EngineeringObject, ObjectView } from './types';
 
-const kinds:Record<string,MessageKey> = {turbine:'turbine',cabinet:'cabinet',device:'device',component:'component',terminal:'terminal',cable:'cable',loop_label:'loopLabel',unknown:'unclassified'};
+const kinds:Record<string,MessageKey> = {turbine:'turbine',cabinet:'cabinet',device:'device',component:'component',terminal:'terminal',cable:'cable',loop_label:'loopLabel',unknown:'unclassified',
+  blade_assembly:'bladeAssembly',rotor:'rotorAssembly',yaw_mechanism:'yawMechanism',transformer:'transformer',generator:'generator',gearbox:'gearbox',main_shaft:'mainShaft',hub:'hub',tower:'tower',nacelle:'nacelle'};
 export function categoryLabel(value:Pick<CatalogGroup,'code'|'nameZh'|'nameEn'|'objectKind'>, locale:Locale) {
   if (value.code) {
     const name = locale==='en' ? value.nameEn || value.nameZh : value.nameZh || value.nameEn;

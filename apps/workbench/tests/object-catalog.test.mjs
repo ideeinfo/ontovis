@@ -14,6 +14,15 @@ test('unclassified objects and recorded equipment kinds have distinct translated
  assert.equal(objectCategory({...object('b','乙'),objectKind:'cabinet'},'zh'),'柜体');
  assert.equal(objectCategory({...object('b','乙'),objectKind:'cabinet'},'en'),'Cabinet');
 });
+test('shared equipment kinds have readable labels while source standard categories keep priority',()=>{
+ const rows=[['blade_assembly','叶片组','Blade assembly'],['rotor','叶轮 / 转子','Rotor assembly'],['yaw_mechanism','偏航机构','Yaw mechanism'],
+  ['transformer','变压器','Transformer'],['generator','发电机','Generator'],['gearbox','齿轮箱','Gearbox'],['main_shaft','主轴','Main shaft'],['hub','轮毂','Hub'],['tower','塔筒','Tower'],['nacelle','机舱','Nacelle']];
+ for(const [objectKind,zh,en] of rows){
+  const item={...object('fixture','设备'),objectKind};
+  assert.equal(objectCategory(item,'zh'),zh);assert.equal(objectCategory(item,'en'),en);
+  assert.equal(objectCategory({...item,classification:{code:'A',nameZh:'来源分类'}},'zh'),'A · 来源分类');
+ }
+});
 test('a standard category remains visible when generic kind and definition/installation scope are unclassified',()=>{
  const item={...object('sensor','+CN1-1B4',null),objectScope:'unclassified',classification:{code:'BTA',nameZh:'温度变送器',nameEn:'Temperature transmitter',reviewState:'unreviewed'}};
  const before=structuredClone(item);
