@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
-import { Boxes, Building2, ChevronDown, ChevronRight, ClipboardList, Database, FileClock, Focus, GitBranch, Languages, Layers, Link2, LogOut, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
+import { Boxes, Building2, ChevronDown, ChevronRight, ClipboardList, Database, FileClock, Focus, GitBranch, Languages, Layers, LayoutDashboard, Link2, LogOut, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
 import logo from '../../../assets/brand/ONTOVis.png';
 import { ApiError, cancelled, failureMessage, WorkbenchApi } from './api';
 import type { ContextView, ModelView, ObjectView, SessionView } from './types';
@@ -34,7 +34,7 @@ const DataAlarms = lazy(() => import('./DataAlarms').then(module => ({default:mo
 const navigation = [
   ['project', 'projectAccess', Building2], ['models', 'modelCenter', Boxes],
   ['bindings', 'componentBinding', Link2], ['hierarchy', 'equipmentHierarchy', GitBranch],
-  ['scene', 'sceneSettings', Layers], ['orders', 'projectWorkOrders', ClipboardList], ['analysis', 'analysisDrafts', GitBranch], ['data', 'dataAlarms', Database],
+  ['scene', 'sceneSettings', Layers], ['orders', 'projectWorkOrders', ClipboardList], ['analysis', 'analysisDrafts', LayoutDashboard], ['data', 'dataAlarms', Database],
   ['ai', 'aiPolicy', Sparkles], ['audit', 'evidenceAudit', FileClock],
 ] as const;
 type Page = WorkbenchPage;
