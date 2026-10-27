@@ -14,6 +14,13 @@ test('unclassified objects and recorded equipment kinds have distinct translated
  assert.equal(objectCategory({...object('b','乙'),objectKind:'cabinet'},'zh'),'柜体');
  assert.equal(objectCategory({...object('b','乙'),objectKind:'cabinet'},'en'),'Cabinet');
 });
+test('a standard category remains visible when generic kind and definition/installation scope are unclassified',()=>{
+ const item={...object('sensor','+CN1-1B4',null),objectScope:'unclassified',classification:{code:'BTA',nameZh:'温度变送器',nameEn:'Temperature transmitter',reviewState:'unreviewed'}};
+ const before=structuredClone(item);
+ assert.equal(objectCategory(item,'zh'),'BTA · 温度变送器');assert.equal(objectCategory(item,'en'),'BTA · Temperature transmitter');
+ assert.equal(objectCategory({objectKind:item.objectKind,classification:{...item.classification,nameEn:null}},'en'),'BTA · 温度变送器');
+ assert.deepEqual(item,before);assert.equal(item.objectScope,'unclassified');assert.equal(item.classification.reviewState,'unreviewed');
+});
 test('the object path shows recorded parents from root to selection without mutating the nearest-first response',()=>{
  const root=object('root','机组'),cabinet=object('CN','信号柜'),child=object('child','控制接口');
  const detail={item:child,ancestors:{completeness:'complete',path:[{object:cabinet},{object:root}]}};

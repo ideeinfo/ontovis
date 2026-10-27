@@ -10,7 +10,7 @@ export function categoryLabel(value:Pick<CatalogGroup,'code'|'nameZh'|'nameEn'|'
   const key = kinds[value.objectKind];
   return key ? translate(locale,key) : value.objectKind || translate(locale,'unclassified');
 }
-export function objectCategory(item:EngineeringObject, locale:Locale) {
+export function objectCategory(item:Pick<EngineeringObject,'objectKind'|'classification'>, locale:Locale) {
   return categoryLabel({code:null,nameZh:null,nameEn:null,...item.classification,objectKind:item.objectKind},locale);
 }
 export function recordedObjectPath(detail:ObjectView) {

@@ -3,6 +3,7 @@ import type {SourceRef} from './analysisCanvas';
 import type {ProjectModelVersion} from './resourceTypes';
 import type {PhotoSelector} from './workOrderTypes';
 import type {Investigation} from './workOrderTypes';
+import type {ObjectClassification} from './types';
 import type {SimulatedTrend,SimulatedDataset,SimulatedAlarm} from './simulatedAlarms';
 
 export const ANALYSIS_ROOT='/api/workbench/analysis-sessions';
@@ -15,7 +16,7 @@ export type EvidenceSource=Partial<ProjectModelVersion & SimulatedTrend>&{
   documentId?:string;contentVersionId?:string;sourceSha256?:string;selector?:PhotoSelector|null;
   outline?:{title:string;page:number}[];
   knowledgeReleaseId?:string;knowledgeNodeId?:string;
-  item?:{entityUid:string;entityRevision:string;displayName?:string;objectKind?:string;objectScope?:string;identifiers?:{value:string;role:string}[];definitionParentEntityUid?:string};
+  item?:{entityUid:string;entityRevision:string;displayName?:string;objectKind?:string;objectScope?:string;classification?:ObjectClassification|null;identifiers?:{value:string;role:string}[];definitionParentEntityUid?:string};
   dataset?:SimulatedDataset;items?:SimulatedAlarm[];mappingKind?:string;
   orderId?:string;orderRevision?:number;faultCode?:string;state?:string;investigation?:Investigation;
   diagnosis?:{gap?:string};events?:{recordedAt:string;action:string;note:string}[];
