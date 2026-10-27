@@ -45,6 +45,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   const [redo,setRedo]=useState<CanvasSnapshot[]>([]),[multi,setMulti]=useState<string[]>([]);
   const [listVisible,setListVisible]=useState(!initialEntry),[materialsOpen,setMaterialsOpen]=useState(!!initialEntry),[right,setRight]=useState(false);
   const [trashView,setTrashView]=useState(false),[deleteTarget,setDeleteTarget]=useState<AnalysisListItem|null>(null),[lifecycleUnknown,setLifecycleUnknown]=useState(false);
+  const [lifecycleNotice,setLifecycleNotice]=useState('');
   const lifecyclePending=useRef<{item:AnalysisListItem;action:'trash'|'untrash';task:ReturnType<typeof pendingLifecycle>}|null>(null);
   const [section,setSection]=useState('types'),[recommendations,setRecommendations]=useState<Recommendations|null>(null),[recommendLoading,setRecommendLoading]=useState(false);
   const [related,setRelated]=useState<{entityUid:string;expectedEntityRevision:string}|null>(null),[relatedLabel,setRelatedLabel]=useState(''),[sourceAttempt,setSourceAttempt]=useState(0);
@@ -120,7 +121,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
     node.addEventListener('wheel',wheel,{passive:false,capture:true});return()=>node.removeEventListener('wheel',wheel,true);
   },[!!draft,busy,uncertain]);
   function apply(value:CanvasSnapshot,remember=true){if(!editable)return;if(remember&&draft){setUndo(items=>[...items.slice(-19),draft]);setRedo([]);}setDraft(value);setNotice('');}
-  function adopt(value:Detail){setDraft(value.snapshot);setReceipt(value);setSaved(JSON.stringify(value.snapshot));setSelected(value.snapshot.cards[0]?.id||'');setUndo([]);setRedo([]);setMulti([]);setExpanded('');setError(null);setUncertain(false);pending.current=null;}
+  function adopt(value:Detail){setDraft(value.snapshot);setReceipt(value);setSaved(JSON.stringify(value.snapshot));setSelected(value.snapshot.cards[0]?.id||'');setUndo([]);setRedo([]);setMulti([]);setExpanded('');setError(null);setNotice('');setLifecycleNotice('');setUncertain(false);pending.current=null;}
   function change(action:()=>void){if(dirty)setLeave(()=>action);else action();}
   async function open(id:string){
     setFixed(false);
@@ -160,7 +161,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
       const result=await api.request<{lifecycle:'active'|'trashed';lifecycleRevision:number}>(operation.task.path,operation.task.body,abort.signal);
       if(!alive.current||abort.signal.aborted)return;
       lifecyclePending.current=null;setLifecycleUnknown(false);setDeleteTarget(null);setReload(v=>v+1);
-      setNotice(operation.action==='trash'?t('画布已移至回收站','Canvas moved to recycle bin'):t('画布已恢复','Canvas restored'));
+      setLifecycleNotice(operation.action==='trash'?t('画布已移至回收站','Canvas moved to recycle bin'):t('画布已恢复','Canvas restored'));
       if(receipt?.analysisSessionId===operation.item.analysisSessionId){
         if(result.lifecycle==='trashed'){
           setDraft(null);setReceipt(null);setSaved('');setSelected('');setExpanded('');setPreview(null);setVersions(null);
@@ -340,7 +341,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
       </div>}
       {uncertain&&<div className="ad-alert" role="status">{t('保存结果尚未确认。重试会使用同一请求，避免重复创建。','Save result is unknown. Retry reuses the same request.')}</div>}
       {lifecycleUnknown&&<div className="ad-alert" role="status">{t('回收站操作结果尚未确认，重试会复用同一请求。','Recycle-bin result is unknown. Retry reuses the same request.')}<Btn disabled={busy} onClick={()=>void manageLifecycle()}>{t('重试回收站操作','Retry recycle-bin operation')}</Btn></div>}
-      {!draft&&notice&&<div className="ad-alert" role="status">{notice}</div>}
+      {lifecycleNotice&&<div className="ad-alert" role="status">{lifecycleNotice}</div>}
       {draft?<>
 
         {fixed&&receipt&&<div className="ad-alert" role="status">{t('正在查看工单关联的固定版本','Viewing the linked fixed revision')} · r{receipt.analysisRevision}<Btn onClick={()=>void open(receipt.analysisSessionId)}>{t('继续最新分析','Continue latest analysis')}</Btn></div>}
