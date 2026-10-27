@@ -161,7 +161,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             work_order_paths = tuple('/api/workbench/work-orders' + suffix
                                      for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history', '/snapshot'))
             analysis_paths = tuple('/api/workbench/analysis-sessions' + suffix
-                                   for suffix in ('', '/create', '/detail', '/save', '/restore', '/revisions',
+                                   for suffix in ('', '/create', '/detail', '/save', '/restore', '/revisions', '/trash', '/untrash',
                                                   '/evidence/register', '/evidence/detail', '/evidence/content', '/evidence/batch', '/evidence/preview', '/evidence/relationships', '/evidence/preview-content', '/start', '/copy', '/recommendations', '/history-candidates', '/import-history', '/evidence/register-batch',
                                                   '/link-work-order', '/simulation/catalogue', '/simulation/detail', '/simulation/qualify'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',

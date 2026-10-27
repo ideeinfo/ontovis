@@ -15,13 +15,14 @@ def upgrade(database_url, expected_store_id, roots, *, service_stopped=False):
         try:
             with connection.transaction() as cursor:
                 cursor.execute('select pg_advisory_xact_lock(%s)',(draft.WRITE_LOCK,))
-                draft.require(draft.profile(cursor)==2,'ANALYSIS_SOURCES_NOT_ENABLED',409)
+                version=draft.profile(cursor)
+                draft.require(version>=2,'ANALYSIS_SOURCES_NOT_ENABLED',409)
                 cursor.execute(f'select store_id::text from {draft.SCHEMA}.store_meta where id=1')
                 draft.require(cursor.fetchone()[0]==expected_store_id,'ANALYSIS_STORE_SCOPE_MISMATCH',409)
                 cursor.execute('select to_regclass(%s)',(draft.SCHEMA+'.analysis_fault_context',))
                 changed=cursor.fetchone()[0] is None
                 cursor.execute(draft.CANVAS_INDEX_DDL)
-                return {'storeId':expected_store_id,'schemaVersion':2,'indexReady':True,'changed':changed}
+                return {'storeId':expected_store_id,'schemaVersion':version,'indexReady':True,'changed':changed}
         finally:connection.close()
 
 

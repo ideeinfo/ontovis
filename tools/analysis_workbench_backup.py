@@ -98,7 +98,7 @@ def snapshot(project_root, destination, database_url, *, library_root, model_roo
             version = draft.profile(cursor)
             # These locks also block non-cooperating SQL writes while the paired
             # local files and registry are copied by the existing offline tool.
-            columns = draft.V1_COLUMNS if version == 1 else draft.COLUMNS
+            columns = draft.columns_for(version)
             cursor.execute('lock table '+','.join(draft.SCHEMA+'.'+name for name in columns)+' in share mode nowait')
             original = analysis.export_package(database_url)
             analysis._safe_directory(target, new=True)

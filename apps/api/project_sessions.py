@@ -383,7 +383,7 @@ class ProjectSessions(UserSessions):
         row = self._session(sid, payload)
         code = self._ref(payload.get('projectRef'))
         action = path.removeprefix('/api/workbench/analysis-sessions').removeprefix('/')
-        require(action in ('', 'create', 'detail', 'save', 'restore', 'revisions', 'evidence/register',
+        require(action in ('', 'create', 'detail', 'save', 'restore', 'revisions', 'trash', 'untrash', 'evidence/register',
                           'evidence/detail', 'evidence/content', 'evidence/batch', 'evidence/preview', 'evidence/relationships', 'evidence/preview-content', 'start', 'copy', 'recommendations', 'history-candidates', 'import-history', 'evidence/register-batch',
                           'link-work-order', 'simulation/catalogue', 'simulation/detail', 'simulation/qualify'))
         body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
@@ -400,7 +400,7 @@ class ProjectSessions(UserSessions):
         require(self.analysis_store_id is not None, 'ANALYSIS_NOT_ENABLED', 503)
         require(row.subject_id is not None, 'ANALYSIS_IDENTITY_REQUIRED', 401)
         actor = identifier(row.subject_id)
-        writing = action in ('create', 'save', 'restore', 'evidence/register', 'start', 'copy', 'import-history', 'evidence/register-batch', 'link-work-order')
+        writing = action in ('create', 'save', 'restore', 'trash', 'untrash', 'evidence/register', 'start', 'copy', 'import-history', 'evidence/register-batch', 'link-work-order')
         access = self._access(sid, row, code)
         if writing:
             require(access.get('role') == 'admin', 'ANALYSIS_WRITE_FORBIDDEN', 403)
@@ -539,17 +539,25 @@ class ProjectSessions(UserSessions):
                     require(set(body) == {'faultCode'})
                     value = reader.qualify(body['faultCode'])
                 else:
-                    require(store.schema_version == 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
+                    require(store.schema_version >= 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
                     require(set(body) == {'analysisSessionId', 'analysisRevision', 'orderId', 'expectedOrderRevision', 'requestId'})
-                    fixed = store.detail(actor, body['analysisSessionId'], authorize, revision=body['analysisRevision'])
-                    def analysis_guard():
-                        current = store.detail(actor, body['analysisSessionId'], authorize, revision=body['analysisRevision'])
-                        require(current['contentSha256'] == fixed['contentSha256'], 'ANALYSIS_CHANGED', 409)
-                    value = service.work_orders.link_analysis({**body, 'analysisSha256': fixed['contentSha256']}, actor, authorize, analysis_guard)
+                    # Serialize a new fixed link with deletion; previously saved links remain readable.
+                    from .analysis_drafts import WRITE_LOCK
+                    with store.connection.transaction() as cursor:
+                        cursor.execute('select pg_advisory_xact_lock(%s)', (WRITE_LOCK,))
+                        store._session(cursor, body['analysisSessionId'], actor, active=True)
+                        _, fixed = store._revision(cursor, body['analysisSessionId'], body['analysisRevision'])
+                        def analysis_guard():
+                            authorize()
+                            store._session(cursor, body['analysisSessionId'], actor, active=True)
+                        value = service.work_orders.link_analysis({**body, 'analysisSha256': fixed[1]}, actor, authorize, analysis_guard)
                 authorize()
             elif action == 'copy':
                 from .analysis_queries import copy_analysis
                 value = copy_analysis(store,actor,body,authorize)
+            elif action in ('trash', 'untrash'):
+                from .analysis_lifecycle import change
+                value = change(store, actor, access['role'], action, body, authorize)
             elif writing:
                 value = store.write(actor, access['role'], action, body, authorize)
             elif action == '':
@@ -563,8 +571,9 @@ class ProjectSessions(UserSessions):
                                       before=body.get('before'), limit=body.get('limit', 25))
             return {**value, 'projectRef': payload['projectRef'], 'sessionRevision': row.revision,
                     'capabilities': {'canWrite': access.get('role') == 'admin', 'canConfirmConclusion': False,
-                                     'sourceCardsEnabled': store.schema_version == 2, 'sourceReferenceApiVersion': 2 if store.schema_version == 2 else 0,
-                                     'canLinkWorkOrder': store.schema_version == 2 and access.get('role') == 'admin'}}
+                                     'sourceCardsEnabled': store.schema_version >= 2, 'sourceReferenceApiVersion': 2 if store.schema_version >= 2 else 0,
+                                     'canManageLifecycle': store.schema_version >= 3 and access.get('role') == 'admin',
+                                     'canLinkWorkOrder': store.schema_version >= 2 and access.get('role') == 'admin'}}
         finally:
             release_store()
 

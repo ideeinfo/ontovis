@@ -43,11 +43,11 @@ class WorkbenchDeploymentTests(unittest.TestCase):
             with self.assertRaises(AssertionError):location_for('/api/workbench/scenes/'+action)
 
     def test_analysis_drafts_have_bounded_routes_without_conclusion_or_sharing(self):
-        for suffix in ('', '/create', '/save', '/detail', '/restore', '/revisions'):
+        for suffix in ('', '/create', '/save', '/detail', '/restore', '/revisions', '/trash', '/untrash'):
             body = location_for('/api/workbench/analysis-sessions'+suffix)
             self.assertIn('client_max_body_size '+('264k' if suffix in ('/create', '/save') else '16k')+';', body)
             self.assertIn('proxy_buffering off;', body)
-        for suffix in ('/confirm', '/archive', '/share', '/save/extra', '/'):
+        for suffix in ('/confirm', '/archive', '/share', '/purge', '/trash/extra', '/untrash/extra', '/save/extra', '/'):
             with self.assertRaises(AssertionError): location_for('/api/workbench/analysis-sessions'+suffix)
 
     def test_analysis_source_preparation_and_fixed_work_order_routes_are_exact(self):

@@ -22,9 +22,10 @@ MANIFEST_FORMAT = 'ontovis-analysis-draft-snapshot-v1'
 
 
 def package_profile(package):
-    version = 1 if package.get('format') == draft.FORMAT_V1 else 2
-    draft.require(package.get('format') == (draft.FORMAT_V1 if version == 1 else draft.FORMAT))
-    return version, draft.V1_COLUMNS if version == 1 else draft.COLUMNS
+    draft.require(type(package.get('format')) is str)
+    version = {draft.FORMAT_V1: 1, draft.FORMAT: 2, draft.FORMAT_V3: 3}.get(package.get('format'))
+    draft.require(version is not None)
+    return version, draft.columns_for(version)
 
 
 def sha(raw):
@@ -87,6 +88,22 @@ def validate_package(package):
         draft.require(all((key, revision) in revisions for revision in range(1, row['head_revision'] + 1)))
         head = json.loads(revisions[(key, row['head_revision'])]['snapshot_json'])
         draft.require(head['title'] == row['title'] and head['status'] == row['status'])
+    lifecycle_events, lifecycle_receipts = {}, set()
+    if version >= 3:
+        for row in tables['analysis_lifecycle_events']:
+            owner = sessions.get(row['session_id'])
+            draft.require(owner is not None and row['actor_id'] == owner['owner_id'])
+            draft.identifier(row['request_id']); draft.utc(row['created_at'])
+            revision = row['lifecycle_revision']
+            draft.require(type(revision) is int and 1 <= revision <= 1000)
+            draft.require(type(row['analysis_revision']) is int and (row['session_id'], row['analysis_revision']) in revisions)
+            key = (row['session_id'], revision)
+            draft.require(key not in lifecycle_events and row['state'] == ('trashed' if revision % 2 else 'active'))
+            lifecycle_events[key] = row
+        for (session_id, revision), row in lifecycle_events.items():
+            draft.require(all((session_id, n) in lifecycle_events for n in range(1, revision)))
+            if revision > 1:
+                draft.require(lifecycle_events[(session_id, revision-1)]['analysis_revision'] <= row['analysis_revision'])
     seen_receipts = set()
     for row in tables['analysis_requests']:
         draft.require(row['connection_id'] == package['connectionId'])
@@ -99,7 +116,20 @@ def validate_package(package):
             result = json.loads(row['result_json'])
         except (TypeError, ValueError, RecursionError):
             raise PreviewError(422, 'ANALYSIS_PACKAGE_INVALID') from None
-        if version==2 and isinstance(result,dict) and result.get('operation')=='evidence/register':
+        if version >= 3 and isinstance(result, dict) and result.get('operation') in ('trash', 'untrash'):
+            draft.require(set(result) == {'analysisSessionId', 'analysisRevision', 'lifecycle', 'lifecycleRevision', 'operation'}
+                          and draft.canonical(result) == row['result_json'])
+            draft.require(type(result['lifecycleRevision']) is int and type(result['analysisRevision']) is int)
+            key = (result['analysisSessionId'], result['lifecycleRevision'])
+            event = lifecycle_events.get(key); owner = sessions.get(result['analysisSessionId'])
+            draft.require(event and owner and key not in lifecycle_receipts
+                and owner['owner_id'] == row['actor_id'] and owner['project_code'] == row['project_code']
+                and event['request_id'] == row['request_id'] and event['analysis_revision'] == result['analysisRevision']
+                and event['state'] == result['lifecycle']
+                and result['operation'] == ('trash' if event['state'] == 'trashed' else 'untrash'))
+            lifecycle_receipts.add(key)
+            continue
+        if version>=2 and isinstance(result,dict) and result.get('operation')=='evidence/register':
             draft.require(set(result)=={'analysisSessionId','operation','evidenceRefId','sourceKind','sourceRevision'}
                 and draft.canonical(result)==row['result_json'])
             owner=sessions.get(result['analysisSessionId'])
@@ -120,7 +150,8 @@ def validate_package(package):
                       and result['restoredFromRevision'] == revision['restored_from'])
         seen_receipts.add(version_key)
     draft.require(seen_receipts == set(revisions))
-    if version == 2:
+    draft.require(lifecycle_receipts == set(lifecycle_events))
+    if version >= 2:
         from apps.api.analysis_evidence import validate_descriptor, MAX_SOURCE_BYTES
         ids, source_requests, counts = set(), set(), {}
         used = 0
@@ -168,7 +199,7 @@ def export_package(database_url):
     try:
         with connection.transaction(readonly=True) as cursor:
             version = draft.profile(cursor)
-            columns_by_table = draft.V1_COLUMNS if version == 1 else draft.COLUMNS
+            columns_by_table = draft.columns_for(version)
             tables = {}
             for name in columns_by_table:
                 cursor.execute(f'select count(*) from {draft.SCHEMA}.{name}')
@@ -180,7 +211,7 @@ def export_package(database_url):
                 tables[name] = [row[0] for row in cursor.fetchall()]
             draft.require(len(tables['store_meta']) == 1, 'ANALYSIS_STORAGE_INVALID', 409)
             meta = tables['store_meta'][0]
-            package = {'format': draft.FORMAT_V1 if version == 1 else draft.FORMAT, 'sourceStoreId': meta['store_id'], 'connectionId': meta['connection_id'], 'tables': tables}
+            package = {'format': {1: draft.FORMAT_V1, 2: draft.FORMAT, 3: draft.FORMAT_V3}[version], 'sourceStoreId': meta['store_id'], 'connectionId': meta['connection_id'], 'tables': tables}
             validate_package(package)
             return package
     finally:
@@ -255,7 +286,7 @@ def restore_new(root, expected_manifest_sha256, database_url):
             cursor.execute('select to_regnamespace(%s)', (draft.SCHEMA,))
             draft.require(cursor.fetchone()[0] is None, 'ANALYSIS_TARGET_OCCUPIED', 409)
             version, columns_by_table = package_profile(package)
-            cursor.execute(draft.DDL if version == 2 else draft.DDL_V1)
+            cursor.execute({1: draft.DDL_V1, 2: draft.DDL, 3: draft.DDL_V3}[version])
             store_id = str(uuid4())
             cursor.execute(f'insert into {draft.SCHEMA}.store_meta values(1,%s,%s,%s)', (version, package['connectionId'], store_id))
             for name in tuple(columns_by_table)[1:]:

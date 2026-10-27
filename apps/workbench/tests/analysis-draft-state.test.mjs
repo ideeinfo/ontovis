@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft} from '../src/analysisDraftState.ts';
+import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle} from '../src/analysisDraftState.ts';
 const scope={ontobaseConnectionId:'synthetic',projectCode:'A'};
 test('new draft has explicit time scope and inherits no source or work order',()=>{
  const value=blankAnalysisDraft(scope,new Date('2026-10-26T12:00:00Z'));
@@ -29,4 +29,12 @@ test('read-only camera movement is not an unsaved edit but local notes remain di
  const value=blankAnalysisDraft(scope),saved=JSON.stringify(value);value.viewport.x+=10;
  assert.equal(draftChanged(value,saved,false),false);assert.equal(draftChanged(value,saved),true);
  value.title='local edit';assert.equal(draftChanged(value,saved,false),true);
+});
+
+test('recycle-bin requests pin both versions and keep content revision restore separate',()=>{
+ const item={analysisSessionId:'fixture-id',analysisRevision:5,lifecycleRevision:2,title:'Local canvas',status:'analyzing',updatedAt:'fixture'};
+ const pending=pendingLifecycle(item,'trash','request-fixed');item.analysisRevision=6;item.lifecycleRevision=3;
+ assert.deepEqual(pending,{path:'/api/workbench/analysis-sessions/trash',body:{analysisSessionId:'fixture-id',expectedAnalysisRevision:5,expectedLifecycleRevision:2,requestId:'request-fixed'}});
+ assert.equal(pendingLifecycle(item,'untrash','restore-id').path,'/api/workbench/analysis-sessions/untrash');
+ assert.equal(pendingLifecycle({...item,lifecycleRevision:undefined},'trash','first').body.expectedLifecycleRevision,0);
 });

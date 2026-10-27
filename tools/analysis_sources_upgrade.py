@@ -19,8 +19,8 @@ def upgrade(database_url, expected_store_id, roots, *, service_stopped=False):
                 version = draft.profile(cursor)
                 cursor.execute(f'select store_id::text from {draft.SCHEMA}.store_meta where id=1')
                 draft.require(cursor.fetchone()[0] == expected_store_id, 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)
-                if version == 2:
-                    return {'schemaVersion': 2, 'changed': False, 'storeId': expected_store_id}
+                if version >= 2:
+                    return {'schemaVersion': version, 'changed': False, 'storeId': expected_store_id}
                 cursor.execute('lock table '+','.join(draft.SCHEMA+'.'+n for n in draft.V1_COLUMNS)+' in access exclusive mode nowait')
                 cursor.execute(draft.EVIDENCE_DDL)
                 cursor.execute(f'alter table {draft.SCHEMA}.store_meta drop constraint store_meta_schema_version_check')

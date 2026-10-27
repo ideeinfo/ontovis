@@ -25,6 +25,7 @@ def entry_dataset(reader, entry):
 
 
 def matching_history(store, actor, dataset, object_id, authorize):
+    from .analysis_lifecycle import active_condition
     authorize()
     with store.connection.transaction(readonly=True) as cur:
         # Scope/owner index and fixed context expressions avoid fetching every Canvas.
@@ -32,6 +33,7 @@ def matching_history(store, actor, dataset, object_id, authorize):
             from {d.SCHEMA}.analysis_sessions s join {d.SCHEMA}.analysis_revisions r
               on r.session_id=s.session_id and r.revision=s.head_revision
             where s.connection_id=%s and s.project_code=%s and s.owner_id=%s
+              and {active_condition(store)}
               and r.snapshot_json::jsonb#>>'{{context,faultCode}}'=%s
               and r.snapshot_json::jsonb#>>'{{context,sourceConnectionId}}'=%s
               and r.snapshot_json::jsonb->>'schemaVersion'='2'

@@ -93,7 +93,7 @@ def validate_canvas(value, connection_id, project_code):
 
 
 def validate_handles(cursor, session_id, snapshot, schema_version):
-    d.require(schema_version == 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
+    d.require(schema_version >= 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
     origin = snapshot.get('inheritedFrom')
     historical = [c for c in snapshot['cards'] if c.get('historical')]
     d.require(not historical or origin is not None, 'ANALYSIS_HISTORY_REFERENCE_REQUIRED', 409)

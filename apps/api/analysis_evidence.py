@@ -78,7 +78,7 @@ class AnalysisEvidence:
         return cursor.fetchone()
 
     def register(self, actor_id, body, authorize, resolve):
-        draft.require(self.store.schema_version == 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
+        draft.require(self.store.schema_version >= 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
         draft.require(type(body) is dict and set(body) == {'analysisSessionId', 'expectedAnalysisRevision', 'requestId', 'sourceKind', 'selector'})
         session_id = draft.identifier(body['analysisSessionId']); request_id = draft.identifier(body['requestId'])
         draft.require(type(body['expectedAnalysisRevision']) is int and 1 <= body['expectedAnalysisRevision'] <= 1000)
@@ -94,6 +94,7 @@ class AnalysisEvidence:
                 self.store._session(cursor,session_id,actor_id)
                 return {k:result[k] for k in ('evidenceRefId','sourceKind','sourceRevision')}
         with self.store.connection.transaction(readonly=True) as cursor:
+            self.store._session(cursor, session_id, actor_id, active=True)
             repeated=alias(cursor)
             if repeated:authorize();return repeated
             prior = self._row(cursor, session_id, actor_id, request_id=request_id)
@@ -106,7 +107,7 @@ class AnalysisEvidence:
         raw = validate_descriptor(body['sourceKind'], descriptor); digest = hashlib.sha256(raw.encode()).hexdigest()
         with self.store.connection.transaction() as cursor:
             cursor.execute('select pg_advisory_xact_lock(%s)', (draft.WRITE_LOCK,))
-            head = self.store._session(cursor, session_id, actor_id, lock=True)[0]
+            head = self.store._session(cursor, session_id, actor_id, lock=True, active=True)[0]
             repeated=alias(cursor)
             if repeated:authorize();return repeated
             prior = self._row(cursor, session_id, actor_id, request_id=request_id)
@@ -138,7 +139,7 @@ class AnalysisEvidence:
             return {'evidenceRefId': evidence_id, 'sourceKind': body['sourceKind'], 'sourceRevision': digest}
 
     def descriptor(self, actor_id, body, authorize):
-        draft.require(self.store.schema_version == 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
+        draft.require(self.store.schema_version >= 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
         draft.require(type(body) is dict and set(body) == {'analysisSessionId', 'evidenceRefId'})
         authorize()
         with self.store.connection.transaction(readonly=True) as cursor:

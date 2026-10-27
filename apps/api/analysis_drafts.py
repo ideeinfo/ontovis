@@ -15,6 +15,7 @@ from .authority import PreviewError
 SCHEMA = 'ontovis_analysis_v1'
 FORMAT_V1 = 'ontovis-analysis-drafts-v1'
 FORMAT = 'ontovis-analysis-sources-v2'
+FORMAT_V3 = 'ontovis-analysis-lifecycle-v3'
 MAX_BYTES = 256 * 1024
 MAX_STORE_BYTES = 8 * 1024 * 1024
 MAX_STORE_REVISIONS = 10000
@@ -87,6 +88,24 @@ CANVAS_INDEX_DDL = f'''create index if not exists analysis_fault_context on {SCH
  ((snapshot_json::jsonb #>> '{{context,sourceConnectionId}}'),(snapshot_json::jsonb #>> '{{context,faultCode}}'),session_id,revision)
  where snapshot_json::jsonb->>'schemaVersion'='2';'''
 DDL = DDL_V1.replace('schema_version=1', 'schema_version=2') + EVIDENCE_DDL + CANVAS_INDEX_DDL
+V3_COLUMNS = {**COLUMNS, 'analysis_lifecycle_events': ('session_id', 'lifecycle_revision', 'state',
+    'analysis_revision', 'actor_id', 'request_id', 'created_at')}
+LIFECYCLE_DDL = f'''
+create table {SCHEMA}.analysis_lifecycle_events (
+ session_id uuid not null references {SCHEMA}.analysis_sessions(session_id),
+ lifecycle_revision integer not null check(lifecycle_revision between 1 and 1000),
+ state text not null check(state in ('active','trashed')),
+ analysis_revision integer not null, actor_id uuid not null, request_id uuid not null, created_at text not null,
+ primary key(session_id,lifecycle_revision), unique(session_id,request_id),
+ foreign key(session_id,analysis_revision) references {SCHEMA}.analysis_revisions(session_id,revision));
+create trigger immutable_analysis_lifecycle before update or delete on {SCHEMA}.analysis_lifecycle_events
+ for each row execute function {SCHEMA}.immutable_record();
+'''
+DDL_V3 = DDL.replace('schema_version=2', 'schema_version=3') + LIFECYCLE_DDL
+
+
+def columns_for(version):
+    return {1: V1_COLUMNS, 2: COLUMNS, 3: V3_COLUMNS}[version]
 
 
 def require(condition, code='INVALID_REQUEST', status=422):
@@ -234,9 +253,8 @@ def profile(cursor):
     actual = {}
     for table, column in cursor.fetchall():
         actual.setdefault(table, []).append(column)
-    version = 1 if actual == {name: list(columns) for name, columns in V1_COLUMNS.items()} else 2
-    expected = V1_COLUMNS if version == 1 else COLUMNS
-    require(actual == {name: list(columns) for name, columns in expected.items()}, 'ANALYSIS_PROFILE_CHANGED', 409)
+    version = next((v for v in (1, 2, 3) if actual == {name: list(columns) for name, columns in columns_for(v).items()}), None)
+    require(version is not None, 'ANALYSIS_PROFILE_CHANGED', 409)
     cursor.execute(f'select schema_version from {SCHEMA}.store_meta where id=1')
     row = cursor.fetchone()
     require(row and row[0] == version, 'ANALYSIS_PROFILE_CHANGED', 409)
@@ -245,13 +263,13 @@ def profile(cursor):
 
 def provision(database_url, connection_id, *, version=2):
     text(connection_id)
-    require(type(version) is int and version in (1, 2))
+    require(type(version) is int and version in (1, 2, 3))
     connection = AnalysisConnection(database_url)
     try:
         with connection.transaction() as cursor:
             cursor.execute('select to_regnamespace(%s)', (SCHEMA,))
             require(cursor.fetchone()[0] is None, 'ANALYSIS_TARGET_OCCUPIED', 409)
-            cursor.execute(DDL if version == 2 else DDL_V1)
+            cursor.execute({1: DDL_V1, 2: DDL, 3: DDL_V3}[version])
             store_id = str(uuid4())
             cursor.execute(f'insert into {SCHEMA}.store_meta values(1,%s,%s,%s)', (version, connection_id, store_id))
             profile(cursor)
@@ -278,13 +296,23 @@ class AnalysisDrafts:
     def close(self):
         self.connection.close()
 
-    def _session(self, cursor, session_id, actor_id, *, lock=False):
+    def lifecycle(self, cursor, session_id):
+        if self.schema_version < 3:
+            return {'lifecycle': 'active', 'lifecycleRevision': 0}
+        cursor.execute(f'''select state,lifecycle_revision from {SCHEMA}.analysis_lifecycle_events
+            where session_id=%s order by lifecycle_revision desc limit 1''', (session_id,))
+        row = cursor.fetchone()
+        return {'lifecycle': row[0], 'lifecycleRevision': row[1]} if row else {'lifecycle': 'active', 'lifecycleRevision': 0}
+
+    def _session(self, cursor, session_id, actor_id, *, lock=False, active=False):
         identifier(session_id); identifier(actor_id)
         cursor.execute(f'''select head_revision,title,status,created_at,updated_at from {SCHEMA}.analysis_sessions
             where session_id=%s and connection_id=%s and project_code=%s and owner_id=%s''' + (' for update' if lock else ''),
             (session_id, self.connection_id, self.project_code, actor_id))
         row = cursor.fetchone()
         require(row, 'NOT_FOUND_OR_FORBIDDEN', 404)
+        if active:
+            require(self.lifecycle(cursor, session_id)['lifecycle'] == 'active', 'ANALYSIS_TRASHED', 409)
         return row
 
     def _revision(self, cursor, session_id, revision):
@@ -308,7 +336,8 @@ class AnalysisDrafts:
             snapshot, row = self._revision(cursor, session_id, version)
             authorize()
             return {'analysisSessionId': session_id, 'analysisRevision': version, 'headRevision': head,
-                    'contentSha256': row[1], 'snapshot': snapshot, 'operation': row[2], 'restoredFromRevision': row[3]}
+                    'contentSha256': row[1], 'snapshot': snapshot, 'operation': row[2], 'restoredFromRevision': row[3],
+                    **self.lifecycle(cursor, session_id)}
 
     def history(self, actor_id, session_id, authorize, *, before=None, limit=25):
         require(type(limit) is int and 1 <= limit <= 50)
@@ -326,22 +355,30 @@ class AnalysisDrafts:
 
     def listing(self, actor_id, body, authorize, *, cursor_key, session_revision):
         identifier(actor_id)
-        require(type(body) is dict and set(body) <= {'q', 'status', 'limit', 'cursor'})
+        require(type(body) is dict and set(body) <= {'q', 'status', 'limit', 'cursor', 'lifecycle'})
+        lifecycle = body.get('lifecycle', 'active')
+        require(lifecycle in ('active', 'trashed'))
         query, status, limit = body.get('q', ''), body.get('status', ''), body.get('limit', 25)
         require(type(query) is str and len(query) <= 200 and type(limit) is int and 1 <= limit <= 50)
         require(status in ('', 'analyzing', 'awaiting_field_check', 'awaiting_expert_review'))
         authorize()
         with self.connection.transaction(readonly=True) as cursor:
-            cursor.execute(f'''select session_id::text,title,status,head_revision,created_at,updated_at
-                from {SCHEMA}.analysis_sessions where connection_id=%s and project_code=%s and owner_id=%s
-                order by updated_at desc,session_id limit 1001''', (self.connection_id, self.project_code, actor_id))
+            projection = (f'''left join lateral (select state,lifecycle_revision,created_at as changed_at
+                from {SCHEMA}.analysis_lifecycle_events where session_id=s.session_id order by lifecycle_revision desc limit 1) l on true'''
+                if self.schema_version >= 3 else "left join (select 'active'::text as state,0 as lifecycle_revision,null::text as changed_at) l on true")
+            cursor.execute(f'''select s.session_id::text,s.title,s.status,s.head_revision,s.created_at,s.updated_at,
+                coalesce(l.state,'active'),coalesce(l.lifecycle_revision,0),coalesce(l.changed_at,s.updated_at)
+                from {SCHEMA}.analysis_sessions s {projection}
+                where s.connection_id=%s and s.project_code=%s and s.owner_id=%s
+                and coalesce(l.state,'active')=%s order by coalesce(l.changed_at,s.updated_at) desc,s.session_id limit 1001''',
+                (self.connection_id, self.project_code, actor_id, lifecycle))
             rows = cursor.fetchall()
             require(len(rows) <= 1000, 'ANALYSIS_STORAGE_INVALID', 409)
             items = [{'analysisSessionId': r[0], 'title': r[1], 'status': r[2], 'analysisRevision': r[3],
-                      'createdAt': r[4], 'updatedAt': r[5]} for r in rows
+                      'createdAt': r[4], 'updatedAt': r[5], 'lifecycle': r[6], 'lifecycleRevision': r[7], 'lifecycleChangedAt': r[8]} for r in rows
                      if (not status or r[2] == status) and query.strip().casefold() in r[1].casefold()]
             revision = digest([self.store_id, self.connection_id, self.project_code, actor_id,
-                               session_revision, query, status, limit, items])
+                               session_revision, query, status, lifecycle, limit, items])
             start = 0
             token = body.get('cursor')
             if token is not None:
@@ -382,7 +419,7 @@ class AnalysisDrafts:
             replay = cursor.fetchone()
             if replay:
                 require(replay[0] == fingerprint, 'ANALYSIS_REQUEST_CONFLICT', 409)
-                result = json.loads(replay[1]); self._session(cursor, result['analysisSessionId'], actor_id)
+                result = json.loads(replay[1]); self._session(cursor, result['analysisSessionId'], actor_id, active=True)
                 authorize(); return result
             # Keep the bounded draft store exportable. Candidate writes serialize
             # this quota check; this is not a multi-process throughput claim.
@@ -396,7 +433,7 @@ class AnalysisDrafts:
                 session_id, revision = str(uuid4()), 1
             else:
                 session_id = identifier(body['analysisSessionId'])
-                current = self._session(cursor, session_id, actor_id, lock=True)[0]
+                current = self._session(cursor, session_id, actor_id, lock=True, active=True)[0]
                 require(type(body['expectedAnalysisRevision']) is int and current == body['expectedAnalysisRevision'], 'ANALYSIS_CHANGED', 409)
                 require(current < 1000, 'ANALYSIS_REVISION_LIMIT', 413)
                 revision = current + 1

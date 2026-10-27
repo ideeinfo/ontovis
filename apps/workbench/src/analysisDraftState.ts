@@ -1,6 +1,11 @@
 import {validateSnapshot, type CanvasSnapshot, type ProjectScope} from './analysisCanvas.ts';
 
-export type DraftReceipt = {analysisSessionId:string;analysisRevision:number;headRevision?:number;contentSha256:string};
+export type DraftReceipt = {analysisSessionId:string;analysisRevision:number;headRevision?:number;contentSha256:string;lifecycle?:'active'|'trashed';lifecycleRevision?:number};
+export type AnalysisListItem={analysisSessionId:string;title:string;status:string;analysisRevision:number;updatedAt:string;lifecycle?:'active'|'trashed';lifecycleRevision?:number};
+export function pendingLifecycle(item:AnalysisListItem,action:'trash'|'untrash',requestId:string){
+  return {path:'/api/workbench/analysis-sessions/'+action,body:{analysisSessionId:item.analysisSessionId,
+    expectedAnalysisRevision:item.analysisRevision,expectedLifecycleRevision:item.lifecycleRevision??0,requestId}};
+}
 export type PendingDraft = {path:string;body:object;snapshot:CanvasSnapshot};
 export function draftChanged(value:CanvasSnapshot|null,saved:string,includeViewport=true):boolean {
   if(!value)return false;
