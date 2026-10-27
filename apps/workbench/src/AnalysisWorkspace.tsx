@@ -4,7 +4,7 @@ import {Btn,IconBtn,Modal} from './Primitives';
 import {addManualRelation,frameBounds,selectedInBox,arrangeCards,fitViewport,moveCard,removeCard,resizeCard,RESIZE_HANDLES,zoomAt,type ResizeHandle,type CanvasSnapshot,type ProjectScope,type RelationKind,type CanvasCard,type CardView} from './analysisCanvas';
 import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,type DraftReceipt,type PendingDraft} from './analysisDraftState';
 import {RowActions,RowContext} from './ListMenus';
-import {AnalysisSources,ANALYSIS_ROOT,type AnalysisEntry,type Recommendation,type Recommendations,type EvidenceSource,type SourceAnchor} from './analysisSources';
+import {AnalysisSources,ANALYSIS_ROOT,setCardPreviewOpen,type AnalysisEntry,type Recommendation,type Recommendations,type EvidenceSource,type SourceAnchor} from './analysisSources';
 import {AnalysisSourceCard,AnalysisTrend,materialNames} from './AnalysisSourceCard';
 import {useSourceRelations,SourceRelationLines,SourceRelationDetails,type CardSourceRelation} from './AnalysisSourceRelations';
 import type {SimulatedTrend} from './simulatedAlarms';
@@ -43,7 +43,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   const [section,setSection]=useState('objects'),[recommendations,setRecommendations]=useState<Recommendations|null>(null),[recommendLoading,setRecommendLoading]=useState(false);
   const [related,setRelated]=useState<{entityUid:string;expectedEntityRevision:string}|null>(null),[relatedLabel,setRelatedLabel]=useState(''),[sourceAttempt,setSourceAttempt]=useState(0);
   const [expandedAnchor,setExpandedAnchor]=useState<SourceAnchor|null>(null);
-  const [activeMedia,setActiveMedia]=useState(''),[activeModel,setActiveModel]=useState(''),[expanded,setExpanded]=useState('');
+  const [openPreviews,setOpenPreviews]=useState<ReadonlySet<string>>(()=>new Set()),[expanded,setExpanded]=useState('');
   const [compare,setCompare]=useState(false),[trendData,setTrendData]=useState<Record<string,SimulatedTrend>>({}),[linkOrderOpen,setLinkOrderOpen]=useState(false),[orderId,setOrderId]=useState('');
   const [startAttempt,setStartAttempt]=useState(0),[fixed,setFixed]=useState(false),[referenceState,setReferenceState]=useState<Record<string,string>>({});
   const [recommendQuery,setRecommendQuery]=useState(''),[recommendFilter,setRecommendFilter]=useState<string|undefined>(),[chosen,setChosen]=useState<string[]>([]);
@@ -67,6 +67,11 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   const selectedCard=draft?.cards.find(card=>card.id===selected);
   const sources=useMemo(()=>receipt?new AnalysisSources(api,receipt.analysisSessionId):null,[api,receipt?.analysisSessionId,api.epoch,api.revision]);
   useEffect(()=>()=>sources?.dispose(),[sources]);
+  useEffect(()=>setOpenPreviews(new Set()),[sources]);
+  const previewCardIds=draft?.cards.map(card=>card.id).join('|')||'';
+  useEffect(()=>setOpenPreviews(open=>{const ids=new Set(draft?.cards.map(card=>card.id));
+    const next=new Set([...open].filter(id=>ids.has(id)));return next.size===open.size?open:next;
+  }),[previewCardIds]);
   const sourceRelations=useSourceRelations(sources,draft?.cards||[]);
   const visibleRelations=sourceRelations.relations.filter(link=>[link.from,link.to].every(card=>!referenceState[card.source!.id]||referenceState[card.source!.id]==='available'));
   const analysisEntry=useMemo<AnalysisEntry|null>(()=>draft?(draft.context.datasetId&&draft.context.datasetRevision?{datasetId:draft.context.datasetId,datasetRevision:draft.context.datasetRevision}:{projectOnly:true}):initialEntry&& !('analysisSessionId' in initialEntry)&&!('entityUid' in initialEntry)?initialEntry:null,[draft?.context.datasetId,draft?.context.datasetRevision,!!draft,initialEntry]);
@@ -164,11 +169,11 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
       try{const ref=references.get(item.key);if(!ref){failed.push(item.title);continue;}
         if(!alive.current||abort.signal.aborted)return;const kind=item.kind==='model'?'model3d':item.kind;
         const existing=next.cards.find(c=>!c.historical&&c.kind===kind&&c.source?.revision===ref.sourceRevision);
-        if(existing&&!replaceId){addedId=existing.id;if(items.length===1)focusCard(existing);continue;}
+        if(existing&&!replaceId){addedId=existing.id;if(['photo','drawing','document','model'].includes(item.kind))setOpenPreviews(open=>setCardPreviewOpen(open,existing.id,true));if(items.length===1)focusCard(existing);continue;}
         const n=next.cards.length,id=replaceId||crypto.randomUUID(),card:CanvasCard={id,kind,title:item.title,x:32+(n%3)*380,y:48+Math.floor(n/3)*400,width:340,height:['photo','drawing','document','model'].includes(item.kind)?360:250,pinned:false,
           source:{...api.project!,system:['object','drawing','document','photo'].includes(item.kind)?'ontobase':'ontovis',id:ref.evidenceRefId,revision:ref.sourceRevision}};
         next={...next,schemaVersion:2,cards:replaceId?next.cards.map(old=>old.id===id?{...old,source:card.source}:old):[...next.cards,card]};added++;addedId=id;setSelected(id);setMulti([id]);
-        if(item.kind==='model')setActiveModel(id);else if(['photo','drawing','document'].includes(item.kind))setActiveMedia(id);
+        if(['photo','drawing','document','model'].includes(item.kind))setOpenPreviews(open=>setCardPreviewOpen(open,id,true));
       }catch(value){if([401,403].includes(status(value))||abort.signal.aborted)throw value;failed.push(item.title);}}
       if(added)apply(next);setChosen([]);setNotice(failed.length?t(`已加入${added}项；${failed.length}项未加入，可重试`,`Added ${added}; ${failed.length} failed`):added?t(`已加入${added}项资料`,`Added ${added} materials`):t('资料已在画布中','Material already on canvas'));return addedId;
     }catch(value){failure(value);}finally{if(alive.current&&!abort.signal.aborted)setBusy(false);}
@@ -263,12 +268,12 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   const expandedCard=draft?.cards.find(c=>c.id===expanded);
   function openSource(card:CanvasCard,anchor?:SourceAnchor|null){
     const relation=sourceRelations.relations.find(link=>link.to.id===card.id&&link.anchor);
-    setExpandedAnchor(anchor??relation?.anchor??null);setExpanded(card.id);setActiveModel('');
+    setExpandedAnchor(anchor??relation?.anchor??null);setExpanded(card.id);
   }
   function openRelation(link:CardSourceRelation){setSelected(link.to.id);openSource(link.to,link.anchor);}
-  async function addAndOpen(item:Recommendation){const id=await addSource(item);if(id){setExpandedAnchor(null);setExpanded(id);setActiveModel('');}}
-  const sourceContent=(card:CanvasCard,full=false)=>sources&&<AnalysisSourceCard key={card.id+(full?':full':':inline')} card={card} sources={sources} en={en} full={full} anchor={full?expandedAnchor:null} onAddMaterial={editable?item=>void addAndOpen(item):undefined} active={full||!expanded&&(card.kind==='model3d'?activeModel===card.id:activeMedia===card.id)}
-    onActivate={()=>card.kind==='model3d'?setActiveModel(card.id):setActiveMedia(card.id)} onOpen={()=>openSource(card)} onRelated={chooseRelated} onPage={(page,value)=>pageAction.current(card,page,value)}
+  async function addAndOpen(item:Recommendation){const id=await addSource(item);if(id){setExpandedAnchor(null);setExpanded(id);}}
+  const sourceContent=(card:CanvasCard,full=false)=>sources&&<AnalysisSourceCard key={card.id+(full?':full':':inline')} card={card} sources={sources} en={en} full={full} anchor={full?expandedAnchor:null} onAddMaterial={editable?item=>void addAndOpen(item):undefined} active={full||openPreviews.has(card.id)}
+    onActivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,true))} onDeactivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,false))} onOpen={()=>openSource(card)} onRelated={chooseRelated} onPage={(page,value)=>pageAction.current(card,page,value)}
     onAvailability={(id,state)=>setReferenceState(previous=>previous[id]===state?previous:{...previous,[id]:state})}
     onView={view=>viewAction.current(card.id,view)} cursor={card.historical?undefined:trendCursor} onCursor={card.historical?undefined:setTrendCursor}
     onTrend={(id,value)=>setTrendData(previous=>previous[id]===value?previous:{...previous,[id]:value})}/>;

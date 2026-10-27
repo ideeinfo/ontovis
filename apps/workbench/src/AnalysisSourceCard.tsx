@@ -1,6 +1,6 @@
 import {lazy,memo,Suspense,useEffect,useState} from 'react';
-import {ExternalLink,RefreshCw} from 'lucide-react';
-import {Btn} from './Primitives';
+import {ChevronUp,ExternalLink,RefreshCw} from 'lucide-react';
+import {Btn,IconBtn} from './Primitives';
 import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
 import {trendDomain,trendSegments,type SimulatedTrend} from './simulatedAlarms';
 import {AnalysisSources,type EvidenceDetail,type EvidenceSource,type SourceAnchor,type Recommendation} from './analysisSources';
@@ -31,8 +31,8 @@ export function AnalysisTrend({trends,en,cursor,onCursor}:{trends:SimulatedTrend
       return <p key={i} data-series={i}>{en?trend.metricId:({sensor_temperature:'传感器温度',reference_temperature:'独立参照温度',supply_voltage:'供电电压',device_feedback:'状态反馈',overcurrent:'过流信号'} as Record<string,string>)[trend.metricId]||trend.metricId} · {trend.unit==='degC'?'°C':trend.unit}{sample&&<output> · {sample.value??'—'} · {sample.quality} · {new Date(sample.sourceTime).toLocaleTimeString(en?'en-GB':'zh-CN',{timeZone:'UTC'})} UTC</output>}<br/><small>{trend.timeFrom} — {trend.timeTo} · UTC</small></p>;})}
   </div>;
 }
-type Props={card:CanvasCard;sources:AnalysisSources;en:boolean;active:boolean;onActivate:()=>void;onOpen:()=>void;onRelated?:(value:EvidenceSource)=>void;onPage?:(page:number,value:EvidenceSource)=>void;onTrend?:(id:string,value:SimulatedTrend)=>void;onAvailability?:(id:string,state:string)=>void;full?:boolean;onView?:(view:CardView)=>void;cursor?:number|null;onCursor?:(value:number|null)=>void;anchor?:SourceAnchor|null;onAddMaterial?:(item:Recommendation)=>void};
-export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,en,active,onActivate,onOpen,onRelated,onPage,onTrend,onAvailability,onView,cursor,onCursor,anchor,onAddMaterial,full=false}:Props){
+type Props={card:CanvasCard;sources:AnalysisSources;en:boolean;active:boolean;onActivate:()=>void;onDeactivate:()=>void;onOpen:()=>void;onRelated?:(value:EvidenceSource)=>void;onPage?:(page:number,value:EvidenceSource)=>void;onTrend?:(id:string,value:SimulatedTrend)=>void;onAvailability?:(id:string,state:string)=>void;full?:boolean;onView?:(view:CardView)=>void;cursor?:number|null;onCursor?:(value:number|null)=>void;anchor?:SourceAnchor|null;onAddMaterial?:(item:Recommendation)=>void};
+export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,en,active,onActivate,onDeactivate,onOpen,onRelated,onPage,onTrend,onAvailability,onView,cursor,onCursor,anchor,onAddMaterial,full=false}:Props){
   const [detail,setDetail]=useState<EvidenceDetail|null>(null),[image,setImage]=useState(''),[error,setError]=useState(false),[retry,setRetry]=useState(0),[slow,setSlow]=useState(false),[authorized,setAuthorized]=useState(''),[cancelled,setCancelled]=useState(false);
   const [original,setOriginal]=useState(false),[imagePending,setImagePending]=useState(false);
   const authorizationKey=card.source!.id+':'+active+':'+retry;
@@ -55,7 +55,7 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
   return <div className={`ac-source ac-source-${card.kind}`} data-canvas-inner>
     <div className="ac-source-toolbar"><small>{card.historical?(en?'Historical reference':'历史参考'):en?'Fixed source':'固定来源'}{value.versionNumber?' · v'+value.versionNumber:''}</small>
       {card.kind==='photo'&&full&&<Btn aria-pressed={original} onClick={()=>setOriginal(v=>!v)}>{original?(en?'Fast preview':'快速预览'):(en?'Original image':'查看原图')}</Btn>}
-      {!full&&<Btn onClick={onOpen}><ExternalLink size={13}/>{en?'Expand':'展开查看'}</Btn>}</div>
+      {!full&&<div className="ac-preview-controls">{active&&<IconBtn label={(en?'Collapse preview: ':'收起预览：')+card.title} onClick={onDeactivate}><ChevronUp size={14}/></IconBtn>}<Btn onClick={onOpen}><ExternalLink size={13}/>{en?'Expand':'展开查看'}</Btn></div>}</div>
     {full&&card.kind==='photo'&&!!image&&imagePending&&<small role="status">{original?(en?'Loading original image…':'正在加载原图…'):(en?'Loading preview…':'正在加载预览…')}</small>}
     {card.kind==='object'&&<><strong>{value.item?.displayName||card.title}</strong><p>{value.item?.identifiers?.filter(i=>i.role==='primary').map(i=>i.value).join(' · ')}</p><p>{value.item?.objectKind==='cabinet'?(en?'Cabinet':'柜体'):value.item?.objectKind==='unknown'?(en?'Type not classified':'类型未分类'):value.item?.objectKind} · {value.item?.objectScope==='definition'?(en?'Project definition':'项目定义'):value.item?.objectScope==='installation'?(en?'Installed object':'安装对象'):value.item?.objectScope==='unclassified'?(en?'Scope not classified':'范围未分类'):value.item?.objectScope}</p><Btn onClick={()=>onRelated?.(value)}>{en?'Related materials':'推荐相关资料'}</Btn></>}
     {card.kind==='alarm'&&<><span className="ad-badge">{en?'Simulated alarm':'模拟报警'}</span><p>{value.dataset?.presetCause}</p><dl>{value.items?.map(row=><div key={row.sourceRevision}><dt>{row.state==='active'?(en?'Occurred':'发生'):(en?'Recovered':'恢复')}</dt><dd>{new Date(row.sourceTime).toLocaleString(en?'en-GB':'zh-CN')} · {row.severity}</dd></div>)}</dl></>}

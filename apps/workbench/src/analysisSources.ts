@@ -27,8 +27,15 @@ export type PreviewRow={id:string;title:string;identifier?:string;owner?:string;
 export type KnowledgeNode={id:string;kind:string;title:string;statement:string;faultCode?:string;properties:Record<string,string>};
 export type SourcePreview={kind:string;title?:string;drawingUid?:string;drawingNumber?:string;pageNumber?:number;sourceRevision?:string;focusId?:string;selector?:PhotoSelector|null;gaps:string[];nextCursor:number|null;total?:number;objects?:PreviewRow[];ports?:PreviewRow[];connections?:PreviewRow[];references?:PreviewRow[];nodes?:KnowledgeNode[];relations?:{id:string;from:string;to:string;label:string}[];evidence?:{id:string;text:string;page:number;bbox:PreviewRow['bbox'];renditionId?:string}[];scope?:Record<string,unknown>;limitations?:Record<string,unknown>;releaseId?:string};
 
+export function setCardPreviewOpen(current:ReadonlySet<string>,id:string,open:boolean):ReadonlySet<string>{
+  if(current.has(id)===open)return current;
+  const next=new Set(current);if(open)next.add(id);else next.delete(id);return next;
+}
+
+
 // One workspace owns this short-lived cache. Metadata is authorized on every
 // mount/open; only fixed bytes are reused after that read. Nothing is persisted.
+
 export class AnalysisSources{
   private pending=new Map<string,{resolve:(value:EvidenceDetail)=>void;reject:(error:unknown)=>void}[]>();
   private scheduled=false;private disposed=false;private controllers=new Set<AbortController>();

@@ -3,9 +3,17 @@ import assert from 'node:assert/strict';
 import {CARD_KINDS,RESIZE_HANDLES,resizeCard,validateSnapshot} from '../src/analysisCanvas.ts';
 import {applyCanvasAction,conversationContext} from '../src/analysisActions.ts';
 import {readNote,writeNote} from '../src/analysisNotes.ts';
-import {AnalysisSources} from '../src/analysisSources.ts';
+import {AnalysisSources,setCardPreviewOpen} from '../src/analysisSources.ts';
 const scope={projectCode:'P',ontobaseConnectionId:'source'};
 const fixture=()=>({schemaVersion:2,...scope,title:'Test',status:'analyzing',context:{objectIds:[],timeFrom:'2026-10-25T00:00:00Z',timeTo:'2026-10-25T00:03:00Z',timezone:'UTC'},viewport:{x:0,y:0,zoom:1},cards:[{id:'one',kind:'analysis',title:'检查',note:'',x:100,y:100,width:340,height:260,pinned:false}],relations:[]});
+test('opening and closing a card preserves all other media and model previews',()=>{
+ const empty=new Set();let open=empty;
+ for(const kind of ['drawing','photo','document','model3d'])for(let i=0;i<2;i++)open=setCardPreviewOpen(open,kind+i,true);
+ assert.equal(empty.size,0);assert.equal(open.size,8);
+ const before=open;open=setCardPreviewOpen(open,'model3d0',false);
+ assert.equal(before.size,8);assert.equal(open.size,7);assert.equal(open.has('model3d1'),true);
+ assert.equal(setCardPreviewOpen(open,'photo0',true),open);assert.equal(setCardPreviewOpen(open,'absent',false),open);
+});
 test('all nine card kinds resize from every edge and corner without changing sources',()=>{
  for(const kind of CARD_KINDS)for(const edge of RESIZE_HANDLES){const value=fixture();Object.assign(value.cards[0],{kind,...(kind==='analysis'?{}:{source:{...scope,system:'ontobase',id:'fixed',revision:'fixed'}})});
   const resized=resizeCard(value,'one',edge,30,20);assert.notDeepEqual(resized.cards[0],value.cards[0]);assert.deepEqual(resized.cards[0].source,value.cards[0].source);
