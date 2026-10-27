@@ -7,6 +7,7 @@ import {usePreferences} from './Preferences';
 import {IconBtn} from './Primitives';
 import {SceneResourceCache,cloneModel} from './sceneResourceCache';
 import {createSceneControls} from './sceneControls';
+import {cursorZoomView} from './sceneZoom';
 import {prepareSceneRenderer} from './sceneRenderer';
 import {SceneCabinetAppearance} from './sceneCabinetAppearance';
 import {ModelPreviewInspection} from './modelPreview';
@@ -142,11 +143,14 @@ export function SceneViewport(props:SceneViewportProps) {
     const report=(value:unknown)=>{if(!stale()&&!cancelled(value)){setError(value);current.current.onError?.(value);}};
     const emit=()=>{if(!stale())current.current.onViewChange(view(camera,orbit));};
     let dirtyFrame=true;
+    let wheelPending:{x:number;y:number;delta:number}|null=null;
     const schedule=()=>{if(!disposed&&!document.hidden&&!frame)frame=requestAnimationFrame(render);};
     const request=()=>{dirtyFrame=true;schedule();};
     const render=()=>{
       frame=0;if(disposed||document.hidden)return;
       if(stale()){renderer.clear();return;}
+      if(wheelPending){const pending=wheelPending;wheelPending=null;
+        if(!resourcesLoading&&!current.current.disabled)zoomAt(pending.x,pending.y,Math.pow(.95,pending.delta/100));}
       if(tween){
         const progress=Math.min(1,(performance.now()-tween.start)/900),ease=progress*progress*(3-2*progress);
         camera.position.lerpVectors(new THREE.Vector3(...tween.from.eye),new THREE.Vector3(...tween.to.eye),ease);
@@ -403,6 +407,21 @@ export function SceneViewport(props:SceneViewportProps) {
       }
       return ray.ray.intersectPlane(plane,new THREE.Vector3());
     };
+    const zoomAt=(x:number,y:number,factor:number)=>{
+      prepareRay(x,y);
+      const targets:THREE.Object3D[]=preview?[preview]:[...entries.values()].filter(entry=>entry.root.visible).map(entry=>entry.root);
+      if(terrain?.visible&&!preview)targets.push(terrain);
+      const hit=ray.intersectObjects(targets,true)[0];
+      const target=cursorZoomView(view(camera,orbit),ray.ray.direction.toArray() as Vector3,factor,hit?.distance);
+      camera.position.fromArray(target.eye);orbit.target.fromArray(target.target);orbit.update();emit();
+    };
+    const wheel=(event:WheelEvent)=>{
+      if(current.current.disabled||!orbit.enabled||!orbit.enableZoom||resourcesLoading)return;
+      event.preventDefault();event.stopImmediatePropagation();
+      current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;
+      const delta=-event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?element.clientHeight:1)*(event.ctrlKey?10:1);
+      wheelPending={x:event.clientX,y:event.clientY,delta:Math.max(-1200,Math.min(1200,(wheelPending?.delta??0)+delta))};request();
+    };
     const hitModel=(x:number,y:number)=>{
       prepareRay(x,y);
       const active=current.current.componentPickingInstanceId;
@@ -483,6 +502,7 @@ export function SceneViewport(props:SceneViewportProps) {
       camera.aspect=width/height;camera.updateProjectionMatrix();renderer.setSize(width,height);request();});resize.observe(element);
     const orbitStart=()=>{current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;};orbit.addEventListener('change',request);orbit.addEventListener('start',orbitStart);orbit.addEventListener('end',emit);
     const canvas=renderer.domElement;
+    canvas.addEventListener('wheel',wheel,{capture:true,passive:false});
     canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',motion);canvas.addEventListener('pointerup',up);
     canvas.addEventListener('pointercancel',cancelDrag);canvas.addEventListener('keydown',escape);canvas.addEventListener('drop',drop);canvas.addEventListener('dragover',dragover);
     document.addEventListener('visibilitychange',visible);
@@ -492,7 +512,7 @@ export function SceneViewport(props:SceneViewportProps) {
       focus:id=>{clearComponentFocus();if(previewInspection){previewInspection.restore();current.current.onPreviewPick?.(previewInspection.structure.identity,null);fit();request();return;}
         if(resourcesLoading||id&&!entries.has(id))focusPending=id;else fit(id);highlight();},
       setView:target=>{if(restoreView)restoreView=structuredClone(target);else moveView(target);},
-      zoom:factor=>{tween=null;componentTween=false;componentPending=null;camera.position.sub(orbit.target).multiplyScalar(factor).add(orbit.target);request();emit();}};
+      zoom:factor=>{tween=null;componentTween=false;componentPending=null;const rect=canvas.getBoundingClientRect();zoomAt(rect.left+rect.width/2,rect.top+rect.height/2,factor);request();}};
     const cameraControl:SceneCameraControl={getView:()=>view(camera,orbit),ready:()=>!disposed&&!stale()&&!resourcesLoading&&!preview&&!latestError.current,
       setView:target=>{if(disposed||stale())return;if(componentTarget||componentFocused)clearComponentFocus();moveView(target,false);}};
     if(current.current.cameraControl)current.current.cameraControl.current=cameraControl;
@@ -500,6 +520,7 @@ export function SceneViewport(props:SceneViewportProps) {
     return ()=>{
       if(current.current.cameraControl?.current===cameraControl)current.current.cameraControl.current=null;
       disposed=true;++generation;loading?.cancel();loadingAbort?.abort();cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',visible);
+      wheelPending=null;canvas.removeEventListener('wheel',wheel,true);
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
       orbit.removeEventListener('change',request);orbit.removeEventListener('start',orbitStart);orbit.removeEventListener('end',emit);
