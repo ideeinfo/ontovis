@@ -7,7 +7,7 @@ import {usePreferences} from './Preferences';
 import {IconBtn} from './Primitives';
 import {SceneResourceCache,cloneModel} from './sceneResourceCache';
 import {createSceneControls} from './sceneControls';
-import {cursorZoomView} from './sceneZoom';
+import {cursorZoomView,visibleZoomHit} from './sceneZoom';
 import {prepareSceneRenderer} from './sceneRenderer';
 import {SceneCabinetAppearance} from './sceneCabinetAppearance';
 import {ModelPreviewInspection} from './modelPreview';
@@ -411,7 +411,7 @@ export function SceneViewport(props:SceneViewportProps) {
       prepareRay(x,y);
       const targets:THREE.Object3D[]=preview?[preview]:[...entries.values()].filter(entry=>entry.root.visible).map(entry=>entry.root);
       if(terrain?.visible&&!preview)targets.push(terrain);
-      const hit=ray.intersectObjects(targets,true)[0];
+      const hit=visibleZoomHit(ray.intersectObjects(targets,true));
       const target=cursorZoomView(view(camera,orbit),ray.ray.direction.toArray() as Vector3,factor,hit?.distance);
       camera.position.fromArray(target.eye);orbit.target.fromArray(target.target);orbit.update();emit();
     };
