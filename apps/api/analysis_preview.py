@@ -69,6 +69,24 @@ def object_geometry(row, revision):
     return bbox(row.get('bbox'))
 
 
+def drawing_classification(row):
+    imported = (row.get('entity_properties') or {}).get('result_import') or {}
+    standard = (imported.get('classification') or {}).get('standard') or {}
+    if not isinstance(standard, dict) or not isinstance(standard.get('code'), str) or not standard['code'].strip():
+        return None
+    fields = {'code': 'code', 'revisionId': 'revision_id', 'tableRevision': 'table_revision',
+              'nameZh': 'name_zh', 'nameEn': 'name_en', 'reviewState': 'review_state'}
+    return {key: standard[source].strip() for key, source in fields.items() if isinstance(standard.get(source), str)}
+
+
+def drawing_type_label(row):
+    classification = drawing_classification(row)
+    if classification:
+        name = classification.get('nameZh') or classification.get('nameEn')
+        return classification['code'] + (' · ' + name if name else '')
+    return row.get('object_type') or 'unknown'
+
+
 def drawing_preview(reader, descriptor, options):
     drawing, selected = drawing_identity(reader, descriptor)
     if drawing is None:
@@ -91,8 +109,9 @@ def drawing_preview(reader, descriptor, options):
             result['objects'].append({'id': row['id'], 'entityUid': row.get('entity_uid'),
                 'title': row.get('display_name') or row.get('rds_designation') or row['id'],
                 'identifier': row.get('rds_designation'), 'bbox': box, 'state': row.get('review_status'),
+                'objectType': row.get('object_type'), 'classification': drawing_classification(row),
                 'sourceInstanceId': row.get('text_span', {}).get('source_instance_id'),
-                'properties': {'类型': row.get('object_type'), '位号': row.get('rds_designation'),
+                'properties': {'类型': drawing_type_label(row), '分类复核': (drawing_classification(row) or {}).get('reviewState'), '位号': row.get('rds_designation'),
                                '来源批次': row.get('source_run_id'), '审核状态': row.get('review_status')}})
         result['nextCursor'] = cursor + 200 if len(rows) > cursor + 200 else None
         result['total'] = len(rows)
@@ -107,8 +126,12 @@ def drawing_preview(reader, descriptor, options):
         owners = {}
         if section == 'ports' and current:
             locations = reader.reader._request('GET', path + '/object-locations')['items']
-            owners = {loc.get('text_span', {}).get('source_instance_id'): loc.get('display_name') or loc.get('rds_designation')
-                      for loc in locations if loc.get('entity_properties', {}).get('result_import', {}).get('drawing_revision') == revision}
+            for loc in locations:
+                imported = loc.get('entity_properties', {}).get('result_import', {})
+                owner_id = loc.get('text_span', {}).get('source_instance_id') or imported.get('source_instance_id')
+                if owner_id and imported.get('drawing_revision') == revision:
+                    # An ambiguous source instance cannot identify a port owner.
+                    owners[owner_id] = None if owner_id in owners else loc
         result['nextCursor'] = records.get('next_after')
         if not current:
             result['gaps'].append('此批关系对应另一图纸版本，保留文字，未叠加到当前图面。')
@@ -119,10 +142,18 @@ def drawing_preview(reader, descriptor, options):
                 point = position.get('normalized')
                 if current and position.get('state') == 'located' and point and all(type(point.get(k)) in (int, float) and 0 <= point[k] <= 1 for k in ('x', 'y')):
                     box = {'x': max(0, min(.99, point['x'] - .005)), 'y': max(0, min(.99, point['y'] - .005)), 'width': .01, 'height': .01}
-                owner = owners.get(row.get('source_instance_id')) or row.get('source_instance_id')
+                owner_id = row.get('source_instance_id')
+                owner_row = owners.get(owner_id)
+                if row.get('owner_resolution', {}).get('state') not in (None, 'resolved'):
+                    owner_row = None
+                owner = (owner_row.get('display_name') or owner_row.get('rds_designation')) if owner_row else owner_id
                 item = {'id': row['source_port_id'], 'title': '端口 ' + row['label'] if row.get('label') else '未命名端口',
-                        'owner': owner, 'bbox': box, 'state': row.get('review_state'),
-                        'properties': {'所属对象': owner, '端口类型': row.get('port_type_text'), '方向': row.get('direction_text')}}
+                        'owner': owner, 'ownerId': owner_id, 'objectType': owner_row.get('object_type') if owner_row else None,
+                        'classification': drawing_classification(owner_row) if owner_row else None,
+                        'bbox': box, 'state': row.get('review_state'),
+                        'properties': {'所属对象': owner, '对象类型': drawing_type_label(owner_row) if owner_row else None,
+                                       '分类复核': (drawing_classification(owner_row) or {}).get('reviewState') if owner_row else None,
+                                       '端口类型': row.get('port_type_text'), '方向': row.get('direction_text')}}
             elif section == 'references':
                 display = row.get('display_bbox', {})
                 box = bbox(display.get('normalized_bbox') if display else row.get('normalized_bbox')) if current else None

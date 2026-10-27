@@ -3,6 +3,7 @@ import * as Tabs from '@radix-ui/react-tabs';
 import {ArrowLeft,BookOpen,GitBranch,Search,ExternalLink,RefreshCw} from 'lucide-react';
 import {Btn} from './Primitives';
 import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
+import {DrawingContentList} from './DrawingContentList';
 import {AnalysisSources,type EvidenceSource,type KnowledgeNode,type PreviewRow,type SourceAnchor,type SourcePreview,type Recommendation} from './analysisSources';
 import type {CanvasCard} from './analysisCanvas';
 import type {PhotoSelector} from './workOrderTypes';
@@ -11,7 +12,7 @@ function region(box:PreviewRow['bbox'],revision:string):PhotoSelector|null{
   return box?{kind:'image_bbox',renditionId:'source-region',displayRevision:revision,regionKind:'device_region',coordinateSpace:'oriented_display_normalized',bbox:box}:null;
 }
 const nodeNames:Record<string,string>={FaultDefinition:'故障定义',TriggerCondition:'触发条件',ClearCondition:'复位条件',Symptom:'现象',PossibleCause:'可能原因',CheckStep:'排查步骤',EquipmentReference:'工程对象',Procedure:'操作程序',Requirement:'要求',ConceptDefinition:'概念'};
-const propertyNames:Record<string,string>={unknown:'未分类',needs_review:'待复核',accepted:'已采用',approved:'已审核',document_reference:'文档引用',wire_connectivity:'导线连接'};
+const propertyNames:Record<string,string>={unknown:'未分类',needs_review:'待复核',unreviewed:'待复核',accepted:'已采用',approved:'已审核',document_reference:'文档引用',wire_connectivity:'导线连接'};
 const relationNames:Record<string,string>={hasTrigger:'触发条件',hasTriggerCondition:'触发条件',hasPossibleCause:'可能原因',hasCheckStep:'排查步骤',refersToEquipment:'涉及对象',hasSymptom:'故障现象',hasClearCondition:'复位条件'};
 
 function KnowledgeGraph({nodes,relations,selected,onSelect}:{nodes:KnowledgeNode[];relations:NonNullable<SourcePreview['relations']>;selected:string;onSelect:(id:string)=>void}){
@@ -38,6 +39,7 @@ export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{ca
   const [selected,setSelected]=useState(''),[node,setNode]=useState(anchor?.nodeId||source.knowledgeNodeId||''),[query,setQuery]=useState(''),[filter,setFilter]=useState(''),[cursor,setCursor]=useState(0);
   const [citation,setCitation]=useState<PhotoSelector|null>(null);
   const [graphScope,setGraphScope]=useState('related');
+  const [rowFocus,setRowFocus]=useState(0);
   useEffect(()=>{const abort=new AbortController();setLoading(true);setError(false);
     void sources.preview(card.source!,document?{cursor,graphScope,...(filter?{q:filter}:{}),...(node?{nodeId:node}:{})}:{section,cursor},abort.signal)
       .then(value=>{if(!abort.signal.aborted){setPreview(value);if(!selected&&value.focusId)setSelected(value.focusId);if(!node&&value.focusId)setNode(value.focusId);}})
@@ -66,13 +68,13 @@ export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{ca
           <nav className="ac-preview-rows" aria-label={t('知识节点','Knowledge nodes')}>{preview?.nodes?.map(row=><button key={row.id} type="button" aria-current={node===row.id?'true':undefined} onClick={()=>chooseNode(row.id)}><small>{nodeNames[row.kind]||row.kind}</small><strong>{row.title}</strong></button>)}</nav></>}
       </>:<><Tabs.Root value={section} onValueChange={showSection}><Tabs.List className="ac-preview-tabs">{[['objects','对象','Objects'],['ports','端口','Ports'],['connections','连接','Connections'],['references','引用','References']].map(([id,zh,eng])=><Tabs.Trigger key={id} value={id}>{t(zh,eng)}</Tabs.Trigger>)}</Tabs.List></Tabs.Root>
         <label className="ad-search"><Search size={14}/><input aria-label={t('筛选图纸内容','Filter drawing content')} placeholder={t('名称、位号或端口','Name, tag or port')} value={query} onChange={event=>setQuery(event.target.value)}/></label>
-        <nav className="ac-preview-rows" aria-label={t('图纸内容列表','Drawing contents')}>{rows.filter(row=>[row.title,row.identifier,row.owner,row.targetTitle].join(' ').toLowerCase().includes(query.toLowerCase())).map(row=><button key={row.id} type="button" aria-current={selected===row.id?'true':undefined} onClick={()=>chooseRow(row)}><strong>{row.title}</strong><small>{row.identifier||row.owner||row.targetTitle||''}</small>{!row.bbox&&<small>{t('未提供可定位区域','No locatable region')}</small>}</button>)}</nav></>}
+        <nav className="ac-preview-rows" aria-label={t('图纸内容列表','Drawing contents')}><DrawingContentList rows={rows} section={section} query={query} selected={selected} focusToken={rowFocus} en={en} onSelect={chooseRow}/></nav></>}
       {loading&&<small role="status">{t('正在读取内容…','Loading content…')}</small>}{error&&<div role="alert">{t('来源读取失败','Source unavailable')}<Btn onClick={()=>setReload(v=>v+1)}><RefreshCw size={13}/>{t('重试','Retry')}</Btn></div>}
       {preview?.nextCursor!=null&&<Btn onClick={()=>setCursor(preview.nextCursor!)}>{t('下一页','Next page')}</Btn>}{cursor>0&&<Btn onClick={()=>setCursor(0)}><ArrowLeft size={13}/>{t('返回首批','First page')}</Btn>}
     </aside>
     <main className="ac-preview-main"><div className="ac-preview-heading"><strong>{document?(mode==='graph'?t('文档知识图谱','Document knowledge graph'):t(`第 ${page} 页`,`Page ${page}`)):preview?.title||card.title}</strong><small>{document?source.knowledgeReleaseId?t('已发布知识','Published knowledge'):t('固定文档版本','Fixed document version'):preview?.drawingNumber}</small></div>
       {document&&mode==='graph'?<KnowledgeGraph nodes={preview?.nodes||[]} relations={preview?.relations||[]} selected={node||preview?.focusId||''} onSelect={chooseNode}/>:image?<div className="ac-photo-view"><WorkOrderPhotoViewport key={`${card.source!.id}:${page}:${selected}:${node}:${JSON.stringify(selector)}`} embedded focusFraction={.35} image={image} decodedImage={sources.decodedImage(image)} selector={selector} label={card.title} en={en} onError={()=>setImageError(true)}
-        regions={rows.filter((row):row is PreviewRow&{bbox:NonNullable<PreviewRow['bbox']>}=>!!row.bbox).map(row=>({id:row.id,title:row.title,bbox:row.bbox}))} onRegion={id=>setSelected(id)}/></div>:<div className="ac-source-state" role="status">{imageError?t('图像读取失败，可重试','Image unavailable; retry'):t('正在载入页面…','Loading page…')}<Btn onClick={()=>setReload(v=>v+1)}>{t('重试','Retry')}</Btn></div>}
+        regions={rows.filter((row):row is PreviewRow&{bbox:NonNullable<PreviewRow['bbox']>}=>!!row.bbox).map(row=>({id:row.id,title:row.title,bbox:row.bbox}))} onRegion={id=>{setSelected(id);setQuery('');setRowFocus(value=>value+1);}}/></div>:<div className="ac-source-state" role="status">{imageError?t('图像读取失败，可重试','Image unavailable; retry'):t('正在载入页面…','Loading page…')}<Btn onClick={()=>setReload(v=>v+1)}>{t('重试','Retry')}</Btn></div>}
       {!!preview?.gaps.length&&<div className="ac-preview-notice">{preview.gaps.join(' · ')}</div>}
     </main>
     <aside className="ac-preview-properties"><header><strong>{t(document?'知识与来源':'所选内容',document?'Knowledge & sources':'Selection')}</strong></header>

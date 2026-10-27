@@ -24,6 +24,9 @@ class SourceViewerTests(TestCase):
         self.location={'id':'region','project_code':'P','drawing_uid':'project:drawing-1','entity_uid':'sensor',
             'row_version':2,'entity_properties':{'result_import':{'drawing_revision':self.sha}},
             'bbox':{'x':.2,'y':.3,'width':.1,'height':.1},'display_name':'Temperature sensor'}
+        self.location.update(object_type='unknown',text_span={'source_instance_id':'instance-1'})
+        self.location['entity_properties']['result_import']['classification']={'standard':{'code':'BTA','revision_id':'catalogue-v1','name_zh':'温度变送器','name_en':'Temperature transmitter','review_state':'unreviewed'}}
+        self.extra_locations=[];self.owner_resolution='resolved'
         self.wrapper=SimpleNamespace(project_code='P',connection_id='source',prefix='/api/v1/projects/P',
                                     _request=Mock(side_effect=self.request),authority=SimpleNamespace(source_bytes=Mock(return_value={'content':b'pdf','sha256':self.sha})))
         self.reader=SimpleNamespace(reader=self.wrapper,read=Mock(return_value={}),authorize=Mock())
@@ -50,13 +53,13 @@ class SourceViewerTests(TestCase):
             self.assertEqual(q['version_id'],[self.document['contentVersionId']])
             return {'items':[{'id':self.document['knowledgeReleaseId'],'content_version_id':self.document['contentVersionId'],'state':'published'}]}
         if '/object-locations/' in path:return {**deepcopy(self.location),'project_code':self.project}
-        if url.path.endswith('/object-locations'):return {'items':[self.location]}
+        if url.path.endswith('/object-locations'):return {'items':[self.location,*self.extra_locations]}
         if url.path.endswith('/result-relation-imports'):return {'items':[{'id':'batch'}]}
         if url.path.endswith('/records'):
             kind=q['kind'][0]
             row={'source_reference_id':'cross-page','target_label':'/22.4','normalized_bbox':self.location['bbox'],
                 'target':{'status':'bound','drawing_uid':'project:next','drawing_revision':self.sha,'drawing_name':'Next drawing','basis':'printed page reference'},'relationship_semantics':'document_reference'}
-            if kind=='ports':row={'source_port_id':'P1','position':{'state':'located','normalized':{'x':.4,'y':.5}},'label':'1'}
+            if kind=='ports':row={'source_port_id':'P1','source_instance_id':'instance-1','owner_resolution':{'state':self.owner_resolution},'position':{'state':'located','normalized':{'x':.4,'y':.5}},'label':'1'}
             return {'source_state':'current' if self.current else 'stale','drawing_revision':self.sha,'next_after':None,'items':[{'document':row}]}
         if '/drawings/' in path:return {'drawing_uid':'project:drawing-1','project_code':self.project,'drawing_name':'Source drawing'}
         raise AssertionError(path)
@@ -75,6 +78,33 @@ class SourceViewerTests(TestCase):
         self.assertEqual(row['semantics'],'document_reference');self.assertEqual(row['selector']['drawingUid'],'project:next')
         self.current=False;row=drawing_preview(self.reader,self.drawing,{'section':'references'})['references'][0]
         self.assertNotIn('selector',row);self.assertIsNone(row['bbox'])
+
+    def test_object_and_port_groups_preserve_the_source_standard_and_owner_identity(self):
+        obj=drawing_preview(self.reader,self.drawing,{})['objects'][0]
+        port=drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]
+        self.assertEqual(obj['objectType'],'unknown')
+        self.assertEqual(obj['classification']['code'],'BTA')
+        self.assertEqual(obj['classification']['reviewState'],'unreviewed')
+        self.assertEqual(port['classification'],obj['classification'])
+        self.assertEqual(port['ownerId'],'instance-1')
+        self.assertEqual(port['owner'],'Temperature sensor')
+
+    def test_stale_unresolved_or_ambiguous_ports_do_not_borrow_current_object_types(self):
+        self.current=False
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]['classification'])
+        self.current=True;self.owner_resolution='unresolved'
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]['classification'])
+        self.owner_resolution='resolved';other=deepcopy(self.location);other['id']='another-location';self.extra_locations=[other]
+        port=drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]
+        self.assertIsNone(port['classification']);self.assertEqual(port['owner'],'instance-1')
+
+    def test_generic_type_without_standard_stays_available_for_grouping(self):
+        self.location['entity_properties']['result_import'].pop('classification');self.location['object_type']='terminal'
+        self.assertEqual(drawing_preview(self.reader,self.drawing,{})['objects'][0]['objectType'],'terminal')
+        port=drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]
+        self.assertEqual(port['objectType'],'terminal');self.assertIsNone(port['classification'])
+        self.location['entity_properties']['result_import']['classification']=None
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{})['objects'][0]['classification'])
 
     def test_referenced_pdf_cannot_change_or_cross_project(self):
         self.assertEqual(drawing_bytes(self.reader,self.drawing)['content'],b'pdf')
