@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {Box3,BoxGeometry,Group,Mesh,MeshBasicMaterial,PerspectiveCamera,Vector3} from 'three';
-import {selectedModelBounds,selectedModelView} from '../src/sceneModelFocus.ts';
+import {SceneModelSelectionBoxes,selectedModelBounds,selectedModelView} from '../src/sceneModelFocus.ts';
 import {selectSceneScope} from '../src/sceneOrganization.ts';
 
 function model(x,y,z){const root=new Group();root.add(new Mesh(new BoxGeometry(20,145,30),new MeshBasicMaterial()));root.position.set(x,y,z);return {root};}
@@ -39,4 +39,27 @@ test('degenerate camera direction and point bounds still produce a finite usable
   const view=selectedModelView(new PerspectiveCamera(42,1,.05,2000000),box,new Vector3());
   assert.deepEqual(view.target,[10,20,30]);assert.ok(view.eye.every(Number.isFinite));
   assert.ok(new Vector3(...view.eye).distanceTo(new Vector3(...view.target))>=2.99);
+});
+test('multi-selection keeps an individual visible position box for each selected model',()=>{
+  const scene=new Group(),entries=new Map([['a',model(-20,0,0)],['b',model(30,10,20)]]),selection=new SceneModelSelectionBoxes(scene);
+  selection.update(entries,['a','b']);assert.equal(selection.helpers.size,2);
+  for(const [id,helper] of selection.helpers){
+    assert.deepEqual(helper.box,new Box3().setFromObject(entries.get(id).root));
+    assert.equal(helper.material.depthTest,false);assert.equal(helper.material.depthWrite,false);
+  }
+  const first=selection.helpers.get('a');entries.get('a').root.position.x=40;selection.update(entries,['a','b']);
+  assert.equal(selection.helpers.get('a'),first);assert.equal(first.box.getCenter(new Vector3()).x,40);
+  selection.dispose();assert.equal(scene.children.length,0);
+});
+test('hidden/deselected model boxes are released once without touching shared source geometry',()=>{
+  const scene=new Group(),entries=new Map([['a',model(0,0,0)],['b',model(30,0,0)]]),selection=new SceneModelSelectionBoxes(scene);
+  let sourceDisposed=0,boxDisposed=0;entries.get('a').root.children[0].geometry.addEventListener('dispose',()=>sourceDisposed++);
+  selection.update(entries,['a','b']);const first=selection.helpers.get('a');first.geometry.addEventListener('dispose',()=>boxDisposed++);
+  entries.get('a').root.visible=false;selection.update(entries,['a','b']);assert.equal(selection.helpers.size,1);assert.equal(boxDisposed,1);
+  selection.update(entries,[]);selection.dispose();selection.dispose();assert.equal(selection.helpers.size,0);assert.equal(sourceDisposed,0);assert.equal(boxDisposed,1);
+});
+test('single selection and missing model ids never allocate an unrelated multi-selection outline',()=>{
+  const scene=new Group(),entries=new Map([['a',model(0,0,0)]]),selection=new SceneModelSelectionBoxes(scene);
+  selection.update(entries,['a']);assert.equal(selection.helpers.size,0);
+  selection.update(entries,['missing','missing']);assert.equal(selection.helpers.size,0);selection.dispose();
 });

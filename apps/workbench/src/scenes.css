@@ -64,5 +64,5 @@
 .sw-workspace input[type=checkbox],.sw-form input[type=checkbox]{width:14px;height:14px;min-width:14px;min-height:14px;max-width:14px;max-height:14px;flex:0 0 14px;padding:0;margin:0;accent-color:var(--primary)}
 
 .sw-model-selection{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--borderSubtle);margin-bottom:8px}
-.sw-workspace .sw-model-selection>label{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}.sw-model-selection>.ov-btn{font-size:11px;padding:4px 8px;white-space:nowrap}
+.sw-workspace .sw-model-selection>label{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:13px;cursor:pointer}.sw-model-selection>.ov-btn{font-size:11px;padding:4px 8px;white-space:nowrap}
 .sw-resource-group>summary>.so-select{display:inline-block;vertical-align:middle;margin-right:7px}.sw-resource-group>summary>span{overflow-wrap:anywhere}

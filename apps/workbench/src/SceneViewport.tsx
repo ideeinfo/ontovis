@@ -9,7 +9,7 @@ import {SceneResourceCache,cloneModel} from './sceneResourceCache';
 import {createSceneControls} from './sceneControls';
 import {cursorZoomView,visibleZoomHit} from './sceneZoom';
 import {prepareSceneRenderer} from './sceneRenderer';
-import {selectedModelBounds,selectedModelView} from './sceneModelFocus';
+import {SceneModelSelectionBoxes,selectedModelBounds,selectedModelView} from './sceneModelFocus';
 import {SceneCabinetAppearance} from './sceneCabinetAppearance';
 import {ModelPreviewInspection} from './modelPreview';
 import {previewIdentity,type PreviewSelection,type PreviewStructure} from './modelPreviewTypes';
@@ -126,7 +126,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const grass=new THREE.DataTexture(pixels,64,64);grass.wrapS=grass.wrapT=THREE.RepeatWrapping;
     grass.colorSpace=THREE.SRGBColorSpace;grass.needsUpdate=true;
     const environment=new SceneEnvironmentRuntime(scene,renderer,sun,light,terrainMaterial,grass);
-    const entries=new Map<string,Entry>();
+    const entries=new Map<string,Entry>(),selectionBoxes=new SceneModelSelectionBoxes(scene);
     let terrain:THREE.Mesh<THREE.BufferGeometry,THREE.MeshStandardMaterial>|null=null,terrainKey='';
     let preview:THREE.Group|null=null,previewKey='',restoreView:SceneView|null=null;
     let previewInspection:ModelPreviewInspection|null=null,lastPreviewFocus='';
@@ -247,7 +247,8 @@ export function SceneViewport(props:SceneViewportProps) {
       const state=current.current,ids=state.selectedIds??(state.selectedId?[state.selectedId]:[]);
       const selectedEntries=ids.flatMap(id=>{const entry=entries.get(id);return entry?.root.visible?[entry]:[];});
       const componentActive=componentHighlight();
-      selectedBox.visible=!componentActive&&selectedEntries.length>0&&!preview;
+      selectedBox.visible=!componentActive&&selectedEntries.length===1&&!preview;
+      selectionBoxes.update(entries,componentActive||preview?[]:ids);
       if(selectedBox.visible){selectedBox.box.makeEmpty();for(const entry of selectedEntries){entry.root.updateMatrixWorld(true);selectedBox.box.union(new THREE.Box3().setFromObject(entry.root));}selectedBox.updateMatrixWorld(true);}
       previewSelection();
       request();
@@ -529,7 +530,7 @@ export function SceneViewport(props:SceneViewportProps) {
       orbit.removeEventListener('change',request);orbit.removeEventListener('start',orbitStart);orbit.removeEventListener('end',emit);
       sceneControls.dispose();environment.dispose();imageryLayer.dispose();previewInspection?.dispose();previewInspection=null;
       current.current.onPreviewStructure?.(null);
-      for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
+      selectionBoxes.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
       componentBox.geometry.dispose();disposeMaterial(componentBox.material);
       grid.geometry.dispose();disposeMaterial(grid.material);terrainMaterial.dispose();grass.dispose();scene.clear();
       renderer.dispose();renderer.forceContextLoss();canvas.remove();runtime.current=null;
