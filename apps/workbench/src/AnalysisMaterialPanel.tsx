@@ -1,9 +1,10 @@
 import {ArrowLeft,Box,FileImage,FileText,Image,Layers,Activity,Bell,ClipboardList,StickyNote,Plus,Search,X,RefreshCw} from 'lucide-react';
 import {Btn,IconBtn} from './Primitives';
 import {MATERIAL_CATEGORIES,materialCategories} from './analysisMaterials';
-import type {Recommendation,Recommendations} from './analysisSources';
+import type {Recommendation,Recommendations,RecommendationMatch} from './analysisSources';
 
 const icons={object:Box,drawing:FileImage,document:FileText,photo:Image,model3d:Layers,trend:Activity,alarm:Bell,work_order:ClipboardList,analysis:StickyNote};
+const matches:Record<RecommendationMatch,[string,string]>={binding:['已绑定','Recorded binding'],historical_binding:['历史绑定','Historical binding'],name_candidate:['名称候选','Name candidate'],catalogue_search:['目录检索','Catalogue search'],simulation_mapping:['模拟映射','Simulation mapping'],simulation_rule:['演练规则','Rehearsal rule']};
 type Props={section:string;query:string;en:boolean;loading:boolean;value:Recommendations|null;chosen:string[];editable:boolean;canAdd:boolean;
   contextLabel:string;onClose:()=>void;onSection:(section:string)=>void;onQuery:(query:string)=>void;onSearch:()=>void;
   onToggle:(key:string)=>void;onAdd:(item:Recommendation)=>void;onAddChosen:()=>void;onNote:()=>void;onMore:()=>void;onRefresh:()=>void};
@@ -22,7 +23,7 @@ export function AnalysisMaterialPanel({section,query,en,loading,value,chosen,edi
         <span className="ac-material-icon"><Icon size={22}/></span><span><strong>{t(row.zh,row.en)}</strong><small>{t(row.hint,row.hintEn)}</small></span><Plus size={16}/></button>;
       }):loading?<p role="status">{t('正在读取相关推荐…','Loading recommendations…')}</p>:items.map(item=>{const kind=item.kind==='model'?'model3d':item.kind,Icon=icons[kind];return <div className="ac-material-result" key={item.key} data-material-kind={kind} draggable={editable&&canAdd} onDragStart={event=>{event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-recommendation',item.key);}}>
         <label><input type="checkbox" aria-label={t('选择资料 ','Select material ')+item.title} checked={chosen.includes(item.key)} disabled={!canAdd} onChange={()=>onToggle(item.key)}/><Icon size={18}/></label>
-        <div><strong>{item.title}</strong>{item.identifier&&<small>{item.identifier}</small>}<small>{item.reason}</small>{item.preview?.dataset&&<small>{new Date(item.preview.dataset.timeFrom).toLocaleString(en?'en-GB':'zh-CN',{timeZone:'Asia/Shanghai'})} · UTC+8 · {t('模拟数据','Simulated data')}</small>}</div>
+        <div><strong>{item.title}</strong>{item.matchType&&matches[item.matchType]&&<small className="ac-match-type" data-match={item.matchType}>{t(...matches[item.matchType])}</small>}{item.identifier&&<small>{item.identifier}</small>}<small>{item.reason}</small>{item.preview?.dataset&&<small>{new Date(item.preview.dataset.timeFrom).toLocaleString(en?'en-GB':'zh-CN',{timeZone:'Asia/Shanghai'})} · UTC+8 · {t('模拟数据','Simulated data')}</small>}</div>
         <IconBtn label={t('加入画布：','Add to canvas: ')+item.title} disabled={!editable||!canAdd} onClick={()=>onAdd(item)}><Plus size={17}/></IconBtn>
       </div>;})}
       {home&&!materialCategories(query).length&&<p>{t('没有匹配的资料类型','No matching material types')}</p>}

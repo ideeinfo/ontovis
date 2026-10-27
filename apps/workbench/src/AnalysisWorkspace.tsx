@@ -95,7 +95,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   useEffect(()=>{
     if(!materialsOpen||!analysisEntry||section==='types'){setRecommendations(null);setRecommendLoading(false);return;}const abort=new AbortController();setRecommendLoading(true);setRecommendations(null);
     setChosen([]);
-    void api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendFilter!==undefined&&['objects','models','documents','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos'].includes(section)&&related?related:{})},abort.signal)
+    void api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendFilter!==undefined&&['objects','models','documents','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos','models'].includes(section)&&related?related:{})},abort.signal)
       .then(value=>{if(!abort.signal.aborted)setRecommendations(value);}).catch(value=>{if(!abort.signal.aborted)failure(value);}).finally(()=>{if(!abort.signal.aborted)setRecommendLoading(false);});
     return()=>abort.abort();
   },[analysisEntry,materialsOpen,section,related,sourceAttempt,recommendFilter,api]);
@@ -190,7 +190,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   function addNote(){if(!draft||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('分析笔记','Analysis note'),note:'',x:32+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:300,height:200,pinned:false}]});setSelected(id);}
   function focusCard(card:CanvasCard){setSelected(card.id);setMulti([card.id]);if(current.current&&canvas.current)setDraft({...current.current,viewport:{...current.current.viewport,x:canvas.current.clientWidth/2-(card.x+card.width/2)*current.current.viewport.zoom,y:canvas.current.clientHeight/2-(card.y+card.height/2)*current.current.viewport.zoom}});}
   async function moreRecommendations(){if(!recommendations||!analysisEntry||recommendLoading)return;setRecommendLoading(true);
-    try{const value=await api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendations.nextCursor?{cursor:recommendations.nextCursor}:{offset:recommendations.nextOffset}),...(recommendFilter!==undefined&&['objects','documents','models','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos'].includes(section)&&related?related:{})});
+    try{const value=await api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendations.nextCursor?{cursor:recommendations.nextCursor}:{offset:recommendations.nextOffset}),...(recommendFilter!==undefined&&['objects','documents','models','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos','models'].includes(section)&&related?related:{})});
       setRecommendations({...value,items:[...recommendations.items,...value.items.filter(i=>!recommendations.items.some(old=>old.key===i.key))]});}
     catch(value){failure(value);}finally{setRecommendLoading(false);}}
   async function addSource(item:Recommendation,replaceId?:string,position?:{x:number;y:number}){return addSources([item],replaceId,position);}
@@ -389,6 +389,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
             })}
           </div>
           {!draft.cards.length&&<div className="ad-empty"><StickyNote size={28}/><strong>{t('从报警、资料或分析笔记开始','Start with an alarm, material or note')}</strong><p>{t('加入报警后，按当前事件推荐相关对象与资料','An alarm provides related objects and materials')}</p><Btn primary onClick={()=>{setMaterialsOpen(true);setSection('types');setRecommendQuery('');setRecommendFilter(undefined);setRight(false);}}>{t('加入资料','Add materials')}</Btn></div>}
+          {sourceRelations.relations.some(link=>link.origin==='candidate')&&<small className="ac-relation-legend">{t('虚线：候选或人工引用','Dashed: candidates or manual references')}</small>}
           <div className="ad-zoom"><IconBtn label={t('缩小画布','Zoom out canvas')} disabled={busy||uncertain} onClick={()=>zoom(1/1.2)}><ZoomOut size={15}/></IconBtn><button type="button" aria-label={t('画布100%','Canvas 100%')} onClick={()=>zoom(1/draft.viewport.zoom)}>{Math.round(draft.viewport.zoom*100)}%</button><IconBtn label={t('放大画布','Zoom in canvas')} disabled={busy||uncertain} onClick={()=>zoom(1.2)}><ZoomIn size={15}/></IconBtn><IconBtn label={t('适应全部','Fit all')} disabled={busy||uncertain} onClick={fit}><Maximize size={15}/></IconBtn></div>
           <Btn className="ac-save-view" disabled={!editable||!receipt} onClick={()=>void commit()}>{t('保存当前视图','Save current view')}</Btn>
           <span className="ad-hint">{t('中键拖动平移 · 滚轮缩放画布 · 拖标题移动 · 拖边角调整大小','Middle drag to pan · Wheel to zoom canvas · Drag title to move · Edges to resize')}</span>

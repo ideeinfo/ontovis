@@ -9,7 +9,8 @@ import type {SimulatedTrend,SimulatedDataset,SimulatedAlarm} from './simulatedAl
 export const ANALYSIS_ROOT='/api/workbench/analysis-sessions';
 export type AnalysisEntry={projectOnly:true}|{entityUid:string;expectedEntityRevision:string;timeTo:string}|{datasetId:string;datasetRevision:string}|{orderId:string}|{analysisSessionId:string;analysisRevision:number};
 export type SourceKind='object'|'drawing'|'document'|'photo'|'model'|'trend'|'alarm'|'work_order';
-export type Recommendation={key:string;kind:SourceKind;title:string;reason:string;identifier?:string;selector:Record<string,string|number>;preview?:EvidenceSource};
+export type RecommendationMatch='binding'|'historical_binding'|'name_candidate'|'catalogue_search'|'simulation_mapping'|'simulation_rule';
+export type Recommendation={key:string;kind:SourceKind;title:string;reason:string;identifier?:string;selector:Record<string,string|number>;preview?:EvidenceSource;matchType?:RecommendationMatch};
 export type Recommendations={items:Recommendation[];nextOffset:number|null;nextCursor?:string|null;gaps:string[];dataset:SimulatedDataset|null};
 export type EvidenceSource=Partial<ProjectModelVersion & SimulatedTrend>&{
   title?:string;pageNumber?:number;pageCount?:number;versionNumber?:number;newerVersionAvailable?:boolean;
@@ -22,8 +23,9 @@ export type EvidenceSource=Partial<ProjectModelVersion & SimulatedTrend>&{
   diagnosis?:{gap?:string};events?:{recordedAt:string;action:string;note:string}[];
 };
 export type EvidenceDetail={evidenceRefId:string;sourceKind:SourceKind;sourceRevision:string;availability:'available'|'restricted'|'unavailable'|'changed';reason?:string;source?:EvidenceSource};
-export type SourceAnchor={entityUid?:string;selector?:PhotoSelector|null;componentKeys?:string[];nodeId?:string;pageNumber?:number;drawingUid?:string};
-export type SourceRelationship={id:string;fromRef:string;toRef:string;kind:string;label:string;reason:string;origin:'source';anchor:SourceAnchor|null};
+export type SourceAnchor={entityUid?:string;selector?:PhotoSelector|null;componentKeys?:string[];nodeId?:string;pageNumber?:number;drawingUid?:string;referenceKind?:'name_candidate'|'historical_binding'};
+export type SourceRelationshipGap={evidenceRefId:string;reason:string};
+export type SourceRelationship={id:string;fromRef:string;toRef:string;kind:string;label:string;reason:string;origin:'source'|'candidate';anchor:SourceAnchor|null};
 export type DrawingClassification={code:string;revisionId?:string;tableRevision?:string;nameZh?:string;nameEn?:string;reviewState?:string};
 export type PreviewRow={id:string;title:string;identifier?:string;owner?:string;ownerId?:string|null;objectType?:string|null;classification?:DrawingClassification|null;bbox?:{x:number;y:number;width:number;height:number}|null;state?:string;properties?:Record<string,unknown>;sourceInstanceId?:string;selector?:Record<string,string>;targetTitle?:string;targetDrawingUid?:string;targetRevision?:string;reason?:string;semantics?:string;entityUid?:string};
 export type KnowledgeNode={id:string;kind:string;title:string;statement:string;faultCode?:string;properties:Record<string,string>};

@@ -1,0 +1,142 @@
+"""Relationship provenance and selected-object recommendations; no live engineering writes."""
+import json
+import sqlite3
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import Mock, patch
+
+from apps.api.analysis_model_links import object_names, scene_bindings
+from apps.api.analysis_preview import relationships
+from apps.api.analysis_queries import recommendations
+from apps.api.authority import PreviewError
+
+
+class ModelAssociationTests(TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(':memory:'); self.addCleanup(self.db.close)
+        self.db.executescript('''
+            create table scenes(id text,head_revision text,project_code text);
+            create table scene_revisions(revision text,snapshot text);
+            create table scene_spatial_validations(revision text,validation text);
+            create table scene_lifecycle(scene_id text,state text);
+            create table scene_resource_uses(revision text,model_version_id text);
+            create table project_model_assets(id text primary key,name text,project_code text);
+            create table project_model_versions(asset_id text,version_id text,content_revision text);
+            create table versions(id text,sha256 text,components text,created_at text);
+            create table project_model_lifecycle(asset_id text,state text);''')
+        self.library = SimpleNamespace(connect=lambda: self.db)
+        self.item = {'entityUid': 'definition-cabinet', 'entityRevision': 'r1', 'objectKind': 'cabinet', 'objectScope': 'definition',
+            'identifiers': [{'value': '=PLANT+CB7', 'role': 'primary', 'scheme': 'RDS', 'status': 'accepted', 'scopeType': 'project', 'scopeKey': 'P'}]}
+        self.reader = SimpleNamespace(reader=SimpleNamespace(project_code='P', connection_id='source',
+            context_for_object=Mock(return_value={'item': self.item, 'context': None})),
+            models=SimpleNamespace(library=self.library, project_code='shared-models', listing=Mock(side_effect=AssertionError('No full catalogue scan'))),
+            authorize=Mock(), actor='synthetic-owner')
+        self.components = [{'componentKey': 'cabinet-key', 'displayName': 'CB7'}]
+
+    def model(self, asset='asset', version='version', name='Cabinet model', date='1', components=None, deleted=False):
+        self.db.execute('insert or ignore into project_model_assets values(?,?,?)', (asset, name, 'shared-models'))
+        self.db.execute('insert into project_model_versions values(?,?,?)', (asset, version, 'content-'+version))
+        self.db.execute('insert into versions values(?,?,?,?)', (version, 'a'*64, json.dumps(self.components if components is None else components), date))
+        if deleted: self.db.execute('insert into project_model_lifecycle values(?,?)', (asset, 'deleted'))
+
+    def scene(self, uid='definition-cabinet', version='version', state='active', key='cabinet-key', *, name='scene', project='P', connection='source', blocking=False, whole=False):
+        ref = {'entityUid': uid, 'projectCode': project, 'ontobaseConnectionId': connection}
+        instance = {'modelVersionId': version, 'sceneModelInstanceId': 'instance', 'componentBindings': []}
+        if whole: instance['rootBinding'] = {'objectRef': ref}
+        else: instance['componentBindings'] = [{'objectRef': ref, 'componentKeys': [key]}]
+        self.db.execute('insert into scenes values(?,?,?)', (name, name, 'P'))
+        self.db.execute('insert into scene_revisions values(?,?)', (name, json.dumps({'instances': [instance]})))
+        self.db.execute('insert into scene_lifecycle values(?,?)', (name, state))
+        self.db.execute('insert into scene_resource_uses values(?,?)', (name, version))
+        if blocking: self.db.execute('insert into scene_spatial_validations values(?,?)', (name, json.dumps({'bindingIssues': [{'blocking': True, 'sceneModelInstanceId': 'instance', 'objectRef': ref}]})))
+
+    def recommended(self, **extra):
+        body = {'entry': {'projectOnly': True}, 'section': 'models', 'entityUid': self.item['entityUid'], 'expectedEntityRevision': 'r1', **extra}
+        return recommendations(self.reader, body, self.library)
+
+    def linked(self):
+        self.reader.read = Mock(side_effect=lambda kind, desc: {'item': self.item} if kind == 'object' else {'components': self.components})
+        return relationships(self.reader, [({'evidenceRefId': 'object', 'sourceKind': 'object'}, {'entityUid': self.item['entityUid']}),
+            ({'evidenceRefId': 'model', 'sourceKind': 'model'}, {'modelVersionId': 'version'})], self.library)
+
+    def test_non_demo_project_uses_exact_binding_before_a_same_named_candidate(self):
+        self.model(asset='candidate', version='candidate-v', name='A name-only model')
+        self.model(asset='bound', version='version', name='Z bound model', components=[{'componentKey': 'cabinet-key', 'displayName': 'Different label'}])
+        self.scene()
+        with patch('apps.api.simulated_faults.catalogue', side_effect=AssertionError('No simulation profile needed')):
+            rows = self.recommended()['items']
+        self.assertEqual([row['matchType'] for row in rows], ['binding', 'name_candidate'])
+        self.assertEqual(rows[0]['selector']['modelVersionId'], 'version')
+        self.reader.models.listing.assert_not_called()
+        self.reader.reader.context_for_object.assert_called_once_with('definition-cabinet', 'r1')
+
+    def test_saved_binding_keeps_its_old_model_version(self):
+        self.model(version='version', date='1'); self.model(version='new-version', date='2', components=[]); self.scene()
+        rows = self.recommended()['items']; self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]['selector']['modelVersionId'], rows[0]['matchType']), ('version', 'binding'))
+
+    def test_recycled_binding_is_history_and_restoring_scene_restores_source_semantics(self):
+        self.model(); self.scene(state='deleted')
+        self.assertEqual(self.recommended()['items'][0]['matchType'], 'historical_binding')
+        link = self.linked()['items'][0]
+        self.assertEqual((link['kind'], link['origin'], link['anchor']['referenceKind']), ('model_binding_history', 'candidate', 'historical_binding'))
+        self.db.execute("update scene_lifecycle set state='active'")
+        self.assertEqual(self.recommended()['items'][0]['matchType'], 'binding')
+        self.assertEqual(self.linked()['items'][0]['origin'], 'source')
+
+    def test_same_name_different_identity_is_candidate_with_an_explanation(self):
+        self.model(); self.scene(uid='different-installed-cabinet', state='deleted')
+        self.assertEqual(self.recommended()['items'][0]['matchType'], 'name_candidate')
+        value = self.linked(); link = value['items'][0]
+        self.assertEqual((link['kind'], link['origin']), ('model_name_candidate', 'candidate'))
+        self.assertEqual(link['anchor']['componentKeys'], ['cabinet-key'])
+        self.assertIn('MODEL_BOUND_TO_DIFFERENT_OBJECT', [row['reason'] for row in value['gaps']])
+        self.assertFalse(any(row['kind'] == 'model_binding' for row in value['items']))
+
+    def test_cross_scope_blocking_and_missing_component_never_become_a_binding(self):
+        self.model(); self.scene(project='OTHER', name='wrong-project'); self.scene(connection='OTHER', name='wrong-source')
+        self.scene(blocking=True, name='blocked'); self.scene(key='missing-key', name='removed-component')
+        self.assertEqual(self.recommended()['items'][0]['matchType'], 'name_candidate')
+        self.assertTrue(all(row['origin'] == 'candidate' for row in self.linked()['items']))
+
+    def test_root_binding_is_a_whole_model_relationship(self):
+        self.model(components=[]); self.components = []; self.scene(whole=True)
+        self.assertEqual(self.recommended()['items'][0]['matchType'], 'binding')
+        link = self.linked()['items'][0]
+        self.assertEqual((link['label'], link['anchor']['componentKeys']), ('模型整体绑定', []))
+
+    def test_candidates_are_bounded_paged_and_deleted_assets_are_excluded(self):
+        for n in range(15): self.model(asset=f'a{n:02}', version=f'v{n:02}', name=f'Model {n:02}')
+        self.model(asset='deleted', version='deleted-v', deleted=True)
+        first = self.recommended(); second = self.recommended(offset=first['nextOffset'])
+        self.assertEqual((len(first['items']), len(second['items']), second['nextOffset']), (12, 3, None))
+        self.assertEqual(len({row['key'] for row in first['items']+second['items']}), 15)
+
+    def test_default_manual_model_category_does_not_load_the_whole_catalogue(self):
+        value = recommendations(self.reader, {'entry': {'projectOnly': True}, 'section': 'models'}, self.library)
+        self.assertEqual(value['items'], []); self.assertTrue(value['gaps']); self.reader.models.listing.assert_not_called()
+        for query in (None, ['invalid']):
+            with self.assertRaises(PreviewError): self.recommended(q=query)
+
+
+class AlarmObjectMappingTests(TestCase):
+    def value(self, *, duplicate=False, **identifier_changes):
+        identifier = {'value': '=PLANT+CB7-B1', 'scheme': 'RDS', 'status': 'accepted', 'role': 'primary', 'scopeType': 'project', 'scopeKey': 'P', **identifier_changes}
+        obj = {'item': {'identifiers': [identifier]}}
+        reader = SimpleNamespace(reader=SimpleNamespace(project_code='P'), authorize=Mock(), read=Mock(side_effect=lambda kind, _: {'dataset': {'sourceKind': 'simulated', 'primaryRds': '=PLANT+CB7-B1'}} if kind == 'alarm' else obj))
+        fixed = [({'evidenceRefId': 'alarm', 'sourceKind': 'alarm'}, {}), ({'evidenceRefId': 'object', 'sourceKind': 'object'}, {'entityUid': 'one'})]
+        if duplicate: fixed.append(({'evidenceRefId': 'other', 'sourceKind': 'object'}, {'entityUid': 'two'}))
+        value = relationships(reader, fixed, None)
+        self.assertEqual(reader.read.call_count, len(fixed))
+        return value
+
+    def test_explicit_project_identifier_links_a_simulated_alarm_without_extra_source_reads(self):
+        row = self.value()['items'][0]
+        self.assertEqual((row['fromRef'], row['toRef'], row['kind'], row['label']), ('alarm', 'object', 'alarm_object_mapping', '模拟报警对象'))
+        self.assertEqual(self.value(status='needs_review')['items'][0]['origin'], 'source')
+
+    def test_alias_wrong_scope_status_and_ambiguous_identity_do_not_infer_an_alarm_target(self):
+        for change in ({'role': 'alias'}, {'scopeType': 'installation'}, {'scopeKey': 'OTHER'}, {'status': 'rejected'}, {'value': 'same display name'}):
+            self.assertEqual(self.value(**change)['items'], [])
+        result = self.value(duplicate=True)
+        self.assertEqual(result['items'], []); self.assertEqual(result['gaps'][0]['reason'], 'ALARM_OBJECT_MAPPING_AMBIGUOUS')

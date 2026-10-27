@@ -51,7 +51,7 @@ def recommendation(kind, title, selector, reason, **extra):
     return {'key': d.digest([kind,selector]), 'kind': kind, 'title': title[:120], 'selector': selector, 'reason': reason, **extra}
 
 
-def recommendations(reader, body):
+def recommendations(reader, body, scene_library=None):
     d.require(type(body) is dict and 'entry' in body and set(body) <= {'entry','section','offset','cursor','entityUid','expectedEntityRevision','q'})
     manual=body['entry']=={'projectOnly':True} or body.get('section')=='objects' and 'q' in body
     dataset, order = (None,None) if manual else entry_dataset(reader, body['entry'])
@@ -76,10 +76,10 @@ def recommendations(reader, body):
         else:gaps.append('输入对象名称或位号查找，或从设备层级直接进入分析。')
     elif section == 'objects':
         from .demo_faults import diagnosis
-        tags = [(dataset['primaryRds'],'报警明确映射对象'),('=WEC+'+dataset['cabinet'],'已登记的所属柜体')]
+        tags = [(dataset['primaryRds'],'模拟报警配置的显式位号映射'),('=WEC+'+dataset['cabinet'],'演练配置指定的柜体，所属关系以对象来源为准')]
         channel = sim.PROFILES[dataset['faultCode']].get('channel')
         tags += [(channel['moduleRds'] if channel and node['rds']==channel['rds'] else node['rds'],
-                  '模块内地址 '+channel['address']+'；定位所属模块' if channel and node['rds']==channel['rds'] else '本故障码排查分支的参照对象')
+                  '模块内地址 '+channel['address']+'；定位所属模块' if channel and node['rds']==channel['rds'] else '演练规则中的排查参照对象，尚未证明诊断因果')
                  for node in diagnosis(dataset['faultCode'])['nodes'] if node['kind']=='component']
         seen = set()
         for tag, reason in tags:
@@ -88,7 +88,8 @@ def recommendations(reader, body):
             def add(tag=tag, reason=reason):
                 value = reader._rds(tag); item = value['item']
                 rows.append(recommendation('object', item.get('displayName',tag),
-                    {k:selected(value)[k] for k in ('entityUid','expectedEntityRevision')},reason, identifier=tag))
+                    {k:selected(value)[k] for k in ('entityUid','expectedEntityRevision')},reason, identifier=tag,
+                    matchType='simulation_mapping' if tag==dataset['primaryRds'] else 'simulation_rule'))
             attempt(add)
     elif section in ('materials','drawings','photos'):
         if 'entityUid' in body:
@@ -150,31 +151,28 @@ def recommendations(reader, body):
                 'sourceSha256':item['source_sha256'],'pageNumber':1}, '项目文档名称匹配；适用性需结合正文核对'))
         return {'items':rows, 'nextOffset':None,'nextCursor':value.get('next_cursor'), 'gaps':gaps, 'dataset':dataset}
     elif section == 'models':
-        if 'q' in body or manual:
-            value = reader.models.listing(reader.actor,reader.authorize,access_revision='analysis',q=body.get('q',''),limit=12,cursor=cursor)
-            versions=[(item['displayName'],item['versions'][0]) for item in value['items'] if item.get('versions')]
-            next_cursor=value['nextCursor'];reason='共享模型名称候选；以已有绑定及代理精度为准'
+        d.require(type(body.get('q','')) is str and len(body.get('q','')) <= 200)
+        if 'entityUid' in body:
+            chosen = reader.reader.context_for_object(body['entityUid'], body.get('expectedEntityRevision'))
+        elif dataset and not body.get('q','').strip():
+            chosen = reader._rds('=WEC+'+dataset['cabinet'])
+        elif 'q' in body and body['q'].strip():
+            value = reader.models.listing(reader.actor,reader.authorize,access_revision='analysis',q=body['q'],limit=12,cursor=cursor)
+            for item in value['items']:
+                if not item.get('versions'): continue
+                version = item['versions'][0]
+                rows.append(recommendation('model',item['displayName'],{'modelAssetId':version['modelAssetId'],'modelVersionId':version['modelVersionId'],
+                    'expectedContentRevision':version['contentRevision'],'expectedSha256':version['sha256']},
+                    '共享模型名称检索结果；尚未声明与当前对象的绑定',matchType='catalogue_search'))
+            return {'items':rows,'nextOffset':None,'nextCursor':value['nextCursor'],'gaps':gaps,'dataset':dataset}
         else:
-            # Match existing component metadata, not a whole-library client scan.
-            # A same-named schematic component is explicitly a reference, not a binding.
-            with reader.models.library.connect() as db:
-                found=db.execute('''select a.name,p.asset_id,p.version_id,p.content_revision,v.sha256
-                    from project_model_assets a join project_model_versions p on p.asset_id=a.id
-                    join versions v on v.id=p.version_id
-                    left join project_model_lifecycle l on l.asset_id=a.id
-                    where a.project_code=? and coalesce(l.state,'active')='active'
-                      and not exists(select 1 from project_model_versions p2 join versions v2 on v2.id=p2.version_id
-                        where p2.asset_id=a.id and (v2.created_at>v.created_at or v2.created_at=v.created_at and v2.id>v.id))
-                      and exists(select 1 from json_each(v.components) component
-                        where json_extract(component.value,'$.displayName')=?)
-                    order by a.name,a.id limit 13 offset ?''',(reader.models.project_code,dataset['cabinet'],offset)).fetchall()
-            versions=[(row[0],{'modelAssetId':row[1],'modelVersionId':row[2],'contentRevision':row[3],'sha256':row[4]}) for row in found[:12]]
-            next_cursor=offset+12 if len(found)>12 else None;reason='已有模型含 '+dataset['cabinet']+' 柜级构件；几何精度与对象绑定须分别查看'
-        for title,v in versions:
-            rows.append(recommendation('model',title,{'modelAssetId':v['modelAssetId'],'modelVersionId':v['modelVersionId'],
-                'expectedContentRevision':v['contentRevision'],'expectedSha256':v['sha256']},reason))
-        return {'items':rows,'nextOffset':next_cursor if isinstance(next_cursor,int) else None,
-                'nextCursor':next_cursor if isinstance(next_cursor,str) else None,'gaps':gaps,'dataset':dataset}
+            return {'items':[],'nextOffset':None,'nextCursor':None,'gaps':['先从工程对象卡选择“推荐相关资料”，再查看模型；也可明确输入模型名补充检索。'],'dataset':dataset}
+        from .analysis_model_links import recommend_models
+        values, following, model_gaps = recommend_models(reader,chosen,scene_library,offset=offset,query=body.get('q',''))
+        for value in values:
+            rows.append(recommendation('model',value['title'],value['selector'],value['reason'],matchType=value['matchType']))
+        return {'items':rows,'nextOffset':following,'nextCursor':None,'gaps':gaps+model_gaps,'dataset':dataset}
+
     else:
         value = reader.orders.listing({'q':dataset['faultCode'] if dataset else body.get('q',''),'limit':12,'cursor':offset},False)
         for item in value['items']:

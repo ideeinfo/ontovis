@@ -275,12 +275,27 @@ def relationships(reader, fixed, scene_library):
             if error.status in (401, 403): raise
             gaps.append({'evidenceRefId': reference['evidenceRefId'], 'reason': error.code})
     edges = []
-    def add(a, b, kind, label, anchor=None, reason=''):
+    def add(a, b, kind, label, anchor=None, reason='', *, origin='source'):
         if kind == 'model_binding' and any(edge['fromRef'] == a and edge['toRef'] == b and edge['kind'] == kind
                 and edge['anchor']['componentKeys'] == anchor['componentKeys'] for edge in edges):
             return
         edges.append({'id': d.digest([a, b, kind, anchor])[:32], 'fromRef': a, 'toRef': b, 'kind': kind, 'label': label,
-                      'anchor': anchor, 'reason': reason, 'origin': 'source'})
+                      'anchor': anchor, 'reason': reason, 'origin': origin})
+    def gap(identity, reason):
+        if not any(row['evidenceRefId']==identity and row['reason']==reason for row in gaps):
+            gaps.append({'evidenceRefId': identity, 'reason': reason})
+    from .analysis_source_reader import matches_project_identifier
+    for identity, (kind, descriptor, value) in values.items():
+        dataset = value.get('dataset', {})
+        if kind != 'alarm' or dataset.get('sourceKind') != 'simulated' or not dataset.get('primaryRds'):
+            continue
+        matches = [(ref, target) for ref, (target_kind, target, obj) in values.items()
+                   if target_kind == 'object' and matches_project_identifier(obj['item'],dataset['primaryRds'],reader.reader.project_code)]
+        if len({target['entityUid'] for _,target in matches}) > 1:
+            gap(identity,'ALARM_OBJECT_MAPPING_AMBIGUOUS'); continue
+        for ref, target in matches:
+            add(identity,ref,'alarm_object_mapping','模拟报警对象',{'entityUid':target['entityUid']},
+                '固定模拟报警配置按项目主位号 '+dataset['primaryRds']+' 显式映射；不表示已确认故障原因或现场安装身份')
     drawings = {}
     for identity, (kind, descriptor, value) in values.items():
         if kind == 'drawing':
@@ -302,32 +317,39 @@ def relationships(reader, fixed, scene_library):
             for target, other in drawings.items():
                 if source != target and ref.get('selector') and ref.get('targetDrawingUid') == other['drawingUid'] and ref.get('targetRevision') == other['sourceRevision']:
                     add(source, target, 'drawing_reference', '图纸引用 · ' + ref['title'], {'drawingUid': other['drawingUid']}, ref.get('reason') or '')
-    if scene_library is not None:
-        models = {ref: desc for ref, (kind, desc, _) in values.items() if kind == 'model'}
-        if models:
-            with scene_library.connect() as db:
-                rows = db.execute('''select s.id,s.head_revision,r.snapshot,v.validation from scenes s join scene_revisions r on r.revision=s.head_revision
-                    left join scene_spatial_validations v on v.revision=s.head_revision
-                    left join scene_lifecycle l on l.scene_id=s.id where s.project_code=? and coalesce(l.state,'active')='active'
-                    and exists(select 1 from scene_resource_uses u where u.revision=s.head_revision and u.model_version_id in (''' + ','.join('?' for _ in models) + ')) order by s.id limit 100',
-                    (reader.reader.project_code, *(v['modelVersionId'] for v in models.values()))).fetchall()
-            for scene_id, scene_revision, raw, raw_validation in rows:
-                scene = json.loads(raw)
-                validation = json.loads(raw_validation) if raw_validation else {}
-                for instance in scene['instances']:
-                    for model_id, model in models.items():
-                        if instance['modelVersionId'] != model['modelVersionId']: continue
-                        for binding in instance.get('componentBindings', []):
-                            bound = binding['objectRef']
-                            if bound.get('projectCode') != reader.reader.project_code or bound.get('ontobaseConnectionId') != reader.reader.connection_id: continue
-                            if any(issue.get('blocking') and issue.get('sceneModelInstanceId') == instance['sceneModelInstanceId'] and issue.get('objectRef') == bound
-                                   for issue in validation.get('bindingIssues', [])): continue
-                            keys = {c.get('componentKey') for c in values[model_id][2].get('components', [])}
-                            if not set(binding['componentKeys']) <= keys: continue
-                            for object_id, (kind, descriptor, _) in values.items():
-                                if kind == 'object' and bound['entityUid'] == descriptor['entityUid']:
-                                    add(object_id, model_id, 'model_binding', '模型构件绑定', {'componentKeys': binding['componentKeys'],
-                                        'sceneId': scene_id, 'sceneRevision': scene_revision}, '已保存场景的构件绑定；几何精度保持来源标识')
+    from .analysis_model_links import scene_bindings, candidate_components, component_name_index
+    models = {ref: desc for ref, (kind, desc, _) in values.items() if kind == 'model'}
+    indexes = {ref: component_name_index(values[ref][2].get('components', [])) for ref in models}
+    bindings, truncated = scene_bindings(reader,scene_library,model_versions=[model['modelVersionId'] for model in models.values()])
+    if truncated:
+        for identity in models: gap(identity,'MODEL_BINDINGS_TRUNCATED')
+    for object_id, (kind, descriptor, obj) in values.items():
+        if kind != 'object': continue
+        for model_id, model in models.items():
+            components = values[model_id][2].get('components', [])
+            keys = {component.get('componentKey') for component in components}
+            matched = [row for row in bindings if row['modelVersionId']==model['modelVersionId']
+                       and row['entityUid']==descriptor['entityUid'] and set(row['componentKeys']) <= keys]
+            active = [row for row in matched if row['sceneState']=='active']
+            for row in active or matched:
+                history = row['sceneState']!='active'
+                anchor = {'componentKeys':row['componentKeys'],'sceneId':row['sceneId'],'sceneRevision':row['sceneRevision']}
+                if history: anchor['referenceKind']='historical_binding'
+                add(object_id,model_id,'model_binding_history' if history else 'model_binding',
+                    '历史场景绑定' if history else '模型整体绑定' if row['wholeModel'] else '模型构件绑定',anchor,
+                    '绑定保存在回收站场景中，只作历史参考' if history else '有效场景中已保存的对象绑定；几何精度保持来源标识',
+                    origin='candidate' if history else 'source')
+                if history:
+                    gap(object_id,'MODEL_BINDING_IN_RECYCLE_BIN'); gap(model_id,'MODEL_BINDING_IN_RECYCLE_BIN')
+            if matched: continue
+            candidates = candidate_components(obj['item'],components,by_name=indexes[model_id])
+            if not candidates: continue
+            add(object_id,model_id,'model_name_candidate','同名构件候选',{'componentKeys':candidates[:32],'referenceKind':'name_candidate'},
+                '模型构件名与对象的主标识匹配，只用于查看候选位置；没有把项目定义、安装对象或同名构件认定为同一对象',origin='candidate')
+            gap(object_id,'MODEL_NAME_CANDIDATE_ONLY'); gap(model_id,'MODEL_NAME_CANDIDATE_ONLY')
+            if any(row['modelVersionId']==model['modelVersionId'] and row['entityUid']!=descriptor['entityUid']
+                   and set(row['componentKeys']) & set(candidates) for row in bindings):
+                gap(object_id,'MODEL_BOUND_TO_DIFFERENT_OBJECT'); gap(model_id,'MODEL_BOUND_TO_DIFFERENT_OBJECT')
     # Same-code links require the actual published fault_code property, not a title match.
     for doc_id, (kind, descriptor, _) in values.items():
         if kind != 'document': continue
@@ -346,4 +368,4 @@ def relationships(reader, fixed, scene_library):
                 add(alarm_id, doc_id, 'fault_manual', '故障代码手册', {'nodeId': matching['id'], 'pageNumber': descriptor['pageNumber']}, '已发布故障节点的代码与当前报警代码一致；适用范围见手册')
     reader.authorize()
     unique = {edge['id']: edge for edge in edges}
-    return {'items': list(unique.values())[:200], 'gaps': gaps}
+    return {'items': sorted(unique.values(),key=lambda edge:edge['origin']!='source')[:200], 'gaps': gaps[:200]}

@@ -484,7 +484,7 @@ class ProjectSessions(UserSessions):
                 elif action == 'recommendations':
                     from .analysis_queries import recommendations
                     release_store()
-                    value = recommendations(reader, body)
+                    value = recommendations(reader, body, service.library)
                 elif action == 'evidence/batch':
                     require(set(body) == {'analysisSessionId','evidenceRefIds'} and type(body['evidenceRefIds']) is list
                             and 1 <= len(body['evidenceRefIds']) <= 12)

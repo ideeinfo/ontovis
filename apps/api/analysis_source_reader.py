@@ -18,6 +18,13 @@ def selected(value):
             'expectedHierarchyRevision': context['hierarchyRevision'] if context else None}
 
 
+def matches_project_identifier(item, identifier, project_code):
+    return any(value.get('value') == identifier and value.get('role') == 'primary'
+        and value.get('status') in ('accepted', 'needs_review') and value.get('scheme') in ('RDS', 'electrical_tag')
+        and value.get('scopeType') == 'project' and value.get('scopeKey') == project_code
+        for value in item.get('identifiers', []))
+
+
 class AnalysisSourceReader:
     def __init__(self, reader, models, orders, authorize, actor):
         self.reader, self.models, self.orders, self.authorize, self.actor = reader, models, orders, authorize, actor
@@ -161,9 +168,7 @@ class AnalysisSourceReader:
         value = self.reader._request('GET', self.reader.prefix+'/objects?'+urlencode({'primaryIdentifier': rds, 'limit': 50}))
         draft.require(value.get('projectCode') == self.reader.project_code and type(value.get('items')) is list, 'SOURCE_UNAVAILABLE', 502)
         def matches(item):
-            return any(i.get('value') == rds and i.get('role') == 'primary' and i.get('status') in ('accepted', 'needs_review')
-                and i.get('scheme') in ('RDS', 'electrical_tag') and i.get('scopeType') == 'project'
-                and i.get('scopeKey') == self.reader.project_code for i in item.get('identifiers', []))
+            return matches_project_identifier(item, rds, self.reader.project_code)
         rows = [row for row in value['items'] if matches(row)]
         draft.require(value.get('nextCursor') is None and len(rows) == 1, 'DIAGNOSTIC_OBJECT_UNRESOLVED', 409)
         result = self.reader.context_for_object(rows[0]['entityUid'], rows[0]['entityRevision'])

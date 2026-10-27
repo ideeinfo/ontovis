@@ -15,10 +15,11 @@ export function AnalysisModelCard({api,version,en,initialView,onView,full=false,
   function flushView(){clearTimeout(timer.current);const value=lastView.current;lastView.current=null;if(value)change.current?.(value);}
   useEffect(()=>()=>flushView(),[]);
   useEffect(()=>{if(!inspection.structure||!initial.current)return;const view=initial.current;initial.current=undefined;
+    if(componentKeys.length)return;
     if(view.componentId)inspection.choose(view.componentId);
     const id=requestAnimationFrame(()=>camera.current?.setView({eye:view.eye,target:view.target}));return()=>cancelAnimationFrame(id);
   },[inspection.structure]);
-  useEffect(()=>{if(!inspection.structure||initialView||!componentKeys.length)return;
+  useEffect(()=>{if(!inspection.structure||!componentKeys.length)return;
     const node=inspection.structure.nodes.find(row=>row.componentKeys.some(key=>componentKeys.includes(key)));
     if(node)inspection.choose(node.id);
   },[inspection.structure,componentKeys.join('|')]);
