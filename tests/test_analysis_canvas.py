@@ -58,6 +58,29 @@ class CanvasStorageTests(unittest.TestCase):
         return self.demo.write(OWNER,'admin','save',{'analysisSessionId':result['analysisSessionId'],
             'expectedAnalysisRevision':result['analysisRevision'],'requestId':str(uuid4()),'snapshot':snapshot or result['snapshot']},lambda:None)
 
+    def test_manual_canvas_can_add_an_alarm_and_trend_then_reopen_fixed_sources(self):
+        from apps.api.analysis_evidence import AnalysisEvidence
+        from apps.api.analysis_queries import recommendations
+        self.demo=self.consumer(project='Demo-PDS');reader=self.reader()
+        value=snapshot();value.update(projectCode='Demo-PDS',schemaVersion=2,cards=[])
+        created=self.demo.write(OWNER,'admin','create',{'requestId':str(uuid4()),'snapshot':value},lambda:None)
+        alarm=recommendations(reader,{'entry':{'projectOnly':True},'section':'alarms','q':'13002'})['items'][0]
+        dataset=alarm['preview']['dataset'];entry={key:dataset[key] for key in ('datasetId','datasetRevision')}
+        trend=recommendations(reader,{'entry':entry,'section':'trends','q':'reference_temperature'})['items'][0]
+        evidence=AnalysisEvidence(self.demo)
+        for index,item in enumerate((alarm,trend)):
+            ref=evidence.register(OWNER,{'analysisSessionId':created['analysisSessionId'],'expectedAnalysisRevision':1,
+                'requestId':str(uuid4()),'sourceKind':item['kind'],'selector':item['selector']},lambda:None,reader.resolve)
+            value['cards'].append({'id':str(uuid4()),'kind':item['kind'],'title':item['title'],'x':100+index*380,'y':80,'width':340,'height':260,'pinned':False,
+                'source':{'system':'ontovis','ontobaseConnectionId':CONNECTION,'projectCode':'Demo-PDS','id':ref['evidenceRefId'],'revision':ref['sourceRevision']}})
+        value['context'].update({key:dataset[key] for key in ('faultCode','sourceConnectionId','branch','datasetId','datasetRevision','timeFrom','timeTo')},eventId=alarm['selector']['eventId'])
+        saved=self.save(created,value)
+        reopened=self.demo.detail(OWNER,created['analysisSessionId'],lambda:None)
+        self.assertEqual(saved['analysisRevision'],2);self.assertEqual(reopened['snapshot'],value)
+        self.assertEqual(reopened['snapshot']['context']['faultCode'],'13002')
+        wrong=deepcopy(value);wrong['context']['faultCode']='13001'
+        with self.assertRaises(PreviewError):self.save(saved,wrong)
+
     def test_event_resume_recurrence_history_and_layout_are_independent(self):
         self.demo=self.consumer(project='Demo-PDS');a=self.start();self.assertEqual(len(a['snapshot']['cards']),5)
         self.assertEqual(self.start()['analysisSessionId'],a['analysisSessionId'])

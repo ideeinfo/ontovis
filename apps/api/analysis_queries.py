@@ -54,7 +54,7 @@ def recommendations(reader, body):
     manual=body['entry']=={'projectOnly':True} or body.get('section')=='objects' and 'q' in body
     dataset, order = (None,None) if manual else entry_dataset(reader, body['entry'])
     section = body.get('section', 'objects'); offset = body.get('offset', 0)
-    d.require(section in ('objects','materials','documents','models','orders') and type(offset) is int and 0 <= offset <= 1000)
+    d.require(section in ('objects','materials','drawings','photos','documents','models','orders','alarms','trends') and type(offset) is int and 0 <= offset <= 1000)
     cursor = body.get('cursor')
     d.require(cursor is None or isinstance(cursor,(str,int)) and not isinstance(cursor,bool))
     if isinstance(cursor,str): d.text(cursor,4096)
@@ -88,7 +88,7 @@ def recommendations(reader, body):
                 rows.append(recommendation('object', item.get('displayName',tag),
                     {k:selected(value)[k] for k in ('entityUid','expectedEntityRevision')},reason, identifier=tag))
             attempt(add)
-    elif section == 'materials':
+    elif section in ('materials','drawings','photos'):
         if 'entityUid' in body:
             chosen = reader.reader.context_for_object(body['entityUid'],body.get('expectedEntityRevision'))
         elif dataset: chosen = reader._rds(dataset['primaryRds'])
@@ -96,6 +96,8 @@ def recommendations(reader, body):
         selection = selected(chosen)
         from .scene_evidence import SceneEvidenceReader
         for kind, source in (('drawing',SceneEvidenceReader(reader.reader)),('photo',reader.photos)):
+            if section == 'drawings' and kind != 'drawing' or section == 'photos' and kind != 'photo':
+                continue
             def add(kind=kind, source=source):
                 for item in source.resolve(selection)['items']:
                     if kind == 'drawing' and item['availability'] != 'available': continue
@@ -103,6 +105,30 @@ def recommendations(reader, body):
                     rows.append(recommendation(kind,item['title'],{k:selection[k] for k in ('entityUid','expectedEntityRevision')} | {'evidenceRef':item['evidenceRef']},
                         '所选对象已有的资料关联', preview=item))
             attempt(add)
+    elif section in ('alarms','trends'):
+        query = body.get('q', '');d.require(type(query) is str and len(query) <= 200)
+        if section == 'alarms':
+            def add_alarms():
+                candidates = sim.catalogue(reader.reader.project_code)['items']
+                candidates.sort(key=lambda item: (item['datasetId'] != (dataset or {}).get('datasetId'),
+                    item['faultCode'] != (dataset or {}).get('faultCode'), item['timeFrom'], item['datasetId']))
+                for item in candidates:
+                    if query.casefold() not in (item['faultCode']+' '+item['title']+' '+item['primaryRds']).casefold():continue
+                    reason = '当前分析的模拟报警' if dataset and item['datasetId'] == dataset['datasetId'] else '同码独立事件，仅作历史参照' if dataset and item['faultCode'] == dataset['faultCode'] else '本项目模拟报警，是否相关需结合本次调查核对'
+                    rows.append(recommendation('alarm', item['faultCode']+' · '+item['title'],
+                        {key:item[key] for key in ('datasetId','datasetRevision')} | {'eventId':item['datasetId']+'-event-1'},
+                        reason, preview={'dataset':item}, identifier=item['primaryRds']))
+            attempt(add_alarms)
+        elif not dataset:
+            gaps.append('先加入故障报警，再选择该报警的趋势。')
+        else:
+            metrics = (['sensor_temperature','reference_temperature'] if dataset['faultCode'] in ('13001','13002') else []) + ['device_feedback','supply_voltage','overcurrent']
+            names = {'sensor_temperature':'传感器温度','reference_temperature':'独立参照温度','device_feedback':'状态反馈','supply_voltage':'供电电压','overcurrent':'过流信号'}
+            for metric in metrics:
+                if query.casefold() not in (names[metric]+' '+metric).casefold():continue
+                rows.append(recommendation('trend', names[metric],
+                    {key:dataset[key] for key in ('datasetId','datasetRevision','timeFrom','timeTo')} | {'metricId':metric},
+                    '当前模拟报警的固定时间窗；质量异常保留断点'))
     elif section == 'documents':
         if dataset and 'q' not in body:
             from .analysis_preview import fault_documents

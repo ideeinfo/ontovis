@@ -477,8 +477,10 @@ export function SceneViewport(props:SceneViewportProps) {
       if(document.hidden){environment.suspend();hiddenAt=performance.now();cancelAnimationFrame(frame);frame=0;}
       else {if(tween&&hiddenAt!==null)tween.start+=performance.now()-hiddenAt;hiddenAt=null;appearance();request();}
     };
-    const resize=new ResizeObserver(()=>{const rect=element.getBoundingClientRect();camera.aspect=Math.max(1,rect.width)/Math.max(1,rect.height);
-      camera.updateProjectionMatrix();renderer.setSize(Math.max(1,rect.width),Math.max(1,rect.height));request();});resize.observe(element);
+    const resize=new ResizeObserver(()=>{
+      // Layout dimensions exclude the enclosing analysis canvas's CSS zoom.
+      const width=Math.max(1,element.clientWidth),height=Math.max(1,element.clientHeight);
+      camera.aspect=width/height;camera.updateProjectionMatrix();renderer.setSize(width,height);request();});resize.observe(element);
     const orbitStart=()=>{current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;};orbit.addEventListener('change',request);orbit.addEventListener('start',orbitStart);orbit.addEventListener('end',emit);
     const canvas=renderer.domElement;
     canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',motion);canvas.addEventListener('pointerup',up);

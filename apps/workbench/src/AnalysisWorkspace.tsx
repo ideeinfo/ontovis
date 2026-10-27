@@ -4,6 +4,8 @@ import {Btn,IconBtn,Modal} from './Primitives';
 import {addManualRelation,frameBounds,selectedInBox,arrangeCards,fitViewport,moveCard,removeCard,resizeCard,RESIZE_HANDLES,zoomAt,type ResizeHandle,type CanvasSnapshot,type ProjectScope,type RelationKind,type CanvasCard,type CardView} from './analysisCanvas';
 import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,type DraftReceipt,type PendingDraft} from './analysisDraftState';
 import {RowActions,RowContext} from './ListMenus';
+import {AnalysisMaterialPanel} from './AnalysisMaterialPanel';
+import {materialPosition,withPrimaryAlarm} from './analysisMaterials';
 import {AnalysisSources,ANALYSIS_ROOT,setCardPreviewOpen,type AnalysisEntry,type Recommendation,type Recommendations,type EvidenceSource,type SourceAnchor} from './analysisSources';
 import {AnalysisSourceCard,AnalysisTrend,materialNames} from './AnalysisSourceCard';
 import {useSourceRelations,SourceRelationLines,SourceRelationDetails,type CardSourceRelation} from './AnalysisSourceRelations';
@@ -40,7 +42,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   const [undo,setUndo]=useState<CanvasSnapshot[]>([]);
   const [redo,setRedo]=useState<CanvasSnapshot[]>([]),[multi,setMulti]=useState<string[]>([]);
   const [left,setLeft]=useState<'list'|'recommendations'|null>(initialEntry?'recommendations':'list'),[right,setRight]=useState(false);
-  const [section,setSection]=useState('objects'),[recommendations,setRecommendations]=useState<Recommendations|null>(null),[recommendLoading,setRecommendLoading]=useState(false);
+  const [section,setSection]=useState('types'),[recommendations,setRecommendations]=useState<Recommendations|null>(null),[recommendLoading,setRecommendLoading]=useState(false);
   const [related,setRelated]=useState<{entityUid:string;expectedEntityRevision:string}|null>(null),[relatedLabel,setRelatedLabel]=useState(''),[sourceAttempt,setSourceAttempt]=useState(0);
   const [expandedAnchor,setExpandedAnchor]=useState<SourceAnchor|null>(null);
   const [openPreviews,setOpenPreviews]=useState<ReadonlySet<string>>(()=>new Set()),[expanded,setExpanded]=useState('');
@@ -84,9 +86,9 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
     return()=>abort.abort();
   },[initialEntry,api,startAttempt]);
   useEffect(()=>{
-    if(left!=='recommendations'||!analysisEntry)return;const abort=new AbortController();setRecommendLoading(true);setRecommendations(null);
+    if(left!=='recommendations'||!analysisEntry||section==='types'){setRecommendations(null);setRecommendLoading(false);return;}const abort=new AbortController();setRecommendLoading(true);setRecommendations(null);
     setChosen([]);
-    void api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendFilter!==undefined&&['objects','models','documents','orders'].includes(section)?{q:recommendFilter}:{}),...(section==='materials'&&related?related:{})},abort.signal)
+    void api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendFilter!==undefined&&['objects','models','documents','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos'].includes(section)&&related?related:{})},abort.signal)
       .then(value=>{if(!abort.signal.aborted)setRecommendations(value);}).catch(value=>{if(!abort.signal.aborted)failure(value);}).finally(()=>{if(!abort.signal.aborted)setRecommendLoading(false);});
     return()=>abort.abort();
   },[analysisEntry,left,section,related,sourceAttempt,recommendFilter,api]);
@@ -107,7 +109,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   },[api,api.revision,api.epoch,filter,reload]);
   useEffect(()=>{
     const node=canvas.current;if(!node)return;
-    const wheel=(event:WheelEvent)=>{event.preventDefault();event.stopPropagation();const value=current.current;if(!value||busy||uncertain)return;
+    const wheel=(event:WheelEvent)=>{if((event.target as Element).closest('.ac-material-panel'))return;event.preventDefault();event.stopPropagation();const value=current.current;if(!value||busy||uncertain)return;
       const rect=node.getBoundingClientRect(),delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?node.clientHeight:1);setDraft({...value,viewport:zoomAt(value.viewport,value.viewport.zoom*Math.exp(-delta*.0015),event.clientX-rect.left,event.clientY-rect.top)});};
     node.addEventListener('wheel',wheel,{passive:false,capture:true});return()=>node.removeEventListener('wheel',wheel,true);
   },[!!draft,busy,uncertain]);
@@ -152,11 +154,11 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   function addNote(){if(!draft||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('分析笔记','Analysis note'),note:'',x:32+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:300,height:200,pinned:false}]});setSelected(id);}
   function focusCard(card:CanvasCard){setSelected(card.id);setMulti([card.id]);if(current.current&&canvas.current)setDraft({...current.current,viewport:{...current.current.viewport,x:canvas.current.clientWidth/2-(card.x+card.width/2)*current.current.viewport.zoom,y:canvas.current.clientHeight/2-(card.y+card.height/2)*current.current.viewport.zoom}});}
   async function moreRecommendations(){if(!recommendations||!analysisEntry||recommendLoading)return;setRecommendLoading(true);
-    try{const value=await api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendations.nextCursor?{cursor:recommendations.nextCursor}:{offset:recommendations.nextOffset}),...(recommendFilter!==undefined&&['objects','documents','models','orders'].includes(section)?{q:recommendFilter}:{}),...(section==='materials'&&related?related:{})});
+    try{const value=await api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendations.nextCursor?{cursor:recommendations.nextCursor}:{offset:recommendations.nextOffset}),...(recommendFilter!==undefined&&['objects','documents','models','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos'].includes(section)&&related?related:{})});
       setRecommendations({...value,items:[...recommendations.items,...value.items.filter(i=>!recommendations.items.some(old=>old.key===i.key))]});}
     catch(value){failure(value);}finally{setRecommendLoading(false);}}
-  async function addSource(item:Recommendation,replaceId?:string){return addSources([item],replaceId);}
-  async function addSources(items:Recommendation[],replaceId?:string){
+  async function addSource(item:Recommendation,replaceId?:string,position?:{x:number;y:number}){return addSources([item],replaceId,position);}
+  async function addSources(items:Recommendation[],replaceId?:string,position?:{x:number;y:number}){
     const snapshot=current.current;if(!snapshot||!editable)return;let version=receipt;
     if(!version){if(!await commit()||!lastCommitted.current)return;version=lastCommitted.current;}
     const abort=new AbortController();request.current=abort;setBusy(true);setError(null);let next=snapshot;let added=0;let addedId='';const failed:string[]=[];
@@ -170,9 +172,12 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
         if(!alive.current||abort.signal.aborted)return;const kind=item.kind==='model'?'model3d':item.kind;
         const existing=next.cards.find(c=>!c.historical&&c.kind===kind&&c.source?.revision===ref.sourceRevision);
         if(existing&&!replaceId){addedId=existing.id;if(['photo','drawing','document','model'].includes(item.kind))setOpenPreviews(open=>setCardPreviewOpen(open,existing.id,true));if(items.length===1)focusCard(existing);continue;}
-        const n=next.cards.length,id=replaceId||crypto.randomUUID(),card:CanvasCard={id,kind,title:item.title,x:32+(n%3)*380,y:48+Math.floor(n/3)*400,width:340,height:['photo','drawing','document','model'].includes(item.kind)?360:250,pinned:false,
+        const id=replaceId||crypto.randomUUID(),height=['photo','drawing','document','model'].includes(item.kind)?360:250;
+        const board=canvas.current,panel=left==='recommendations'?Math.min(380,(board?.clientWidth||0)/2):0;
+        const point=position||materialPosition(next.viewport,{x:panel+((board?.clientWidth||800)-panel)/2-170*next.viewport.zoom,y:(board?.clientHeight||600)/2-height/2*next.viewport.zoom});
+        const card:CanvasCard={id,kind,title:item.title,x:Math.min(20000,point.x+added*28),y:Math.min(20000,point.y+added*28),width:340,height,pinned:false,
           source:{...api.project!,system:['object','drawing','document','photo'].includes(item.kind)?'ontobase':'ontovis',id:ref.evidenceRefId,revision:ref.sourceRevision}};
-        next={...next,schemaVersion:2,cards:replaceId?next.cards.map(old=>old.id===id?{...old,source:card.source}:old):[...next.cards,card]};added++;addedId=id;setSelected(id);setMulti([id]);
+        next={...next,schemaVersion:2,cards:replaceId?next.cards.map(old=>old.id===id?{...old,source:card.source}:old):[...next.cards,card]};if(!replaceId)next=withPrimaryAlarm(next,item);added++;addedId=id;setSelected(id);setMulti([id]);
         if(['photo','drawing','document','model'].includes(item.kind))setOpenPreviews(open=>setCardPreviewOpen(open,id,true));
       }catch(value){if([401,403].includes(status(value))||abort.signal.aborted)throw value;failed.push(item.title);}}
       if(added)apply(next);setChosen([]);setNotice(failed.length?t(`已加入${added}项；${failed.length}项未加入，可重试`,`Added ${added}; ${failed.length} failed`):added?t(`已加入${added}项资料`,`Added ${added} materials`):t('资料已在画布中','Material already on canvas'));return addedId;
@@ -226,7 +231,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
     catch(value){failure(value);setNotice(t('分析已保存；工单关联未完成，可重试','Analysis saved; linking is incomplete. Retry.'));}finally{setBusy(false);}
   }
   function pointerDown(event:ReactPointerEvent,id?:string,handle?:ResizeHandle){
-    if(!draft||![0,1].includes(event.button)||busy||uncertain)return;
+    if(!draft||![0,1].includes(event.button)||busy||uncertain||(event.target as Element).closest('.ac-material-panel'))return;
     // Portaled context menus bubble through the card in React, but are not a drag surface.
     if(!event.currentTarget.contains(event.target as Node))return;
     if(event.button===1||!handle&&(tool==='hand'||space.current)){
@@ -286,15 +291,6 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
         {list?.nextCursor&&<li><Btn disabled={loading} onClick={()=>void more()}>{t('加载更多','Load more')}</Btn></li>}</ul>
       <footer>{t('仅本人可见','Private to you')}</footer>
     </aside>}
-    {left==='recommendations'&&<aside className="ad-list ac-recommendations"><header><strong>{t('本次推荐','Recommendations')}</strong><IconBtn label={t('收起推荐','Hide recommendations')} onClick={()=>setLeft(null)}><X size={14}/></IconBtn></header>
-      <select aria-label={t('推荐类型','Recommendation type')} value={section} onChange={event=>{setSection(event.target.value);setRecommendFilter(undefined);setRecommendQuery('');}}>{[['objects','相关对象','Objects'],['materials','图纸与照片','Drawings & photos'],['documents','参考文档','Documents'],['models','三维模型','3D models'],['orders','历史工单','Work orders']].map(([id,zh,eng])=><option key={id} value={id}>{t(zh,eng)}</option>)}</select>
-      {['objects','models','documents','orders'].includes(section)&&<form className="ad-search" onSubmit={event=>{event.preventDefault();setRecommendFilter(recommendQuery);}}><input aria-label={t('搜索本项目资料','Search project materials')} placeholder={t('按名称补充查找','Search by name')} value={recommendQuery} onChange={event=>setRecommendQuery(event.target.value)}/><button>{t('搜索','Search')}</button></form>}
-      <small>{t('按当前报警和所选对象推荐','Recommended from the alarm and selected object')}{related?' · '+relatedLabel:''}</small>
-      <div className="ac-recommend-items">{recommendLoading?<p role="status">{t('正在读取相关推荐…','Loading recommendations…')}</p>:recommendations?.items.map(item=><div className="ac-recommend-item" key={item.key} draggable onDragStart={event=>event.dataTransfer.setData('application/x-ontovis-recommendation',item.key)}><input type="checkbox" aria-label={t('选择资料 ','Select material ')+item.title} checked={chosen.includes(item.key)} onChange={event=>setChosen(keys=>event.target.checked?[...keys,item.key]:keys.filter(key=>key!==item.key))}/><strong>{item.title}</strong><small>{item.reason}</small><Btn disabled={!editable||!!draft&&draft.cards.length>=50} onClick={()=>void addSource(item)}><Plus size={13}/>{t('放入画布','Add to canvas')}</Btn></div>)}
-        {!recommendLoading&&!recommendations?.items.length&&<p>{t(analysisEntry?'当前没有可推荐资料，可切换类型或对象。':'从故障报警或工单进入后显示相关推荐。',analysisEntry?'No recommendations. Try another category or object.':'Open from an alarm or work order for recommendations.')}</p>}
-        {!!recommendations?.gaps.length&&<details><summary>{t('部分来源未返回','Some sources are unavailable')}</summary>{recommendations.gaps.map((gap,i)=><p key={i}>{gap}</p>)}</details>}
-      </div>{!!chosen.length&&<Btn primary disabled={!editable} onClick={()=>void addSources(recommendations!.items.filter(item=>chosen.includes(item.key)))}>{t('加入所选资料','Add selected')} ({chosen.length})</Btn>}{(recommendations?.nextCursor||recommendations?.nextOffset!==null&&recommendations?.nextOffset!==undefined)&&<Btn disabled={recommendLoading} onClick={()=>void moreRecommendations()}>{t('更多资料','More materials')}</Btn>}<Btn onClick={()=>setSourceAttempt(v=>v+1)}>{t('刷新推荐','Refresh')}</Btn><Btn onClick={()=>setLeft('list')}>{t('我的分析','My analyses')}</Btn>
-    </aside>}
     <div className="ad-editor">
       {!!error&&<div className="ad-alert" role="alert"><span>{errorText}</span>{!draft&&<Btn onClick={()=>initialEntry?setStartAttempt(v=>v+1):setReload(v=>v+1)}>{t('重试','Retry')}</Btn>}
         {code(error)==='ANALYSIS_CHANGED'&&<><Btn disabled={busy} onClick={()=>void commit(true)}>{t('另存副本','Save a copy')}</Btn><Btn disabled={busy} onClick={()=>change(()=>receipt&&void open(receipt.analysisSessionId))}>{t('重新读取','Reload saved')}</Btn></>}
@@ -309,8 +305,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
           <Btn primary disabled={!writable||busy||fixed||!dirty} onClick={()=>void commit()}><Save size={14}/>{uncertain?t('重试保存','Retry save'):t('保存','Save')}</Btn>
         </header>
         {fixed&&receipt&&<div className="ad-alert" role="status">{t('正在查看工单关联的固定版本','Viewing the linked fixed revision')} · r{receipt.analysisRevision}<Btn onClick={()=>void open(receipt.analysisSessionId)}>{t('继续最新分析','Continue latest analysis')}</Btn></div>}
-        <div className="ad-tools"><Btn disabled={!editable||draft.cards.length>=50} onClick={addNote}><Plus size={14}/>{t('分析笔记','Analysis note')}</Btn>
-          <Btn aria-pressed={left==='recommendations'} onClick={()=>{setLeft(left==='recommendations'?null:'recommendations');setRight(false);}}><PanelLeft size={14}/>{t('本次推荐','Recommendations')}</Btn>
+        <div className="ad-tools"><Btn className="ac-add-materials" aria-pressed={left==='recommendations'} onClick={()=>{setLeft(left==='recommendations'?null:'recommendations');setSection('types');setRecommendFilter(undefined);setRecommendQuery('');setRight(false);}}><Plus size={16}/>{t('加入资料','Add materials')}</Btn>
           <Btn onClick={()=>{setLeft(left==='list'?null:'list');setRight(false);}}>{t('我的分析','My analyses')}</Btn>
           <IconBtn label={t('选择工具','Select tool')} aria-pressed={tool==='pointer'} onClick={()=>setTool('pointer')}><MousePointer2 size={16}/></IconBtn><IconBtn label={t('平移工具','Pan tool')} aria-pressed={tool==='hand'} onClick={()=>setTool('hand')}><Hand size={16}/></IconBtn>
           <IconBtn label={t('撤销修改','Undo change')} disabled={!undo.length||!editable} onClick={()=>undoChange()}><Undo2 size={16}/></IconBtn>
@@ -325,10 +320,15 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
         </div>
         <div className="ad-canvas-row"><div ref={canvas} className={`ad-canvas ad-tool-${tool}`} tabIndex={0} aria-label={t('分析画布','Analysis canvas')}
           onKeyDown={event=>{if((event.target as HTMLElement).closest('input,textarea,select,[data-canvas-inner]'))return;if(event.key==='Escape'){setSelected('');setMulti([]);setExpanded('');setLinkOpen(false);}else if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();undoChange(event.shiftKey);}else if(event.code==='Space'){space.current=true;event.preventDefault();}}} onKeyUp={event=>{if(event.code==='Space')space.current=false;}} onBlur={()=>{space.current=false;drag.current=null;}}
-          onDragOver={event=>{if(event.dataTransfer.types.includes('application/x-ontovis-recommendation'))event.preventDefault();}} onDrop={event=>{event.preventDefault();const item=recommendations?.items.find(item=>item.key===event.dataTransfer.getData('application/x-ontovis-recommendation'));if(item)void addSource(item);}}
+          onDragOver={event=>{if(event.dataTransfer.types.includes('application/x-ontovis-recommendation')){event.preventDefault();event.dataTransfer.dropEffect='copy';}}} onDrop={event=>{event.preventDefault();if((event.target as Element).closest('.ac-material-panel'))return;const item=recommendations?.items.find(item=>item.key===event.dataTransfer.getData('application/x-ontovis-recommendation'));if(item){const rect=event.currentTarget.getBoundingClientRect();void addSource(item,undefined,materialPosition(draft.viewport,{x:event.clientX-rect.left,y:event.clientY-rect.top}));}}}
           onPointerDownCapture={event=>{if(event.button===1||event.button===0&&(tool==='hand'||space.current))pointerDown(event);}}
           onAuxClick={event=>{if(event.button===1)event.preventDefault();}}
           onPointerDown={event=>pointerDown(event)} onPointerMove={pointerMove} onPointerUp={finishGesture} onPointerCancel={finishGesture} onLostPointerCapture={finishGesture}>
+          {left==='recommendations'&&<AnalysisMaterialPanel section={section} query={recommendQuery} en={en} loading={recommendLoading} value={recommendations} chosen={chosen} editable={editable} canAdd={editable&&draft.cards.length<50}
+            contextLabel={[draft.context.faultCode?t('当前报警 '+draft.context.faultCode,'Current alarm '+draft.context.faultCode):'',related?relatedLabel:''].filter(Boolean).join(' · ')} onClose={()=>setLeft(null)}
+            onSection={value=>{setSection(value);setRecommendFilter(undefined);setRecommendQuery('');setChosen([]);}} onQuery={setRecommendQuery} onSearch={()=>{if(section!=='types')setRecommendFilter(recommendQuery);}}
+            onToggle={key=>setChosen(keys=>keys.includes(key)?keys.filter(value=>value!==key):[...keys,key])} onAdd={item=>void addSource(item)} onAddChosen={()=>void addSources(recommendations!.items.filter(item=>chosen.includes(item.key)))}
+            onNote={addNote} onMore={()=>void moreRecommendations()} onRefresh={()=>setSourceAttempt(v=>v+1)}/>}
           <div className="ad-world" style={{transform:`translate(${draft.viewport.x}px,${draft.viewport.y}px) scale(${draft.viewport.zoom})`}}>
             {selectionBox&&<div className="ac-selection-box" style={{left:selectionBox.x,top:selectionBox.y,width:selectionBox.width,height:selectionBox.height}}/>}
             {draft.frames?.map(group=><div className="ac-frame" key={group.id} style={{left:group.x,top:group.y,width:group.width,height:group.height}}><button type="button" data-frame-id={group.id} disabled={!editable} onClick={()=>setFrameDialog({id:group.id,title:group.title})}>{group.title}</button></div>)}
@@ -348,7 +348,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
               </article></RowContext>;
             })}
           </div>
-          {!draft.cards.length&&<div className="ad-empty"><StickyNote size={28}/><strong>{t('从一条分析笔记开始','Start with an analysis note')}</strong><p>{t('记录原因假设、排查步骤和证据缺口','Record hypotheses, checks and missing evidence')}</p><Btn primary disabled={!editable} onClick={addNote}>{t('添加分析笔记','Add analysis note')}</Btn></div>}
+          {!draft.cards.length&&<div className="ad-empty"><StickyNote size={28}/><strong>{t('从报警、资料或分析笔记开始','Start with an alarm, material or note')}</strong><p>{t('加入报警后，按当前事件推荐相关对象与资料','An alarm provides related objects and materials')}</p><Btn primary onClick={()=>{setLeft('recommendations');setSection('types');setRecommendQuery('');setRecommendFilter(undefined);setRight(false);}}>{t('加入资料','Add materials')}</Btn></div>}
           <div className="ad-zoom"><IconBtn label={t('缩小画布','Zoom out canvas')} disabled={busy||uncertain} onClick={()=>zoom(1/1.2)}><ZoomOut size={15}/></IconBtn><button type="button" aria-label={t('画布100%','Canvas 100%')} onClick={()=>zoom(1/draft.viewport.zoom)}>{Math.round(draft.viewport.zoom*100)}%</button><IconBtn label={t('放大画布','Zoom in canvas')} disabled={busy||uncertain} onClick={()=>zoom(1.2)}><ZoomIn size={15}/></IconBtn><IconBtn label={t('适应全部','Fit all')} disabled={busy||uncertain} onClick={fit}><Maximize size={15}/></IconBtn></div>
           <Btn className="ac-save-view" disabled={!editable||!receipt} onClick={()=>void commit()}>{t('保存当前视图','Save current view')}</Btn>
           <span className="ad-hint">{t('中键拖动平移 · 滚轮缩放画布 · 拖标题移动 · 拖边角调整大小','Middle drag to pan · Wheel to zoom canvas · Drag title to move · Edges to resize')}</span>
