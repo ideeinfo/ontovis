@@ -26,6 +26,10 @@ export function selectSceneInstances(snapshot:EditableSceneSnapshot,selection:st
   if(!additive)return [...members];
   return members.every(member=>selection.includes(member))?selection.filter(member=>!members.includes(member)):[...new Set([...selection,...members])];
 }
+export function selectSceneScope(selection:string[],scope:string[],checked:boolean):string[] {
+  const members=new Set(scope);
+  return checked?[...new Set([...selection,...scope])]:selection.filter(id=>!members.has(id));
+}
 export function groupSceneInstances(snapshot:EditableSceneSnapshot,ids:string[],displayName:string,groupId:string):EditableSceneSnapshot {
   const data=sceneOrganization(snapshot),members=[...new Set(ids)];
   ensure(members.length>=2&&members.length===ids.length&&members.every(id=>snapshot.instances.some(item=>item.sceneModelInstanceId===id)));

@@ -1,4 +1,6 @@
 const copy = {
+  selectAllModels:['全选模型','Select all models'],loadSelected:['加载所选','Load selected'],
+  selectModelGroup:['全选此模型的实例','Select all instances of this model'],
   scenes:['场景','Scenes'], create:['创建场景','Create scene'], search:['搜索场景','Search scenes'],
   empty:['还没有场景','No scenes yet'], name:['名称','Name'], createName:['场景名称','Scene name'],
   createHint:['创建局部场景，随后添加模型或地形。','Create a local scene, then add models or terrain.'],

@@ -9,6 +9,7 @@ import {SceneResourceCache,cloneModel} from './sceneResourceCache';
 import {createSceneControls} from './sceneControls';
 import {cursorZoomView,visibleZoomHit} from './sceneZoom';
 import {prepareSceneRenderer} from './sceneRenderer';
+import {selectedModelBounds,selectedModelView} from './sceneModelFocus';
 import {SceneCabinetAppearance} from './sceneCabinetAppearance';
 import {ModelPreviewInspection} from './modelPreview';
 import {previewIdentity,type PreviewSelection,type PreviewStructure} from './modelPreviewTypes';
@@ -38,7 +39,7 @@ export interface SceneViewportProps {
   selectedIds?:string[];gridSnap?:number;cameraControl?:{current:SceneCameraControl|null};onCameraInteraction?:()=>void;
   terrainVisible:boolean;pendingPlacement:boolean;placementModel?:ProjectModelVersion|null;previewModel?:ProjectModelVersion|null;
   imageryVersion?:ImageryRecord|null;imageryVisible?:boolean;
-  viewCommand?:{token:number;view:SceneView};focusRequest?:{token:number;instanceId:string|null};
+  viewCommand?:{token:number;view:SceneView};focusRequest?:{token:number;instanceId:string|null;instanceIds?:string[]};
   componentFocus?:ComponentFocusRequest;
   componentPickingInstanceId?:string|null;onComponentPick?:(pick:SceneComponentPick)=>void;
   previewSelection?:PreviewSelection;onPreviewStructure?:(value:PreviewStructure|null)=>void;
@@ -48,7 +49,7 @@ export interface SceneViewportProps {
   onResourceDrop?:(ref:{modelAssetId:string;modelVersionId:string},point:Vector3)=>void;
   onError?:(error:unknown)=>void;
 }
-type Runtime={sync:()=>void;preload:()=>void;appearance:()=>void;fit:()=>void;focus:(id:string|null)=>void;
+type Runtime={sync:()=>void;preload:()=>void;appearance:()=>void;fit:()=>void;focus:(id:string|null|string[])=>void;
   componentFocus:()=>void;previewSelection:()=>void;setView:(view:SceneView)=>void;zoom:(factor:number)=>void};
 type Entry={root:THREE.Group;key:string;appearance:SceneCabinetAppearance};
 class ViewportInteractionError extends Error {
@@ -130,7 +131,7 @@ export function SceneViewport(props:SceneViewportProps) {
     let preview:THREE.Group|null=null,previewKey='',restoreView:SceneView|null=null;
     let previewInspection:ModelPreviewInspection|null=null,lastPreviewFocus='';
     let generation=0,frame=0,hiddenAt:number|null=null,loadingAbort:AbortController|null=null;
-    let focusPending:string|null|undefined;
+    let focusPending:string|null|string[]|undefined;
     let tween:{start:number;from:SceneView;to:SceneView}|null=null;
     let componentTween=false,lastComponentRequest:string|null=null;
     let componentTarget:ComponentFocusTarget|null=null,componentPending:ComponentFocusTarget|null=null,componentFocused:ComponentFocusTarget|null=null;
@@ -205,7 +206,8 @@ export function SceneViewport(props:SceneViewportProps) {
       }
       return componentTarget!==null;
     };
-    const bounds=(id?:string|null)=>{
+    const bounds=(id?:string|null|string[])=>{
+      if(Array.isArray(id))return selectedModelBounds(entries,id);
       if(preview)return new THREE.Box3().setFromObject(preview);
       if(id&&entries.has(id))return new THREE.Box3().setFromObject(entries.get(id)!.root);
       const box=new THREE.Box3();
@@ -213,8 +215,9 @@ export function SceneViewport(props:SceneViewportProps) {
       if(terrain&&terrain.visible)box.union(new THREE.Box3().setFromObject(terrain));
       return box.isEmpty()?new THREE.Box3(new THREE.Vector3(-30,0,-30),new THREE.Vector3(30,40,30)):box;
     };
-    const fit=(id?:string|null)=>{
+    const fit=(id?:string|null|string[])=>{
       const box=bounds(id);if(box.isEmpty())return;
+      if(Array.isArray(id)){const target=selectedModelView(camera,box,camera.position.clone().sub(orbit.target));if(target)moveView(target);return;}
       const center=box.getCenter(new THREE.Vector3()),size=box.getSize(new THREE.Vector3());
       const distance=Math.max(3,size.length()/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)))*1.15);
       const direction=camera.position.clone().sub(orbit.target);if(direction.lengthSq()<1e-12)direction.set(.9,.55,1.2);
@@ -510,7 +513,7 @@ export function SceneViewport(props:SceneViewportProps) {
       fit:()=>{clearComponentFocus();if(previewInspection){previewInspection.restore();current.current.onPreviewPick?.(previewInspection.structure.identity,null);fit();request();return;}
         if(resourcesLoading)focusPending=null;else fit();highlight();},
       focus:id=>{clearComponentFocus();if(previewInspection){previewInspection.restore();current.current.onPreviewPick?.(previewInspection.structure.identity,null);fit();request();return;}
-        if(resourcesLoading||id&&!entries.has(id))focusPending=id;else fit(id);highlight();},
+        if(resourcesLoading||(Array.isArray(id)?id.some(member=>!entries.has(member)):id&&!entries.has(id)))focusPending=id;else fit(id);highlight();},
       setView:target=>{if(restoreView)restoreView=structuredClone(target);else moveView(target);},
       zoom:factor=>{tween=null;componentTween=false;componentPending=null;const rect=canvas.getBoundingClientRect();zoomAt(rect.left+rect.width/2,rect.top+rect.height/2,factor);request();}};
     const cameraControl:SceneCameraControl={getView:()=>view(camera,orbit),ready:()=>!disposed&&!stale()&&!resourcesLoading&&!preview&&!latestError.current,
@@ -536,7 +539,7 @@ export function SceneViewport(props:SceneViewportProps) {
   useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
   useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,waterOverride,cloudOverride,reduced,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
-  useEffect(()=>{if(props.focusRequest)runtime.current?.focus(props.focusRequest.instanceId);},[props.focusRequest?.token]);
+  useEffect(()=>{if(props.focusRequest)runtime.current?.focus(props.focusRequest.instanceIds??props.focusRequest.instanceId);},[props.focusRequest?.token]);
   useEffect(()=>{runtime.current?.componentFocus();},[props.componentFocus,props.snapshot,props.modelRefs,props.selectedId,props.personalVisibility,props.previewModel]);
   useEffect(()=>{runtime.current?.previewSelection();},[props.previewSelection]);
   return <section className="ov-scene-viewport" aria-label={message('view')}>
@@ -546,7 +549,7 @@ export function SceneViewport(props:SceneViewportProps) {
       <div className="ov-scene-viewport-tools"><IconBtn label={message('zoomIn')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(.8);}}><ZoomIn size={16}/></IconBtn>
         <IconBtn label={message('zoomOut')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(1.25);}}><ZoomOut size={16}/></IconBtn>
         <IconBtn label={message('fit')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.fit();}}><Maximize size={16}/></IconBtn>
-        <IconBtn label={message('focus')} disabled={!props.selectedId||!!props.previewModel} onClick={()=>{props.onCameraInteraction?.();runtime.current?.focus(props.selectedId);}}><Focus size={16}/></IconBtn></div>
+        <IconBtn label={message('focus')} disabled={!props.selectedId||!!props.previewModel} onClick={()=>{props.onCameraInteraction?.();runtime.current?.focus((props.selectedIds?.length??0)>1?props.selectedIds!:props.selectedId);}}><Focus size={16}/></IconBtn></div>
       {props.imageryVersion&&props.snapshot.imagery&&props.imageryVisible&&props.terrainVisible&&!props.previewModel&&!environmentStatus.water&&<div className="ov-scene-imagery-attribution">
         <span>{props.imageryVersion.displayName} · {props.imageryVersion.metadata.acquiredAt} · {props.imageryVersion.report.pixelSize.map(v=>Number(v.toPrecision(3))).join(' × ')} {props.imageryVersion.report.horizontalCrs==='EPSG:4326'?'°':'m'} · {imageryText(locale,'precision')}</span>
         <span>{props.imageryVersion.metadata.attribution}</span>{imageryPartial&&<span>{imageryText(locale,'partial')}</span>}
