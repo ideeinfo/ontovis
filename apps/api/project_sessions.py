@@ -384,7 +384,7 @@ class ProjectSessions(UserSessions):
         code = self._ref(payload.get('projectRef'))
         action = path.removeprefix('/api/workbench/analysis-sessions').removeprefix('/')
         require(action in ('', 'create', 'detail', 'save', 'restore', 'revisions', 'evidence/register',
-                          'evidence/detail', 'evidence/content', 'evidence/batch', 'start', 'copy', 'recommendations', 'history-candidates', 'import-history', 'evidence/register-batch',
+                          'evidence/detail', 'evidence/content', 'evidence/batch', 'evidence/preview', 'evidence/relationships', 'evidence/preview-content', 'start', 'copy', 'recommendations', 'history-candidates', 'import-history', 'evidence/register-batch',
                           'link-work-order', 'simulation/catalogue', 'simulation/detail', 'simulation/qualify'))
         body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
         if action in ('simulation/catalogue', 'simulation/detail'):
@@ -499,6 +499,29 @@ class ProjectSessions(UserSessions):
                             if error.status not in (403,404,409,410,502,503,504): raise
                             values.append({'evidenceRefId':evidence_id,'availability':'restricted' if error.status == 403 else 'unavailable','reason':error.code})
                     value = {'items':values}
+                elif action == 'evidence/relationships':
+                    require(set(body) == {'analysisSessionId', 'evidenceRefIds'} and type(body['evidenceRefIds']) is list and 1 <= len(body['evidenceRefIds']) <= 50)
+                    require(all(isinstance(value, str) for value in body['evidenceRefIds']))
+                    fixed = [sources.descriptor(actor, {'analysisSessionId': body['analysisSessionId'], 'evidenceRefId': evidence_id}, guard) for evidence_id in dict.fromkeys(body['evidenceRefIds'])]
+                    release_store()
+                    from .analysis_preview import relationships
+                    value = relationships(reader, fixed, service.library)
+                elif action in ('evidence/preview', 'evidence/preview-content'):
+                    require({'analysisSessionId', 'evidenceRefId'} <= set(body) <= {'analysisSessionId', 'evidenceRefId', 'options'})
+                    reference, descriptor = sources.descriptor(actor, {k: body[k] for k in ('analysisSessionId', 'evidenceRefId')}, guard)
+                    release_store()
+                    if action == 'evidence/preview':
+                        from .analysis_preview import preview
+                        value = preview(reader, reference['sourceKind'], descriptor, body.get('options', {}))
+                    else:
+                        if reference['sourceKind'] == 'document':
+                            options = body.get('options', {})
+                            require(type(options) is dict and set(options) == {'pageNumber'} and type(options['pageNumber']) is int)
+                            value = reader.content('document', {**descriptor, 'pageNumber': options['pageNumber']})
+                        else:
+                            require(reference['sourceKind'] == 'photo' and 'options' not in body)
+                            from .analysis_media import photo_preview
+                            value = photo_preview(reader, descriptor)
                 elif action in ('evidence/detail', 'evidence/content'):
                     reference, descriptor = sources.descriptor(actor, body, guard)
                     release_store()

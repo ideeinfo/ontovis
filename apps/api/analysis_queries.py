@@ -104,6 +104,14 @@ def recommendations(reader, body):
                         '所选对象已有的资料关联', preview=item))
             attempt(add)
     elif section == 'documents':
+        if dataset and 'q' not in body:
+            from .analysis_preview import fault_documents
+            def add_manual():
+                for item in fault_documents(reader, dataset['faultCode']):
+                    rows.append(recommendation('document', item['title'], item['selector'], item['reason']))
+            attempt(add_manual)
+            if rows:
+                return {'items': rows[:12], 'nextOffset': None, 'nextCursor': None, 'gaps': gaps, 'dataset': dataset}
         query = body.get('q', dataset['faultCode'] if dataset else '');d.require(type(query) is str and len(query)<=200)
         params={'q':query,'status':'active','limit':12}
         if cursor is not None:params['cursor']=cursor
@@ -196,17 +204,26 @@ def start_analysis(store, actor, reader, body, authorize):
     if order:
         item=order; add('work_order',item['title'],{'orderId':item['orderId'],'expectedOrderRevision':item['orderRevision']},'order')
         snapshot['context']['workOrderId']=item['orderId']
+    try:
+        from .analysis_preview import fault_documents
+        manuals = fault_documents(reader, dataset['faultCode'])
+        for index, manual in enumerate(manuals[:2]):
+            add('document', manual['title'], manual['selector'], 'fault-manual-' + str(index))
+    except PreviewError as error:
+        if error.status in (401,403): raise
+        gap = error.code
     n=len(snapshot['cards']); snapshot['cards'].append({'id':rid('note'),'kind':'analysis','title':'本次排查记录','note':'',
         'x':32+(n%3)*380,'y':48+(n//3)*300,'width':340,'height':250,'pinned':False,'checkState':'not_started','frameId':'current'})
     snapshot['context'].update({k:dataset[k] for k in ('faultCode','sourceConnectionId','branch','datasetId','datasetRevision')},eventId=event_id)
-    snapshot['frames']=[{'id':'current','title':'本次调查','x':12,'y':12,'width':1140,'height':620}]
+    current_bottom = max(c['y'] + c['height'] for c in snapshot['cards'])
+    snapshot['frames']=[{'id':'current','title':'本次调查','x':12,'y':12,'width':1140,'height':current_bottom + 8}]
     imported = False; missing = []
     prior = history[0] if history else None
     if prior and len(prior['snapshot']['cards'])+len(snapshot['cards']) <= 50:
         snapshot['inheritedFrom']={k:prior[k] for k in ('analysisSessionId','analysisRevision','contentSha256')}
         old = prior['snapshot']; mapping={c['id']:rid('history-card-'+c['id']) for c in old['cards']}
         for card in old['cards']:
-            clone=copy.deepcopy(card);clone.update(id=mapping[card['id']],y=card['y']+800,historical=True,frameId='history')
+            clone=copy.deepcopy(card);clone.update(id=mapping[card['id']],y=card['y']+current_bottom+180,historical=True,frameId='history')
             if card['kind'] != 'analysis':
                 kind = 'model' if card['kind']=='model3d' else card['kind']
                 try:

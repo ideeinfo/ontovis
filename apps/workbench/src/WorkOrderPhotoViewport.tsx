@@ -4,7 +4,7 @@ import type {PhotoSelector} from './workOrderTypes';
 import type {ImageView} from './analysisCanvas';
 import {clampPhotoZoom,MAX_PHOTO_ZOOM,MIN_PHOTO_ZOOM,photoBaseSize,photoBoxes,photoFocusScroll,photoFocusZoom,photoWheelZoom,photoZoomScroll} from './workOrderPhoto';
 
-export function WorkOrderPhotoViewport({image,selector,label,en,onError,embedded=false,initialView,onViewChange,decodedImage}:{image:string;selector:PhotoSelector|null;label:string;en:boolean;onError:()=>void;embedded?:boolean;initialView?:ImageView;onViewChange?:(value:ImageView)=>void;decodedImage?:HTMLImageElement}){
+export function WorkOrderPhotoViewport({image,selector,label,en,onError,embedded=false,initialView,onViewChange,decodedImage,regions=[],onRegion,focusFraction=.09}:{image:string;selector:PhotoSelector|null;label:string;en:boolean;onError:()=>void;embedded?:boolean;initialView?:ImageView;onViewChange?:(value:ImageView)=>void;decodedImage?:HTMLImageElement;regions?:{id:string;title:string;bbox:{x:number;y:number;width:number;height:number}}[];onRegion?:(id:string)=>void;focusFraction?:number}){
   const viewer=useRef<HTMLDivElement>(null);
   const imageHost=useRef<HTMLDivElement>(null);
   const [size,setSize]=useState({width:600,height:500}),[natural,setNatural]=useState({width:0,height:0});
@@ -42,22 +42,24 @@ export function WorkOrderPhotoViewport({image,selector,label,en,onError,embedded
   }
   function focusPhoto(){
     const view=viewer.current;if(!view||!natural.width)return;
-    cancelPan();restoring.current=null;const next=photoFocusZoom(box,size.width,size.height,natural.width,natural.height);
+    cancelPan();restoring.current=null;const next=photoFocusZoom(box,size.width,size.height,natural.width,natural.height,focusFraction);
     pending.current=photoFocusScroll(box,base.width*next,base.height*next,view.clientWidth,view.clientHeight);
     zoomRef.current=next;setZoom(next);
     if(next===zoom){view.scrollTo(pending.current);pending.current=null;}
   }
   useLayoutEffect(()=>{
     const view=viewer.current;if(!view)return;
-    const observer=new ResizeObserver(([entry])=>{
-      const {inlineSize:width,blockSize:height}=entry.borderBoxSize[0];
+    const observer=new ResizeObserver(()=>{
+      const width=view.clientWidth,height=view.clientHeight;
       setSize(current=>current.width===width&&current.height===height?current:{width,height});
     });
-    observer.observe(view,{box:'border-box'});return()=>observer.disconnect();
+    observer.observe(view);return()=>observer.disconnect();
   },[]);
   useLayoutEffect(()=>{if(initial.current&&natural.width){const value=initial.current;initial.current=undefined;
     zoomRef.current=value.zoom;setZoom(value.zoom);restoring.current=value;
-  }else focusPhoto();},[natural.width,natural.height,embedded?0:size.width,embedded?0:size.height]);
+  // The loading placeholder and scrollbars change the usable viewport after
+  // decoding. Finish automatic centering before preserving the user's view.
+  }else if(!embedded||!changed.current&&!restoring.current)focusPhoto();},[natural.width,natural.height,size.width,size.height]);
   useLayoutEffect(()=>{const view=viewer.current,value=restoring.current;if(!view||zoomRef.current!==zoom)return;
     // Image dimensions settle after the viewer opens; restore against the final
     // frame rather than the temporary pre-scrollbar viewport.
@@ -95,6 +97,8 @@ export function WorkOrderPhotoViewport({image,selector,label,en,onError,embedded
       onKeyDown={event=>{if(['+','=','-'].includes(event.key)){event.preventDefault();applyZoom(clampPhotoZoom(zoom+(event.key==='-'?-.1:.1)));}else if(event.key==='Escape')cancelPan();}}>
       <div className="wo-photo-stage"><div className="wo-photo-frame" style={{width:base.width*zoom,height:base.height*zoom,visibility:natural.width?'visible':'hidden'}}>
         {decodedImage?<div ref={imageHost} style={{display:'contents'}}/>:<img src={image} alt={label} draggable={false} onLoad={event=>setNatural({width:event.currentTarget.naturalWidth,height:event.currentTarget.naturalHeight})} onError={onError}/>}
+        {regions.map(region=><button key={region.id} type="button" className="ac-drawing-hotspot" aria-label={region.title} title={region.title}
+          onPointerDown={event=>event.stopPropagation()} onClick={()=>onRegion?.(region.id)} style={{left:`${region.bbox.x*100}%`,top:`${region.bbox.y*100}%`,width:`${region.bbox.width*100}%`,height:`${region.bbox.height*100}%`}}/>)}
         {boxes.map((region,index)=><span key={index} className="wo-photo-region" style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${region.width*100}%`,height:`${region.height*100}%`}}><span>{selector?.regionKind==='label_region'?(en?'Label region':'来源标签区域'):(en?'Object region':'来源对象区域')}</span></span>)}
       </div></div>
     </div>

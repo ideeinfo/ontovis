@@ -76,3 +76,19 @@ test('decoded image retention is bounded to two sources and released on close',a
   sources.dispose();assert.equal(images.filter(i=>i.src).length,0);
  }finally{globalThis.Image=original;sources.dispose();}
 });
+
+test('screen previews, originals and document pages never share the wrong byte cache',async()=>{
+ const calls=[];const sources=new AnalysisSources({request:async(path,body)=>{calls.push({path,body});return new Blob([JSON.stringify(body)]);}},'session');
+ const ref={id:'photo',revision:'fixed'},source={contentVersionId:'version',selector:{displayRevision:'display'}};
+ const a=await sources.file(ref,source,undefined,'preview'),b=await sources.file(ref,source,undefined,'original');
+ assert.notEqual(a,b);assert.equal(await sources.file(ref,source,undefined,'preview'),a);
+ const first=await sources.file({id:'doc',revision:'fixed'},undefined,undefined,'original',48),second=await sources.file({id:'doc',revision:'fixed'},undefined,undefined,'original',49);
+ assert.notEqual(first,second);assert.equal(calls.length,4);assert.ok(calls[0].path.endsWith('/preview-content'));assert.ok(calls[1].path.endsWith('/content'));
+ assert.deepEqual(calls.slice(2).map(c=>c.body.options.pageNumber),[48,49]);sources.dispose();
+});
+
+test('relationship lookup uses owned fixed handles and deduplicates copied card views',async()=>{
+ const calls=[];const sources=new AnalysisSources({request:async(path,body)=>{calls.push({path,body});return {items:[],gaps:[]};}},'session');
+ await sources.relationships([{id:'one',revision:'r1'},{id:'one',revision:'r1'},{id:'two',revision:'r2'}]);
+ assert.deepEqual(calls[0].body,{analysisSessionId:'session',evidenceRefIds:['one','two']});sources.dispose();
+});

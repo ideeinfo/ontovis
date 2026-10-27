@@ -75,6 +75,40 @@ class AnalysisSourceHttpTests(unittest.TestCase):
         self.assertTrue(read[1]['capabilities']['sourceCardsEnabled'])
         self.assertEqual(read[1]['capabilities']['sourceReferenceApiVersion'],2)
 
+    def test_full_preview_and_relationship_reads_keep_owner_project_and_input_boundaries(self):
+        created,model,data,body,ref=self.register();payload=self.reference(created,ref)
+        result=self.request(ROOT+'/evidence/preview',{**payload,'options':{}})
+        self.assertEqual((result[0],result[1]['kind']),(200,'model'))
+        related=self.body(analysisSessionId=created['analysisSessionId'],evidenceRefIds=[ref['evidenceRefId']])
+        result=self.request(ROOT+'/evidence/relationships',related)
+        self.assertEqual((result[0],result[1]['items']),(200,[]))
+        for suffix,payload in (('preview',payload),('relationships',related)):
+            self.assertEqual(self.request(ROOT+'/evidence/'+suffix,payload,client=False)[0],401)
+            self.assertEqual(self.request(ROOT+'/evidence/'+suffix,payload,client=self.login('other'))[0],404)
+            self.assertEqual(self.request(ROOT+'/evidence/'+suffix,{**payload,'projectRef':{'ontobaseConnectionId':'ontobase-primary','projectCode':'B'}})[0],404)
+        self.assertEqual(self.request(ROOT+'/evidence/preview',{**self.reference(created,ref),'options':{'cursor':10001}})[0],422)
+        self.assertEqual(self.request(ROOT+'/evidence/relationships',{**related,'evidenceRefIds':[]})[0],422)
+        self.assertEqual(self.request(ROOT+'/evidence/relationships',{**related,'evidenceRefIds':[{}]})[0],422)
+        self.assertEqual(self.request(ROOT+'/evidence/preview-content',self.reference(created,ref))[0],422)
+
+    def test_document_page_browsing_returns_bytes_without_changing_saved_citation(self):
+        created,_=self.create();selector={'documentId':str(uuid4()),'contentVersionId':str(uuid4()),'sourceSha256':'a'*64,'pageNumber':48}
+        with patch('apps.api.analysis_source_reader.AnalysisSourceReader.resolve',return_value=selector):
+            result=self.request(ROOT+'/evidence/register',self.body(analysisSessionId=created['analysisSessionId'],expectedAnalysisRevision=1,requestId=str(uuid4()),sourceKind='document',selector=selector))
+        self.assertEqual(result[0],200,result[1]);ref=result[1];payload=self.reference(created,ref)
+        self.assertEqual(self.request(ROOT+'/evidence/preview-content',{**payload,'options':['pageNumber']})[0],422)
+        with patch('apps.api.analysis_source_reader.AnalysisSourceReader.content',return_value={'content':b'page','mediaType':'image/png','sha256':'b'*64}) as read:
+            connection=HTTPConnection(*self.server.server_address,timeout=5)
+            try:
+                connection.request('POST',ROOT+'/evidence/preview-content',json.dumps({**payload,'options':{'pageNumber':49},'expectedSessionRevision':self.admin['revision']}),
+                    {'Host':'127.0.0.1:4180','Origin':'http://127.0.0.1:4180','Content-Type':'application/json','Cookie':self.admin['cookie']})
+                response=connection.getresponse();self.assertEqual(response.status,200);self.assertEqual(response.read(),b'page');self.assertEqual(response.getheader('Cache-Control'),'no-store')
+            finally:connection.close()
+            self.assertEqual(read.call_args.args[1]['pageNumber'],49)
+        with patch('apps.api.analysis_source_reader.AnalysisSourceReader.read',return_value={}) as read:
+            self.assertEqual(self.request(ROOT+'/evidence/detail',payload)[0],200)
+            self.assertEqual(read.call_args.args[1]['pageNumber'],48)
+
     def test_owner_project_origin_anonymous_and_write_denial_do_not_expose_sources(self):
         created,model,data,body,ref=self.register();payload=self.reference(created,ref)
         self.assertEqual(self.request(ROOT+'/evidence/detail',payload,client=False)[0],401)

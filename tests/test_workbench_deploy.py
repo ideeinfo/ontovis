@@ -61,7 +61,7 @@ class WorkbenchDeploymentTests(unittest.TestCase):
     def test_canvas_routes_allow_bounded_snapshots_and_batches_only(self):
         root='/api/workbench/analysis-sessions/'
         large=('copy','import-history','evidence/register-batch')
-        for suffix in (*large,'start','recommendations','history-candidates','evidence/batch'):
+        for suffix in (*large,'start','recommendations','history-candidates','evidence/batch','evidence/preview','evidence/relationships','evidence/preview-content'):
             self.assertIn('client_max_body_size '+('264k' if suffix in large else '16k')+';',location_for(root+suffix))
             for extra in ('/','/extra'):
                 with self.assertRaises(AssertionError):location_for(root+suffix+extra)

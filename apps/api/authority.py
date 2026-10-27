@@ -139,3 +139,19 @@ class Authority:
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             raise PreviewError(502, 'SOURCE_UNAVAILABLE') from None
 
+    def source_bytes(self, path: str, media_types: tuple[str, ...]) -> dict:
+        """A server-constructed source path; callers verify project and fixed identity."""
+        request = urllib.request.Request(self.base_url + path, headers={
+            'Authorization': 'Bearer ' + self.token, 'Accept': ','.join(media_types)})
+        try:
+            with self.opener.open(request, timeout=30) as response:
+                raw = response.read(20 * 1024 * 1024 + 1); mime = response.headers.get_content_type()
+                if not raw or len(raw) > 20 * 1024 * 1024 or mime not in media_types:
+                    raise PreviewError(502, 'SOURCE_UNAVAILABLE')
+                return {'content': raw, 'mediaType': mime, 'sha256': hashlib.sha256(raw).hexdigest()}
+        except urllib.error.HTTPError as error:
+            status = error.code if error.code in (401, 403, 404, 409, 410, 413, 422, 503) else 502
+            error.close(); raise PreviewError(status, 'ANALYSIS_SOURCE_UNAVAILABLE') from None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            raise PreviewError(502, 'SOURCE_UNAVAILABLE') from None
+

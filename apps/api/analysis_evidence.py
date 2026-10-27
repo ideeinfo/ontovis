@@ -30,6 +30,10 @@ def validate_descriptor(kind, value):
         'alarm': {'datasetId', 'datasetRevision', 'eventId'},
         'trend': {'datasetId', 'datasetRevision', 'metricId', 'timeFrom', 'timeTo'},
     }[kind]
+    if kind == 'drawing' and 'drawingUid' in value:
+        fields = {'drawingUid', 'expectedContentSha256'}
+    if kind == 'document' and 'knowledgeReleaseId' in value:
+        fields |= {'knowledgeReleaseId', 'knowledgeNodeId'}
     draft.require(set(value) == fields)
     for key, item in value.items():
         if key in ('installationContextId', 'expectedHierarchyRevision') and item is None:
@@ -42,12 +46,13 @@ def validate_descriptor(kind, value):
             sha(item)
         else:
             draft.text(item, 512)
-    if kind in ('object', 'drawing', 'photo'):
+    if kind in ('object', 'photo') or kind == 'drawing' and 'drawingUid' not in value:
         draft.require((value['installationContextId'] is None) == (value['expectedHierarchyRevision'] is None))
     if kind == 'model':
         draft.identifier(value['modelAssetId']); draft.identifier(value['modelVersionId'])
     if kind == 'document':
         draft.identifier(value['documentId']); draft.identifier(value['contentVersionId'])
+        if 'knowledgeReleaseId' in value: draft.identifier(value['knowledgeReleaseId'])
     if kind == 'trend':
         draft.require(draft.utc(value['timeFrom']) < draft.utc(value['timeTo']))
     raw = draft.canonical(value)

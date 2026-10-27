@@ -24,11 +24,11 @@ export function photoZoomScroll(current:number,next:number,baseWidth:number,base
   return {left:axis(baseWidth,viewportWidth,left,x),top:axis(baseHeight,viewportHeight,top,y)};
 }
 
-export function photoFocusZoom(box:PhotoBox|undefined, viewportWidth:number, viewportHeight:number, imageWidth:number, imageHeight:number):number {
+export function photoFocusZoom(box:PhotoBox|undefined, viewportWidth:number, viewportHeight:number, imageWidth:number, imageHeight:number,focusFraction=.09):number {
   if(!box||![viewportWidth,viewportHeight,imageWidth,imageHeight].every(v=>Number.isFinite(v)&&v>0))return 1;
   const base=photoBaseSize(viewportWidth,viewportHeight,imageWidth,imageHeight);
   // Match OntoBase's photo focus: retain context around the source annotation.
-  return clampPhotoZoom(Math.min(viewportWidth*.09/(box.width*base.width),viewportHeight*.09/(box.height*base.height)));
+  return clampPhotoZoom(Math.min(viewportWidth*focusFraction/(box.width*base.width),viewportHeight*focusFraction/(box.height*base.height)));
 }
 
 export function photoFocusScroll(box:PhotoBox|undefined,width:number,height:number,viewportWidth:number,viewportHeight:number){

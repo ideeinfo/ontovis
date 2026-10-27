@@ -14,12 +14,18 @@ export type EvidenceSource=Partial<ProjectModelVersion & SimulatedTrend>&{
   title?:string;pageNumber?:number;pageCount?:number;versionNumber?:number;newerVersionAvailable?:boolean;
   documentId?:string;contentVersionId?:string;sourceSha256?:string;selector?:PhotoSelector|null;
   outline?:{title:string;page:number}[];
+  knowledgeReleaseId?:string;knowledgeNodeId?:string;
   item?:{entityUid:string;entityRevision:string;displayName?:string;objectKind?:string;objectScope?:string;identifiers?:{value:string;role:string}[];definitionParentEntityUid?:string};
   dataset?:SimulatedDataset;items?:SimulatedAlarm[];mappingKind?:string;
   orderId?:string;orderRevision?:number;faultCode?:string;state?:string;investigation?:Investigation;
   diagnosis?:{gap?:string};events?:{recordedAt:string;action:string;note:string}[];
 };
 export type EvidenceDetail={evidenceRefId:string;sourceKind:SourceKind;sourceRevision:string;availability:'available'|'restricted'|'unavailable'|'changed';reason?:string;source?:EvidenceSource};
+export type SourceAnchor={entityUid?:string;selector?:PhotoSelector|null;componentKeys?:string[];nodeId?:string;pageNumber?:number;drawingUid?:string};
+export type SourceRelationship={id:string;fromRef:string;toRef:string;kind:string;label:string;reason:string;origin:'source';anchor:SourceAnchor|null};
+export type PreviewRow={id:string;title:string;identifier?:string;owner?:string;bbox?:{x:number;y:number;width:number;height:number}|null;state?:string;properties?:Record<string,unknown>;sourceInstanceId?:string;selector?:Record<string,string>;targetTitle?:string;targetDrawingUid?:string;targetRevision?:string;reason?:string;semantics?:string;entityUid?:string};
+export type KnowledgeNode={id:string;kind:string;title:string;statement:string;faultCode?:string;properties:Record<string,string>};
+export type SourcePreview={kind:string;title?:string;drawingUid?:string;drawingNumber?:string;pageNumber?:number;sourceRevision?:string;focusId?:string;selector?:PhotoSelector|null;gaps:string[];nextCursor:number|null;total?:number;objects?:PreviewRow[];ports?:PreviewRow[];connections?:PreviewRow[];references?:PreviewRow[];nodes?:KnowledgeNode[];relations?:{id:string;from:string;to:string;label:string}[];evidence?:{id:string;text:string;page:number;bbox:PreviewRow['bbox'];renditionId?:string}[];scope?:Record<string,unknown>;limitations?:Record<string,unknown>;releaseId?:string};
 
 // One workspace owns this short-lived cache. Metadata is authorized on every
 // mount/open; only fixed bytes are reused after that read. Nothing is persisted.
@@ -59,14 +65,23 @@ export class AnalysisSources{
       })();
     }
   }
-  file(ref:SourceRef,source?:EvidenceSource,signal?:AbortSignal):Promise<string>{
+  async preview(ref:SourceRef,options:Record<string,string|number>={},signal?:AbortSignal):Promise<SourcePreview>{
+    await this.slot(false);
+    try{return await this.api.request(ANALYSIS_ROOT+'/evidence/preview',{analysisSessionId:this.sessionId,evidenceRefId:ref.id,options},signal);}
+    finally{this.release(false);}
+  }
+  relationships(refs:SourceRef[],signal?:AbortSignal){
+    return this.api.request<{items:SourceRelationship[];gaps:{evidenceRefId:string;reason:string}[]}>(ANALYSIS_ROOT+'/evidence/relationships',
+      {analysisSessionId:this.sessionId,evidenceRefIds:[...new Set(refs.map(ref=>ref.id))]},signal);
+  }
+  file(ref:SourceRef,source?:EvidenceSource,signal?:AbortSignal,representation:'original'|'preview'='original',pageNumber?:number):Promise<string>{
     if(signal?.aborted||this.disposed)return Promise.reject(new DOMException('Closed','AbortError'));
-    const key=source?.contentVersionId&&source?.selector?`${source.contentVersionId}:${source.selector.displayRevision}`:ref.id+':'+ref.revision;
+    const key=representation+':'+(source?.contentVersionId&&source?.selector?`${source.contentVersionId}:${source.selector.displayRevision}`:ref.id+':'+ref.revision)+':'+(pageNumber||'');
     const cached=this.files.get(key);if(cached){this.files.delete(key);this.files.set(key,cached);return Promise.resolve(cached.url);}
     let entry=this.inflight.get(key);
     if(!entry){const abort=new AbortController();
     const promise=(async()=>{await this.slot(true);this.controllers.add(abort);
-      try{const blob=await this.api.request<Blob>(ANALYSIS_ROOT+'/evidence/content',{analysisSessionId:this.sessionId,evidenceRefId:ref.id},abort.signal,'source');
+      try{const blob=await this.api.request<Blob>(ANALYSIS_ROOT+(representation==='preview'||pageNumber?'/evidence/preview-content':'/evidence/content'),{analysisSessionId:this.sessionId,evidenceRefId:ref.id,...(pageNumber?{options:{pageNumber}}:{})},abort.signal,'source');
         if(this.disposed||abort.signal.aborted)throw new DOMException('Closed','AbortError');
         const url=URL.createObjectURL(blob);
         if(blob.type.startsWith('image/')&&typeof Image!=='undefined'){

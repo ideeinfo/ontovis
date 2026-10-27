@@ -46,7 +46,7 @@ class CanvasStorageTests(unittest.TestCase):
 
     def reader(self):
         selection={'entityUid':'synthetic-temperature-sensor','expectedEntityRevision':'fixed:1','installationContextId':None,'expectedHierarchyRevision':None}
-        return SimpleNamespace(reader=SimpleNamespace(project_code='Demo-PDS'),
+        return SimpleNamespace(reader=SimpleNamespace(project_code='Demo-PDS',prefix='/api/v1/projects/Demo-PDS',_request=lambda *args: (_ for _ in ()).throw(PreviewError(404,'NOT_FOUND_OR_FORBIDDEN'))),
             _rds=lambda _: {'item':{'entityUid':selection['entityUid'],'entityRevision':'fixed:1'},'context':None},
             resolve=lambda kind,selector:selection if kind=='object' else selector)
 

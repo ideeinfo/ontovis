@@ -32,6 +32,11 @@ class AnalysisSourceReader:
         self.authorize()
         if kind == 'object':
             value = self._selection(selector)
+        elif kind == 'drawing' and 'drawingUid' in selector:
+            validate_descriptor(kind, selector)
+            from .analysis_preview import drawing_bytes
+            drawing_bytes(self, selector)
+            value = dict(selector)
         elif kind in ('drawing', 'photo'):
             body = self._selection(selector, ('evidenceRef',))
             draft.text(selector['evidenceRef'], 512)
@@ -63,6 +68,10 @@ class AnalysisSourceReader:
         elif kind == 'document':
             value = dict(selector)
             self.read(kind, value)
+            if 'knowledgeReleaseId' in value:
+                from .analysis_preview import node_evidence
+                evidence = node_evidence(self, value)
+                draft.require(any(row['selector'].get('page') == value['pageNumber'] for row in evidence['items']), 'KNOWLEDGE_PAGE_MISMATCH', 409)
         else:
             raise PreviewError(503, 'ANALYSIS_SOURCE_NOT_CONNECTED')
         validate_descriptor(kind, value); self.authorize()
@@ -73,6 +82,11 @@ class AnalysisSourceReader:
         if kind == 'object':
             value = self.reader.detail(descriptor['installationContextId'], descriptor['entityUid'],
                 descriptor['expectedHierarchyRevision'], expected_entity_revision=descriptor['expectedEntityRevision'])
+        elif kind == 'drawing' and 'drawingUid' in descriptor:
+            from .analysis_preview import drawing_identity
+            drawing, _ = drawing_identity(self, descriptor)
+            value = {'title': drawing.get('drawing_name') or drawing['drawing_uid'], 'drawingUid': drawing['drawing_uid'],
+                     'pageNumber': drawing.get('source_page_number'), 'contentSha256': descriptor['expectedContentSha256']}
         elif kind in ('drawing', 'photo'):
             body = {key: descriptor[key] for key in SELECTION}
             rows = (self.photos if kind == 'photo' else SceneEvidenceReader(self.reader)).resolve(body)['items']
@@ -104,6 +118,7 @@ class AnalysisSourceReader:
             value['outline'] = [{'title':row['title'],'page':row['page']}
                 for row in navigation.get('outline',[])[:200]
                 if isinstance(row.get('page'),int) and 1 <= row['page'] <= version['page_count']]
+            value.update({key: descriptor[key] for key in ('knowledgeReleaseId', 'knowledgeNodeId') if key in descriptor})
         elif kind in ('alarm', 'trend'):
             simulated.catalogue(self.reader.project_code)
             dataset = simulated.dataset(descriptor['datasetId'], descriptor['datasetRevision'])
@@ -124,6 +139,10 @@ class AnalysisSourceReader:
         if kind == 'photo':
             return self.photos.content(descriptor)
         if kind == 'drawing':
+            if 'drawingUid' in descriptor:
+                from .analysis_preview import drawing_bytes
+                from .analysis_media import drawing_image
+                return drawing_image(drawing_bytes(self, descriptor))
             value = SceneEvidenceReader(self.reader).content(descriptor)
             return {'content': value['content'], 'mediaType': 'image/png', 'sha256': value['imageSha256']}
         if kind == 'model':

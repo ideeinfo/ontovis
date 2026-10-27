@@ -162,7 +162,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                      for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history', '/snapshot'))
             analysis_paths = tuple('/api/workbench/analysis-sessions' + suffix
                                    for suffix in ('', '/create', '/detail', '/save', '/restore', '/revisions',
-                                                  '/evidence/register', '/evidence/detail', '/evidence/content', '/evidence/batch', '/start', '/copy', '/recommendations', '/history-candidates', '/import-history', '/evidence/register-batch',
+                                                  '/evidence/register', '/evidence/detail', '/evidence/content', '/evidence/batch', '/evidence/preview', '/evidence/relationships', '/evidence/preview-content', '/start', '/copy', '/recommendations', '/history-candidates', '/import-history', '/evidence/register-batch',
                                                   '/link-work-order', '/simulation/catalogue', '/simulation/detail', '/simulation/qualify'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
@@ -220,7 +220,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, sessions.projects_request(sid, parts.path, payload))
             if parts.path in analysis_paths:
                 value = sessions.analysis_request(sid, parts.path, payload)
-                if parts.path.endswith('/evidence/content'):
+                if parts.path.endswith(('/evidence/content', '/evidence/preview-content')):
                     return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'])
                 return self.reply(200, value)
             if parts.path in work_order_paths:
