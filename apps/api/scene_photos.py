@@ -120,6 +120,14 @@ class ScenePhotoReader(SceneEvidenceReader):
         return self._resolve_selected(body)
 
     def content(self, payload):
+        if type(payload) is dict and 'representation' in payload:
+            _require(payload['representation'] in ('display','preview'),'INVALID_REQUEST',422)
+            body={key:value for key,value in payload.items() if key!='representation'}
+            if payload['representation']=='preview':
+                from .analysis_source_reader import AnalysisSourceReader
+                from .analysis_media import photo_preview
+                return photo_preview(AnalysisSourceReader(self.reader,None,None,self.reader.authorize,''),body)
+            return self.content(body)
         _require(type(payload) is dict and (set(payload)-{'photoPurpose'}) == SELECTION_FIELDS | PHOTO_FIELDS, 'INVALID_REQUEST', 422)
         body = self._selection({key: payload[key] for key in SELECTION_FIELDS | ({'photoPurpose'} if 'photoPurpose' in payload else set())})
         _text(payload['evidenceRef'], request=True); _text(payload['expectedContentVersionId'], request=True)

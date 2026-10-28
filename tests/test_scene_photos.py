@@ -100,6 +100,18 @@ class ScenePhotoTests(unittest.TestCase):
         with self.assertRaises(PreviewError) as result: function(*args)
         self.assertEqual(result.exception.code, code)
 
+    def test_preview_reuses_pixels_but_rechecks_the_device_association(self):
+        from collections import OrderedDict
+        from apps.api import analysis_media
+        body=self.content_body()
+        with patch.object(analysis_media,'_cache',OrderedDict()):
+            first=self.reader.content(body|{'representation':'preview'})
+            second=self.reader.content(body|{'representation':'preview'})
+            self.assertEqual(first,second);self.assertEqual(first['mediaType'],'image/jpeg')
+            self.assertEqual(sum(path.endswith('/photos/content') for _,path,_ in self.authority.calls),1)
+            self.authority.allowed=False
+            with self.assertRaises(PreviewError):self.reader.content(body|{'representation':'preview'})
+
     def test_metadata_keeps_fixed_version_region_and_separate_source_digest(self):
         row = self.reader.resolve(self.body())['items'][0]
         self.assertEqual(row['contentVersionId'], 'synthetic-fixed-version')

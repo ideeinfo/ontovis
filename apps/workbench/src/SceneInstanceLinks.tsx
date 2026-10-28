@@ -117,7 +117,7 @@ export function SceneInstanceLinks(props:SceneInstanceLinksProps) {
     </div>
     {!internal?<><div className="se-actions"><Btn disabled={blocked} onClick={openPicker}><Link2 size={14}/>{t(rootBinding?'changeDevice':'chooseDevice')}</Btn>
       {rootBinding&&<Btn disabled={blocked} onClick={()=>void changeRoot(null)}>{t('clearDevice')}</Btn>}</div>
-      <Btn disabled={disabled||!validRoot||!root.context} onClick={props.onEnterInternal}>{t('enterInternal')}</Btn></>:
+      <Btn disabled={disabled||!validRoot||!root.context} onClick={props.onEnterInternal}>{props.sharedConfiguration?(locale==='zh'?'查看共享构件配置':'View shared component configuration'):t('enterInternal')}</Btn></>:
       <><Btn disabled={disabled} onClick={props.onReturnToScene}><ArrowLeft size={14}/>{t('returnToScene')}</Btn>
       {!selectedObject?<p className="se-state">{t('noSelection')}</p>:<>
         {!inside?<p className="se-state" role="status">{t('outsideRoot')}</p>:!linkable(selectedObject)?<p className="se-state" role="status">{t(selectedObject.item.objectScope==='installation'?'incomplete':'readOnlyObject')}</p>:null}

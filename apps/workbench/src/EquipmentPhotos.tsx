@@ -10,7 +10,7 @@ interface PhotoCandidate {documentId:string;title:string;contentVersionId:string
 export function EquipmentPhotos({api,definition,device,en,canWrite=false}:{api:WorkbenchApi;definition:SceneObjectContext|null;device:SceneObjectContext|null;en:boolean;canWrite?:boolean}){
   const [purpose,setPurpose]=useState<PhotoPurpose>('object_location'),[photos,setPhotos]=useState<ObjectPhoto[]>([]);
   const [error,setError]=useState<unknown>(null),[loading,setLoading]=useState(false),[chosen,setChosen]=useState<ObjectPhoto|null>(null),[image,setImage]=useState('');
-  const [picker,setPicker]=useState(false),[candidates,setCandidates]=useState<PhotoCandidate[]>([]),[candidate,setCandidate]=useState<PhotoCandidate|null>(null),[reload,setReload]=useState(0),[saving,setSaving]=useState(false),[next,setNext]=useState<string|null>(null),[candidatesLoading,setCandidatesLoading]=useState(false);
+  const [picker,setPicker]=useState(false),[candidates,setCandidates]=useState<PhotoCandidate[]>([]),[candidate,setCandidate]=useState<PhotoCandidate|null>(null),[reload,setReload]=useState(0),[saving,setSaving]=useState(false),[next,setNext]=useState<string|null>(null),[candidatesLoading,setCandidatesLoading]=useState(false),[original,setOriginal]=useState(false);
   const current=purpose==='object_location'?definition:device;
   const cache=useRef(new Map<string,string>()),active=useRef<AbortController|null>(null),operation=useRef<AbortController|null>(null);
   const body=current?{entityUid:current.item.entityUid,expectedEntityRevision:current.item.entityRevision,
@@ -40,14 +40,15 @@ export function EquipmentPhotos({api,definition,device,en,canWrite=false}:{api:W
       documentId:candidate.documentId,contentVersionId:candidate.contentVersionId,renditionId:candidate.renditionId,expectedDisplayRevision:candidate.displayRevision,
       basis:en?'User associates a device field photo':'用户关联此设备的现场照片',clientRequestId:crypto.randomUUID()},abort.signal);if(!abort.signal.aborted){setPicker(false);setReload(value=>value+1);}
     }catch(error){if(!abort.signal.aborted&&!cancelled(error))setError(error);}finally{if(!abort.signal.aborted)setSaving(false);}}
-  async function open(photo:ObjectPhoto){
+  async function open(photo:ObjectPhoto,full=false){
+    setOriginal(full);
     active.current?.abort();const abort=new AbortController();active.current=abort;setChosen(photo);setImage('');setError(null);
-    const key=JSON.stringify([api.epoch,api.revision,photo.documentId,photo.contentVersionId,photo.selector?.displayRevision,photo.sourceSha256]);
+    const key=JSON.stringify([api.epoch,api.revision,photo.documentId,photo.contentVersionId,photo.selector?.displayRevision,photo.sourceSha256,full]);
     const cached=cache.current.get(key);if(cached){setImage(cached);return;}
     try{
       const blob=await api.request<Blob>('/api/workbench/objects/photos/content',{...body,evidenceRef:photo.evidenceRef,
         expectedSourceRevision:photo.sourceRevision,expectedContentVersionId:photo.contentVersionId,expectedSourceSha256:photo.sourceSha256,
-        expectedDisplayRevision:photo.selector?.displayRevision},abort.signal,true);
+        expectedDisplayRevision:photo.selector?.displayRevision,representation:full?'display':'preview'},abort.signal,true);
       if(abort.signal.aborted)return;
       if(cache.current.size>=8){const first=cache.current.keys().next().value;if(first){URL.revokeObjectURL(cache.current.get(first)!);cache.current.delete(first);}}
       const url=URL.createObjectURL(blob);cache.current.set(key,url);setImage(url);
@@ -60,6 +61,7 @@ export function EquipmentPhotos({api,definition,device,en,canWrite=false}:{api:W
     {purpose==='field_record'&&device&&canWrite&&<Btn onClick={()=>void chooseFieldPhoto()}>{en?'Associate a project photo':'关联已有项目照片'}</Btn>}
     {loading?<p role="status">{en?'Loading photos…':'正在读取照片…'}</p>:error?<p role="alert">{failureMessage(error,en?'en':'zh')}</p>:photos.length?photos.map(photo=><div className="eq-photo-row" key={photo.evidenceRef}><span>{photo.title}</span><Btn onClick={()=>void open(photo)}>{en?'Open photo':'打开照片'}</Btn></div>):<p className="eq-caption">{purpose==='field_record'?(en?'No field photos for this device':'当前设备暂无现场照片'):(en?'No object location photos':'当前对象暂无定位照片')}</p>}
     {chosen&&<Modal title={chosen.title} description={purpose==='object_location'?(en?'Shared object location':'共享工程对象定位'):(device?.item.displayName??'')} onClose={()=>{active.current?.abort();setChosen(null);setImage('');}}>
+      <Btn onClick={()=>void open(chosen,!original)}>{original?(en?'Fast preview':'快速预览'):(en?'Full resolution':'原尺寸')}</Btn>
       {image?<WorkOrderPhotoViewport image={image} selector={purpose==='field_record'?null:chosen.selector} label={chosen.title} en={en} focusFraction={.35} onError={()=>setImage('')}/>:<p role={error?'alert':'status'}>{error?failureMessage(error,en?'en':'zh'):(en?'Loading photo…':'正在载入照片…')}</p>}
     </Modal>}
     {picker&&<Modal title={en?'Associate field photo':'关联现场照片'} description={device?.item.displayName??''} onClose={()=>{if(!saving)setPicker(false);}}><div className="eq-adoption-list">{candidates.map(photo=><label key={photo.documentId}><input type="radio" name="field-photo" checked={candidate?.documentId===photo.documentId} onChange={()=>setCandidate(photo)}/>{photo.title}</label>)}</div>{candidatesLoading&&<p role="status">{en?'Loading project photos…':'正在读取项目照片…'}</p>}{next&&<Btn disabled={candidatesLoading||saving} onClick={()=>void chooseFieldPhoto(next)}>{en?'Load more':'加载更多'}</Btn>}{!!error&&<p role="alert">{failureMessage(error,en?'en':'zh')}</p>}<Btn primary disabled={!candidate||saving} onClick={()=>void associate()}>{en?'Save association':'保存关联'}</Btn></Modal>}
