@@ -2,6 +2,7 @@ import {useEffect,useMemo,useState} from 'react';
 import {cancelled,failureMessage,type WorkbenchApi} from './api';
 import {EquipmentApi,type ApplicationBundle,type ApplicationSummary,type PropertyValue} from './equipmentApi';
 import {Btn,Modal} from './Primitives';
+import {OntoBaseEquipmentLink} from './OntoBaseEquipmentLink';
 
 function valueText(value:PropertyValue|undefined,en:boolean){
   if(value?.status==='not_applicable')return en?'Not applicable':'不适用';
@@ -24,7 +25,7 @@ export function EquipmentApplicationDetails({value,en}:{value:ApplicationBundle;
   <h4>{en?'Specification parameters':'规格参数'}</h4><div className="eq-parameter-grid">{template.fields.map(field=>{const v=snapshot.values.find(row=>row.propertyRevisionId===field.propertyRevisionId);return <div key={field.propertyKey}><span>{en?field.definition.nameEn||field.definition.nameZh:field.definition.nameZh}{field.inherited&&<small>{en?'Inherited':'继承'}</small>}</span><strong>{valueText(v,en)}</strong><span>{field.definition.unit||'—'}</span></div>;})}</div>
   <details><summary>{en?'Roles and sources':'内部角色与来源'}</summary><dl className="eq-metadata">{snapshot.roles.map(role=><div className="eq-metadata-row" key={role.roleKey}><dt>{role.name}</dt><dd>{role.quantity} · {role.optional?(en?'Optional':'可选'):(en?'Required':'必需')}</dd></div>)}</dl>
     {snapshot.sources.map((source,index)=><p key={index}>{source.url&&/^https?:\/\//.test(source.url)?<a href={source.url} target="_blank" rel="noreferrer">{source.provider||source.url}</a>:source.provider||'—'}{source.note&&<small>{source.note}</small>}</p>)}</details>
-  <p className="eq-caption">{en?'Edit specification, parameters, roles and equipment adoption in OntoBase.':'型号、参数、内部角色和单台设备采用由 OntoBase 管理。'}</p></section>;
+  <p className="eq-caption">{en?'Edit specification, parameters, roles and equipment adoption in OntoBase.':'型号、参数、内部角色和单台设备采用由 OntoBase 管理。'}</p><OntoBaseEquipmentLink en={en}/></section>;
 }
 
 export function EquipmentApplicationPicker({api,en,onClose,onSelect,continuing=false}:{api:WorkbenchApi;en:boolean;onClose:()=>void;onSelect:(value:ApplicationBundle)=>void;continuing?:boolean}){
@@ -42,7 +43,7 @@ export function EquipmentApplicationPicker({api,en,onClose,onSelect,continuing=f
     <div className="eq-form"><label>{en?'OntoBase project application':'OntoBase 项目采用'}<select aria-label={en?'OntoBase project application':'OntoBase 项目采用'} value={revision} onChange={e=>setRevision(e.target.value)}><option value="">{en?'Select…':'请选择…'}</option>{items.map(item=><option key={item.revisionId} value={item.revisionId}>{item.name} · {item.variant} / r{item.revision}</option>)}</select></label>
     {total>50&&<div className="eq-actions"><Btn disabled={!offset||busy} onClick={()=>setOffset(v=>Math.max(0,v-50))}>{en?'Previous':'上一页'}</Btn><span>{offset+1}–{Math.min(offset+50,total)} / {total}</span><Btn disabled={offset+50>=total||busy} onClick={()=>setOffset(v=>v+50)}>{en?'Next':'下一页'}</Btn></div>}
     {busy&&<p role="status">{en?'Loading source…':'正在读取源端…'}</p>}{!!error&&<p role="alert">{failureMessage(error,en?'en':'zh')}</p>}
-    {!busy&&!error&&!items.length&&<p>{en?'Create a specification and project application in OntoBase first.':'请先在 OntoBase 建立型号规格和项目采用。'}</p>}
+    {!busy&&!error&&!items.length&&<><p>{en?'Create a specification and project application in OntoBase first.':'请先在 OntoBase 建立型号规格和项目采用。'}</p><OntoBaseEquipmentLink en={en}/></>}
     {bundle&&<EquipmentApplicationDetails value={bundle} en={en}/>}
     {continuing&&<p className="eq-caption">{en?'Original object identities and component mappings must match. Existing history remains readable.':'原对象 UID 和构件映射必须一致；已有绑定历史继续保留。'}</p>}
     <div className="eq-actions"><Btn onClick={onClose}>{en?'Cancel':'取消'}</Btn><Btn primary disabled={!bundle||busy} onClick={()=>bundle&&onSelect(bundle)}>{en?'Use this application':'使用此项目采用'}</Btn></div></div>

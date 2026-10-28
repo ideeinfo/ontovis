@@ -24,6 +24,7 @@ import {ProjectsPanel} from './ProjectsPanel';
 import {EquipmentHierarchy} from './EquipmentHierarchy';
 import type {ProjectAccess,ProjectRef,ProjectSummary} from './projectTypes';
 import {canNavigate,isGlobalPage,workbenchHeader,type WorkbenchPage} from './workbenchNavigation';
+import {keepWorkspaceOnSessionFailure} from './sessionAvailability';
 
 const api = new WorkbenchApi();
 const ModelViewport = lazy(() => import('./ModelViewport').then(module => ({default:module.ModelViewport})));
@@ -124,10 +125,14 @@ export function Workbench() {
         if(changed||api.revision!==value.sessionRevision)api.session(value.sessionRevision);
         const safe=value.state==='active'?value:{state:value.state,sessionRevision:value.sessionRevision};
         current.current=safe;setSession(safe);sessionReady.current=true;setSessionCheck('ready');
+        if(value.state==='active')setMessage(previous=>previous==='unavailable'?null:previous);
         if(['signedOut','expired'].includes(value.state))mustSignOut.current=false;
         if(value.state==='active'){loginOpen.current=false;setModal(previous=>previous==='login'?null:previous);if(changed)setReload(value=>value+1);}
         return value;
-      }catch(value){if(mounted.current&&ticket===inspectIntent.current&&!cancelled(value)){clear('unavailable',mustSignOut.current?'logoutFailed':'unavailable');setSessionCheck('failed');
+      }catch(value){if(mounted.current&&ticket===inspectIntent.current&&!cancelled(value)){
+        if(keepWorkspaceOnSessionFailure(value,current.current,mustSignOut.current))setMessage('unavailable');
+        else clear('unavailable',mustSignOut.current?'logoutFailed':'unavailable');
+        setSessionCheck('failed');
         if(mustSignOut.current){loginOpen.current=true;setModal('login');}}return null;}
       finally{if(ticket===inspectIntent.current){inspection.current=null;const touch=pendingActivity.current;pendingActivity.current=false;
         if(touch&&mounted.current&&current.current?.state==='active'&&!authBusy.current&&!mustSignOut.current)void inspect(true);}}
@@ -266,7 +271,7 @@ export function Workbench() {
       <div className="cw-nav-items" id="cw-navigation-items">{navigation.map(([id,label,Icon]) => <button type="button" key={id} className={`cw-nav-item ${page === id ? 'active' : ''}`} aria-label={t(label)} aria-current={page === id ? 'page' : undefined} disabled={!canNavigate(id,!!project)} title={t(label)} onClick={() => {if(canNavigate(id,!!project))navigate(id);}}><Icon size={17} strokeWidth={1.7}/><span>{t(label)}</span></button>)}</div>
     </nav>
       <main className="cw-main"><div className="cw-toolbar">{workspace && <IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn>}<div className="cw-page-title"><span className="cw-breadcrumb">{t('projectManagement')}<ChevronRight size={11}/>{t(title)}</span><h1>{t(title)}</h1></div>{workspace && <><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}</>}<span className="cw-grow"/>{workspace && <div className="cw-layout" role="group" aria-label={t('workbenchLayout')}>{(['balanced','modelLayout','drawingLayout'] as const).map(value => <button type="button" key={value} aria-pressed={layout === value} className={layout === value ? 'active' : ''} onClick={() => setLayout(value)}>{t(value)}</button>)}</div>}<IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn>{workspace && <IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn>}</div>
-      {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}</div>}
+      {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}{!error&&active&&message==='unavailable'&&sessionCheck==='failed'&&<Btn onClick={()=>void inspect()}>{t('retry')}</Btn>}</div>}
       {page==='scene'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${JSON.stringify(project?.projectRef)}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceSceneId||''}`} api={api} ref={sceneWorkspace} initialEntry={sceneEntry} initialSceneId={resourceSceneId} project={project} onProjectCreated={enterProject} onProjectName={setProjectName} onConfigure={()=>navigate('hierarchy')}/></Suspense>}
       {page==='orders'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><WorkOrders key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} initialQuery={initialOrderQuery} onDirtyChange={setOrdersDirty} onAnalyze={orderId=>navigate('analysis',null,'',{orderId})} onOpenAnalysis={(analysisSessionId,analysisRevision)=>navigate('analysis',null,'',{analysisSessionId,analysisRevision})}/></Suspense>}
       {page==='analysis'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><AnalysisWorkspace initialEntry={initialAnalysisEntry} onOpenWorkOrder={code=>navigate('orders',null,code)} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onDirtyChange={setOrdersDirty}/></Suspense>}
