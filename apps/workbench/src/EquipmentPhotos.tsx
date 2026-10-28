@@ -4,6 +4,7 @@ import {Btn,Modal} from './Primitives';
 import type {SceneObjectContext} from './sceneEngineeringTypes';
 import type {ObjectPhoto} from './workOrderTypes';
 import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
+import {EquipmentApi} from './equipmentApi';
 
 type PhotoPurpose='object_location'|'field_record';
 interface PhotoCandidate {documentId:string;title:string;contentVersionId:string;renditionId:string;displayRevision:string}
@@ -41,14 +42,13 @@ export function EquipmentPhotos({api,definition,device,en,canWrite=false}:{api:W
       basis:en?'User associates a device field photo':'用户关联此设备的现场照片',clientRequestId:crypto.randomUUID()},abort.signal);if(!abort.signal.aborted){setPicker(false);setReload(value=>value+1);}
     }catch(error){if(!abort.signal.aborted&&!cancelled(error))setError(error);}finally{if(!abort.signal.aborted)setSaving(false);}}
   async function open(photo:ObjectPhoto,full=false){
+    if(!body)return;
     setOriginal(full);
     active.current?.abort();const abort=new AbortController();active.current=abort;setChosen(photo);setImage('');setError(null);
     const key=JSON.stringify([api.epoch,api.revision,photo.documentId,photo.contentVersionId,photo.selector?.displayRevision,photo.sourceSha256,full]);
     const cached=cache.current.get(key);if(cached){setImage(cached);return;}
     try{
-      const blob=await api.request<Blob>('/api/workbench/objects/photos/content',{...body,evidenceRef:photo.evidenceRef,
-        expectedSourceRevision:photo.sourceRevision,expectedContentVersionId:photo.contentVersionId,expectedSourceSha256:photo.sourceSha256,
-        expectedDisplayRevision:photo.selector?.displayRevision,representation:full?'display':'preview'},abort.signal,true);
+      const blob=await new EquipmentApi(api).photoContent(body,photo,full,abort.signal);
       if(abort.signal.aborted)return;
       if(cache.current.size>=8){const first=cache.current.keys().next().value;if(first){URL.revokeObjectURL(cache.current.get(first)!);cache.current.delete(first);}}
       const url=URL.createObjectURL(blob);cache.current.set(key,url);setImage(url);

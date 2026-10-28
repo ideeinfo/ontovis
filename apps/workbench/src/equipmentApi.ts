@@ -2,6 +2,7 @@ import type {WorkbenchApi} from './api';
 import type {EngineeringObject,Installation} from './types';
 import type {EngineeringRef} from './sceneEngineeringTypes';
 import type {ProjectModelVersion} from './resourceTypes';
+import type {ObjectPhoto} from './workOrderTypes';
 
 export interface SharedMapping {objectRef:EngineeringRef;expectedEntityRevision:string;componentKeys:string[]}
 export interface EquipmentConfigurationSnapshot {displayName:string;objectKind:string;
@@ -13,6 +14,8 @@ export interface EquipmentRecord {item:EngineeringObject&{equipmentState?:'activ
 export interface EquipmentConfigurations {items:EquipmentConfiguration[];assignments:EquipmentAdoption[];objects:EngineeringObject[];models:ProjectModelVersion[];capabilities:{canWrite:boolean}}
 export type EquipmentCatalogItem=EngineeringObject&{sceneUseCount:number};
 export interface EquipmentCatalogue {items:EquipmentCatalogItem[];nextCursor:string|null;snapshotRevision:string}
+interface PhotoSelection {entityUid:string;expectedEntityRevision:string;installationContextId:string|null;
+  expectedHierarchyRevision:string|null;photoPurpose:'object_location'|'field_record'}
 const ROOT='/api/workbench/equipment';
 export class EquipmentApi {
   private api:WorkbenchApi;
@@ -21,6 +24,11 @@ export class EquipmentApi {
   configurations(signal?:AbortSignal){return this.api.request<EquipmentConfigurations>(ROOT+'/configurations',{},signal);}
   resolve(entityUids:string[],signal?:AbortSignal){return this.api.request<{items:EquipmentRecord[]}>(ROOT+'/resolve',{entityUids},signal);}
   children(parentEntityUid:string,cursor:string|null=null,signal?:AbortSignal){return this.api.request<{items:{object:EngineeringObject}[];nextCursor:string|null;total:number}>(ROOT+'/definitions/children',{parentEntityUid,...(cursor?{cursor}:{})},signal);}
+  photoContent(selection:PhotoSelection,photo:ObjectPhoto,full=false,signal?:AbortSignal){
+    return this.api.request<Blob>('/api/workbench/objects/photos/content',{...selection,evidenceRef:photo.evidenceRef,
+      expectedSourceRevision:photo.sourceRevision,expectedContentVersionId:photo.contentVersionId,expectedSourceSha256:photo.sourceSha256,
+      expectedDisplayRevision:photo.selector?.displayRevision,representation:full?'display':'preview'},signal,'source');
+  }
   save(configurationId:string,expectedConfigurationRevision:string|null,snapshot:EquipmentConfigurationSnapshot,signal?:AbortSignal){
     return this.api.request<EquipmentConfiguration>(ROOT+'/configurations/save',{configurationId,expectedConfigurationRevision,snapshot,clientRequestId:crypto.randomUUID()},signal);
   }
