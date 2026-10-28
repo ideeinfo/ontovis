@@ -128,7 +128,6 @@ export function SceneBindingReview({api,check,instances,previousInstances,busy,o
     &&prepared.plan.refs.every(ref=>shown.names!.has(bindingReviewRefKey(ref)));
   function close(){if(busy)return;ticket.current++;abort.current?.abort();setState(null);onClose();}
   return <Modal title={t('reviewTitle')} description={t('reviewHint')} onClose={close}>
-    <p className="se-note">{t('reviewHint')}</p>
     {!shown||shown.loading?<p className="se-note" role="status">{t('loading')}</p>:shown.error?<>
       <p className="se-state" role="alert">{failureMessage(shown.error,locale)}</p>
       <Btn disabled={busy} onClick={()=>setRetry(value=>value+1)}>{t('retry')}</Btn>
