@@ -78,6 +78,47 @@ class ModelAssociationTests(TestCase):
         self.assertEqual(frozen[0]['equipmentEntityUid'],'unit7')
         self.assertEqual(configuration_references(self.library,'version','other-project'),[])
 
+    def test_source_adopters_drive_current_bindings_and_canvas_capture(self):
+        from apps.api.analysis_model_links import configuration_references, shared_configuration_bindings, frozen_configuration_bindings
+        self.db.executescript('create table equipment_configurations(id text,head_revision text,project_code text);'
+            'create table equipment_configuration_revisions(configuration_id text,revision text,snapshot text);'
+            'create table equipment_configuration_assignments(equipment_uid text,configuration_id text);')
+        application='00000000-0000-4000-8000-000000000001'
+        profile={'projectApplicationRef':{'applicationRevisionId':application},'models':[{'modelVersionId':'version',
+            'mappings':[{'objectRef':{'entityUid':'definition-cabinet','projectCode':'P','ontobaseConnectionId':'source'},
+                'expectedEntityRevision':'r1','componentKeys':['cabinet-key']}]}]}
+        self.db.execute("insert into equipment_configurations values('configuration','r1','P')")
+        self.db.execute('insert into equipment_configuration_revisions values(?,?,?)',('configuration','r1',json.dumps(profile)))
+        self.db.execute("insert into equipment_configuration_assignments values('stale-private-adopter','configuration')")
+        self.scene(uid='unit7',whole=True)
+        self.reader.reader.prefix='/api/v1/projects/P'
+        page={'projectCode':'P','applicationRevisionId':application,'total':1,'items':[{'entityUid':'unit7','adoptionId':application}],
+            'snapshotRevision':'adopters:1','nextOffset':None}
+        self.reader.reader._request=Mock(return_value=page)
+        captured=configuration_references(self.library,'version','P',self.reader.reader)
+        self.assertEqual(captured[0]['equipmentEntityUids'],['unit7'])
+        rows,truncated=shared_configuration_bindings(self.reader,self.library,entity_uid='definition-cabinet',equipment_uid='unit7')
+        self.assertFalse(truncated);self.assertEqual(rows[0]['equipmentEntityUid'],'unit7')
+        self.assertEqual(rows[0]['componentKeys'],['cabinet-key'])
+        self.reader.reader._request.return_value=page|{'total':0,'items':[],'snapshotRevision':'adopters:2'}
+        self.assertEqual(shared_configuration_bindings(self.reader,self.library),([],False))
+        self.assertEqual(frozen_configuration_bindings(self.reader,self.library,'version',captured)[0]['equipmentEntityUid'],'unit7')
+
+    def test_source_adopter_capture_pages_and_rejects_changed_or_oversized_sets(self):
+        from apps.api.equipment_reader import EquipmentReader
+        application='00000000-0000-4000-8000-000000000001'
+        page={'projectCode':'P','applicationRevisionId':application,'total':101,'items':[
+            {'entityUid':'unit'+str(n),'adoptionId':application} for n in range(100)],'snapshotRevision':'adopters:1','nextOffset':100}
+        source=SimpleNamespace(prefix='/api/v1/projects/P',project_code='P',_request=Mock(side_effect=[page,
+            page|{'items':[{'entityUid':'unit100','adoptionId':application}],'nextOffset':None}]))
+        self.assertEqual(len(EquipmentReader(source).application_equipment(application)),101)
+        self.assertIn('expectedSnapshotRevision=adopters%3A1',source._request.call_args.args[1])
+        source._request=Mock(side_effect=[page,page|{'snapshotRevision':'adopters:2','items':[],'nextOffset':None}])
+        with self.assertRaisesRegex(PreviewError,'SNAPSHOT_CHANGED'):EquipmentReader(source).application_equipment(application)
+        source._request=Mock(return_value=page|{'total':501})
+        with self.assertRaisesRegex(PreviewError,'ANALYSIS_SOURCE_LIMIT'):EquipmentReader(source).application_equipment(application)
+        self.assertEqual(source._request.call_count,1)
+
     def test_non_demo_project_uses_exact_binding_before_a_same_named_candidate(self):
         self.model(asset='candidate', version='candidate-v', name='A name-only model')
         self.model(asset='bound', version='version', name='Z bound model', components=[{'componentKey': 'cabinet-key', 'displayName': 'Different label'}])

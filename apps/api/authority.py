@@ -91,8 +91,11 @@ class Authority:
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             raise PreviewError(502, 'SOURCE_UNAVAILABLE') from None
 
-    def photo(self, path: str, body: dict, display_sha256: str) -> dict:
+    def photo(self, path: str, body: dict, display_sha256: str | None) -> dict:
         """Read only the fixed, authorized display rendition; never follow URLs."""
+        aggregate = display_sha256 is None and path.endswith('/equipment/shared-photos/content')
+        if display_sha256 is None and not aggregate:
+            raise PreviewError(422, 'INVALID_REQUEST')
         request = urllib.request.Request(self.base_url + path, method='POST',
             headers={'Authorization': 'Bearer ' + self.token, 'Content-Type': 'application/json',
                      'Accept': 'image/png,image/jpeg,image/webp', 'Cache-Control': 'no-store'},
@@ -104,13 +107,17 @@ class Authority:
                 signature = (mime == 'image/png' and raw.startswith(b'\x89PNG\r\n\x1a\n')
                     or mime == 'image/jpeg' and raw.startswith(b'\xff\xd8\xff')
                     or mime == 'image/webp' and raw.startswith(b'RIFF') and raw[8:12] == b'WEBP')
-                if (not raw or len(raw) > 20 * 1024 * 1024 or not signature
-                        or hashlib.sha256(raw).hexdigest() != display_sha256
+                digest = hashlib.sha256(raw).hexdigest()
+                if (not raw or len(raw) > 20 * 1024 * 1024 or not signature):
+                    raise PreviewError(409, 'CONTENT_CHANGED')
+                # Aggregated photos validate immutable version/applicability at the source;
+                # resized previews have a different digest from the fixed full rendition.
+                if not aggregate and (digest != display_sha256
                         or response.headers.get('X-Content-SHA256') != display_sha256
                         or response.headers.get('X-Document-Content-Version') != body['expectedContentVersionId']
                         or response.headers.get('X-Anchor-Applies-To') != 'display_rendition'):
                     raise PreviewError(409, 'CONTENT_CHANGED')
-                return {'content': raw, 'mediaType': mime, 'sha256': display_sha256}
+                return {'content': raw, 'mediaType': mime, 'sha256': digest}
         except urllib.error.HTTPError as error:
             try:
                 detail = json.loads(error.read(16384)).get('detail', {})

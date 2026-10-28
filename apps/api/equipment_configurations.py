@@ -1,4 +1,4 @@
-"""Project-owned shared model mappings and explicit equipment adoption."""
+"""Project-owned geometry mappings; current equipment adoption belongs to OntoBase."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -68,15 +68,27 @@ class EquipmentConfigurations:
                 create trigger if not exists equipment_adoption_history_no_delete
                     before delete on equipment_configuration_adoptions begin select raise(abort,'immutable equipment adoption'); end;
             ''')
+            if 'project_application_revision_id' not in {r['name'] for r in db.execute('pragma table_info(equipment_configurations)')}:
+                db.execute('alter table equipment_configurations add column project_application_revision_id text')
+            db.execute('create unique index if not exists equipment_configuration_source_application on equipment_configurations(project_code,project_application_revision_id) where project_application_revision_id is not null')
 
     def _ref(self, ref):
         return validate_ref(ref, **self.scope)
 
-    def for_equipment(self, uid):
+    def for_equipment(self, uid, equipment=None):
+        adoption=(equipment([uid])[uid].get('adoption') if equipment else None)
         with self.library.connect() as db:
+            if adoption:
+                row=db.execute('''select c.id,c.head_revision,r.snapshot from equipment_configurations c
+                    join equipment_configuration_revisions r on r.revision=c.head_revision
+                    where c.project_code=? and c.project_application_revision_id=?''',
+                    (self.scope['project_code'],adoption['applicationRevisionId'])).fetchone()
+                if row:
+                    return {'configurationId':row['id'],'configurationRevision':row['head_revision'],'snapshot':json.loads(row['snapshot'])}
             row=db.execute('''select c.id,c.head_revision,r.snapshot from equipment_configuration_assignments a
                 join equipment_configurations c on c.id=a.configuration_id
-                join equipment_configuration_revisions r on r.revision=c.head_revision where a.equipment_uid=?''',(uid,)).fetchone()
+                join equipment_configuration_revisions r on r.revision=c.head_revision
+                where a.equipment_uid=? and c.project_application_revision_id is null''',(uid,)).fetchone()
         return {'configurationId':row['id'],'configurationRevision':row['head_revision'],'snapshot':json.loads(row['snapshot'])} if row else None
 
     def validate(self, snapshot, objects, model_components):
@@ -117,11 +129,34 @@ class EquipmentConfigurations:
         value['models'].sort(key=lambda m:m['modelVersionId'])
         return value
 
+    def source_snapshot(self, snapshot, application):
+        require(type(snapshot) is dict and set(snapshot)=={'projectApplicationRef','models'},'SOURCE_APPLICATION_REQUIRED',409)
+        ref=snapshot['projectApplicationRef']
+        require(type(ref) is dict and set(ref)=={'applicationId','applicationRevisionId','specificationRevisionId'})
+        expected={'applicationId':application['applicationId'],'applicationRevisionId':application['revisionId'],
+                  'specificationRevisionId':application['snapshot']['specificationRevisionId']}
+        require(ref==expected and application['projectCode']==self.scope['project_code'],'SOURCE_APPLICATION_MISMATCH',409)
+        source=application['snapshot']; root=source.get('rootDefinition')
+        allowed={r['entityUid']:r['expectedEntityRevision'] for r in ([root] if root else [])+source['mappings']}
+        require(type(snapshot['models']) is list)
+        for model in snapshot['models']:
+            require(type(model) is dict and type(model.get('mappings')) is list)
+            for mapping in model['mappings']:
+                require(type(mapping) is dict and type(mapping.get('objectRef')) is dict)
+                require(allowed.get(mapping['objectRef'].get('entityUid'))==mapping.get('expectedEntityRevision')
+                        and mapping.get('expectedEntityRevision') is not None,'DEFINITION_NOT_IN_APPLICATION',409)
+        return {'displayName':source['name'],'objectKind':application['specification']['objectKind'],
+                'rootDefinition':None if root is None else {'objectRef':{'ontobaseConnectionId':self.scope['connection_id'],
+                    'projectCode':self.scope['project_code'],'entityUid':root['entityUid']},'expectedEntityRevision':root['expectedEntityRevision']},
+                'models':snapshot['models']}
+
     def catalogue(self, authorize):
         authorize()
         with self.library.connect() as db:
             rows = db.execute('''select c.id,c.head_revision,r.snapshot,r.saved_at,
-                (select count(*) from equipment_configuration_assignments a where a.configuration_id=c.id) as equipment_count
+                case when c.project_application_revision_id is null then
+                  (select count(*) from equipment_configuration_assignments a where a.configuration_id=c.id)
+                  else null end as equipment_count
                 from equipment_configurations c join equipment_configuration_revisions r on r.revision=c.head_revision
                 where c.project_code=? order by r.saved_at,c.id''', (self.scope['project_code'],)).fetchall()
             assignments = [dict(row) for row in db.execute('select * from equipment_configuration_assignments order by equipment_uid')]
@@ -153,12 +188,21 @@ class EquipmentConfigurations:
                 rows=db.execute('''select u.equipment_uid,u.configuration_id as id,u.configuration_revision as head_revision,r.snapshot
                     from scene_equipment_configuration_uses u join equipment_configuration_revisions r on r.revision=u.configuration_revision
                     where u.scene_revision=?''',(opened['sceneRevision'],)).fetchall()
-        by_uid={row['equipment_uid']:row for row in rows}
+            application_rows=db.execute('''select c.id,c.head_revision,c.project_application_revision_id,r.snapshot
+                from equipment_configurations c join equipment_configuration_revisions r on r.revision=c.head_revision
+                where c.project_code=? and c.project_application_revision_id is not null''',(self.scope['project_code'],)).fetchall() if current else []
+        by_uid={row['equipment_uid']:row for row in rows if not current or not json.loads(row['snapshot']).get('projectApplicationRef')}
         roots=sorted({i['rootBinding']['objectRef']['entityUid'] for i in opened['snapshot']['instances'] if i.get('rootBinding')
-                      and i['rootBinding']['objectRef']['entityUid'] in by_uid})
+                      and (current or i['rootBinding']['objectRef']['entityUid'] in by_uid)})
         if not roots:return deepcopy(opened),[]
         known={}
         for offset in range(0,len(roots),50):known.update(equipment(roots[offset:offset+50]))
+        by_application={r['project_application_revision_id']:r for r in application_rows}
+        if current:
+            for uid,source in known.items():
+                adoption=source.get('adoption')
+                if adoption and adoption['applicationRevisionId'] in by_application:
+                    by_uid[uid]=by_application[adoption['applicationRevisionId']]
         value=deepcopy(opened);uses=[];expectations=value['validation'].setdefault('engineeringExpectations',[])
         expected_uids={x['ref']['entityUid'] for x in expectations}
         for instance in value['snapshot']['instances']:
@@ -208,7 +252,7 @@ class EquipmentConfigurations:
         db.execute('insert into equipment_configuration_requests values(?,?,?,?)',(actor,request,digest,encoded(result)))
         return result
 
-    def save(self, body, actor, authorize, objects, model_components):
+    def save(self, body, actor, authorize, objects, model_components, application=None):
         require(type(body) is dict and set(body) == {'configurationId','expectedConfigurationRevision','snapshot','clientRequestId'})
         cid = identifier(body['configurationId']); authorize()
         with self.library.connect() as db:
@@ -218,20 +262,33 @@ class EquipmentConfigurations:
                 authorize(); return prior
             old = db.execute('select head_revision from equipment_configurations where id=? and project_code=?', (cid,self.scope['project_code'])).fetchone()
             require((old['head_revision'] if old else None) == body['expectedConfigurationRevision'], 'REVISION_CONFLICT', 409)
-            snapshot = self.validate(body['snapshot'], objects, model_components)
+            source_ref=deepcopy(body['snapshot'].get('projectApplicationRef')) if type(body['snapshot']) is dict else None
+            snapshot = self.validate(self.source_snapshot(body['snapshot'],application) if application else body['snapshot'], objects, model_components)
+            if application:
+                snapshot['projectApplicationRef']=source_ref
+                duplicate=db.execute('select id from equipment_configurations where project_code=? and project_application_revision_id=? and id<>?',
+                    (self.scope['project_code'],source_ref['applicationRevisionId'],cid)).fetchone()
+                require(duplicate is None,'APPLICATION_BINDING_EXISTS',409)
             # Existing adopted model versions cannot silently lose their mapping.
             if old:
                 previous = json.loads(db.execute('select snapshot from equipment_configuration_revisions where revision=?',(old['head_revision'],)).fetchone()[0])
+                require(not previous.get('projectApplicationRef') or previous['projectApplicationRef']==source_ref,'SOURCE_APPLICATION_MISMATCH',409)
+                # First attachment is a continuation: original geometry mappings must remain reviewable.
+                if source_ref and not previous.get('projectApplicationRef'):
+                    for model in previous['models']:
+                        new=next((m for m in snapshot['models'] if m['modelVersionId']==model['modelVersionId']),None)
+                        require(new is not None and all(m in new['mappings'] for m in model['mappings']),'LEGACY_MAPPING_CHANGED',409)
                 require({x['modelVersionId'] for x in previous['models']} <= {x['modelVersionId'] for x in snapshot['models']}, 'MODEL_MAPPING_IN_USE', 409)
             revision = 'equipment-config:' + str(uuid4()); now = datetime.now(timezone.utc).isoformat()
             if not old:
-                db.execute('insert into equipment_configurations values(?,?,?)',(cid,self.scope['project_code'],revision))
+                db.execute('insert into equipment_configurations(id,project_code,head_revision) values(?,?,?)',(cid,self.scope['project_code'],revision))
             db.execute('insert into equipment_configuration_revisions values(?,?,?,?,?)',(revision,cid,encoded(snapshot),actor,now))
             db.execute('update equipment_configurations set head_revision=? where id=?',(revision,cid))
+            if source_ref:db.execute('update equipment_configurations set project_application_revision_id=? where id=?',(source_ref['applicationRevisionId'],cid))
             count = db.execute('select count(*) from equipment_configuration_assignments where configuration_id=?',(cid,)).fetchone()[0]
             authorize()
             return self._finish(db,actor,request,digest,{'configurationId':cid,'configurationRevision':revision,'snapshot':snapshot,
-                'equipmentCount':count,'savedAt':now})
+                'equipmentCount':None if source_ref else count,'savedAt':now})
 
     def assign(self, body, actor, authorize, equipment):
         require(type(body) is dict and set(body) == {'configurationId','expectedConfigurationRevision','equipment','clientRequestId'})

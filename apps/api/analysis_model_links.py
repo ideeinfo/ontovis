@@ -7,18 +7,32 @@ import re
 from .analysis_drafts import require
 
 
-def configuration_references(library, version, project):
+def configuration_references(library, version, project, reader=None):
     """Capture revisions and adopters once when a model is added to a Canvas."""
     if library is None:return []
     with library.connect() as db:
         if not db.execute("select 1 from sqlite_master where name='equipment_configurations'").fetchone():return []
-        rows=db.execute('''select c.id,c.head_revision from equipment_configurations c
+        rows=db.execute('''select c.id,c.head_revision,r.snapshot from equipment_configurations c
             join equipment_configuration_revisions r on r.revision=c.head_revision
-            where c.project_code=? and exists(select 1 from json_each(r.snapshot,'$.models') m
-                where json_extract(m.value,'$.modelVersionId')=?) order by c.id''',(project,version)).fetchall()
-        return [{'configurationId':cid,'configurationRevision':revision,'equipmentEntityUids':[
-            row[0] for row in db.execute('select equipment_uid from equipment_configuration_assignments where configuration_id=? order by equipment_uid',(cid,))]}
-            for cid,revision in rows]
+            where c.project_code=? and (? is null or exists(select 1 from json_each(r.snapshot,'$.models') m
+                where json_extract(m.value,'$.modelVersionId')=?)) order by c.id limit 51''',(project,version,version)).fetchall()
+        require(len(rows)<=50,'ANALYSIS_SOURCE_LIMIT',409)
+        captured=[]
+        for cid,revision,raw in rows:
+            application=json.loads(raw).get('projectApplicationRef')
+            legacy=[] if application else [row[0] for row in db.execute(
+                'select equipment_uid from equipment_configuration_assignments where configuration_id=? order by equipment_uid limit 501',(cid,))]
+            require(len(legacy)<=500,'ANALYSIS_SOURCE_LIMIT',409)
+            captured.append((cid,revision,application,legacy))
+    result=[]
+    for cid,revision,application,legacy in captured:
+        if application:
+            from .equipment_reader import EquipmentReader
+            require(reader is not None,'ANALYSIS_SOURCE_UNAVAILABLE',503)
+            adopters=EquipmentReader(reader).application_equipment(application['applicationRevisionId'])
+        else:adopters=legacy
+        result.append({'configurationId':cid,'configurationRevision':revision,'equipmentEntityUids':adopters})
+    return result
 
 
 def frozen_configuration_bindings(reader,library,version,references):
@@ -134,29 +148,31 @@ def scene_bindings(reader, library, *, model_versions=None, entity_uid=None):
 
 def shared_configuration_bindings(reader,library,*,model_versions=None,entity_uid=None,equipment_uid=None):
     """Saved project mappings provide model evidence without per-scene copies."""
+    versions=sorted(set(model_versions)) if model_versions is not None else None
+    if versions==[]:return [],False
+    if versions is not None:require(len(versions)<=50)
+    references=configuration_references(library,versions[0] if versions and len(versions)==1 else None,
+        reader.reader.project_code,reader.reader)
+    adopters=[{'uid':uid,'configurationId':ref['configurationId'],'configurationRevision':ref['configurationRevision']}
+        for ref in references for uid in ref['equipmentEntityUids'] if equipment_uid is None or uid==equipment_uid]
+    if not adopters:return [],False
     with library.connect() as db:
-        if not db.execute("select 1 from sqlite_master where name='equipment_configuration_assignments'").fetchone():
-            return [],False
         conditions=["s.project_code=?","coalesce(l.state,'active')='active'"]
-        params=[reader.reader.project_code]
+        params=[json.dumps(adopters),reader.reader.project_code]
         if entity_uid is not None:
             conditions.append("json_extract(b.value,'$.objectRef.entityUid')=?");params.append(entity_uid)
-        if equipment_uid is not None:
-            conditions.append('a.equipment_uid=?');params.append(equipment_uid)
-        if model_versions is not None:
-            versions=sorted(set(model_versions))
-            if not versions:return [],False
+        if versions is not None:
             conditions.append("json_extract(m.value,'$.modelVersionId') in ("+','.join('?' for _ in versions)+')');params.extend(versions)
-        rows=db.execute('''select s.id,s.head_revision,a.equipment_uid,c.id,c.head_revision,
+        rows=db.execute('''select s.id,s.head_revision,json_extract(a.value,'$.uid'),c.id,cr.revision,
             json_extract(m.value,'$.modelVersionId'),b.value from scenes s
             join scene_revisions r on r.revision=s.head_revision
             join json_each(r.snapshot,'$.instances') i
-            join equipment_configuration_assignments a on a.equipment_uid=json_extract(i.value,'$.rootBinding.objectRef.entityUid')
-            join equipment_configurations c on c.id=a.configuration_id
-            join equipment_configuration_revisions cr on cr.revision=c.head_revision
+            join json_each(?) a on json_extract(a.value,'$.uid')=json_extract(i.value,'$.rootBinding.objectRef.entityUid')
+            join equipment_configurations c on c.id=json_extract(a.value,'$.configurationId') and c.project_code=s.project_code
+            join equipment_configuration_revisions cr on cr.configuration_id=c.id and cr.revision=json_extract(a.value,'$.configurationRevision')
             join json_each(cr.snapshot,'$.models') m on json_extract(m.value,'$.modelVersionId')=json_extract(i.value,'$.modelVersionId')
             join json_each(m.value,'$.mappings') b
-            left join scene_lifecycle l on l.scene_id=s.id where '''+' and '.join(conditions)+''' order by s.id,a.equipment_uid limit 201''',params).fetchall()
+            left join scene_lifecycle l on l.scene_id=s.id where '''+' and '.join(conditions)+''' order by s.id,json_extract(a.value,'$.uid') limit 201''',params).fetchall()
     result=[]
     for scene,revision,equipment,cid,config_revision,version,raw in rows[:200]:
         mapping=json.loads(raw)

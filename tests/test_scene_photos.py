@@ -198,5 +198,22 @@ class ScenePhotoTests(unittest.TestCase):
         data = PNG + b'changed'
         self.error('CONTENT_CHANGED', source.photo, '/fixed-photo', body, sha)
 
+    def test_aggregate_renditions_accept_only_image_bytes_from_the_fixed_endpoint(self):
+        source=Authority('http://127.0.0.1:1234');source.token='synthetic-token'
+        class Response(io.BytesIO): pass
+        data=PNG;mime='image/png';seen=[]
+        class Opener:
+            def open(_self,request,timeout):
+                seen.append(request.full_url)
+                result=Response(data);result.headers=Message();result.headers['Content-Type']=mime
+                return result
+        source.opener=Opener();path='/api/v1/projects/P/equipment/shared-photos/content'
+        self.assertEqual(source.photo(path,{'representation':'thumbnail'},None)['sha256'],hashlib.sha256(PNG).hexdigest())
+        self.error('INVALID_REQUEST',source.photo,'/unrelated',{},None)
+        self.assertEqual(len(seen),1)
+        mime='text/html';self.error('CONTENT_CHANGED',source.photo,path,{},None)
+        mime='image/png';data=b'not an image';self.error('CONTENT_CHANGED',source.photo,path,{},None)
+        data=PNG+bytes(20*1024*1024);self.error('CONTENT_CHANGED',source.photo,path,{},None)
+
 
 if __name__ == '__main__': unittest.main()

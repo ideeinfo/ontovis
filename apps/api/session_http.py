@@ -169,7 +169,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                   '/api/workbench/objects/evidence/content', '/api/workbench/objects/photos/resolve',
                                   '/api/workbench/objects/photos/content')
             equipment_paths=tuple('/api/workbench/equipment'+suffix for suffix in ('','/resolve','/definitions/children','/photo-candidates','/photos/associate',
-                '/configurations','/configurations/detail','/configurations/save','/configurations/assign'))
+                '/configurations','/configurations/detail','/configurations/save','/configurations/assign',
+                '/applications','/applications/detail','/shared-photos/query','/shared-photos/regions','/shared-photos/content'))
             legacy_migration_paths = tuple('/api/workbench/scenes/legacy-migration/' + action
                                            for action in ('sources', 'check', 'activate', 'entry'))
             terrain_paths = ('/api/workbench/terrains', '/api/workbench/terrains/job', '/api/workbench/terrains/job/cancel',
@@ -228,7 +229,10 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             if parts.path in work_order_paths:
                 return self.reply(200, sessions.work_order_request(sid, parts.path, payload))
             if parts.path in equipment_paths:
-                return self.reply(200,sessions.equipment_request(sid,parts.path,payload))
+                value=sessions.equipment_request(sid,parts.path,payload)
+                if parts.path.endswith('/shared-photos/content'):
+                    return self.image(value['content'],value['sessionRevision'],value['mediaType'],value['sha256'])
+                return self.reply(200,value)
             if parts.path in scene_paths: return self.reply(200,sessions.scene_request(sid,parts.path,payload))
             if parts.path in legacy_migration_paths:
                 return self.reply(200, sessions.legacy_migration_request(sid, parts.path, payload))

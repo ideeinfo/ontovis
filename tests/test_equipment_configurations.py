@@ -40,6 +40,60 @@ class EquipmentConfigurationTests(unittest.TestCase):
         return {'configurationId':self.cid,'expectedConfigurationRevision':revision,'clientRequestId':str(uuid4()),
             'equipment':[{'entityUid':uid,'expectedEntityRevision':uid+':1','expectedHierarchyRevision':uid+':tree1','expectedAssignmentRevision':None} for uid in uids]}
 
+    def source_application(self):
+        return {'applicationId':str(uuid4()),'revisionId':str(uuid4()),'projectCode':'A',
+            'specification':{'objectKind':'turbine'},'snapshot':{'name':'源端教学规格 · 已采用配置',
+                'specificationRevisionId':str(uuid4()),'rootDefinition':None,
+                'mappings':[{'roleKey':'cabinet','entityUid':'shared-cabinet','expectedEntityRevision':'definition:1'}]}}
+
+    def source_save(self, application, revision=None, **changes):
+        ref={'applicationId':application['applicationId'],'applicationRevisionId':application['revisionId'],
+             'specificationRevisionId':application['snapshot']['specificationRevisionId']}
+        body={'configurationId':self.cid,'expectedConfigurationRevision':revision,'clientRequestId':str(uuid4()),
+              'snapshot':{'projectApplicationRef':ref,'models':copy.deepcopy(self.snapshot['models'])},**changes}
+        return self.store.save(body,'user',self.authorize,self.objects,lambda _:[{'componentKey':'cabinet'}],application=application)
+
+    def test_source_adoption_selects_binding_without_private_equipment_assignments(self):
+        app=self.source_application();saved=self.source_save(app)
+        ref=saved['snapshot']['projectApplicationRef']
+        self.assertEqual(saved['snapshot']['displayName'],app['snapshot']['name'])
+        self.assertEqual(self.store.for_equipment('unit7',lambda u:{'unit7':{'adoption':ref}})['configurationId'],self.cid)
+        self.assertIsNone(self.store.for_equipment('unit7',lambda u:{'unit7':{'adoption':None}}))
+        with self.library.connect() as db:self.assertEqual(db.execute('select count(*) from equipment_configuration_assignments').fetchone()[0],0)
+        with self.assertRaisesRegex(PreviewError,'APPLICATION_BINDING_EXISTS'):
+            self.source_save(app,configurationId=str(uuid4()))
+
+    def test_source_roles_and_fixed_revisions_cannot_be_overridden(self):
+        app=self.source_application();saved=self.source_save(app)
+        changed=copy.deepcopy(app);changed['revisionId']=str(uuid4())
+        with self.assertRaisesRegex(PreviewError,'SOURCE_APPLICATION_MISMATCH'):
+            self.source_save(changed,saved['configurationRevision'])
+        self.snapshot['models'][0]['mappings'][0]['expectedEntityRevision']='definition:2'
+        with self.assertRaisesRegex(PreviewError,'DEFINITION_NOT_IN_APPLICATION'):self.source_save(app,saved['configurationRevision'])
+
+    def test_legacy_attachment_preserves_bindings_and_fixed_history(self):
+        old=self.save();app=self.source_application();saved=self.source_save(app,old['configurationRevision'])
+        self.assertEqual(saved['snapshot']['models'],old['snapshot']['models'])
+        self.assertNotIn('projectApplicationRef',self.store.detail(self.cid,old['configurationRevision'],self.authorize)['snapshot'])
+        other=self.source_application();self.cid=str(uuid4());old=self.save()
+        self.snapshot['models'][0]['mappings'][0]['componentKeys']=[]
+        with self.assertRaisesRegex(PreviewError,'LEGACY_MAPPING_CHANGED'):self.source_save(other,old['configurationRevision'])
+
+    def test_current_scene_uses_source_adoption_and_history_keeps_legacy_revision(self):
+        first,scene,equipment=self.populated_scene();app=self.source_application()
+        with self.library.connect() as db:
+            db.execute('create table scene_revisions(revision text primary key)');db.execute("insert into scene_revisions values('r1')")
+            for uid in ('unit7','unit18'):db.execute('insert into scene_equipment_configuration_uses values(?,?,?,?,?)',('r1',uid,self.cid,first['configurationRevision'],uid))
+        saved=self.source_save(app,first['configurationRevision'])
+        def current(uids):
+            rows=equipment(uids)
+            for row in rows.values():row['adoption']=saved['snapshot']['projectApplicationRef']
+            return rows
+        _,uses=self.store.resolve_scene(scene,current,self.authorize)
+        self.assertTrue(all(u['configurationRevision']==saved['configurationRevision'] for u in uses));self.assertEqual(len(uses),2)
+        _,old=self.store.resolve_scene(dict(scene,sceneRevision='r1',headRevision='new'),current,self.authorize)
+        self.assertTrue(all(u['configurationRevision']==first['configurationRevision'] for u in old))
+
     def test_one_configuration_update_is_shared_and_history_is_immutable(self):
         first=self.save();body=self.assignment(first['configurationRevision'])
         adopted=self.store.assign(body,'user',self.authorize,self.equipment)

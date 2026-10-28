@@ -112,11 +112,16 @@ class SceneEngineeringValidator:
         _require(mode in ('check', 'save', 'open', 'replacement'))
         _require(type(previous_validation) is dict)
         before, after = self._instances(previous_snapshot), self._instances(snapshot)
+        shared_uses={}
+        if self.shared_configuration:
+            shared_uses['sharedConfigurationUses']=previous_validation.get('sharedConfigurationUses',[]) if mode=='open' else []
         if self.shared_configuration and mode!='open':
             for uid,item in after.items():
                 root=_root(item)
                 config=self.shared_configuration(root['entityUid']) if root else None
                 if not config:continue
+                shared_uses['sharedConfigurationUses'].append({'sceneModelInstanceId':uid,'equipmentEntityUid':root['entityUid'],
+                    'configurationId':config['configurationId'],'configurationRevision':config['configurationRevision']})
                 old=before.get(uid)
                 _require(item['componentBindings']==(old['componentBindings'] if old else []),
                          'SHARED_CONFIGURATION_REQUIRED',409)
@@ -141,7 +146,7 @@ class SceneEngineeringValidator:
             if mode == 'save': validate_expectations(reviewed, required_refs=[], **self.scope)
             self.reader.authorize()
             return {'engineeringExpectations': [], 'bindingIssues': [],
-                    'rootBindingChanges': declarations, 'rootBindingImpact': impacts}
+                    'rootBindingChanges': declarations, 'rootBindingImpact': impacts,**shared_uses}
         selections, current = self._read(refs)
         expectations = [current[key] for key in sorted(current)]
         if mode == 'save':
@@ -227,4 +232,4 @@ class SceneEngineeringValidator:
                                      item['installationContextId'], item['kind']))
         self.reader.authorize()
         return {'engineeringExpectations': expectations, 'bindingIssues': issues,
-                'rootBindingChanges': declarations, 'rootBindingImpact': impacts}
+                'rootBindingChanges': declarations, 'rootBindingImpact': impacts,**shared_uses}

@@ -70,7 +70,7 @@ class AnalysisSourceReader:
             value = {key: row[key] for key in ('modelAssetId', 'modelVersionId', 'contentRevision', 'sha256')}
             if self.scene_library is not None:
                 from .analysis_model_links import configuration_references
-                value['configurationRefs']=configuration_references(self.scene_library,value['modelVersionId'],self.reader.project_code)
+                value['configurationRefs']=configuration_references(self.scene_library,value['modelVersionId'],self.reader.project_code,self.reader)
         elif kind == 'work_order':
             value = self.orders.capture(selector, self.actor, self.authorize)
         elif kind in ('alarm', 'trend'):

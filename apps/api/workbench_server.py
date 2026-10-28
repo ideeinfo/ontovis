@@ -121,13 +121,21 @@ class WorkbenchSessions(UserSessions):
         elif path=='/api/workbench/equipment/resolve':
             if set(body)!={'entityUids'}:raise PreviewError(422,'INVALID_REQUEST')
             value={'items':list(equipment.resolve(body['entityUids']).values())}
+        elif path=='/api/workbench/equipment/applications':
+            value=equipment.applications(body)
+        elif path=='/api/workbench/equipment/applications/detail':
+            if set(body)!={'applicationRevisionId'}:raise PreviewError(422,'INVALID_REQUEST')
+            value=equipment.application_detail(body['applicationRevisionId'])
+        elif path in ('/api/workbench/equipment/shared-photos/query','/api/workbench/equipment/shared-photos/regions','/api/workbench/equipment/shared-photos/content'):
+            target=reader.prefix+'/equipment/shared-photos/'+path.rsplit('/',1)[1]
+            if path.endswith('/content'):
+                authorize();value=row.authority.photo(target,body,None)
+            else:value=reader._request('POST',target,body)
         elif path=='/api/workbench/equipment/photo-candidates':
             if set(body)-{'cursor'}:raise PreviewError(422,'INVALID_REQUEST')
             value=reader._request('GET',reader.prefix+'/equipment/photo-candidates'+('?' + urlencode(body) if body else ''))
         elif path=='/api/workbench/equipment/photos/associate':
-            fields={'entityUid','expectedEntityRevision','expectedHierarchyRevision','documentId','contentVersionId','renditionId','expectedDisplayRevision','basis','clientRequestId'}
-            if set(body)!=fields or not isinstance(body['entityUid'],str) or not 0<len(body['entityUid'])<=512:raise PreviewError(422,'INVALID_REQUEST')
-            value=reader._request('POST',reader.prefix+'/equipment/'+quote(body['entityUid'],safe='')+'/photos',{k:v for k,v in body.items() if k!='entityUid'})
+            raise PreviewError(409,'SOURCE_MANAGED')
         elif path=='/api/workbench/equipment/definitions/children':
             if not {'parentEntityUid'}<=set(body)<={'parentEntityUid','cursor'}:raise PreviewError(422,'INVALID_REQUEST')
             value=reader._request('GET',reader.prefix+'/object-definitions/cabinets/children?'+urlencode({**body,'limit':50}))
@@ -148,10 +156,14 @@ class WorkbenchSessions(UserSessions):
             snapshot=body.get('snapshot')
             if type(snapshot) is not dict or type(snapshot.get('models')) is not list or len(snapshot['models'])>20:
                 raise PreviewError(422,'INVALID_REQUEST')
+            source_ref=snapshot.get('projectApplicationRef')
+            if type(source_ref) is not dict or not source_ref.get('applicationRevisionId'):
+                raise PreviewError(409,'SOURCE_APPLICATION_REQUIRED')
+            application=equipment.application(source_ref['applicationRevisionId'])
+            derived=self.equipment_store().source_snapshot(snapshot,application)
             refs=[]
-            if snapshot.get('rootDefinition') is not None:
-                if type(snapshot['rootDefinition']) is not dict:raise PreviewError(422,'INVALID_REQUEST')
-                refs.append(snapshot['rootDefinition'].get('objectRef'))
+            if derived.get('rootDefinition') is not None:
+                refs.append(derived['rootDefinition']['objectRef'])
             for model in snapshot['models']:
                 if type(model) is not dict or type(model.get('mappings')) is not list or len(model['mappings'])>500:
                     raise PreviewError(422,'INVALID_REQUEST')
@@ -163,9 +175,9 @@ class WorkbenchSessions(UserSessions):
             objects={}
             for offset in range(0,len(uids),50):objects.update(reader._resolve(uids[offset:offset+50]))
             value=self.equipment_store().save(body,actor,authorize,lambda uid:{'item':objects[uid]},
-                lambda version:self.project_models.library.version(version)['components'])
+                lambda version:self.project_models.library.version(version)['components'],application=application)
         elif path=='/api/workbench/equipment/configurations/assign':
-            value=self.equipment_store().assign(body,actor,authorize,equipment.resolve)
+            raise PreviewError(409,'SOURCE_MANAGED')
         else:raise PreviewError(422,'INVALID_REQUEST')
         authorize()
         return {**value,'sessionRevision':row.revision,'capabilities':{'canWrite':access.get('role')=='admin'}}
@@ -637,7 +649,8 @@ class WorkbenchSessions(UserSessions):
                 lambda: self.guard(sid, row))
             engineering_check = SceneEngineeringValidator(reader,
                 lambda identifier: model_details(identifier)['components'],
-                self.ontobase_connection_id, self.project_code,shared_configuration=self.equipment_store().for_equipment)
+                self.ontobase_connection_id, self.project_code,
+                shared_configuration=lambda uid:self.equipment_store().for_equipment(uid,EquipmentReader(reader).resolve))
 
             def terrain_replacement(snapshot, candidate, strategy):
                 if self.geometry is None or self.terrains is None:

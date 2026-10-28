@@ -557,7 +557,11 @@ class SceneLibrary:
         db.execute('insert into scene_revisions values (?,?,?,?,?)',
                    (revision, scene_id, _json(snapshot), _json(refs), now))
         if db.execute("select 1 from sqlite_master where name='scene_equipment_configuration_uses'").fetchone():
-            for item in snapshot['instances']:
+            uses=(spatial or {}).get('validation',{}).get('sharedConfigurationUses')
+            for use in uses or []:
+                db.execute('insert into scene_equipment_configuration_uses values(?,?,?,?,?)',
+                    (revision,use['sceneModelInstanceId'],use['configurationId'],use['configurationRevision'],use['equipmentEntityUid']))
+            for item in (snapshot['instances'] if uses is None else []):
                 root=(item.get('rootBinding') or {}).get('objectRef')
                 if root:
                     config=db.execute('''select c.id,c.head_revision from equipment_configuration_assignments a
@@ -739,10 +743,17 @@ class SceneLibrary:
         facts = checker(json.loads(_json(snapshot)), json.loads(_json(reviewed)), json.loads(_json(changes)),
                         previous_snapshot=json.loads(_json(previous)), previous_revision=previous_revision,
                         previous_validation=json.loads(_json(previous_validation)), mode=mode)
-        _fields(facts, ('engineeringExpectations', 'bindingIssues', 'rootBindingChanges', 'rootBindingImpact'))
+        _fields(facts, {'engineeringExpectations', 'bindingIssues', 'rootBindingChanges', 'rootBindingImpact'} |
+                ({'sharedConfigurationUses'} if 'sharedConfigurationUses' in facts else set()))
         _require(all(type(value) is list for value in facts.values()), 'INVALID_ENGINEERING_RESULT')
         current_ids = {item['sceneModelInstanceId'] for item in snapshot['instances']}
         old_ids = {item['sceneModelInstanceId'] for item in previous['instances']}
+        used=set();instances={item['sceneModelInstanceId']:item for item in snapshot['instances']}
+        for use in facts.get('sharedConfigurationUses',[]):
+            _fields(use,{'sceneModelInstanceId','equipmentEntityUid','configurationId','configurationRevision'})
+            uid=use['sceneModelInstanceId'];root=(instances.get(uid,{ }).get('rootBinding') or {}).get('objectRef')
+            _require(uid not in used and root is not None and root['entityUid']==use['equipmentEntityUid'],'INVALID_ENGINEERING_RESULT')
+            used.add(uid);_uuid(use['configurationId']);_text(use['configurationRevision'])
         allowed_refs = set()
         for source in (snapshot, previous):
             for item in source['instances']:
