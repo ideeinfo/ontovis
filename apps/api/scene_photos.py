@@ -46,6 +46,14 @@ class ScenePhotoReader(SceneEvidenceReader):
     def __init__(self, reader):
         self.reader = reader
 
+    def _selection(self, payload):
+        _require(type(payload) is dict,'INVALID_REQUEST',422)
+        body=super()._selection({k:v for k,v in payload.items() if k!='photoPurpose'})
+        if 'photoPurpose' in payload:
+            _require(payload['photoPurpose'] in ('object_location','field_record'),'INVALID_REQUEST',422)
+            body['photoPurpose']=payload['photoPurpose']
+        return body
+
     def _photo_metadata(self, value, body):
         _require(type(value) is dict and value.get('entityUid') == body['entityUid']
                  and value.get('entityRevision') == body['expectedEntityRevision']
@@ -80,6 +88,12 @@ class ScenePhotoReader(SceneEvidenceReader):
                 'sourceEntityRevision', 'documentId', 'contentVersionId', 'title', 'sourceSha256', 'versionNumber',
                 'newerVersionAvailable', 'documentStatus', 'unavailableReason', 'anchorUnavailableReason',
                 'displayAvailability', 'contentAvailability', 'engineeringConfirmation', 'versionMode')}
+            item['photoPurpose']=row.get('photoPurpose','object_location')
+            item['equipmentEntityUid']=row.get('equipmentEntityUid')
+            _require(item['photoPurpose'] in ('object_location','field_record'))
+            _require(item['photoPurpose']==body.get('photoPurpose','object_location'),'SOURCE_CHANGED',409)
+            if item['photoPurpose']=='field_record':
+                _require(item['equipmentEntityUid']==body['entityUid'] and relation=='direct','SOURCE_CHANGED',409)
             _sha(item['sourceRevision']); _text(item['title'], 2000, multiline=True)
             _text(item['contentVersionId']); _text(item['documentId'])
             if item['sourceSha256'] is not None: _sha(item['sourceSha256'])
@@ -106,8 +120,8 @@ class ScenePhotoReader(SceneEvidenceReader):
         return self._resolve_selected(body)
 
     def content(self, payload):
-        _require(type(payload) is dict and set(payload) == SELECTION_FIELDS | PHOTO_FIELDS, 'INVALID_REQUEST', 422)
-        body = self._selection({key: payload[key] for key in SELECTION_FIELDS})
+        _require(type(payload) is dict and (set(payload)-{'photoPurpose'}) == SELECTION_FIELDS | PHOTO_FIELDS, 'INVALID_REQUEST', 422)
+        body = self._selection({key: payload[key] for key in SELECTION_FIELDS | ({'photoPurpose'} if 'photoPurpose' in payload else set())})
         _text(payload['evidenceRef'], request=True); _text(payload['expectedContentVersionId'], request=True)
         for key in ('expectedSourceRevision', 'expectedSourceSha256', 'expectedDisplayRevision'):
             _sha(payload[key], request=True)

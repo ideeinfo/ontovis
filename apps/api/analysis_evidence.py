@@ -32,10 +32,27 @@ def validate_descriptor(kind, value):
     }[kind]
     if kind == 'drawing' and 'drawingUid' in value:
         fields = {'drawingUid', 'expectedContentSha256'}
+    if kind == 'photo' and 'photoPurpose' in value:
+        fields |= {'photoPurpose'}
+        draft.require(value['photoPurpose'] in ('object_location', 'field_record'))
+        if value['photoPurpose'] == 'field_record':
+            draft.require(value.get('installationContextId') is not None, 'EQUIPMENT_REQUIRED', 422)
     if kind == 'document' and 'knowledgeReleaseId' in value:
         fields |= {'knowledgeReleaseId', 'knowledgeNodeId'}
+    if kind == 'model' and 'configurationRefs' in value:
+        fields |= {'configurationRefs'}
+        refs=value['configurationRefs']
+        draft.require(type(refs) is list and len(refs)<=50)
+        for ref in refs:
+            draft.require(type(ref) is dict and set(ref)=={'configurationId','configurationRevision','equipmentEntityUids'})
+            draft.identifier(ref['configurationId']);draft.text(ref['configurationRevision'],100)
+            draft.require(type(ref['equipmentEntityUids']) is list and len(ref['equipmentEntityUids'])<=500)
+            draft.require(all(type(uid) is str for uid in ref['equipmentEntityUids']))
+            draft.require(len(set(ref['equipmentEntityUids']))==len(ref['equipmentEntityUids']))
+            for uid in ref['equipmentEntityUids']:draft.text(uid,512)
     draft.require(set(value) == fields)
     for key, item in value.items():
+        if key == 'configurationRefs':continue
         if key in ('installationContextId', 'expectedHierarchyRevision') and item is None:
             continue
         if key == 'pageNumber':

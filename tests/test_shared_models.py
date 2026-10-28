@@ -150,6 +150,34 @@ class SharedModelTests(unittest.TestCase):
             snapshot(sessions.registry.root, self.root / 'bad-reference', library_root=sessions.shared.library.root, service_stopped=True)
         self.assertEqual(error.exception.code, 'INVALID_SHARED_MODEL_REFERENCE')
 
+    def test_backup_preserves_configuration_history_and_rejects_a_missing_model(self):
+        from apps.api.equipment_configurations import EquipmentConfigurations
+        from tools.project_store_backup import snapshot, restore_new
+        from tools.model_store_backup import BackupError
+        model=self.calibrated();self.create('B')
+        workspace=self.sessions._workspace(self.sessions.registry.lookup('B'))
+        store=workspace.equipment_store();cid=str(uuid4())
+        body={'configurationId':cid,'expectedConfigurationRevision':None,'clientRequestId':str(uuid4()),
+            'snapshot':{'displayName':'共享设备型号','objectKind':'equipment','rootDefinition':None,
+                'models':[{'modelVersionId':model['modelVersionId'],'mappings':[]}]}}
+        saved=store.save(body,'member',lambda:None,lambda _:None,lambda _:model['components'])
+        root=self.sessions.shared.library.root;self.sessions.close()
+        receipt=snapshot(self.sessions.registry.root,self.root/'configuration-backup',library_root=root,service_stopped=True)
+        restored=self.root/'configuration-restored'
+        restore_new(self.root/'configuration-backup',restored,receipt['manifestSha256'],service_stopped=True)
+        sessions=ProjectSessions('http://127.0.0.1:18001',library_root=restored/'workbench-library',
+            workspace_root=restored/'project-spaces',factory=ProjectsAuthority)
+        self.addCleanup(sessions.close)
+        target=sessions._workspace(sessions.registry.lookup('B'))
+        self.assertEqual(target.equipment_store().detail(cid,None,lambda:None)['configurationRevision'],saved['configurationRevision'])
+        with target.library.connect() as db:
+            db.execute('drop trigger equipment_configuration_history_no_update')
+            snapshot_value=body['snapshot'];snapshot_value['models'][0]['modelVersionId']=str(uuid4())
+            db.execute('update equipment_configuration_revisions set snapshot=?',(json.dumps(snapshot_value),))
+        with self.assertRaises(BackupError) as error:
+            snapshot(sessions.registry.root,self.root/'broken-configuration',library_root=sessions.shared.library.root,service_stopped=True)
+        self.assertEqual(error.exception.code,'INVALID_SHARED_MODEL_REFERENCE')
+
     def test_shared_binary_read_does_not_enumerate_projects(self):
         model = self.upload()
         authority = self.sessions.current(self.sid).authority

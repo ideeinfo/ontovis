@@ -27,10 +27,11 @@ def _root(instance):
 
 
 class SceneEngineeringValidator:
-    def __init__(self, reader, model_components, connection_id, project_code):
+    def __init__(self, reader, model_components, connection_id, project_code, *, shared_configuration=None):
         _require(callable(getattr(reader, 'context_for_object', None))
                  and callable(getattr(reader, 'authorize', None)) and callable(model_components))
         self.reader, self.model_components = reader, model_components
+        self.shared_configuration=shared_configuration
         self.scope = {'connection_id': connection_id, 'project_code': project_code}
         _require(reader.connection_id == connection_id and reader.project_code == project_code)
 
@@ -111,6 +112,17 @@ class SceneEngineeringValidator:
         _require(mode in ('check', 'save', 'open', 'replacement'))
         _require(type(previous_validation) is dict)
         before, after = self._instances(previous_snapshot), self._instances(snapshot)
+        if self.shared_configuration and mode!='open':
+            for uid,item in after.items():
+                root=_root(item)
+                config=self.shared_configuration(root['entityUid']) if root else None
+                if not config:continue
+                old=before.get(uid)
+                _require(item['componentBindings']==(old['componentBindings'] if old else []),
+                         'SHARED_CONFIGURATION_REQUIRED',409)
+                if old is None or _root(old)!=root or old['modelVersionId']!=item['modelVersionId']:
+                    _require(any(m['modelVersionId']==item['modelVersionId'] for m in config['snapshot']['models']),
+                             'MODEL_MAPPING_REQUIRED',409)
         old_expectations = validate_expectations(previous_validation.get('engineeringExpectations', []), **self.scope)
         historical = {_key(item['ref']): item for item in old_expectations}
         old_issues = previous_validation.get('bindingIssues', [])

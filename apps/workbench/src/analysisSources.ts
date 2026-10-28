@@ -15,6 +15,7 @@ export type Recommendations={items:Recommendation[];nextOffset:number|null;nextC
 export type EvidenceSource=Partial<ProjectModelVersion & SimulatedTrend>&{
   title?:string;pageNumber?:number;pageCount?:number;versionNumber?:number;newerVersionAvailable?:boolean;
   documentId?:string;contentVersionId?:string;sourceSha256?:string;selector?:PhotoSelector|null;
+  photoPurpose?:'object_location'|'field_record';equipmentEntityUid?:string|null;
   outline?:{title:string;page:number}[];
   knowledgeReleaseId?:string;knowledgeNodeId?:string;
   item?:{entityUid:string;entityRevision:string;displayName?:string;objectKind?:string;objectScope?:string;classification?:ObjectClassification|null;identifiers?:{value:string;role:string}[];definitionParentEntityUid?:string};

@@ -18,7 +18,7 @@ const previewScene:LocalSceneSnapshot={displayName:'',coordinateFrame:{mode:'loc
 const ignore=()=>{};
 const emptyRefs:ModelResourceRef[]=[],emptyVisibility:Record<string,boolean>={};
 
-export function ProjectModelCenter({api,onOpenScene}:{api:WorkbenchApi;onOpenScene:(sceneId?:string,projectRef?:ProjectRef)=>void}) {
+export function ProjectModelCenter({api,onOpenScene,onConfigure}:{api:WorkbenchApi;onOpenScene:(sceneId?:string,projectRef?:ProjectRef)=>void;onConfigure?:()=>void}) {
   const {locale}=usePreferences(),text=(zh:string,en:string)=>locale==='zh'?zh:en;
   const [preview,setPreview]=useState<ProjectModelVersion|null>(null),[error,setError]=useState<unknown>(null);
   const inspection=useModelPreview(preview);
@@ -33,7 +33,7 @@ export function ProjectModelCenter({api,onOpenScene}:{api:WorkbenchApi;onOpenSce
       onPlace={ignore} onPreview={show} onTerrainReady={ignore} onOpenScene={onOpenScene}/></div>
     {preview&&<div className="pm-grid"><div className="pm-tree"><ModelComponentTree version={preview} inspection={inspection} onClose={()=>show(null)}/></div>
       <div className="pm-preview">
-        <ModelPreviewTools inspection={inspection}/>
+        <ModelPreviewTools inspection={inspection}/>{onConfigure&&<Btn onClick={onConfigure}>{text('在设备层级配置','Configure in equipment hierarchy')}</Btn>}
         <div className="pm-canvas"><Suspense fallback={<p role="status">{text('正在读取模型…','Loading model…')}</p>}>
           <SceneViewport key={preview.modelVersionId} api={api} snapshot={previewScene} modelRefs={emptyRefs} terrainVersion={null}
             selectedId={null} editing={false} personalVisibility={emptyVisibility} terrainVisible={false} pendingPlacement={false}

@@ -87,6 +87,18 @@ def _capture(projects, library=None, model=None):
     paired._require(not shared_registered or shared is not None, 'SHARED_MODEL_STORE_REQUIRED')
     for root in roots:
         with closing(sqlite3.connect((root / 'library.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:
+            if db.execute("select 1 from sqlite_master where name='equipment_configuration_revisions'").fetchone():
+                project = db.execute('select project_code from workspace_scope').fetchone()[0]
+                for raw, in db.execute('select snapshot from equipment_configuration_revisions'):
+                    configuration = json.loads(raw)
+                    for model in configuration['models']:
+                        paired._require(shared is not None and model['modelVersionId'] in models,
+                                        'INVALID_SHARED_MODEL_REFERENCE')
+                        references = [row['objectRef'] for row in model['mappings']]
+                        if configuration.get('rootDefinition'):
+                            references.append(configuration['rootDefinition']['objectRef'])
+                        paired._require(all((ref['ontobaseConnectionId'], ref['projectCode']) ==
+                            (shared['connectionId'], project) for ref in references), 'PROJECT_SCOPE_MISMATCH')
             if not db.execute("select 1 from sqlite_master where name='scene_model_scope'").fetchone():
                 continue
             paired._require(shared is not None, 'SHARED_MODEL_STORE_REQUIRED')

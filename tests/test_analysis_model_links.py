@@ -59,6 +59,25 @@ class ModelAssociationTests(TestCase):
         return relationships(self.reader, [({'evidenceRefId': 'object', 'sourceKind': 'object'}, {'entityUid': self.item['entityUid']}),
             ({'evidenceRefId': 'model', 'sourceKind': 'model'}, {'modelVersionId': 'version'})], self.library)
 
+    def test_canvas_keeps_the_configuration_revision_captured_when_model_was_added(self):
+        from apps.api.analysis_model_links import configuration_references, frozen_configuration_bindings
+        self.db.executescript('create table equipment_configurations(id text,head_revision text,project_code text);'
+            'create table equipment_configuration_revisions(configuration_id text,revision text,snapshot text);'
+            'create table equipment_configuration_assignments(equipment_uid text,configuration_id text);')
+        profile={'models':[{'modelVersionId':'version','mappings':[{'objectRef':{'entityUid':'definition-cabinet'},'componentKeys':['cabinet-key']}]}]}
+        self.db.execute("insert into equipment_configurations values('configuration','r1','P')")
+        self.db.execute('insert into equipment_configuration_revisions values(?,?,?)',('configuration','r1',json.dumps(profile)))
+        self.db.execute("insert into equipment_configuration_assignments values('unit7','configuration')")
+        captured=configuration_references(self.library,'version','P')
+        profile['models'][0]['mappings'][0]['componentKeys']=['changed-key']
+        self.db.execute('insert into equipment_configuration_revisions values(?,?,?)',('configuration','r2',json.dumps(profile)))
+        self.db.execute("update equipment_configurations set head_revision='r2'")
+        frozen=frozen_configuration_bindings(self.reader,self.library,'version',captured)
+        self.assertEqual(frozen[0]['componentKeys'],['cabinet-key'])
+        self.assertEqual(frozen[0]['configurationRevision'],'r1')
+        self.assertEqual(frozen[0]['equipmentEntityUid'],'unit7')
+        self.assertEqual(configuration_references(self.library,'version','other-project'),[])
+
     def test_non_demo_project_uses_exact_binding_before_a_same_named_candidate(self):
         self.model(asset='candidate', version='candidate-v', name='A name-only model')
         self.model(asset='bound', version='version', name='Z bound model', components=[{'componentKey': 'cabinet-key', 'displayName': 'Different label'}])

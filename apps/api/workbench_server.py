@@ -41,6 +41,8 @@ from apps.api.legacy_scene_sources import LegacySceneSources
 from apps.api.imagery_library import ImageryLibrary, MAX_BYTES as MAX_IMAGERY_BYTES, MAX_VERSIONS as MAX_IMAGERY_VERSIONS, MAX_TOTAL_BYTES as MAX_IMAGERY_TOTAL_BYTES
 from apps.api.public_geodata import PublicGeoData
 from apps.api.storage_lease import storage_lease, StorageInUse
+from apps.api.equipment_configurations import EquipmentConfigurations
+from apps.api.equipment_reader import EquipmentReader
 
 
 class WorkbenchSessions(UserSessions):
@@ -77,6 +79,8 @@ class WorkbenchSessions(UserSessions):
         self.public_geodata = PublicGeoData(self.library, self.terrains, self.imagery) if self.terrains and self.imagery else None
         self.geometry = SceneGeometryProcess(self.library, python_executable=terrain_python,
             terrain_root=self.terrains.root / 'versions') if self.terrains else None
+        if self.library and project_code!='__shared_models__':
+            self._equipment_store=EquipmentConfigurations(self.library,self.ontobase_connection_id,self.project_code)
 
     def scene_access(self, authority):
         """Read project permission without requiring the legacy default installation."""
@@ -86,6 +90,85 @@ class WorkbenchSessions(UserSessions):
                 or not isinstance(access.get('accessRevision'), str) or not access['accessRevision']):
             raise PreviewError(403, 'FORBIDDEN')
         return access
+
+    def equipment_store(self):
+        if self.library is None:
+            raise PreviewError(503, 'WORKSPACE_REQUIRED')
+        if not hasattr(self, '_equipment_store'):
+            self._equipment_store = EquipmentConfigurations(self.library,self.ontobase_connection_id,self.project_code)
+        return self._equipment_store
+
+    def equipment_request(self, sid, path, payload):
+        writing=path.endswith(('/save','/assign','/associate'))
+        row,authorize,access,actor=self.project_authorization(sid,payload,writing=writing)
+        body={k:v for k,v in payload.items() if k!='expectedSessionRevision'}
+        reader=SceneEngineeringReader(row.authority,self.ontobase_connection_id,self.project_code,lambda:self.guard(sid,row))
+        equipment=EquipmentReader(reader)
+        if path=='/api/workbench/equipment':
+            value=equipment.catalogue(body)
+            counts={}
+            if self.library and value['items']:
+                uids=[item['entityUid'] for item in value['items']]
+                with self.library.connect() as db:
+                    rows=db.execute('''select json_extract(i.value,'$.rootBinding.objectRef.entityUid'),count(*)
+                        from scenes s join scene_revisions r on r.revision=s.head_revision
+                        join json_each(r.snapshot,'$.instances') i left join scene_lifecycle l on l.scene_id=s.id
+                        where s.project_code=? and coalesce(l.state,'active')='active'
+                        and json_extract(i.value,'$.rootBinding.objectRef.entityUid') in ('''+','.join('?' for _ in uids)+''')
+                        group by json_extract(i.value,'$.rootBinding.objectRef.entityUid')''',[self.project_code,*uids]).fetchall()
+                    counts=dict(rows)
+            value['items']=[dict(item,sceneUseCount=counts.get(item['entityUid'],0)) for item in value['items']]
+        elif path=='/api/workbench/equipment/resolve':
+            if set(body)!={'entityUids'}:raise PreviewError(422,'INVALID_REQUEST')
+            value={'items':list(equipment.resolve(body['entityUids']).values())}
+        elif path=='/api/workbench/equipment/photo-candidates':
+            if set(body)-{'cursor'}:raise PreviewError(422,'INVALID_REQUEST')
+            value=reader._request('GET',reader.prefix+'/equipment/photo-candidates'+('?' + urlencode(body) if body else ''))
+        elif path=='/api/workbench/equipment/photos/associate':
+            fields={'entityUid','expectedEntityRevision','expectedHierarchyRevision','documentId','contentVersionId','renditionId','expectedDisplayRevision','basis','clientRequestId'}
+            if set(body)!=fields or not isinstance(body['entityUid'],str) or not 0<len(body['entityUid'])<=512:raise PreviewError(422,'INVALID_REQUEST')
+            value=reader._request('POST',reader.prefix+'/equipment/'+quote(body['entityUid'],safe='')+'/photos',{k:v for k,v in body.items() if k!='entityUid'})
+        elif path=='/api/workbench/equipment/definitions/children':
+            if not {'parentEntityUid'}<=set(body)<={'parentEntityUid','cursor'}:raise PreviewError(422,'INVALID_REQUEST')
+            value=reader._request('GET',reader.prefix+'/object-definitions/cabinets/children?'+urlencode({**body,'limit':50}))
+        elif path=='/api/workbench/equipment/configurations':
+            if body:raise PreviewError(422,'INVALID_REQUEST')
+            value=self.equipment_store().catalogue(authorize) if self.library else {'items':[],'assignments':[]}
+            uids=sorted({m['objectRef']['entityUid'] for cfg in value['items'] for model in cfg['snapshot']['models'] for m in model['mappings']})
+            value['objects']=[]
+            for offset in range(0,len(uids),50):value['objects'].extend(reader._resolve(uids[offset:offset+50]).values())
+            value['models']=[]
+            for version in sorted({m['modelVersionId'] for cfg in value['items'] for m in cfg['snapshot']['models']}):
+                identity=self.project_models.content_identity(version)
+                value['models'].append(self.project_models.model(identity['modelAssetId'],version,authorize))
+        elif path=='/api/workbench/equipment/configurations/detail':
+            if not {'configurationId'}<=set(body)<={'configurationId','configurationRevision'}:raise PreviewError(422,'INVALID_REQUEST')
+            value=self.equipment_store().detail(body['configurationId'],body.get('configurationRevision'),authorize)
+        elif path=='/api/workbench/equipment/configurations/save':
+            snapshot=body.get('snapshot')
+            if type(snapshot) is not dict or type(snapshot.get('models')) is not list or len(snapshot['models'])>20:
+                raise PreviewError(422,'INVALID_REQUEST')
+            refs=[]
+            if snapshot.get('rootDefinition') is not None:
+                if type(snapshot['rootDefinition']) is not dict:raise PreviewError(422,'INVALID_REQUEST')
+                refs.append(snapshot['rootDefinition'].get('objectRef'))
+            for model in snapshot['models']:
+                if type(model) is not dict or type(model.get('mappings')) is not list or len(model['mappings'])>500:
+                    raise PreviewError(422,'INVALID_REQUEST')
+                for mapping in model['mappings']:
+                    if type(mapping) is not dict:raise PreviewError(422,'INVALID_REQUEST')
+                    refs.append(mapping.get('objectRef'))
+            uids=sorted({validate_ref(ref,connection_id=self.ontobase_connection_id,
+                project_code=self.project_code)['entityUid'] for ref in refs})
+            objects={}
+            for offset in range(0,len(uids),50):objects.update(reader._resolve(uids[offset:offset+50]))
+            value=self.equipment_store().save(body,actor,authorize,lambda uid:{'item':objects[uid]},
+                lambda version:self.project_models.library.version(version)['components'])
+        elif path=='/api/workbench/equipment/configurations/assign':
+            value=self.equipment_store().assign(body,actor,authorize,equipment.resolve)
+        else:raise PreviewError(422,'INVALID_REQUEST')
+        authorize()
+        return {**value,'sessionRevision':row.revision,'capabilities':{'canWrite':access.get('role')=='admin'}}
 
     def project_authorization(self, sid, payload, *, writing, write_code='SCENE_WRITE_FORBIDDEN'):
         with self.lock:
@@ -554,7 +637,7 @@ class WorkbenchSessions(UserSessions):
                 lambda: self.guard(sid, row))
             engineering_check = SceneEngineeringValidator(reader,
                 lambda identifier: model_details(identifier)['components'],
-                self.ontobase_connection_id, self.project_code)
+                self.ontobase_connection_id, self.project_code,shared_configuration=self.equipment_store().for_equipment)
 
             def terrain_replacement(snapshot, candidate, strategy):
                 if self.geometry is None or self.terrains is None:
@@ -597,8 +680,31 @@ class WorkbenchSessions(UserSessions):
                 fixed_terrains.update({item['terrainVersionId']: item for item in opened.get('terrainRefs', [])})
                 validate_resources(opened['snapshot'])
                 selected = reader.context_for_object(selected_ref['entityUid'])
-                value = SceneLocationResolver(model_details).resolve(opened, selected, body['contextEpoch'],
-                    body.get('representationChoice'))
+                projected,uses=self.equipment_store().resolve_scene(opened,EquipmentReader(reader).resolve,authorize)
+                target=selected;shared_mapping=None;inherited=False
+                choice=body.get('representationChoice')
+                if selected['context'] is None and choice:
+                    use=next((use for use in uses if use['sceneModelInstanceId']==choice['sceneModelInstanceId']),None)
+                    if use:
+                        uid=selected['item']['entityUid'];parent=selected['item'].get('definitionParentEntityUid')
+                        mapping=next((m for m in use['definitionMappings'] if m['objectRef']['entityUid']==uid),None)
+                        if mapping is None and parent:
+                            mapping=next((m for m in use['definitionMappings'] if m['objectRef']['entityUid']==parent),None)
+                            inherited=mapping is not None
+                        if mapping:
+                            source=mapping['objectRef']['entityUid']
+                            target_uid=use['equipmentTargets'].get(source,use['equipmentEntityUid'])
+                            target=reader.context_for_object(target_uid)
+                            if target_uid==use['equipmentEntityUid'] and mapping['componentKeys']:
+                                instance=next(i for i in projected['snapshot']['instances'] if i['sceneModelInstanceId']==use['sceneModelInstanceId'])
+                                instance['componentBindings'].append({'objectRef':target['objectRef'],'componentKeys':mapping['componentKeys']})
+                            shared_mapping={'configurationId':use['configurationId'],'configurationRevision':use['configurationRevision'],
+                                'equipmentEntityUid':use['equipmentEntityUid'],'definitionObjectRef':mapping['objectRef']}
+                value = SceneLocationResolver(model_details).resolve(projected, target, body['contextEpoch'],choice)
+                if shared_mapping:
+                    value['selectedObject']={**selected['item'],'objectRef':selected['objectRef']}
+                    if value['status']=='located' and inherited:value['mode']='ancestor'
+                    value['sharedConfiguration']=shared_mapping
                 authorize()
             elif path == '/api/workbench/scenes/head' and set(body) == {'sceneId','viewingRevision'}:
                 value = self.scenes.head(body['sceneId'], body['viewingRevision'], authority.username, authorize)

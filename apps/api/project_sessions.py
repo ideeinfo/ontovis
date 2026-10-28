@@ -22,7 +22,7 @@ from .scene_engineering import SceneEngineeringReader
 from .scene_photos import ScenePhotoReader
 
 
-METHODS = ('scene_request', 'scene_object_request', 'resource_request', 'resource_upload',
+METHODS = ('scene_request', 'scene_object_request', 'equipment_request', 'resource_request', 'resource_upload',
            'terrain_request', 'terrain_upload', 'imagery_request', 'imagery_upload', 'imagery_chunk',
            'public_geodata_request', 'legacy_migration_request', 'read', 'upload', 'save_binding')
 
@@ -308,7 +308,7 @@ class ProjectSessions(UserSessions):
         access = self._access(sid, row, code)
         clean = {k: v for k, v in payload.items() if k != 'projectRef'}
         writing = method.endswith('upload') or method == 'imagery_chunk' or path == '/api/workbench/imagery/uploads/complete' or path.endswith(('/create', '/save', '/calibrate', '/import-existing',
-            '/preserve-legacy-display', '/ensure', '/binding', '/cancel', '/start', '/activate', '/delete', '/restore'))
+            '/preserve-legacy-display', '/ensure', '/binding', '/cancel', '/start', '/activate', '/delete', '/restore', '/assign', '/associate'))
         if writing and access.get('role') != 'admin':
             raise PreviewError(403, 'SCENE_WRITE_FORBIDDEN' if '/scenes' in path or '/terrains' in path or '/public-geodata/' in path
                                else 'IMAGERY_WRITE_FORBIDDEN' if '/imagery' in path else 'MODEL_WRITE_FORBIDDEN')
@@ -317,7 +317,7 @@ class ProjectSessions(UserSessions):
                 '/api/workbench/imagery/uploads/complete', '/api/workbench/imagery/uploads/cancel',
                 '/api/workbench/scenes/delete', '/api/workbench/scenes/restore'):
             workspace = self.registry.prepare(code)
-        if method == 'scene_object_request' or path == '/api/workbench/catalog':
+        if method == 'scene_object_request' or path == '/api/workbench/catalog' or method=='equipment_request' and workspace is None:
             if code not in self.readers:
                 service = WorkbenchSessions(self.base_url, code, None, ontobase_connection_id=self.connection_id)
                 service.lock = self.lock
@@ -456,7 +456,7 @@ class ProjectSessions(UserSessions):
                 else:self.guard(sid,row)
                 guard = lambda: self.guard(sid, row)
                 reader = AnalysisSourceReader(SceneEngineeringReader(row.authority, self.connection_id, code, guard),
-                    self.shared.project_models, service.work_orders, guard, actor)
+                    self.shared.project_models, service.work_orders, guard, actor, scene_library=service.library)
                 if action == 'evidence/register':
                     value = sources.register(actor, body, authorize, reader.resolve)
                 elif action == 'start':

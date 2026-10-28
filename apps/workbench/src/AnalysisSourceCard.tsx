@@ -57,6 +57,7 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     <div className="ac-source-toolbar"><small>{card.historical?(en?'Historical reference':'历史参考'):en?'Fixed source':'固定来源'}{value.versionNumber?' · v'+value.versionNumber:''}</small>
       {card.kind==='photo'&&full&&<Btn aria-pressed={original} onClick={()=>setOriginal(v=>!v)}>{original?(en?'Fast preview':'快速预览'):(en?'Original image':'查看原图')}</Btn>}
       {!full&&<div className="ac-preview-controls">{active&&<IconBtn label={(en?'Collapse preview: ':'收起预览：')+card.title} onClick={onDeactivate}><ChevronUp size={14}/></IconBtn>}<Btn onClick={onOpen}><ExternalLink size={13}/>{en?'Expand':'展开查看'}</Btn></div>}</div>
+    {card.kind==='photo'&&<small>{value.photoPurpose==='field_record'?(en?'Device field photo':'本机现场照片'):(en?'Shared object location photo':'共享对象定位照片')}</small>}
     {full&&card.kind==='photo'&&!!image&&imagePending&&<small role="status">{original?(en?'Loading original image…':'正在加载原图…'):(en?'Loading preview…':'正在加载预览…')}</small>}
     {card.kind==='model3d'&&anchor?.referenceKind&&<p className="ac-reference-notice" role="status">{anchor.referenceKind==='name_candidate'?(en?'Viewing a matching-name candidate; no active object binding is established.':'当前查看同名构件候选，尚未建立该对象的有效绑定。'):(en?'Viewing a historical binding from a recycled scene.':'当前按回收站场景中的历史绑定定位，仅作参考。')}</p>}
     {card.kind==='object'&&<><strong>{value.item?.displayName||card.title}</strong><p>{value.item?.identifiers?.filter(i=>i.role==='primary').map(i=>i.value).join(' · ')}</p>

@@ -63,6 +63,36 @@ class ModelLinksHttpTests(unittest.TestCase):
         self.assertEqual(response[0], 200, response[1]); row = response[1]['items'][0]
         self.assertEqual((row['matchType'], row['selector']['modelVersionId']), ('binding', model['modelVersionId']))
 
+    def test_model_handle_pins_shared_configuration_before_later_edits(self):
+        created,_=self.create();model,_=self.model()
+        project={'ontobaseConnectionId':'ontobase-primary','projectCode':'SYNTHETIC-A'}
+        service=self.sessions._workspace(self.sessions.registry.lookup('SYNTHETIC-A'))
+        metadata=self.sessions.shared.project_models.model(model['modelAssetId'],model['modelVersionId'],lambda:None)
+        key=metadata['components'][0]['componentKey'];cid=str(uuid4())
+        target=self.object('SYNTHETIC-A','CABINET')
+        target['item']['installationContextId']=None
+        snapshot={'displayName':'设备共享配置','objectKind':'equipment','rootDefinition':None,'models':[
+            {'modelVersionId':model['modelVersionId'],'mappings':[{'objectRef':dict(project,entityUid='synthetic-cabinet'),
+              'expectedEntityRevision':'r1','componentKeys':[key]}]}]}
+        store=service.equipment_store()
+        first=store.save({'configurationId':cid,'expectedConfigurationRevision':None,'snapshot':snapshot,'clientRequestId':str(uuid4())},
+            'writer',lambda:None,lambda _:target,lambda _:metadata['components'])
+        refs=[]
+        with patch('apps.api.scene_engineering.SceneEngineeringReader.context_for_object',return_value=target),patch('apps.api.scene_engineering.SceneEngineeringReader.detail',return_value=target):
+            for kind,selector in [('object',{'entityUid':'synthetic-cabinet','expectedEntityRevision':'r1'}),
+                ('model',{'modelAssetId':model['modelAssetId'],'modelVersionId':model['modelVersionId'],'expectedContentRevision':metadata['contentRevision'],'expectedSha256':metadata['sha256']})]:
+                status,ref,_=self.request(ROOT+'/evidence/register',{'projectRef':project,'analysisSessionId':created['analysisSessionId'],
+                    'expectedAnalysisRevision':1,'requestId':str(uuid4()),'sourceKind':kind,'selector':selector})
+                self.assertEqual(status,200,ref);refs.append(ref['evidenceRefId'])
+            changed=deepcopy(snapshot);changed['models'][0]['mappings']=[]
+            store.save({'configurationId':cid,'expectedConfigurationRevision':first['configurationRevision'],'snapshot':changed,'clientRequestId':str(uuid4())},
+                'writer',lambda:None,lambda _:target,lambda _:metadata['components'])
+            status,result,_=self.request(ROOT+'/evidence/relationships',{'projectRef':project,'analysisSessionId':created['analysisSessionId'],'evidenceRefIds':refs})
+        self.assertEqual(status,200,result)
+        link=next(row for row in result['items'] if row['kind']=='model_binding')
+        self.assertEqual(link['anchor']['componentKeys'],[key])
+        self.assertEqual(link['anchor']['configurationRevision'],first['configurationRevision'])
+
     def test_adding_alarm_then_mapped_object_changes_actual_relationship_response(self):
         project, created, _ = self.demo(); identity = sim.identity('13001')
         descriptor = {key: identity[key] for key in ('datasetId', 'datasetRevision')}

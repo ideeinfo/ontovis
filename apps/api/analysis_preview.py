@@ -308,7 +308,7 @@ def relationships(reader, fixed, scene_library):
             uid = target['entityUid']
             if kind in ('photo', 'drawing') and descriptor.get('entityUid') == uid:
                 anchor = value.get('selector') if kind == 'photo' else drawings.get(identity, {}).get('selector')
-                add(object_id, identity, kind + '_location', '照片定位' if kind == 'photo' else '图纸定位',
+                add(object_id, identity, kind + '_location', ('本机现场照片' if descriptor.get('photoPurpose')=='field_record' else '照片定位') if kind == 'photo' else '图纸定位',
                     {'entityUid': uid, 'selector': anchor}, '来源中已登记的对象关联')
             if kind == 'object' and obj['item'].get('definitionParentEntityUid') == descriptor['entityUid']:
                 add(object_id, identity, 'containment', '所属设备', reason='OntoBase 已登记定义层级')
@@ -317,7 +317,7 @@ def relationships(reader, fixed, scene_library):
             for target, other in drawings.items():
                 if source != target and ref.get('selector') and ref.get('targetDrawingUid') == other['drawingUid'] and ref.get('targetRevision') == other['sourceRevision']:
                     add(source, target, 'drawing_reference', '图纸引用 · ' + ref['title'], {'drawingUid': other['drawingUid']}, ref.get('reason') or '')
-    from .analysis_model_links import scene_bindings, candidate_components, component_name_index
+    from .analysis_model_links import scene_bindings, candidate_components, component_name_index, frozen_configuration_bindings
     models = {ref: desc for ref, (kind, desc, _) in values.items() if kind == 'model'}
     indexes = {ref: component_name_index(values[ref][2].get('components', [])) for ref in models}
     bindings, truncated = scene_bindings(reader,scene_library,model_versions=[model['modelVersionId'] for model in models.values()])
@@ -328,16 +328,26 @@ def relationships(reader, fixed, scene_library):
         for model_id, model in models.items():
             components = values[model_id][2].get('components', [])
             keys = {component.get('componentKey') for component in components}
-            matched = [row for row in bindings if row['modelVersionId']==model['modelVersionId']
-                       and row['entityUid']==descriptor['entityUid'] and set(row['componentKeys']) <= keys]
+            # Older model handles predate shared configurations. Do not add
+            # newly created project mappings to their historical relationships.
+            candidates_bindings=[row for row in bindings if not row.get('configurationId')]
+            if 'configurationRefs' in model:
+                candidates_bindings+=frozen_configuration_bindings(reader,scene_library,model['modelVersionId'],model['configurationRefs'])
+            source_uid=obj['item'].get('sourceTemplateEntityUid') or obj['item'].get('definitionParentEntityUid')
+            root_uid=(obj.get('context') or {}).get('rootEntityUid')
+            matched = [row for row in candidates_bindings if row['modelVersionId']==model['modelVersionId']
+                       and (row['entityUid']==descriptor['entityUid'] or row['wholeModel'] and row.get('equipmentEntityUid')==descriptor['entityUid'] or source_uid and row['entityUid']==source_uid
+                            and (not root_uid or row.get('equipmentEntityUid')==root_uid)) and set(row['componentKeys']) <= keys]
             active = [row for row in matched if row['sceneState']=='active']
             for row in active or matched:
                 history = row['sceneState']!='active'
-                anchor = {'componentKeys':row['componentKeys'],'sceneId':row['sceneId'],'sceneRevision':row['sceneRevision']}
+                anchor = {'componentKeys':row['componentKeys']}
+                if row.get('sceneId'):anchor.update(sceneId=row['sceneId'],sceneRevision=row['sceneRevision'])
+                if row.get('configurationId'):anchor.update(configurationId=row['configurationId'],configurationRevision=row['configurationRevision'])
                 if history: anchor['referenceKind']='historical_binding'
                 add(object_id,model_id,'model_binding_history' if history else 'model_binding',
                     '历史场景绑定' if history else '模型整体绑定' if row['wholeModel'] else '模型构件绑定',anchor,
-                    '绑定保存在回收站场景中，只作历史参考' if history else '有效场景中已保存的对象绑定；几何精度保持来源标识',
+                    '绑定保存在回收站场景中，只作历史参考' if history else '本项目已保存的共享型号映射；历史画布固定所引用的配置修订' if row.get('configurationId') else '有效场景中已保存的对象绑定；几何精度保持来源标识',
                     origin='candidate' if history else 'source')
                 if history:
                     gap(object_id,'MODEL_BINDING_IN_RECYCLE_BIN'); gap(model_id,'MODEL_BINDING_IN_RECYCLE_BIN')

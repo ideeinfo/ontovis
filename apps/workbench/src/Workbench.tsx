@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
-import { Boxes, Building2, ChevronDown, ChevronRight, ClipboardList, Database, FileClock, Focus, GitBranch, Languages, Layers, LayoutDashboard, Link2, LogOut, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
+import { Boxes, Building2, ChevronDown, ChevronRight, ClipboardList, Database, FileClock, Focus, GitBranch, Languages, Layers, LayoutDashboard, LogOut, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
 import logo from '../../../assets/brand/ONTOVis.png';
 import { ApiError, cancelled, failureMessage, WorkbenchApi } from './api';
 import type { ContextView, ModelView, ObjectView, SessionView } from './types';
@@ -21,7 +21,7 @@ import {LegacySceneEntryReader} from './legacySceneEntry';
 import type {LegacySceneEntryTarget} from './sceneTypes';
 import {LandingPage} from './LandingPage';
 import {ProjectsPanel} from './ProjectsPanel';
-import {ProjectObjects} from './ProjectObjects';
+import {EquipmentHierarchy} from './EquipmentHierarchy';
 import type {ProjectAccess,ProjectRef,ProjectSummary} from './projectTypes';
 import {canNavigate,isGlobalPage,workbenchHeader,type WorkbenchPage} from './workbenchNavigation';
 
@@ -33,7 +33,7 @@ const AnalysisWorkspace = lazy(() => import('./AnalysisWorkspace').then(module =
 const DataAlarms = lazy(() => import('./DataAlarms').then(module => ({default:module.DataAlarms})));
 const navigation = [
   ['project', 'projectAccess', Building2], ['models', 'modelCenter', Boxes],
-  ['bindings', 'componentBinding', Link2], ['hierarchy', 'equipmentHierarchy', GitBranch],
+  ['hierarchy', 'equipmentHierarchy', GitBranch],
   ['scene', 'sceneSettings', Layers], ['orders', 'projectWorkOrders', ClipboardList], ['analysis', 'analysisDrafts', LayoutDashboard], ['data', 'dataAlarms', Database],
   ['ai', 'aiPolicy', Sparkles], ['audit', 'evidenceAudit', FileClock],
 ] as const;
@@ -83,10 +83,10 @@ export function Workbench() {
   const [initialOrderQuery,setInitialOrderQuery]=useState('');
   const [initialAnalysisEntry,setInitialAnalysisEntry]=useState<import('./analysisSources').AnalysisEntry|null>(null);
   const [pendingOrderLeave,setPendingOrderLeave]=useState<(()=>void)|null>(null);
-  function leaveOrders(change:()=>void){if((page==='orders'||page==='analysis')&&ordersDirty)setPendingOrderLeave(()=>change);else change();}
+  function leaveOrders(change:()=>void){if((page==='orders'||page==='analysis'||page==='hierarchy')&&ordersDirty)setPendingOrderLeave(()=>change);else change();}
   function navigate(next:Page,legacyVersionId:string|null=null,orderQuery='',analysisEntry:import('./analysisSources').AnalysisEntry|null=null){
     if(!canNavigate(next,!!project))next='project';
-    if(next==='bindings'&&legacyVersionId===null)next='scene';
+    if(next==='bindings'&&legacyVersionId===null)next='hierarchy';
     const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setResourceSceneId(undefined);setLegacyReady(null);
       api.selectProject(next==='models'?null:project?.projectRef||null);setError(null);
       if(next==='bindings'){setModelVersionId(legacyVersionId);setModel(null);setContext(null);setDetail(null);setModelReload(value=>value+1);}
@@ -267,11 +267,11 @@ export function Workbench() {
     </nav>
       <main className="cw-main"><div className="cw-toolbar">{workspace && <IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn>}<div className="cw-page-title"><span className="cw-breadcrumb">{t('projectManagement')}<ChevronRight size={11}/>{t(title)}</span><h1>{t(title)}</h1></div>{workspace && <><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}</>}<span className="cw-grow"/>{workspace && <div className="cw-layout" role="group" aria-label={t('workbenchLayout')}>{(['balanced','modelLayout','drawingLayout'] as const).map(value => <button type="button" key={value} aria-pressed={layout === value} className={layout === value ? 'active' : ''} onClick={() => setLayout(value)}>{t(value)}</button>)}</div>}<IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn>{workspace && <IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn>}</div>
       {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}</div>}
-      {page==='scene'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${JSON.stringify(project?.projectRef)}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceSceneId||''}`} api={api} ref={sceneWorkspace} initialEntry={sceneEntry} initialSceneId={resourceSceneId} project={project} onProjectCreated={enterProject} onProjectName={setProjectName}/></Suspense>}
+      {page==='scene'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${JSON.stringify(project?.projectRef)}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceSceneId||''}`} api={api} ref={sceneWorkspace} initialEntry={sceneEntry} initialSceneId={resourceSceneId} project={project} onProjectCreated={enterProject} onProjectName={setProjectName} onConfigure={()=>navigate('hierarchy')}/></Suspense>}
       {page==='orders'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><WorkOrders key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} initialQuery={initialOrderQuery} onDirtyChange={setOrdersDirty} onAnalyze={orderId=>navigate('analysis',null,'',{orderId})} onOpenAnalysis={(analysisSessionId,analysisRevision)=>navigate('analysis',null,'',{analysisSessionId,analysisRevision})}/></Suspense>}
       {page==='analysis'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><AnalysisWorkspace initialEntry={initialAnalysisEntry} onOpenWorkOrder={code=>navigate('orders',null,code)} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onDirtyChange={setOrdersDirty}/></Suspense>}
       {page==='data'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><DataAlarms onAnalyze={entry=>navigate('analysis',null,'',entry)} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onOpenWorkOrders={code=>navigate('orders',null,code)}/></Suspense>}
-      {!workspace&&page!=='scene'&&page!=='orders'&&page!=='analysis'&&page!=='data'&&<div className="cw-page-content">{page==='models'&&active?<ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>:page==='hierarchy'&&active&&project?<ProjectObjects key={JSON.stringify(project.projectRef)} api={api} onAnalyze={entry=>navigate('analysis',undefined,undefined,entry)}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
+      {!workspace&&page!=='scene'&&page!=='orders'&&page!=='analysis'&&page!=='data'&&<div className="cw-page-content">{page==='models'&&active?<ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} onConfigure={()=>navigate('hierarchy')} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>:page==='hierarchy'&&active&&project?<EquipmentHierarchy key={JSON.stringify(project.projectRef)} api={api} onDirtyChange={setOrdersDirty} onOpenScene={()=>navigate('scene')} onAnalyze={entry=>navigate('analysis',undefined,undefined,entry)}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
       {page==='scene'&&!active&&<p className="cw-state">{t('loginPrompt')}</p>}
       {workspace&&(!active||legacyReady===entryIdentity)&&<div className={`cw-workspace layout-${layout}`}>
         <ObjectsPanel key={`${session?.sessionRevision}:${reload}:${context?.context.hierarchyRevision}`} api={api} view={context} selected={selection.uid} ancestors={detail?.ancestors.path.map(row=>row.object.entityUid) || []} onSelect={select} className={left ? 'is-open' : ''}/>
@@ -285,7 +285,7 @@ export function Workbench() {
         </aside>
       </div>}</main>
     </div></div>}
-    {pendingOrderLeave&&<Modal title={page==='analysis'?(locale==='zh'?'分析修改尚未保存':'Unsaved analysis changes'):(locale==='zh'?'诊断方案尚未保存':'Unsaved investigation')} description={locale==='zh'?'继续离开将放弃当前未保存的修改。':'Leaving discards the current unsaved edits.'} onClose={()=>setPendingOrderLeave(null)}><div className="wo-actions"><Btn onClick={()=>setPendingOrderLeave(null)}>{locale==='zh'?'继续编辑':'Continue editing'}</Btn><Btn onClick={()=>{const change=pendingOrderLeave;setPendingOrderLeave(null);setOrdersDirty(false);change();}}>{locale==='zh'?'放弃修改并离开':'Discard and leave'}</Btn></div></Modal>}
+    {pendingOrderLeave&&<Modal title={page==='hierarchy'?(locale==='zh'?'共享配置尚未保存':'Unsaved equipment configuration'):page==='analysis'?(locale==='zh'?'分析修改尚未保存':'Unsaved analysis changes'):(locale==='zh'?'诊断方案尚未保存':'Unsaved investigation')} description={locale==='zh'?'继续离开将放弃当前未保存的修改。':'Leaving discards the current unsaved edits.'} onClose={()=>setPendingOrderLeave(null)}><div className="wo-actions"><Btn onClick={()=>setPendingOrderLeave(null)}>{locale==='zh'?'继续编辑':'Continue editing'}</Btn><Btn onClick={()=>{const change=pendingOrderLeave;setPendingOrderLeave(null);setOrdersDirty(false);change();}}>{locale==='zh'?'放弃修改并离开':'Discard and leave'}</Btn></div></Modal>}
     {modal === 'login' && <Modal className="ov-login-dialog" title={t('signInTitle')} description={t('accountHint')} onClose={closeModal} onCloseAutoFocus={event=>{if(loginButton.current){event.preventDefault();loginButton.current.focus();}}}><form className="ov-simple-login" onSubmit={event => {event.preventDefault();void login();}}>
       <input aria-label={t('username')} placeholder={t('username')} autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required disabled={signingIn||signingOut}/><input aria-label={t('password')} placeholder={t('password')} type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={signingIn||signingOut}/>
       {(sessionCheck==='loading'||signingOut)&&!signingIn&&<p role="status">{t('loading')}</p>}

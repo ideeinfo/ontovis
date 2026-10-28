@@ -55,6 +55,17 @@ class SceneEngineeringValidationTests(unittest.TestCase):
         self.validation = self.facts(self.original)
         self.authority.calls.clear()
 
+    def test_shared_configuration_requires_component_edits_at_project_level(self):
+        self.validator.shared_configuration=lambda uid:{'snapshot':{'models':[{'modelVersionId':VERSION}]}}
+        changed=copy.deepcopy(self.original);changed['instances'][0]['componentBindings']=[]
+        self.expect('SHARED_CONFIGURATION_REQUIRED',lambda:self.run_check(changed),409)
+
+    def test_new_root_cannot_adopt_a_model_outside_its_shared_configuration(self):
+        self.validator.shared_configuration=lambda uid:{'snapshot':{'models':[{'modelVersionId':NEW_VERSION}]}}
+        old=copy.deepcopy(self.original);old['instances']=[]
+        current=copy.deepcopy(self.original);current['instances'][0]['componentBindings']=[]
+        self.expect('MODEL_MAPPING_REQUIRED',lambda:self.run_check(current,old=old,validation={'engineeringExpectations':[],'bindingIssues':[]}),409)
+
     def facts(self, scene):
         refs = {}
         for item in scene['instances']:

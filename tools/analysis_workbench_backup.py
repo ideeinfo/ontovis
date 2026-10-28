@@ -54,6 +54,16 @@ def _paired(workbench, workbench_sha, package):
                     (descriptor['modelVersionId'],)).fetchone()
                 draft.require(value == (descriptor['modelAssetId'], descriptor['contentRevision'], descriptor['sha256']),
                               'ANALYSIS_PAIR_SOURCE_MISMATCH', 409)
+            if descriptor.get('configurationRefs'):
+                project=sessions[source['session_id']]['project_code']
+                with database(libraries[project]) as db:
+                    for reference in descriptor['configurationRefs']:
+                        row=db.execute('''select r.snapshot from equipment_configuration_revisions r
+                            join equipment_configurations c on c.id=r.configuration_id
+                            where c.project_code=? and c.id=? and r.revision=?''',
+                            (project,reference['configurationId'],reference['configurationRevision'])).fetchone()
+                        draft.require(row and any(model['modelVersionId']==descriptor['modelVersionId']
+                            for model in json.loads(row[0])['models']), 'ANALYSIS_PAIR_SOURCE_MISMATCH', 409)
     for project, path in libraries.items():
         if not path.is_file(): continue
         with database(path) as db:

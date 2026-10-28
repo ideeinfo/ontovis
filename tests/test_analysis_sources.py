@@ -87,6 +87,24 @@ class SourceContractTests(unittest.TestCase):
             self.assertIn('X91',sensor['dataset']['retainedEvidenceGap'])
             self.assertFalse(sensor['dataset']['wholeFaultDiagnosisComplete'])
 
+    def test_photo_purpose_is_retained_in_fixed_device_source_and_old_descriptors_still_read(self):
+        context={'item':{'entityUid':'unit7-cabinet','entityRevision':'object:1'},
+            'context':{'installationContextId':str(uuid4()),'hierarchyRevision':'tree:1'}}
+        reader=SimpleNamespace(context_for_object=Mock(return_value=context))
+        source=AnalysisSourceReader(reader,None,None,lambda:None,'owner')
+        photo={'evidenceRef':'photo:field','sourceRevision':'a'*64,'contentVersionId':str(uuid4()),
+            'sourceSha256':'b'*64,'selector':{'displayRevision':'c'*64},'displayAvailability':'available','photoPurpose':'field_record'}
+        source.photos.resolve=Mock(return_value={'items':[photo]})
+        descriptor=source.resolve('photo',{'entityUid':'unit7-cabinet','expectedEntityRevision':'object:1',
+            'evidenceRef':'photo:field','photoPurpose':'field_record'})
+        self.assertEqual(descriptor['photoPurpose'],'field_record')
+        self.assertEqual(source.read('photo',descriptor)['photoPurpose'],'field_record')
+        self.assertEqual(source.photos.resolve.call_args.args[0]['entityUid'],'unit7-cabinet')
+        self.assertEqual(source.photos.resolve.call_args.args[0]['photoPurpose'],'field_record')
+        old={k:v for k,v in descriptor.items() if k!='photoPurpose'}
+        validate_descriptor('photo',old)
+        with self.assertRaises(PreviewError):validate_descriptor('photo',descriptor|{'installationContextId':None,'expectedHierarchyRevision':None})
+
     def test_descriptors_reject_urls_owner_fields_and_false_versions(self):
         value={'modelAssetId':str(uuid4()),'modelVersionId':str(uuid4()),'contentRevision':'fixed:1','sha256':'a'*64}
         validate_descriptor('model',value)

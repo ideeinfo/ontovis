@@ -1,7 +1,7 @@
 import {useEffect,useId,useRef,useState} from 'react';
 import {ArrowLeft,Link2,Search} from 'lucide-react';
 import {cancelled,failureMessage,type WorkbenchApi} from './api';
-import {Catalog} from './ObjectsPanel';
+import {EquipmentList} from './EquipmentList';
 import {usePreferences} from './Preferences';
 import {Badge,Btn,Modal} from './Primitives';
 import {SceneApi} from './sceneApi';
@@ -20,6 +20,7 @@ export interface SceneInstanceLinksProps {
   onChooseRoot:(selection:SceneObjectContext|null)=>Promise<void>;
   onEnterInternal:()=>void;onReturnToScene:()=>void;
   onBindComponents:(selection:SceneObjectContext,keys:string[])=>Promise<void>;
+  sharedConfiguration?:{displayName:string;configurationRevision:string};onConfigure?:()=>void;
 }
 
 function sameRef(first:EngineeringRef,second:EngineeringRef) {
@@ -86,7 +87,7 @@ export function SceneInstanceLinks(props:SceneInstanceLinksProps) {
   const canBind=validRoot&&linkable(root)&&linkable(selectedObject)&&inside;
   useEffect(()=>{
     const outcome=pendingComponentPick(pickedComponent,{instanceId,modelVersionId,selectedObject,components,componentBindings,
-      enabled:internal&&canBind&&!readOnly&&!disabled&&!working,lastToken:lastPick.current});
+      enabled:internal&&canBind&&!readOnly&&!disabled&&!working&&!props.sharedConfiguration,lastToken:lastPick.current});
     if(pickedComponent&&Number.isSafeInteger(pickedComponent.token))lastPick.current=Math.max(lastPick.current,pickedComponent.token);
     if(outcome.status==='selected'){setKeys(outcome.keys);setPickOccupied(false);setError(null);}
     else if(outcome.status==='occupied')setPickOccupied(true);
@@ -105,6 +106,9 @@ export function SceneInstanceLinks(props:SceneInstanceLinksProps) {
     finally{if(active(ticket,epoch,revision))setWorking(false);}
   }
   const blocked=readOnly||disabled||working;
+  if(props.sharedConfiguration&&internal)return <section className="se-links"><Btn onClick={props.onReturnToScene}><ArrowLeft size={14}/>{t('returnToScene')}</Btn><strong>{props.sharedConfiguration.displayName}</strong>
+    <p className="se-note">{locale==='zh'?'内部构件共用项目型号配置。':'Internal components use the shared project configuration.'}</p>
+    {selectedObject&&<p>{selectedObject.item.displayName}</p>}<Btn disabled={disabled||!props.onConfigure} onClick={props.onConfigure}>{locale==='zh'?'在设备层级配置':'Configure in equipment hierarchy'}</Btn></section>;
   return <section className="se-links" aria-label={t('deviceLink')}>
     <div><div className="se-link-title"><span>{t('deviceLink')}</span></div>
       <strong>{validRoot?root.item.displayName:rootBinding?t(rootReading?'loading':'unavailable'):t('unbound')}</strong>
@@ -136,7 +140,7 @@ export function SceneInstanceLinks(props:SceneInstanceLinksProps) {
     {choosing&&<Modal title={t('chooseRootTitle')} description={t('chooseRootHint')} onClose={()=>{if(!working)closePicker();}}><div className="se-device-picker">
       <label className="se-search"><Search size={14}/><input value={query} disabled={working} aria-label={t('search')} placeholder={t('search')} onChange={event=>{intent.current++;readAbort.current?.abort();setCandidate(null);setReading(false);setQuery(event.target.value);}}/></label>
       <fieldset className="se-picker-catalog" disabled={working}>{query.trim()!==settled?<p className="se-state" role="status">{t('loading')}</p>:
-        <Catalog key={`${api.epoch}:${api.revision}:${settled}`} api={api} scope="project" query={settled} selected={candidate?.item.entityUid||''} onSelect={uid=>void readCandidate(uid)}/>}</fieldset>
+        <EquipmentList key={`${api.epoch}:${api.revision}:${settled}`} api={api} query={settled} selected={candidate?.item.entityUid||''} onSelect={uid=>void readCandidate(uid)}/>}</fieldset>
       {reading&&<p className="se-state" role="status">{t('loading')}</p>}
       {candidate&&<div className="se-candidate"><strong>{candidate.item.displayName}</strong>{!linkable(candidate)&&<p className="se-note">{t(candidate.item.objectScope==='installation'?'incomplete':'readOnlyObject')}</p>}</div>}
       {!!error&&<p className="se-state" role="alert">{failureMessage(error,locale)}</p>}

@@ -556,6 +556,15 @@ class SceneLibrary:
         refs = self._resource_refs(db, snapshot) if refs is None else refs
         db.execute('insert into scene_revisions values (?,?,?,?,?)',
                    (revision, scene_id, _json(snapshot), _json(refs), now))
+        if db.execute("select 1 from sqlite_master where name='scene_equipment_configuration_uses'").fetchone():
+            for item in snapshot['instances']:
+                root=(item.get('rootBinding') or {}).get('objectRef')
+                if root:
+                    config=db.execute('''select c.id,c.head_revision from equipment_configuration_assignments a
+                        join equipment_configurations c on c.id=a.configuration_id where a.equipment_uid=?''',(root['entityUid'],)).fetchone()
+                    if config:
+                        db.execute('insert into scene_equipment_configuration_uses values(?,?,?,?,?)',
+                            (revision,item['sceneModelInstanceId'],config['id'],config['head_revision'],root['entityUid']))
         for item in snapshot['instances']:
             db.execute('insert into scene_resource_uses values (?,?,?)',
                        (revision, item['sceneModelInstanceId'], item['modelVersionId']))

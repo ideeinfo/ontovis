@@ -26,9 +26,10 @@ def matches_project_identifier(item, identifier, project_code):
 
 
 class AnalysisSourceReader:
-    def __init__(self, reader, models, orders, authorize, actor):
+    def __init__(self, reader, models, orders, authorize, actor, *, scene_library=None):
         self.reader, self.models, self.orders, self.authorize, self.actor = reader, models, orders, authorize, actor
         self.photos = ScenePhotoReader(reader)
+        self.scene_library = scene_library
 
     def _selection(self, selector, extra=()):
         draft.require(type(selector) is dict and set(selector) == {'entityUid', 'expectedEntityRevision', *extra})
@@ -45,7 +46,9 @@ class AnalysisSourceReader:
             drawing_bytes(self, selector)
             value = dict(selector)
         elif kind in ('drawing', 'photo'):
-            body = self._selection(selector, ('evidenceRef',))
+            photo_scope = ('photoPurpose',) if kind == 'photo' and 'photoPurpose' in selector else ()
+            body = self._selection(selector, ('evidenceRef', *photo_scope))
+            if photo_scope: body['photoPurpose'] = selector['photoPurpose']
             draft.text(selector['evidenceRef'], 512)
             rows = (self.photos if kind == 'photo' else SceneEvidenceReader(self.reader)).resolve(body)['items']
             row = next((item for item in rows if item['evidenceRef'] == selector['evidenceRef']), None)
@@ -65,6 +68,9 @@ class AnalysisSourceReader:
             draft.require(row['assetState'] == 'active', 'MODEL_DELETED', 410)
             draft.require(row['contentRevision'] == selector['expectedContentRevision'] and row['sha256'] == selector['expectedSha256'], 'RESOURCE_CHANGED', 409)
             value = {key: row[key] for key in ('modelAssetId', 'modelVersionId', 'contentRevision', 'sha256')}
+            if self.scene_library is not None:
+                from .analysis_model_links import configuration_references
+                value['configurationRefs']=configuration_references(self.scene_library,value['modelVersionId'],self.reader.project_code)
         elif kind == 'work_order':
             value = self.orders.capture(selector, self.actor, self.authorize)
         elif kind in ('alarm', 'trend'):
@@ -96,6 +102,7 @@ class AnalysisSourceReader:
                      'pageNumber': drawing.get('source_page_number'), 'contentSha256': descriptor['expectedContentSha256']}
         elif kind in ('drawing', 'photo'):
             body = {key: descriptor[key] for key in SELECTION}
+            if kind == 'photo' and 'photoPurpose' in descriptor: body['photoPurpose'] = descriptor['photoPurpose']
             rows = (self.photos if kind == 'photo' else SceneEvidenceReader(self.reader)).resolve(body)['items']
             value = next((row for row in rows if row['evidenceRef'] == descriptor['evidenceRef']), None)
             draft.require(value is not None, 'ANALYSIS_SOURCE_UNAVAILABLE', 404)
@@ -108,6 +115,9 @@ class AnalysisSourceReader:
         elif kind == 'model':
             value = self.models.model(descriptor['modelAssetId'], descriptor['modelVersionId'], self.authorize)
             draft.require(value['contentRevision'] == descriptor['contentRevision'] and value['sha256'] == descriptor['sha256'], 'RESOURCE_CHANGED', 409)
+            if 'configurationRefs' in descriptor:
+                from .analysis_model_links import frozen_configuration_bindings
+                frozen_configuration_bindings(self,self.scene_library,descriptor['modelVersionId'],descriptor['configurationRefs'])
         elif kind == 'work_order':
             value = self.orders.fixed_snapshot(descriptor)
         elif kind == 'document':

@@ -47,6 +47,7 @@ export interface SceneViewportProps {
   onSelect:(id:string|null,additive?:boolean)=>void;onPoint:(point:Vector3)=>void;
   onMove:(id:string,point:Vector3)=>Promise<boolean>;onViewChange:(view:SceneView)=>void;
   onResourceDrop?:(ref:{modelAssetId:string;modelVersionId:string},point:Vector3)=>void;
+  onEquipmentDrop?:(entityUid:string,point:Vector3)=>void;
   onError?:(error:unknown)=>void;
 }
 type Runtime={sync:()=>void;preload:()=>void;appearance:()=>void;fit:()=>void;focus:(id:string|null|string[])=>void;
@@ -484,7 +485,15 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const escape=(event:KeyboardEvent)=>{if(event.key.startsWith('Arrow'))current.current.onCameraInteraction?.();if(event.key==='Escape'&&drag){event.preventDefault();cancelDrag();}};
     const drop=(event:DragEvent)=>{
-      const state=current.current;if(!state.editing||state.disabled||state.previewModel||!state.onResourceDrop)return;
+      const state=current.current;if(!state.editing||state.disabled||state.previewModel)return;
+      const equipment=event.dataTransfer?.getData('application/x-ontovis-equipment');
+      if(equipment&&state.onEquipmentDrop){event.preventDefault();try{
+        if(equipment.length>1024)throw new Error('invalid');const value:unknown=JSON.parse(equipment);
+        if(!value||typeof value!=='object'||Object.keys(value).join(',')!=='entityUid'||typeof(value as {entityUid?:unknown}).entityUid!=='string')throw new Error('invalid');
+        const point=groundPoint(event.clientX,event.clientY);if(!point)throw new Error('outside');
+        state.onEquipmentDrop((value as {entityUid:string}).entityUid,point.toArray() as Vector3);
+      }catch{report(new ViewportInteractionError('dropInvalid'));}return;}
+      if(!state.onResourceDrop)return;
       const raw=event.dataTransfer?.getData(DROP_MIME);if(!raw)return;event.preventDefault();
       try {
         if(raw.length>512)throw new Error('invalid');const value:unknown=JSON.parse(raw);
@@ -494,8 +503,8 @@ export function SceneViewport(props:SceneViewportProps) {
         const point=groundPoint(event.clientX,event.clientY);if(point)state.onResourceDrop(reference,point.toArray() as Vector3);else report(new ApiError(422,'OUTSIDE_COVERAGE'));
       } catch {report(new ViewportInteractionError('dropInvalid'));}
     };
-    const dragover=(event:DragEvent)=>{const state=current.current;if(state.editing&&!state.disabled&&!state.previewModel&&state.onResourceDrop
-      &&event.dataTransfer?.types.includes(DROP_MIME)){event.preventDefault();event.dataTransfer.dropEffect='copy';}};
+    const dragover=(event:DragEvent)=>{const state=current.current;if(state.editing&&!state.disabled&&!state.previewModel
+      &&(state.onResourceDrop&&event.dataTransfer?.types.includes(DROP_MIME)||state.onEquipmentDrop&&event.dataTransfer?.types.includes('application/x-ontovis-equipment'))){event.preventDefault();event.dataTransfer.dropEffect='copy';}};
     const visible=()=>{
       if(document.hidden){environment.suspend();hiddenAt=performance.now();cancelAnimationFrame(frame);frame=0;}
       else {if(tween&&hiddenAt!==null)tween.start+=performance.now()-hiddenAt;hiddenAt=null;appearance();request();}

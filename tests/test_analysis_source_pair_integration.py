@@ -44,6 +44,24 @@ class AnalysisSourcePairTests(unittest.TestCase):
         self.assertEqual(read[1],descriptor);self.assertEqual(restored['analysisCounts']['analysis_evidence_refs'],1)
         self.assertEqual(pair.verify(self.root/'paired',receipt['manifestSha256'])[2]['tables']['analysis_evidence_refs'][0]['descriptor_sha256'],reference['sourceRevision'])
 
+    def test_configuration_reference_survives_paired_recovery(self):
+        from apps.api.equipment_configurations import EquipmentConfigurations
+        model=self.model()
+        path=self.source/'project-spaces/libraries'/self.workspace['storage_key']
+        with sqlite3.connect(path/'library.sqlite3') as db:project,context=db.execute('select project_code,context_id from library').fetchone()
+        library=ModelLibrary(path,project,context)
+        store=EquipmentConfigurations(library,'ontobase-primary','SYNTHETIC-A');cid=str(uuid4())
+        saved=store.save({'configurationId':cid,'expectedConfigurationRevision':None,'clientRequestId':str(uuid4()),
+            'snapshot':{'displayName':'共享型号','objectKind':'equipment','rootDefinition':None,
+                'models':[{'modelVersionId':model['modelVersionId'],'mappings':[]}]}},OWNER,lambda:None,lambda _:None,lambda _:model['components'])
+        descriptor={key:model[key] for key in ('modelAssetId','modelVersionId','contentRevision','sha256')}
+        descriptor['configurationRefs']=[{'configurationId':cid,'configurationRevision':saved['configurationRevision'],'equipmentEntityUids':[]}]
+        reference=AnalysisEvidence(self.store).register(OWNER,self.source_body(),lambda:None,lambda *_:descriptor)
+        receipt=self.snapshot();self.restore(receipt)
+        consumer=draft.AnalysisDrafts(self.urls[1],'ontobase-primary','SYNTHETIC-A');self.addCleanup(consumer.close)
+        _,read=AnalysisEvidence(consumer).descriptor(OWNER,{'analysisSessionId':self.created['analysisSessionId'],'evidenceRefId':reference['evidenceRefId']},lambda:None)
+        self.assertEqual(read['configurationRefs'],descriptor['configurationRefs'])
+
     def test_missing_fixed_geometry_is_rejected_before_publishing_paired_manifest(self):
         model=self.model();descriptor={key:model[key] for key in ('modelAssetId','modelVersionId','contentRevision','sha256')};descriptor['sha256']='f'*64
         AnalysisEvidence(self.store).register(OWNER,self.source_body(),lambda:None,lambda *_:descriptor)

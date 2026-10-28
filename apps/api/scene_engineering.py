@@ -60,6 +60,8 @@ def _object(value):
     count = value.get('definitionChildCount', 0)
     _require(type(count) is int and 0 <= count <= 100000)
     result.update(definitionParentEntityUid=parent, definitionChildCount=count)
+    result['equipmentState'] = value.get('equipmentState', 'active')
+    _require(result['equipmentState'] in ('active', 'inactive'))
     if result['sourceTemplateEntityUid'] is not None: _text(result['sourceTemplateEntityUid'])
     _require(result['installationPurpose'] in (None, 'demonstration', 'engineering'))
     classification = value.get('classification')
@@ -267,7 +269,7 @@ class SceneEngineeringReader:
         _require(item['installationPurpose'] == context['purpose'], 'ENGINEERING_CHANGED', 409)
         ancestors = self._ancestors(item, context)
         self._stable(item, context, ancestors)
-        eligible = ancestors['completeness'] == 'complete' and context['rootEntityUid'] is not None
+        eligible = ancestors['completeness'] == 'complete' and context['rootEntityUid'] is not None and item.get('equipmentState','active')=='active'
         root = item if uid == context['rootEntityUid'] else next((entry['object'] for entry in ancestors['path']
             if entry['object']['entityUid'] == context['rootEntityUid']), None)
         return {**result, 'context': context, 'root': root, 'ancestors': ancestors,

@@ -101,13 +101,18 @@ def recommendations(reader, body, scene_library=None):
         for kind, source in (('drawing',SceneEvidenceReader(reader.reader)),('photo',reader.photos)):
             if section == 'drawings' and kind != 'drawing' or section == 'photos' and kind != 'photo':
                 continue
-            def add(kind=kind, source=source):
-                for item in source.resolve(selection)['items']:
+            def add(kind=kind, source=source, purpose=None):
+                scope = {**selection, **({'photoPurpose':purpose} if purpose else {})}
+                for item in source.resolve(scope)['items']:
                     if kind == 'drawing' and item['availability'] != 'available': continue
                     if kind == 'photo' and not item.get('selector'): continue
-                    rows.append(recommendation(kind,item['title'],{k:selection[k] for k in ('entityUid','expectedEntityRevision')} | {'evidenceRef':item['evidenceRef']},
-                        '所选对象已有的资料关联', preview=item))
+                    selector = {k:selection[k] for k in ('entityUid','expectedEntityRevision')} | {'evidenceRef':item['evidenceRef']}
+                    if purpose: selector['photoPurpose'] = purpose
+                    reason = '本机现场照片 · '+chosen['item']['displayName'] if purpose=='field_record' else '共享工程对象定位照片' if kind=='photo' else '所选对象已有的资料关联'
+                    rows.append(recommendation(kind,item['title'],selector,reason,preview=item))
             attempt(add)
+            if kind=='photo' and selection['installationContextId'] is not None:
+                attempt(lambda:add(purpose='field_record'))
     elif section in ('alarms','trends'):
         query = body.get('q', '');d.require(type(query) is str and len(query) <= 200)
         if section == 'alarms':
