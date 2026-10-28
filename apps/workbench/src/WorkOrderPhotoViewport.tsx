@@ -3,6 +3,7 @@ import {Focus,ZoomIn,ZoomOut} from 'lucide-react';
 import type {PhotoSelector} from './workOrderTypes';
 import type {ImageView} from './analysisCanvas';
 import {clampPhotoZoom,MAX_PHOTO_ZOOM,MIN_PHOTO_ZOOM,photoBaseSize,photoBoxes,photoFocusScroll,photoFocusZoom,photoWheelZoom,photoZoomScroll} from './workOrderPhoto';
+import './workOrders.css';
 
 export function WorkOrderPhotoViewport({image,selector,label,en,onError,embedded=false,initialView,onViewChange,decodedImage,regions=[],onRegion,focusFraction=.09}:{image:string;selector:PhotoSelector|null;label:string;en:boolean;onError:()=>void;embedded?:boolean;initialView?:ImageView;onViewChange?:(value:ImageView)=>void;decodedImage?:HTMLImageElement;regions?:{id:string;title:string;bbox:{x:number;y:number;width:number;height:number}}[];onRegion?:(id:string)=>void;focusFraction?:number}){
   const viewer=useRef<HTMLDivElement>(null);
