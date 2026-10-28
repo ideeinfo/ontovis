@@ -66,6 +66,23 @@ class WorkbenchDeploymentTests(unittest.TestCase):
             for extra in ('/','/extra'):
                 with self.assertRaises(AssertionError):location_for(root+suffix+extra)
 
+    def test_equipment_routes_match_the_server_allowlist_and_request_limits(self):
+        tree=ast.parse((ROOT/'apps/api/session_http.py').read_text())
+        assignment=next(node for node in ast.walk(tree) if isinstance(node,ast.Assign)
+            and any(isinstance(target,ast.Name) and target.id=='equipment_paths' for target in node.targets))
+        suffixes=ast.literal_eval(assignment.value.args[0].generators[0].iter)
+        for suffix in suffixes:
+            path='/api/workbench/equipment'+suffix
+            with self.subTest(path=path):
+                body=location_for(path)
+                self.assertIn('client_max_body_size '+('1m' if suffix=='/configurations/save' else '16k')+';',body)
+                self.assertIn('proxy_buffering off;',body)
+                self.assertIn('proxy_read_timeout 60s;',body)
+            for extra in ('/','/extra'):
+                with self.subTest(path=path+extra),self.assertRaises(AssertionError):location_for(path+extra)
+        for suffix in ('/delete','/purge','/photos','/configurations/purge','/configurations/export'):
+            with self.subTest(suffix=suffix),self.assertRaises(AssertionError):location_for('/api/workbench/equipment'+suffix)
+
     def test_only_successful_content_named_public_assets_are_cacheable(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
         block = nginx.split('map "$status:$uri" $ontovis_public_asset_cache_control {', 1)[1].split('\n}', 1)[0]
