@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
-import {commitScene,duplicateAt,moveInstance,placeModel,redoScene,sceneHistory,undoScene} from '../src/sceneState.ts';
+import {commitScene,duplicateAt,hasSceneChanges,moveInstance,placeModel,redoScene,sceneHistory,undoScene} from '../src/sceneState.ts';
 
 const fixture=JSON.parse(readFileSync(new URL('./fixtures/scene-transforms-gdal.json',import.meta.url)));
 const model={modelVersionId:'fixed-model',displayName:'设备A',canPlace:true,canPlaceGeographic:true,calibrationState:'verified',calibration:{state:'verified'}};
@@ -71,4 +71,15 @@ test('geographic placement rejects legacy display before adding an instance or r
   const before=structuredClone(source),legacy={...model,calibrationState:'legacy_display',canPlaceGeographic:false,calibration:{state:'legacy_display'}};
   assert.throws(()=>placeModel(source,legacy,[0,5,0],null,'legacy-geographic',100),error=>error.code==='MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED');
   assert.deepEqual(source,before);
+});
+
+
+test('discarding to the scene list leaves no unsaved prompt from a previous engineering review',()=>{
+  const saved=withModel(),draft=structuredClone(saved);draft.instances[0].displayName='Edited';
+  assert.equal(hasSceneChanges(saved,draft),true);
+  assert.equal(hasSceneChanges(saved,structuredClone(saved)),false);
+  assert.equal(hasSceneChanges(saved,structuredClone(saved),true),true);
+  assert.equal(hasSceneChanges(null,null,true),false);
+  assert.equal(hasSceneChanges(null,draft,true),false);
+  assert.equal(hasSceneChanges(saved,null,true),false);
 });

@@ -8,6 +8,9 @@ export class SceneEditError extends Error {code: string; constructor(code: strin
 export const cloneSnapshot = (value: EditableSceneSnapshot): EditableSceneSnapshot => structuredClone(value);
 export const isLocalScene = (value:EditableSceneSnapshot):value is LocalSceneSnapshot => value.coordinateFrame.mode==='local_plane';
 export const isLocalInstance = (value:SceneModelInstance):value is LocalSceneModelInstance => value.placement.position.mode==='local';
+export function hasSceneChanges(saved:EditableSceneSnapshot|null,draft:EditableSceneSnapshot|null,extraChanges=false):boolean {
+  return !!saved&&!!draft&&(extraChanges||JSON.stringify(saved)!==JSON.stringify(draft));
+}
 export function sceneHistory(snapshot: EditableSceneSnapshot): SceneHistory {return {present:cloneSnapshot(snapshot),past:[],future:[]};}
 export function commitScene(history: SceneHistory, next: EditableSceneSnapshot): SceneHistory {
   if (JSON.stringify(history.present)===JSON.stringify(next)) return history;
