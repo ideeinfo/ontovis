@@ -56,7 +56,7 @@ def recommendations(reader, body, scene_library=None):
     manual=body['entry']=={'projectOnly':True} or body.get('section')=='objects' and 'q' in body
     dataset, order = (None,None) if manual else entry_dataset(reader, body['entry'])
     section = body.get('section', 'objects'); offset = body.get('offset', 0)
-    d.require(section in ('objects','materials','drawings','photos','documents','models','orders','alarms','trends') and type(offset) is int and 0 <= offset <= 1000)
+    d.require(section in ('objects','materials','drawings','photos','documents','device_materials','project_documents','models','orders','alarms','trends') and type(offset) is int and 0 <= offset <= 1000)
     cursor = body.get('cursor')
     d.require(cursor is None or isinstance(cursor,(str,int)) and not isinstance(cursor,bool))
     if isinstance(cursor,str): d.text(cursor,4096)
@@ -66,6 +66,35 @@ def recommendations(reader, body, scene_library=None):
         except PreviewError as error:
             if error.status in (401,403): raise
             gaps.append(error.code)
+    if section in ('device_materials','project_documents'):
+        if section=='device_materials':
+            if not body.get('entityUid'):
+                return {'items':[],'nextOffset':None,'nextCursor':None,'gaps':['请先从设备安装对象卡选择“推荐相关资料”。共享工程定义不代替具体设备。'],'dataset':dataset}
+            chosen=reader.reader.context_for_object(body['entityUid'],body.get('expectedEntityRevision'))
+            selection=selected(chosen)
+            if selection['installationContextId'] is None:
+                return {'items':[],'nextOffset':None,'nextCursor':None,'gaps':['当前为共享工程定义，请选择设备库中的具体设备安装对象。'],'dataset':dataset}
+            from .equipment_reader import EquipmentReader
+            value=EquipmentReader(reader.reader).material_devices({**selection,'cursor':cursor,'limit':12})
+            materials=value['items'];following=value['nextCursor']
+        else:
+            query=body.get('q','');d.require(type(query) is str and len(query)<=200)
+            params={'q':query,'status':'active','limit':12}
+            if cursor is not None:params['cursor']=cursor
+            value=reader.reader._request('GET',reader.reader.prefix+'/documents?'+urlencode(params))
+            materials=[dict(documentId=x['id'],contentVersionId=x['current_version_id'],title=x['name'],
+                kind='photo' if x.get('preview_kind')=='image' or x.get('kind')=='photo' else 'pdf',
+                availability='unavailable' if x.get('preview_error') or not x.get('current_version_id') else 'available')
+                for x in value['items'] if x.get('preview_kind') in ('pdf','image') or x.get('kind')=='photo']
+            following=value.get('next_cursor')
+        for item in materials:
+            kind='photo' if item['kind']=='photo' else 'document'
+            selector={key:item[key] for key in ('documentId','contentVersionId')}
+            selector.update({'sourceType':'project_document'} if kind=='photo' else {'pageNumber':1})
+            rows.append(recommendation(kind,item['title'],selector,
+                '服务器按当前设备型号和角色解析的适用资料；整图不声明对象区域' if section=='device_materials' else '本项目文档库；不声明与当前故障或设备的关联',
+                reasonEn='Applicable materials resolved for this equipment by the source; no object region is asserted.' if section=='device_materials' else 'Project document library; no relation to the current fault or equipment is asserted.',availability=item['availability']))
+        return {'items':rows,'nextOffset':None,'nextCursor':following,'gaps':gaps,'dataset':dataset}
     if section == 'objects' and manual:
         query=body.get('q','');d.require(type(query) is str and len(query)<=200)
         if query.strip():

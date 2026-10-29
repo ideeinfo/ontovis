@@ -9,6 +9,7 @@ import tempfile
 from threading import Thread
 import unittest
 from uuid import uuid4
+from unittest.mock import patch
 
 from apps.api.project_sessions import ProjectSessions
 from apps.api.session_http import handler_type
@@ -35,6 +36,26 @@ class ProjectScopeHttpTests(unittest.TestCase):
 
     def ref(self, code):
         return {'ontobaseConnectionId': 'ontobase-primary', 'projectCode': code}
+
+    def test_material_reads_require_current_project_and_do_not_prepare_a_workspace(self):
+        from tests.test_equipment_materials import MODEL, ROLES, SPEC
+        path='/api/workbench/equipment/materials/models';calls=[];original=ProjectsAuthority.request
+        def source(account,method,target,body=None):
+            if '/equipment-materials/models/' in target:
+                calls.append(target)
+                return dict(model=MODEL,roles=ROLES,revision=0,total=0,items=[],nextCursor=None,canManage=False)
+            return original(account,method,target,body)
+        with patch.object(ProjectsAuthority,'request',source):
+            self.assertEqual(self.request(path,{'specificationId':SPEC})[1]['code'],'PROJECT_REQUIRED')
+            for project in ('A','B'):
+                status,value,_=self.request(path,{'projectRef':self.ref(project),'specificationId':SPEC})
+                self.assertEqual(status,200,value);self.assertEqual(value['projectRef'],self.ref(project))
+                self.assertIsNone(value['workspaceId']);self.assertIn('/projects/'+project+'/',calls[-1])
+                self.assertIsNone(self.sessions.registry.lookup(project))
+            del ProjectsAuthority.permissions['member']['A']
+            self.assertEqual(self.request(path,{'projectRef':self.ref('A'),'specificationId':SPEC})[0],403)
+            self.assertEqual(self.request(path,{'projectRef':self.ref('B'),'specificationId':SPEC})[0],200)
+            self.assertEqual(self.request(path,{'projectRef':self.ref('B'),'specificationId':SPEC},client=False)[0],401)
 
     def test_every_business_family_requires_explicit_project_and_catalog_has_all_grants(self):
         status, directory, _ = self.request('/api/workbench/projects', {})

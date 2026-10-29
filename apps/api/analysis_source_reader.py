@@ -40,6 +40,12 @@ class AnalysisSourceReader:
         self.authorize()
         if kind == 'object':
             value = self._selection(selector)
+        elif kind == 'photo' and selector.get('sourceType') == 'project_document':
+            draft.require(set(selector) == {'sourceType','documentId','contentVersionId'})
+            from .fixed_documents import FixedDocuments
+            material = FixedDocuments(self.reader).metadata({key:selector[key] for key in ('documentId','contentVersionId')})
+            draft.require(material['kind']=='photo','ANALYSIS_SOURCE_UNAVAILABLE',409)
+            value={key:material[key] for key in ('sourceType','documentId','contentVersionId','sourceSha256')}
         elif kind == 'drawing' and 'drawingUid' in selector:
             validate_descriptor(kind, selector)
             from .analysis_preview import drawing_bytes
@@ -80,7 +86,12 @@ class AnalysisSourceReader:
             self.read(kind, value)
         elif kind == 'document':
             value = dict(selector)
-            self.read(kind, value)
+            if set(value)=={'documentId','contentVersionId','pageNumber'}:
+                from .fixed_documents import FixedDocuments
+                material=FixedDocuments(self.reader).metadata(value)
+                draft.require(material['kind']=='pdf','ANALYSIS_SOURCE_UNAVAILABLE',409)
+                value['sourceSha256']=material['sourceSha256']
+            else:self.read(kind, value)
             if 'knowledgeReleaseId' in value:
                 from .analysis_preview import node_evidence
                 evidence = node_evidence(self, value)
@@ -95,6 +106,11 @@ class AnalysisSourceReader:
         if kind == 'object':
             value = self.reader.detail(descriptor['installationContextId'], descriptor['entityUid'],
                 descriptor['expectedHierarchyRevision'], expected_entity_revision=descriptor['expectedEntityRevision'])
+        elif kind == 'photo' and descriptor.get('sourceType') == 'project_document':
+            from .fixed_documents import FixedDocuments
+            value=FixedDocuments(self.reader).metadata({key:descriptor[key] for key in ('documentId','contentVersionId','sourceSha256')})
+            draft.require(value['kind']=='photo','SOURCE_CHANGED',409)
+            value['displayAvailability']='not_checked'
         elif kind == 'drawing' and 'drawingUid' in descriptor:
             from .analysis_preview import drawing_identity
             drawing, _ = drawing_identity(self, descriptor)
@@ -154,6 +170,10 @@ class AnalysisSourceReader:
     def content(self, kind, descriptor):
         validate_descriptor(kind, descriptor); self.authorize()
         if kind == 'photo':
+            if descriptor.get('sourceType')=='project_document':
+                from .fixed_documents import FixedDocuments
+                value=FixedDocuments(self.reader).content({key:descriptor[key] for key in ('documentId','contentVersionId','sourceSha256')})
+                self.authorize();return value
             return self.photos.content(descriptor)
         if kind == 'drawing':
             if 'drawingUid' in descriptor:

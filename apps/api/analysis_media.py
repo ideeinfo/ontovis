@@ -30,6 +30,8 @@ def derived(key, generate):
 
 
 def photo_preview(reader, descriptor):
+    if descriptor.get('sourceType')=='project_document':
+        return reader.content('photo',descriptor)
     # Revalidate the actual association before accessing shared, content-keyed bytes.
     reader.read('photo', descriptor)
     key = ('photo-4096-jpeg-82', descriptor['expectedDisplayRevision'])

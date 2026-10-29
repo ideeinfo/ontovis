@@ -71,3 +71,50 @@ test('fixed application reads accept independent models without retired configur
   assert.equal(bundle.application.snapshot.specificationRevisionId,'specification:r1');
   assert.notEqual(bundle.application.revisionId,bundle.application.headRevisionId);
 });
+
+test('material catalogues use explicit bounded read routes and current device context',async()=>{
+  const sent=[];
+  const api=new WorkbenchApi(async(path,options)=>{sent.push({path,body:JSON.parse(options.body)});return new Response('{}',{headers:{'Content-Type':'application/json','X-Session-Revision':'session:1'}});});
+  api.session('session:1');api.selectProject(project);const service=new EquipmentApi(api);
+  const identity={entityUid:'device',expectedEntityRevision:'entity:7',installationContextId:'context',expectedHierarchyRevision:'tree:3'};
+  await service.modelMaterials('model','role:CN2','photo','opaque:page');
+  await service.materialCandidates('model',4,'model','needle','pdf');
+  await service.deviceMaterials(identity,'next');await service.attributeForm('device');
+  assert.equal(sent[0].path,'/api/workbench/equipment/materials/models');
+  assert.deepEqual({...sent[0].body,projectRef:undefined,expectedSessionRevision:undefined},{specificationId:'model',scope:'role:CN2',kind:'photo',cursor:'opaque:page',limit:20,projectRef:undefined,expectedSessionRevision:undefined});
+  assert.equal(sent[1].body.revision,4);assert.equal(sent[1].body.q,'needle');
+  assert.equal(sent[2].path,'/api/workbench/equipment/materials/resolve');
+  for(const [key,value] of Object.entries(identity))assert.equal(sent[2].body[key],value);
+  assert.equal(sent[3].path,'/api/workbench/equipment/attribute-form');
+  assert.deepEqual(Object.keys(sent[3].body).sort(),['entityUid','expectedSessionRevision','projectRef']);
+  assert.ok(sent.every(call=>call.body.projectRef.projectCode===project.projectCode));
+});
+
+test('fixed document bytes retain content version and hash for every PDF page or photo MIME',async()=>{
+  const fixed={documentId:'doc',contentVersionId:'fixed-version',sourceSha256:'a'.repeat(64)};
+  for(const mime of ['image/png','image/jpeg','image/webp']){
+    let sent;const api=new WorkbenchApi(async(path,options)=>{sent={path,body:JSON.parse(options.body)};return new Response('image',{headers:{'Content-Type':mime,'X-Session-Revision':'session:1'}});});
+    api.session('session:1');api.selectProject(project);
+    assert.equal((await new EquipmentApi(api).materialContent(fixed,3)).type,mime);
+    assert.equal(sent.path,'/api/workbench/equipment/materials/content');
+    assert.equal(sent.body.contentVersionId,'fixed-version');assert.equal(sent.body.pageNumber,3);
+    assert.equal(sent.body.sourceSha256,fixed.sourceSha256);assert.equal(sent.body.renditionId,undefined);
+  }
+});
+
+test('material responses are discarded after cancellation, project switch, logout or access revision change',async()=>{
+  for(const action of ['cancel','project','logout','revision']){
+    let finish;const api=new WorkbenchApi(()=>new Promise(resolve=>{finish=resolve;}));api.session('session:1');api.selectProject(project);
+    const abort=new AbortController(),pending=new EquipmentApi(api).deviceMaterials({entityUid:'device'},null,abort.signal);
+    if(action==='cancel')abort.abort();else if(action==='project')api.selectProject({...project,projectCode:'elsewhere'});else api.session(action==='logout'?null:'session:2');
+    finish(new Response('{}',{headers:{'Content-Type':'application/json','X-Session-Revision':'session:1'}}));
+    await assert.rejects(pending,{name:'AbortError'});
+  }
+});
+
+test('material error responses preserve source conflict and authorization status',async()=>{
+  for(const [status,code] of [[401,'SESSION_EXPIRED'],[403,'FORBIDDEN'],[409,'SOURCE_CHANGED']]){
+    const api=new WorkbenchApi(async()=>new Response(JSON.stringify({code}),{status,headers:{'Content-Type':'application/json'}}));api.session('session:1');api.selectProject(project);
+    await assert.rejects(new EquipmentApi(api).modelMaterials('model'),error=>error.status===status&&error.code===code);
+  }
+});

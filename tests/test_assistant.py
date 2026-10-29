@@ -106,6 +106,14 @@ class AssistantTests(unittest.TestCase):
         for kind in ('object','drawing','photo','model','document','work_order'):
             self.assertLessEqual(len(summarize(Meta(),kind,{})),1000)
 
+    def test_whole_project_photo_summary_never_claims_object_location_or_requests_pixels(self):
+        class Photo(Reader):
+            def read(self,*_):return {'selector':None,'displayAvailability':'not_checked'}
+            def content(self,*_):raise AssertionError('binary content requested')
+        value=json.loads(summarize(Photo(),'photo',{'sourceType':'project_document'}))
+        self.assertEqual(value['purpose'],'project_document');self.assertFalse(value['regionPresent'])
+        self.assertIn('无对象定位证据',value['gaps'][0])
+
     def test_reference_validation_rejects_unknown_citations_and_extra_actions(self):
         self.assertEqual(validate_answer(answer(),{'E1'}),answer())
         for value in [answer('E8'),{**answer(),'execute':'script'}, {**answer(),'hypotheses':[{'text':'certain','refs':[]}]}]:

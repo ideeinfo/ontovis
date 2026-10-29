@@ -3,15 +3,16 @@ import {cancelled,failureMessage,type WorkbenchApi} from './api';
 import {EquipmentApi,type ApplicationBundle,type ApplicationSummary,type PropertyValue} from './equipmentApi';
 import {Btn,Modal} from './Primitives';
 import {OntoBaseEquipmentLink} from './OntoBaseEquipmentLink';
+import {EquipmentMaterials} from './EquipmentMaterials';
 
-function valueText(value:PropertyValue|undefined,en:boolean){
+export function valueText(value:PropertyValue|undefined,en:boolean){
   if(value?.status==='not_applicable')return en?'Not applicable':'不适用';
   if(!value||value.status!=='known')return en?'Unknown':'未知';
   const raw=value.value;
   if(raw&&typeof raw==='object'&&'min' in raw&&'max' in raw)return `${raw.min} – ${raw.max}`;
   return typeof raw==='boolean'?(raw?(en?'Yes':'是'):(en?'No':'否')):String(raw??'');
 }
-export function EquipmentApplicationDetails({value,en}:{value:ApplicationBundle;en:boolean}){
+export function EquipmentApplicationDetails({value,en,api}:{value:ApplicationBundle;en:boolean;api?:WorkbenchApi}){
   const {application:app,specification:spec,template}=value,snapshot=spec.snapshot;
   return <section className="eq-source-details"><dl className="eq-metadata">
     <dt>{en?'Specification':'设备规格'}</dt><dd>{snapshot.name} / r{spec.revision}</dd>
@@ -24,7 +25,7 @@ export function EquipmentApplicationDetails({value,en}:{value:ApplicationBundle;
   <h4>{en?'Specification parameters':'规格参数'}</h4><div className="eq-parameter-grid">{template.fields.map(field=>{const v=snapshot.values.find(row=>row.propertyRevisionId===field.propertyRevisionId);return <div key={field.propertyKey}><span>{en?field.definition.nameEn||field.definition.nameZh:field.definition.nameZh}{field.inherited&&<small>{en?'Inherited':'继承'}</small>}</span><strong>{valueText(v,en)}</strong><span>{field.definition.unit||'—'}</span></div>;})}</div>
   <details><summary>{en?'Roles and sources':'内部角色与来源'}</summary><dl className="eq-metadata">{snapshot.roles.map(role=><div className="eq-metadata-row" key={role.roleKey}><dt>{role.name}</dt><dd>{role.quantity} · {role.optional?(en?'Optional':'可选'):(en?'Required':'必需')}</dd></div>)}</dl>
     {snapshot.sources.map((source,index)=><p key={index}>{source.url&&/^https?:\/\//.test(source.url)?<a href={source.url} target="_blank" rel="noreferrer">{source.provider||source.url}</a>:source.provider||'—'}{source.note&&<small>{source.note}</small>}</p>)}</details>
-  <p className="eq-caption">{en?'Edit specification, parameters, roles and equipment adoption in OntoBase.':'型号、参数、内部角色和单台设备采用由 OntoBase 管理。'}</p><OntoBaseEquipmentLink en={en}/></section>;
+  <p className="eq-caption">{en?'Edit specification, parameters, roles and equipment adoption in OntoBase.':'型号、参数、内部角色和单台设备采用由 OntoBase 管理。'}</p><OntoBaseEquipmentLink en={en}/>{api&&<EquipmentMaterials key={spec.specificationId} api={api} en={en} specificationId={spec.specificationId}/>}</section>;
 }
 
 export function EquipmentApplicationPicker({api,en,onClose,onSelect,continuing=false}:{api:WorkbenchApi;en:boolean;onClose:()=>void;onSelect:(value:ApplicationBundle)=>void;continuing?:boolean}){
@@ -43,7 +44,7 @@ export function EquipmentApplicationPicker({api,en,onClose,onSelect,continuing=f
     {total>50&&<div className="eq-actions"><Btn disabled={!offset||busy} onClick={()=>setOffset(v=>Math.max(0,v-50))}>{en?'Previous':'上一页'}</Btn><span>{offset+1}–{Math.min(offset+50,total)} / {total}</span><Btn disabled={offset+50>=total||busy} onClick={()=>setOffset(v=>v+50)}>{en?'Next':'下一页'}</Btn></div>}
     {busy&&<p role="status">{en?'Loading source…':'正在读取源端…'}</p>}{!!error&&<p role="alert">{failureMessage(error,en?'en':'zh')}</p>}
     {!busy&&!error&&!items.length&&<><p>{en?'Create a specification and project application in OntoBase first.':'请先在 OntoBase 建立型号规格和项目采用。'}</p><OntoBaseEquipmentLink en={en}/></>}
-    {bundle&&<EquipmentApplicationDetails value={bundle} en={en}/>}
+    {bundle&&<EquipmentApplicationDetails value={bundle} en={en} api={api}/>}
     {continuing&&<p className="eq-caption">{en?'Original object identities and component mappings must match. Existing history remains readable.':'原对象 UID 和构件映射必须一致；已有绑定历史继续保留。'}</p>}
     <div className="eq-actions"><Btn onClick={onClose}>{en?'Cancel':'取消'}</Btn><Btn primary disabled={!bundle||busy} onClick={()=>bundle&&onSelect(bundle)}>{en?'Use this application':'使用此项目采用'}</Btn></div></div>
   </Modal>;

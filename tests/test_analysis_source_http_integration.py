@@ -47,6 +47,54 @@ class AnalysisSourceHttpTests(unittest.TestCase):
     def reference(self,created,ref):
         return self.body(analysisSessionId=created['analysisSessionId'],evidenceRefId=ref['evidenceRefId'])
 
+    def read_bytes(self,path,payload):
+        connection=HTTPConnection(*self.server.server_address,timeout=5)
+        try:
+            connection.request('POST',path,json.dumps(payload|{'expectedSessionRevision':self.admin['revision']}),
+                {'Host':'127.0.0.1:4180','Origin':'http://127.0.0.1:4180','Content-Type':'application/json','Cookie':self.admin['cookie']})
+            response=connection.getresponse();self.assertEqual(response.status,200);self.assertEqual(response.getheader('Cache-Control'),'no-store')
+            return response.read()
+        finally:connection.close()
+
+    def test_project_document_photo_registers_and_reads_without_object_or_region(self):
+        from tests.test_equipment_materials import DocumentReader, DOC, VERSION, PNG
+        from tools.analysis_draft_backup import export_package, validate_package
+        created,_=self.create();fixed=DocumentReader();fixed.version['preview_kind']='image'
+        original=self.source.request
+        def source(account,method,path,body=None):
+            if '/documents/' in path:return fixed._request(method,path,body)
+            return original(account,method,path,body)
+        with patch.object(self.source,'request',source),patch.object(self.source,'document_page',return_value=dict(content=PNG,mediaType='image/png',sha256='b'*64),create=True):
+            selector=dict(sourceType='project_document',documentId=DOC,contentVersionId=VERSION)
+            status,ref,*_=self.request(ROOT+'/evidence/register',self.body(analysisSessionId=created['analysisSessionId'],expectedAnalysisRevision=1,requestId=str(uuid4()),sourceKind='photo',selector=selector))
+            self.assertEqual(status,200,ref);payload=self.reference(created,ref)
+            read=self.request(ROOT+'/evidence/detail',payload)
+            self.assertEqual((read[0],read[1]['availability']),(200,'available'));self.assertIsNone(read[1]['source']['selector'])
+            self.assertEqual(self.read_bytes(ROOT+'/evidence/content',payload),PNG)
+            self.assertEqual(self.read_bytes(ROOT+'/evidence/preview-content',payload),PNG)
+            self.assertEqual(self.request(ROOT+'/evidence/relationships',self.body(analysisSessionId=created['analysisSessionId'],evidenceRefIds=[ref['evidenceRefId']]))[1]['items'],[])
+            package=export_package(self.urls[0]);validate_package(package)
+            row=next(row for row in package['tables']['analysis_evidence_refs'] if row['evidence_ref_id']==ref['evidenceRefId'])
+            self.assertEqual(json.loads(row['descriptor_json']),selector|{'sourceSha256':'a'*64})
+            fixed.version['source_sha256']='c'*64
+            self.assertNotEqual(self.request(ROOT+'/evidence/detail',payload)[1]['availability'],'available')
+
+    def test_unpublished_pdf_minimal_selection_keeps_fixed_hash_and_page(self):
+        from tests.test_equipment_materials import DocumentReader, DOC, VERSION, PNG
+        created,_=self.create();fixed=DocumentReader();original=self.source.request
+        def source(account,method,path,body=None):
+            if '/documents/' in path:return {'outline':[]} if path.endswith('/navigation') else fixed._request(method,path,body)
+            return original(account,method,path,body)
+        with patch.object(self.source,'request',source),patch.object(self.source,'document_page',return_value=dict(content=PNG,mediaType='image/png',sha256='b'*64),create=True) as binary:
+            status,ref,*_=self.request(ROOT+'/evidence/register',self.body(analysisSessionId=created['analysisSessionId'],expectedAnalysisRevision=1,requestId=str(uuid4()),sourceKind='document',selector=dict(documentId=DOC,contentVersionId=VERSION,pageNumber=2)))
+            self.assertEqual(status,200,ref);payload=self.reference(created,ref)
+            read=self.request(ROOT+'/evidence/detail',payload)
+            self.assertEqual(read[1]['source']['pageNumber'],2);self.assertEqual(read[1]['source']['sourceSha256'],'a'*64)
+            self.assertNotIn('knowledgeReleaseId',read[1]['source'])
+            self.assertEqual(self.read_bytes(ROOT+'/evidence/preview-content',payload|{'options':{'pageNumber':3}}),PNG)
+            self.assertIn('version_id='+VERSION,binary.call_args.args[0]);self.assertIn('page=3',binary.call_args.args[0])
+            self.assertEqual(self.request(ROOT+'/evidence/detail',payload)[1]['source']['pageNumber'],2)
+
     def demo(self):
         self.source.projects['Demo-PDS']='Synthetic demo';self.source.permissions['writer']['Demo-PDS']='admin'
         project={'ontobaseConnectionId':'ontobase-primary','projectCode':'Demo-PDS'}

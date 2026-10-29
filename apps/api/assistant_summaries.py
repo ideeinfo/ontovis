@@ -91,9 +91,10 @@ def summarize(reader, kind, descriptor, private=()):
             result={'kind':kind,'page':value.get('pageNumber'),'availability':value.get('availability','available'),
                 'gaps':['仅图纸元数据和固定版本；未向模型发送图面、接线或全部对象端口。']}
         elif kind=='photo':
-            result={'kind':kind,'purpose':descriptor.get('photoPurpose','object_location'),
+            plain=descriptor.get('sourceType')=='project_document'
+            result={'kind':kind,'purpose':'project_document' if plain else descriptor.get('photoPurpose','object_location'),
                 'regionPresent':value.get('selector') is not None,'availability':value.get('displayAvailability'),
-                'gaps':['仅定位区域元数据，不含照片像素，不能判断器件外观或现场状况。']}
+                'gaps':['仅项目照片元数据，无对象定位证据；不含照片像素。' if plain else '仅定位区域元数据，不含照片像素，不能判断器件外观或现场状况。']}
         elif kind=='model':
             report=value.get('report') or {}
             result={'kind':kind,'report':{k:report.get(k) for k in ('nodes','triangles','coordinateVerification')},

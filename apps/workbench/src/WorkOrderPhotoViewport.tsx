@@ -82,11 +82,11 @@ export function WorkOrderPhotoViewport({image,selector,label,en,onError,embedded
     pan.current={id:event.pointerId,x:event.clientX,y:event.clientY,left:event.currentTarget.scrollLeft,top:event.currentTarget.scrollTop};setPanning(true);
   }
   return <>
-    <div className="wo-photo-tools"><span>{selector?.kind==='spherical_region'?(en?'Panorama · unfolded region':'球面全景 · 展开图区域'):(en?'Fixed display region':'固定显示资源区域')}</span>
+    <div className="wo-photo-tools"><span>{selector?.kind==='spherical_region'?(en?'Panorama · unfolded region':'球面全景 · 展开图区域'):box?(en?'Fixed display region':'固定显示资源区域'):(en?'Whole image':'整图')}</span>
       <button type="button" aria-label={en?'Zoom out':'照片缩小'} disabled={!natural.width||zoom<=MIN_PHOTO_ZOOM} onClick={()=>applyZoom(clampPhotoZoom(zoom/1.3))}><ZoomOut size={15}/></button>
       <button type="button" aria-label={en?'Zoom in':'照片放大'} disabled={!natural.width||zoom>=MAX_PHOTO_ZOOM} onClick={()=>applyZoom(clampPhotoZoom(zoom*1.3))}><ZoomIn size={15}/></button>
       <output aria-label={en?'Photo zoom':'照片缩放比例'}>{Math.round(zoom*100)}%</output>
-      <button type="button" disabled={!natural.width} onClick={()=>{changed.current=true;focusPhoto();report();}}><Focus size={14}/>{en?'Focus annotation':'定位标注'}</button>
+      {box&&<button type="button" disabled={!natural.width} onClick={()=>{changed.current=true;focusPhoto();report();}}><Focus size={14}/>{en?'Focus annotation':'定位标注'}</button>}
       <button type="button" disabled={!natural.width} onClick={()=>applyZoom(1)}>{en?'Fit photo':'适应窗口'}</button>
     </div>
     <p className="wo-photo-hint">{en?'Scroll to zoom · drag with the left mouse button to pan':'滚轮缩放 · 按住鼠标左键平移'}</p>

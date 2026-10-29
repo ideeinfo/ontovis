@@ -130,16 +130,20 @@ class Authority:
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             raise PreviewError(502, 'SOURCE_UNAVAILABLE') from None
 
-    def document_page(self, path: str) -> dict:
+    def document_page(self, path: str, *, photo=False) -> dict:
         """GET a server-constructed fixed document page, never a client URL."""
         request = urllib.request.Request(self.base_url + path, headers={
-            'Authorization': 'Bearer ' + self.token, 'Accept': 'image/png', 'Cache-Control': 'no-store'})
+            'Authorization': 'Bearer ' + self.token, 'Accept': 'image/png,image/jpeg,image/webp' if photo else 'image/png', 'Cache-Control': 'no-store'})
         try:
             with self.opener.open(request, timeout=30) as response:
                 raw = response.read(20 * 1024 * 1024 + 1)
-                if not raw.startswith(b'\x89PNG\r\n\x1a\n') or len(raw) > 20 * 1024 * 1024 or response.headers.get_content_type() != 'image/png':
+                mime = response.headers.get_content_type()
+                signature = (mime == 'image/png' and raw.startswith(b'\x89PNG\r\n\x1a\n') or photo and (
+                    mime == 'image/jpeg' and raw.startswith(b'\xff\xd8\xff')
+                    or mime == 'image/webp' and raw.startswith(b'RIFF') and raw[8:12] == b'WEBP'))
+                if not signature or len(raw) > 20 * 1024 * 1024:
                     raise PreviewError(502, 'SOURCE_UNAVAILABLE')
-                return {'content': raw, 'mediaType': 'image/png', 'sha256': hashlib.sha256(raw).hexdigest()}
+                return {'content': raw, 'mediaType': mime, 'sha256': hashlib.sha256(raw).hexdigest()}
         except urllib.error.HTTPError as error:
             status = error.code if error.code in (401,403,404,409,410,413,422,503) else 502
             error.close(); raise PreviewError(status, 'ANALYSIS_SOURCE_UNAVAILABLE') from None

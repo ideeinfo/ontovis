@@ -63,6 +63,20 @@ class AnalysisSourcePairTests(unittest.TestCase):
         _,read=AnalysisEvidence(consumer).descriptor(OWNER,{'analysisSessionId':self.created['analysisSessionId'],'evidenceRefId':reference['evidenceRefId']},lambda:None)
         self.assertEqual(read['configurationRefs'],descriptor['configurationRefs'])
 
+    def test_whole_project_photo_and_unpublished_pdf_keep_fixed_versions_after_paired_recovery(self):
+        descriptors=[('photo',dict(sourceType='project_document',documentId=str(uuid4()),contentVersionId=str(uuid4()),sourceSha256='a'*64)),
+                     ('document',dict(documentId=str(uuid4()),contentVersionId=str(uuid4()),sourceSha256='b'*64,pageNumber=2))]
+        refs=[]
+        for kind,descriptor in descriptors:
+            body=self.source_body()|{'sourceKind':kind}
+            refs.append(AnalysisEvidence(self.store).register(OWNER,body,lambda:None,lambda *_,value=descriptor:value))
+        receipt=self.snapshot();restored=self.restore(receipt)
+        consumer=draft.AnalysisDrafts(self.urls[1],'ontobase-primary','SYNTHETIC-A');self.addCleanup(consumer.close)
+        for ref,(_,descriptor) in zip(refs,descriptors):
+            _,read=AnalysisEvidence(consumer).descriptor(OWNER,{'analysisSessionId':self.created['analysisSessionId'],'evidenceRefId':ref['evidenceRefId']},lambda:None)
+            self.assertEqual(read,descriptor)
+        self.assertEqual(restored['analysisCounts']['analysis_evidence_refs'],2)
+
     def test_missing_fixed_geometry_is_rejected_before_publishing_paired_manifest(self):
         model=self.model();descriptor={key:model[key] for key in ('modelAssetId','modelVersionId','contentRevision','sha256')};descriptor['sha256']='f'*64
         AnalysisEvidence(self.store).register(OWNER,self.source_body(),lambda:None,lambda *_:descriptor)

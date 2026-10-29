@@ -121,6 +121,18 @@ class WorkbenchSessions(UserSessions):
         elif path=='/api/workbench/equipment/resolve':
             if set(body)!={'entityUids'}:raise PreviewError(422,'INVALID_REQUEST')
             value={'items':list(equipment.resolve(body['entityUids']).values())}
+        elif path=='/api/workbench/equipment/materials/models':
+            value=equipment.material_catalogue(body)
+        elif path=='/api/workbench/equipment/materials/candidates':
+            value=equipment.material_catalogue(body,candidates=True)
+        elif path=='/api/workbench/equipment/materials/resolve':
+            value=equipment.material_devices(body)
+        elif path in ('/api/workbench/equipment/materials/metadata','/api/workbench/equipment/materials/content'):
+            from .fixed_documents import FixedDocuments
+            fixed=FixedDocuments(reader)
+            value=fixed.content(body) if path.endswith('/content') else fixed.metadata(body)
+        elif path=='/api/workbench/equipment/attribute-form':
+            value=equipment.attribute_form(body)
         elif path=='/api/workbench/equipment/applications':
             value=equipment.applications(body)
         elif path=='/api/workbench/equipment/applications/detail':

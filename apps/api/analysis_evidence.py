@@ -32,6 +32,9 @@ def validate_descriptor(kind, value):
     }[kind]
     if kind == 'drawing' and 'drawingUid' in value:
         fields = {'drawingUid', 'expectedContentSha256'}
+    document_photo = kind == 'photo' and value.get('sourceType') == 'project_document'
+    if document_photo:
+        fields = {'sourceType', 'documentId', 'contentVersionId', 'sourceSha256'}
     if kind == 'photo' and 'photoPurpose' in value:
         fields |= {'photoPurpose'}
         draft.require(value['photoPurpose'] in ('object_location', 'field_record'))
@@ -63,11 +66,11 @@ def validate_descriptor(kind, value):
             sha(item)
         else:
             draft.text(item, 512)
-    if kind in ('object', 'photo') or kind == 'drawing' and 'drawingUid' not in value:
+    if kind == 'object' or kind == 'photo' and not document_photo or kind == 'drawing' and 'drawingUid' not in value:
         draft.require((value['installationContextId'] is None) == (value['expectedHierarchyRevision'] is None))
     if kind == 'model':
         draft.identifier(value['modelAssetId']); draft.identifier(value['modelVersionId'])
-    if kind == 'document':
+    if kind == 'document' or document_photo:
         draft.identifier(value['documentId']); draft.identifier(value['contentVersionId'])
         if 'knowledgeReleaseId' in value: draft.identifier(value['knowledgeReleaseId'])
     if kind == 'trend':

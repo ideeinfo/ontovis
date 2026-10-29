@@ -1,13 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {MATERIAL_CATEGORIES,materialCategories,materialPosition,withPrimaryAlarm} from '../src/analysisMaterials.ts';
+import {MATERIAL_CATEGORIES,materialCategories,materialPosition,relatedMaterialSection,withPrimaryAlarm} from '../src/analysisMaterials.ts';
 import {validateSnapshot} from '../src/analysisCanvas.ts';
 
 test('all nine material types are reachable and type search stays local',()=>{
- assert.equal(MATERIAL_CATEGORIES.length,9);assert.equal(new Set(MATERIAL_CATEGORIES.map(row=>row.kind)).size,9);
+ assert.equal(new Set(MATERIAL_CATEGORIES.map(row=>row.kind)).size,9);
+ assert.deepEqual(materialCategories('当前设备适用资料').map(row=>row.id),['device_materials']);
+ assert.deepEqual(materialCategories('本项目文档库').map(row=>row.id),['project_documents']);
  assert.deepEqual(materialCategories('报警事件').map(row=>row.id),['alarms']);
  assert.deepEqual(materialCategories('fault alarms').map(row=>row.id),['alarms']);
  assert.deepEqual(materialCategories('不存在'),[]);
+});
+test('installed equipment opens source-resolved materials while shared definitions retain old located evidence',()=>{
+ assert.equal(relatedMaterialSection('installation'),'device_materials');
+ for(const scope of ['definition','unclassified',undefined])assert.equal(relatedMaterialSection(scope),'materials');
 });
 test('drops resolve to canvas coordinates at different pan and zoom without leaving layout limits',()=>{
  const point={x:725,y:420};for(const zoom of [.25,.43,1,1.5]){

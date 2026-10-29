@@ -5,7 +5,7 @@ import {addManualRelation,frameBounds,selectedInBox,arrangeCards,fitViewport,mov
 import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle,type AnalysisListItem,type DraftReceipt,type PendingDraft} from './analysisDraftState';
 import {RowActions,RowContext,type ListAction} from './ListMenus';
 import {AnalysisMaterialPanel} from './AnalysisMaterialPanel';
-import {materialPosition,withPrimaryAlarm} from './analysisMaterials';
+import {materialPosition,relatedMaterialSection,withPrimaryAlarm} from './analysisMaterials';
 import {AnalysisSources,ANALYSIS_ROOT,setCardPreviewOpen,type AnalysisEntry,type Recommendation,type Recommendations,type EvidenceSource,type SourceAnchor} from './analysisSources';
 import {AnalysisSourceCard,AnalysisTrend,materialNames} from './AnalysisSourceCard';
 import {useSourceRelations,SourceRelationLines,SourceRelationDetails,type CardSourceRelation} from './AnalysisSourceRelations';
@@ -103,7 +103,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   useEffect(()=>{
     if(!materialsOpen||!analysisEntry||section==='types'){setRecommendations(null);setRecommendLoading(false);return;}const abort=new AbortController();setRecommendLoading(true);setRecommendations(null);
     setChosen([]);
-    void api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendFilter!==undefined&&['objects','models','documents','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos','models'].includes(section)&&related?related:{})},abort.signal)
+    void api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendFilter!==undefined&&['objects','models','documents','project_documents','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos','device_materials','models'].includes(section)&&related?related:{})},abort.signal)
       .then(value=>{if(!abort.signal.aborted)setRecommendations(value);}).catch(value=>{if(!abort.signal.aborted)failure(value);}).finally(()=>{if(!abort.signal.aborted)setRecommendLoading(false);});
     return()=>abort.abort();
   },[analysisEntry,materialsOpen,section,related,sourceAttempt,recommendFilter,api]);
@@ -198,7 +198,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   function addNote(){if(!draft||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('分析笔记','Analysis note'),note:'',x:32+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:300,height:200,pinned:false}]});setSelected(id);}
   function focusCard(card:CanvasCard){setSelected(card.id);setMulti([card.id]);if(current.current&&canvas.current)setDraft({...current.current,viewport:{...current.current.viewport,x:canvas.current.clientWidth/2-(card.x+card.width/2)*current.current.viewport.zoom,y:canvas.current.clientHeight/2-(card.y+card.height/2)*current.current.viewport.zoom}});}
   async function moreRecommendations(){if(!recommendations||!analysisEntry||recommendLoading)return;setRecommendLoading(true);
-    try{const value=await api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendations.nextCursor?{cursor:recommendations.nextCursor}:{offset:recommendations.nextOffset}),...(recommendFilter!==undefined&&['objects','documents','models','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos','models'].includes(section)&&related?related:{})});
+    try{const value=await api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendations.nextCursor?{cursor:recommendations.nextCursor}:{offset:recommendations.nextOffset}),...(recommendFilter!==undefined&&['objects','documents','project_documents','models','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos','device_materials','models'].includes(section)&&related?related:{})});
       setRecommendations({...value,items:[...recommendations.items,...value.items.filter(i=>!recommendations.items.some(old=>old.key===i.key))]});}
     catch(value){failure(value);}finally{setRecommendLoading(false);}}
   async function addSource(item:Recommendation,replaceId?:string,position?:{x:number;y:number}){return addSources([item],replaceId,position);}
@@ -237,7 +237,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
       snapshot:draft,historySessionId:item.analysisSessionId,historyRevision:item.analysisRevision,requestId:crypto.randomUUID()},abort.signal);
       if(!abort.signal.aborted){apply(value.snapshot);setHistoryCandidates(null);setNotice(t('历史参考已载入；保存后记录本次选择','History loaded. Save to record your selection'));}}
     catch(value){failure(value);}finally{if(!abort.signal.aborted)setBusy(false);}}
-  function chooseRelated(value:EvidenceSource){if(!value.item)return;setRelatedLabel(value.item.displayName||t('所选对象','Selected object'));setRelated({entityUid:value.item.entityUid,expectedEntityRevision:value.item.entityRevision});setSection('materials');setMaterialsOpen(true);setRight(false);}
+  function chooseRelated(value:EvidenceSource){if(!value.item)return;setRelatedLabel(value.item.displayName||t('所选对象','Selected object'));setRelated({entityUid:value.item.entityUid,expectedEntityRevision:value.item.entityRevision});setSection(relatedMaterialSection(value.item.objectScope));setMaterialsOpen(true);setRight(false);}
   function changePage(card:CanvasCard,page:number,value:EvidenceSource){if(!value.documentId||!value.contentVersionId||!value.sourceSha256)return;
     void addSource({key:card.id,kind:'document',title:card.title,reason:'指定文档页',selector:{documentId:value.documentId,contentVersionId:value.contentVersionId,sourceSha256:value.sourceSha256,pageNumber:page}},card.id);}
   pageAction.current=changePage;
