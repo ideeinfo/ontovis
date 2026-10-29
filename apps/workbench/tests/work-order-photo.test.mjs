@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {photoBoxes,photoFocusZoom,photoFocusScroll,photoBaseSize,photoWheelZoom,photoZoomScroll,clampPhotoZoom,MAX_PHOTO_ZOOM} from '../src/workOrderPhoto.ts';
+import {photoBoxes,photoFocusZoom,photoFocusScroll,photoBaseSize,photoFitZoom,photoRestoreZoom,photoWheelZoom,photoZoomScroll,clampPhotoZoom,MAX_PHOTO_ZOOM,MIN_PHOTO_ZOOM} from '../src/workOrderPhoto.ts';
 import {WorkbenchApi} from '../src/api.ts';
 
 test('ordinary photo regions stay on the oriented display coordinate space',()=>{
@@ -18,25 +18,34 @@ test('panorama regions split at the seam and preserve source pitch orientation',
   assert.equal(boxes[0].y,1/3);assert.equal(boxes[0].height,1/3);
   assert.deepEqual(photoBoxes({...selector,sphericalRegion:{...selector.sphericalRegion,yaw_span_deg:361}}),[]);
 });
-test('photos fit both viewport axes and use OntoBase focus and zoom bounds',()=>{
+test('photos fit both viewport axes while annotation focus uses actual image pixels',()=>{
   const box={x:.4,y:.85,width:.025,height:.004};
   const base=photoBaseSize(900,560,2400,12000);
   assert.deepEqual(base,{width:105.6,height:528});
   const zoom=photoFocusZoom(box,900,560,2400,12000);
-  assert.equal(zoom,16);
-  const scroll=photoFocusScroll(box,base.width*zoom,base.height*zoom,900,560);
-  assert.ok(Math.abs(16+(box.x+box.width/2)*base.width*zoom-scroll.left-450)<1e-8);
-  assert.ok(Math.abs(16+(box.y+box.height/2)*base.height*zoom-scroll.top-280)<1e-8);
+  assert.equal(zoom,1.05);
+  const scroll=photoFocusScroll(box,2400*zoom,12000*zoom,900,560);
+  assert.ok(Math.abs(16+(box.x+box.width/2)*2400*zoom-scroll.left-450)<1e-8);
+  assert.ok(Math.abs(16+(box.y+box.height/2)*12000*zoom-scroll.top-280)<1e-8);
   assert.equal(photoFocusZoom(undefined,900,560,0,0),1);
-  assert.equal(photoFocusZoom({x:0,y:0,width:1,height:1},900,560,100,100),.5);
-  assert.equal(clampPhotoZoom(0),.5);assert.equal(clampPhotoZoom(100),MAX_PHOTO_ZOOM);
+  assert.equal(photoFocusZoom({x:0,y:0,width:1,height:1},900,560,100,100),.504);
+  assert.equal(clampPhotoZoom(0),MIN_PHOTO_ZOOM);assert.equal(clampPhotoZoom(100),MAX_PHOTO_ZOOM);
+});
+test('preview and original fit below true 100% and legacy saved views retain their old meaning',()=>{
+  const preview=photoFitZoom(1066,432,1962,4096),original=photoFitZoom(1066,432,5076,10599);
+  assert.ok(Math.abs(preview*4096-400)<.01);assert.ok(Math.abs(original*10599-400)<.01);
+  assert.ok(preview<.1&&original<.04);
+  assert.equal(photoFitZoom(1066,432,100,100),1,'small images are not enlarged by Fit');
+  assert.equal(photoRestoreZoom({zoom:1,zoomBasis:'pixels',centerX:.5,centerY:.5},1066,432,5076,10599),1);
+  assert.ok(Math.abs(photoRestoreZoom({zoom:8,centerX:.5,centerY:.5},1066,432,5076,10599)*10599-3200)<.01);
+  assert.equal(photoFocusZoom(undefined,1066,432,1962,4096),preview);
 });
 test('wheel zoom is continuous, normalized by event mode and anchored on the image',()=>{
-  assert.equal(photoWheelZoom(2,100,0,560),1.8097);
+  assert.equal(photoWheelZoom(2,100,0,560),1.809675);
   assert.equal(photoWheelZoom(2,1,1,560),photoWheelZoom(2,16,0,560));
   assert.equal(photoWheelZoom(2,1,2,560),photoWheelZoom(2,560,0,560));
   assert.equal(photoWheelZoom(16,-500,0,560),16);
-  assert.equal(photoWheelZoom(.5,500,0,560),.5);
+  assert.equal(photoWheelZoom(MIN_PHOTO_ZOOM,500,0,560),MIN_PHOTO_ZOOM);
   const target=photoZoomScroll(2,2.6,528,528,900,560,300,400,250,180);
   assert.ok(Math.abs((300+250-16)/2-(target.left+250-16)/2.6)<1e-8);
   assert.ok(Math.abs((400+180-16)/2-(target.top+180-16)/2.6)<1e-8);

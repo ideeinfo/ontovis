@@ -36,6 +36,22 @@ class CanvasContractTests(unittest.TestCase):
         value['cards'][0]['frameId']='missing'
         with self.assertRaises(PreviewError):validate_canvas(value,CONNECTION,value['projectCode'])
 
+    def test_pixel_image_views_are_bounded_and_legacy_views_remain_valid(self):
+        for kind in ('photo','drawing','document'):
+            value=self.value();card=value['cards'][0];card.pop('note');card['kind']=kind
+            card['source']={'system':'ontobase','ontobaseConnectionId':CONNECTION,'projectCode':value['projectCode'],
+                'id':str(uuid4()),'revision':'a'*64}
+            for view in ({'zoom':.0001,'zoomBasis':'pixels','centerX':0,'centerY':1},
+                         {'zoom':16,'zoomBasis':'pixels','centerX':1,'centerY':0},
+                         {'zoom':.1,'centerX':.5,'centerY':.5},{'zoom':16,'centerX':.2,'centerY':.8}):
+                card['view']=view;validate_canvas(value,CONNECTION,value['projectCode'])
+            for changes in ({'zoom':.00001},{'zoom':17},{'zoom':float('nan')},{'zoom':True},
+                            {'zoomBasis':None},{'zoomBasis':'fit'},{'centerX':1.1},{'url':'injected'}):
+                card['view']={'zoom':1,'zoomBasis':'pixels','centerX':.5,'centerY':.5,**changes}
+                with self.assertRaises(PreviewError):validate_canvas(value,CONNECTION,value['projectCode'])
+            card['view']={'zoom':.0001,'centerX':.5,'centerY':.5}
+            with self.assertRaises(PreviewError):validate_canvas(value,CONNECTION,value['projectCode'])
+
 
 @unittest.skipUnless(os.environ.get('ONTOVIS_ANALYSIS_TEST_DATABASE_URL'),'Disposable PG required')
 class CanvasStorageTests(unittest.TestCase):

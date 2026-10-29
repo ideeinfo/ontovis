@@ -1,10 +1,22 @@
 import type {PhotoBox,PhotoSelector} from './workOrderTypes';
+import type {ImageView} from './analysisCanvas';
 
 export const MAX_PHOTO_ZOOM=16;
-export const MIN_PHOTO_ZOOM=.5;
+export const MIN_PHOTO_ZOOM=.0001;
 
-export function clampPhotoZoom(value:number,precision=2){
+export function clampPhotoZoom(value:number,precision=6){
   return Number(Math.max(MIN_PHOTO_ZOOM,Math.min(MAX_PHOTO_ZOOM,Number.isFinite(value)?value:1)).toFixed(precision));
+}
+
+export function photoFitZoom(viewportWidth:number,viewportHeight:number,imageWidth:number,imageHeight:number){
+  if(!imageWidth||!imageHeight)return 1;
+  return clampPhotoZoom(Math.min(1,photoBaseSize(viewportWidth,viewportHeight,imageWidth,imageHeight).width/imageWidth));
+}
+
+export function photoRestoreZoom(view:ImageView,viewportWidth:number,viewportHeight:number,imageWidth:number,imageHeight:number){
+  // Older saved views used a fit-relative multiplier, not image pixels.
+  const basis=view.zoomBasis==='pixels'?1:photoBaseSize(viewportWidth,viewportHeight,imageWidth,imageHeight).width/imageWidth;
+  return clampPhotoZoom(view.zoom*basis);
 }
 
 export function photoBaseSize(viewportWidth:number,viewportHeight:number,imageWidth:number,imageHeight:number){
@@ -15,7 +27,7 @@ export function photoBaseSize(viewportWidth:number,viewportHeight:number,imageWi
 
 export function photoWheelZoom(current:number,deltaY:number,deltaMode:number,viewportHeight:number){
   const pixels=deltaY*(deltaMode===1?16:deltaMode===2?viewportHeight:1);
-  return clampPhotoZoom(current*Math.exp(-pixels*.001),4);
+  return clampPhotoZoom(current*Math.exp(-pixels*.001));
 }
 
 export function photoZoomScroll(current:number,next:number,baseWidth:number,baseHeight:number,viewportWidth:number,viewportHeight:number,left:number,top:number,x:number,y:number){
@@ -25,10 +37,9 @@ export function photoZoomScroll(current:number,next:number,baseWidth:number,base
 }
 
 export function photoFocusZoom(box:PhotoBox|undefined, viewportWidth:number, viewportHeight:number, imageWidth:number, imageHeight:number,focusFraction=.09):number {
-  if(!box||![viewportWidth,viewportHeight,imageWidth,imageHeight].every(v=>Number.isFinite(v)&&v>0))return 1;
-  const base=photoBaseSize(viewportWidth,viewportHeight,imageWidth,imageHeight);
+  if(!box||![viewportWidth,viewportHeight,imageWidth,imageHeight].every(v=>Number.isFinite(v)&&v>0))return photoFitZoom(viewportWidth,viewportHeight,imageWidth,imageHeight);
   // Match OntoBase's photo focus: retain context around the source annotation.
-  return clampPhotoZoom(Math.min(viewportWidth*focusFraction/(box.width*base.width),viewportHeight*focusFraction/(box.height*base.height)));
+  return clampPhotoZoom(Math.min(viewportWidth*focusFraction/(box.width*imageWidth),viewportHeight*focusFraction/(box.height*imageHeight)));
 }
 
 export function photoFocusScroll(box:PhotoBox|undefined,width:number,height:number,viewportWidth:number,viewportHeight:number){

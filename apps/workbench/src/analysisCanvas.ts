@@ -6,7 +6,7 @@ export type RelationKind = 'engineering'|'reference'|'hypothesis'|'supports'|'co
 export type SessionStatus = 'analyzing'|'awaiting_field_check'|'awaiting_expert_review'|'concluded'|'archived';
 export type ProjectScope = {ontobaseConnectionId:string;projectCode:string};
 export type SourceRef = ProjectScope & {system:'ontobase'|'ontovis';id:string;revision:string;locator?:string};
-export type ImageView={zoom:number;centerX:number;centerY:number};
+export type ImageView={zoom:number;centerX:number;centerY:number;zoomBasis?:'pixels'};
 export type ModelView={eye:[number,number,number];target:[number,number,number];componentId?:string};
 export type CardView=ImageView|ModelView;
 export type CanvasCard = {id:string;kind:CardKind;title:string;x:number;y:number;width:number;height:number;pinned:boolean;source?:SourceRef;note?:string;historical?:boolean;checkState?:'not_started'|'checking'|'done'|'blocked';frameId?:string;view?:CardView};
@@ -41,7 +41,7 @@ export function validateSnapshot(value:unknown,scope:ProjectScope):string[]{
     if(!only(c,['id','kind','title','x','y','width','height','pinned','source','note',...(v2?['historical','checkState','frameId','view']:[])]))errors.push('卡片不允许保存源内容或扩展字段');
     if(c.view!==undefined){const v=c.view;
       if(!record(v))errors.push('资料视图无效');
-      else if(['photo','drawing','document'].includes(String(c.kind))){if(!only(v,['zoom','centerX','centerY'])||!finite(v.zoom,.1,16)||!finite(v.centerX,0,1)||!finite(v.centerY,0,1))errors.push('图片视图无效');}
+      else if(['photo','drawing','document'].includes(String(c.kind))){if(!only(v,['zoom','centerX','centerY','zoomBasis'])||(v.zoomBasis!==undefined&&v.zoomBasis!=='pixels')||!finite(v.zoom,v.zoomBasis==='pixels'?.0001:.1,16)||!finite(v.centerX,0,1)||!finite(v.centerY,0,1))errors.push('图片视图无效');}
       else if(c.kind==='model3d'){if(!only(v,['eye','target','componentId'])||[v.eye,v.target].some(p=>!Array.isArray(p)||p.length!==3||p.some(n=>!finite(n,-2000000,2000000)))||(v.componentId!==undefined&&!bounded(v.componentId,512)))errors.push('三维视图无效');}
       else errors.push('此资料不支持内部视图');
     }

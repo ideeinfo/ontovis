@@ -70,12 +70,22 @@ class AnalysisSourcePairTests(unittest.TestCase):
         for kind,descriptor in descriptors:
             body=self.source_body()|{'sourceKind':kind}
             refs.append(AnalysisEvidence(self.store).register(OWNER,body,lambda:None,lambda *_,value=descriptor:value))
+        value=deepcopy(self.store.detail(OWNER,self.created['analysisSessionId'],lambda:None)['snapshot'])
+        value['schemaVersion']=2
+        for ref,(kind,_) in zip(refs,descriptors):
+            value['cards'].append({'id':str(uuid4()),'kind':kind,'title':'Fixed pixel preview','x':100,'y':200,'width':340,'height':300,'pinned':False,
+                'source':{'system':'ontobase','ontobaseConnectionId':'ontobase-primary','projectCode':'SYNTHETIC-A','id':ref['evidenceRefId'],'revision':ref['sourceRevision']},
+                'view':{'zoom':.037739 if kind=='photo' else 1.3,'zoomBasis':'pixels','centerX':.4,'centerY':.6}})
+        saved=self.store.write(OWNER,'synthetic','save',{'analysisSessionId':self.created['analysisSessionId'],'expectedAnalysisRevision':2,
+            'requestId':str(uuid4()),'snapshot':value},lambda:None)
+        self.assertEqual(saved['analysisRevision'],3)
         receipt=self.snapshot();restored=self.restore(receipt)
         consumer=draft.AnalysisDrafts(self.urls[1],'ontobase-primary','SYNTHETIC-A');self.addCleanup(consumer.close)
         for ref,(_,descriptor) in zip(refs,descriptors):
             _,read=AnalysisEvidence(consumer).descriptor(OWNER,{'analysisSessionId':self.created['analysisSessionId'],'evidenceRefId':ref['evidenceRefId']},lambda:None)
             self.assertEqual(read,descriptor)
         self.assertEqual(restored['analysisCounts']['analysis_evidence_refs'],2)
+        self.assertEqual(consumer.detail(OWNER,self.created['analysisSessionId'],lambda:None)['snapshot'],value)
 
     def test_missing_fixed_geometry_is_rejected_before_publishing_paired_manifest(self):
         model=self.model();descriptor={key:model[key] for key in ('modelAssetId','modelVersionId','contentRevision','sha256')};descriptor['sha256']='f'*64

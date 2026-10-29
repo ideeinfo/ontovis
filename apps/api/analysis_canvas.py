@@ -56,7 +56,9 @@ def validate_canvas(value, connection_id, project_code):
         if 'view' in card:
             view = card['view']; d.require(type(view) is dict)
             if card['kind'] in ('drawing','document','photo'):
-                d.require(set(view) == {'zoom','centerX','centerY'} and d.number(view['zoom'],.1,16)
+                d.require({'zoom','centerX','centerY'} <= set(view) <= {'zoom','centerX','centerY','zoomBasis'}
+                    and ('zoomBasis' not in view or view['zoomBasis'] == 'pixels')
+                    and d.number(view['zoom'],.0001 if view.get('zoomBasis') == 'pixels' else .1,16)
                     and d.number(view['centerX'],0,1) and d.number(view['centerY'],0,1))
             elif card['kind'] == 'model3d':
                 d.require({'eye','target'} <= set(view) <= {'eye','target','componentId'})

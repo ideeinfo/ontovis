@@ -56,3 +56,14 @@ test('context has a bounded selection and an explicit increasing UTC time window
     const value=initial();Object.assign(value.context,update);assert.ok(validateSnapshot(value,scope).length);
   }
 });
+test('pixel image views and historical fit-relative views have explicit, separate validation',()=>{
+  for(const kind of ['photo','drawing','document']){
+    const value=initial();value.schemaVersion=2;value.cards=[{...card('image'),kind}];
+    for(const view of [{zoom:.0001,zoomBasis:'pixels',centerX:0,centerY:1},{zoom:16,zoomBasis:'pixels',centerX:1,centerY:0},{zoom:.1,centerX:.5,centerY:.5},{zoom:16,centerX:.2,centerY:.8}]){
+      value.cards[0].view=view;assert.deepEqual(validateSnapshot(value,scope),[]);
+    }
+    for(const view of [{zoom:.0001,centerX:.5,centerY:.5},{zoom:1,zoomBasis:'fit',centerX:.5,centerY:.5},{zoom:17,zoomBasis:'pixels',centerX:.5,centerY:.5},{zoom:.00001,zoomBasis:'pixels',centerX:.5,centerY:.5},{zoom:NaN,zoomBasis:'pixels',centerX:.5,centerY:.5},{zoom:1,zoomBasis:'pixels',centerX:1.1,centerY:.5},{zoom:1,zoomBasis:'pixels',centerX:.5,centerY:.5,url:'injected'}]){
+      value.cards[0].view=view;assert.ok(validateSnapshot(value,scope).length);
+    }
+  }
+});
