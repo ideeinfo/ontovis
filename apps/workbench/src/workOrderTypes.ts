@@ -14,7 +14,14 @@ export interface Investigation {
   conclusion:string;reviewBasis:string;
 }
 export interface InvestigationHistory {orderRevision:number;actor:string;recordedAt:string}
+export interface AssistantTransfer {
+  orderRevision:number;runId:string;conversationId:string|null;conversationVersion:number;analysisSessionId:string;
+  analysisRevision:number;analysisSha256:string;actor:string;recordedAt:string;engineeringConfirmation:false;
+  items:{sourceItemId:string;kind:'hypothesis'|'step'|'gap';originalText:string;text:string;targetKey:string;refs:string[];planItemId:string}[];
+  sources:{key:string;kind:string;evidenceRefId:string;sourceRevision?:string;summaryHash?:string;retrievalRevision?:string}[];
+}
 export interface WorkOrderDetail extends WorkOrder {
+  assistantTransfers?:AssistantTransfer[];
   analysisLinks?:{orderRevision:number;analysisSessionId:string;analysisRevision:number;analysisSha256:string}[];
   investigation:Investigation;investigationRevision:number|null;investigationComplete:boolean;
   investigationHistory:InvestigationHistory[];

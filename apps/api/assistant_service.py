@@ -126,7 +126,8 @@ class AssistantRuntime:
 
 def request(sessions,sid,path,payload):
     action=path.removeprefix('/api/workbench/assistant/')
-    require(action in ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation'))
+    require(action in ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation',
+                       'work-order-preview','work-order-apply'))
     row=sessions.current(sid,authenticated=True,touch=action not in ('policy','status'))
     require(payload.get('expectedSessionRevision')==row.revision,'SESSION_CHANGED',409)
     project=sessions._ref(payload.get('projectRef'));actor=identifier(row.subject_id)
@@ -284,6 +285,56 @@ def request(sessions,sid,path,payload):
             return {**runtime.store.public(record,hide=True),'state':'changed','error':error.code}
         finally:body=original
         return runtime.store.public(record)
+
+    if action in ('work-order-preview', 'work-order-apply'):
+        fields = {'runId', 'orderId'} if action == 'work-order-preview' else {
+            'requestId', 'runId', 'orderId', 'expectedOrderRevision', 'expectedProposalSha256', 'items'}
+        require(set(body) == fields)
+        record = runtime.store.run(project, actor, body['runId'])
+        transfer_policy_revision = runtime.store.policy(project)['revision']
+        validated = visible(record)
+        require(validated['state'] in ('complete', 'partial') and validated['result'] is not None,
+                'ASSISTANT_TRANSFER_UNAVAILABLE', 409)
+        require(runtime.store.policy(project)['revision'] == transfer_policy_revision, 'ASSISTANT_POLICY_CHANGED', 409)
+        from .assistant_work_orders import proposal
+        from .work_orders import WorkOrders
+        proposed = proposal(validated)
+        workspace = sessions.registry.lookup(project)
+        require(workspace is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
+        orders = WorkOrders(sessions._workspace(workspace).library, project)
+        if action == 'work-order-preview':
+            detail = orders.detail({'orderId': body['orderId']})
+            adopted = [item['sourceItemId'] for transfer in detail.get('assistantTransfers', [])
+                       if transfer['runId'] == record['id'] for item in transfer['items']]
+            authorize(True)
+            return reply({'proposal': proposed, 'order': detail, 'adoptedItemIds': adopted, 'modelCalls': 0})
+        # Serialize new references with analysis deletion; fixed revisions never change.
+        from .analysis_drafts import AnalysisDrafts, WRITE_LOCK
+        require(sessions.analysis_slots.acquire(timeout=5), 'ANALYSIS_BUSY', 503)
+        store = None
+        try:
+            store = AnalysisDrafts(sessions.analysis_database_url, sessions.connection_id, project)
+            require(store.store_id == sessions.analysis_store_id, 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)
+            with store.connection.transaction() as cursor:
+                cursor.execute('select pg_advisory_xact_lock(%s)', (WRITE_LOCK,))
+                store._session(cursor, record['analysis_id'], actor, active=True)
+                _, fixed = store._revision(cursor, record['analysis_id'], record['analysis_revision'])
+                def transfer_guard():
+                    authorize(True)
+                    store._session(cursor, record['analysis_id'], actor, active=True)
+                    require(runtime.store.policy(project)['revision'] == transfer_policy_revision,
+                            'ASSISTANT_POLICY_CHANGED', 409)
+                    available = service()
+                    require(available.get('canRun') is True and available['serviceRevision'] == record['service_revision'],
+                            'ASSISTANT_CONFIGURATION_CHANGED', 409)
+                    current = runtime.store.run(project, actor, record['id'])
+                    require(current['version'] == record['version'] and current['state'] in ('complete', 'partial'),
+                            'ASSISTANT_RUN_CHANGED', 409)
+                value = orders.apply_assistant(body, actor, transfer_guard, proposed, {'contentSha256': fixed[1]})
+        finally:
+            if store: store.close()
+            sessions.analysis_slots.release()
+        return reply({**value, 'modelCalls': 0})
 
     if action=='conversation':
         require(set(body) in ({'conversationId'},{'conversationId','beforeTurn'}))

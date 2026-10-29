@@ -28,7 +28,7 @@ def location_for(path):
 
 class WorkbenchDeploymentTests(unittest.TestCase):
     def test_assistant_routes_are_explicit_bounded_and_do_not_publish_arbitrary_tools(self):
-        for action in ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation'):
+        for action in ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation','work-order-preview'):
             root='/api/workbench/assistant/'+action
             body=location_for(root)
             for directive in ('client_max_body_size 16k;','proxy_buffering off;','proxy_read_timeout 60s;'):
@@ -38,6 +38,13 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         for path in ('/api/workbench/assistant','/api/workbench/assistant/query','/api/workbench/assistant/confirm',
                      '/api/workbench/assistant/tools','/api/workbench/assistant/endpoint'):
             with self.assertRaises(AssertionError):location_for(path)
+
+    def test_assistant_order_apply_is_one_exact_bounded_route(self):
+        body=location_for('/api/workbench/assistant/work-order-apply')
+        self.assertIn('client_max_body_size 32k;',body)
+        self.assertIn('proxy_pass http://127.0.0.1:18084;',body)
+        for suffix in ('/','/extra'):
+            with self.assertRaises(AssertionError):location_for('/api/workbench/assistant/work-order-apply'+suffix)
 
     def test_simulation_stream_is_exact_bounded_and_not_buffered_or_compressed(self):
         root='/api/workbench/analysis-sessions/simulation/stream'

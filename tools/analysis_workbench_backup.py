@@ -24,6 +24,39 @@ RECOVERY_FORMAT = 'ontovis-analysis-workbench-recovery-v1'
 RESTORE_LOCK = int.from_bytes(hashlib.sha256(FORMAT.encode()).digest()[:8], 'big', signed=True)
 
 
+def _assistant_transfer(record, transfer, connection_id, project, order_revision, session_id, revision, owner, analysis_sha, plan, graph):
+    """A published work-order suggestion must retain its private source receipt."""
+    from apps.api.assistant_store import AssistantStore
+    from apps.api.assistant_work_orders import proposal, selected_items
+    error = 'ANALYSIS_PAIR_ASSISTANT_MISMATCH'
+    draft.require(record and record['connection_id'] == connection_id
+                  and record['project_code'] == project and record['owner'] == owner
+                  and record['analysis_id'] == session_id and record['analysis_revision'] == revision,
+                  error, 409)
+    try:
+        proposed = proposal(AssistantStore.public(record))
+        draft.require(transfer['orderRevision'] == order_revision and transfer['analysisSessionId'] == session_id and transfer['analysisRevision'] == revision
+                      and transfer['analysisSha256'] == analysis_sha and transfer['actor'] == owner
+                      and transfer['engineeringConfirmation'] is False and transfer['runId'] == record['id']
+                      and transfer['runVersion'] == proposed['runVersion'] and transfer['proposalSha256'] == proposed['proposalSha256'], error, 409)
+        selected = selected_items([{'id': item['sourceItemId'], 'text': item['text'], 'targetKey': item['targetKey']}
+                                  for item in transfer['items']], proposed, graph)
+        keys = {key for item in selected for key in item['refs']}
+        draft.require(transfer['sources'] == [s for s in proposed['sources'] if s['key'] in keys], error, 409)
+        for actual, expected in zip(transfer['items'], selected):
+            draft.require(all(actual[key] == value for key, value in expected.items()), error, 409)
+            match = next((item for item in plan['hypotheses' if actual['kind'] == 'hypothesis' else 'steps']
+                          if item['id'] == actual['planItemId']), None)
+            draft.require(match is not None, error, 409)
+            if actual['kind'] == 'hypothesis':
+                draft.require(match['description'] == actual['text'] and match['status'] == 'candidate' and match['basis'] == '', error, 409)
+            else:
+                draft.require(match['title'] == ('补充证据：' if actual['kind'] == 'gap' else '') + actual['text']
+                              and match['targetKey'] == actual['targetKey'] and match['outcome'] == 'pending' and match['result'] == '', error, 409)
+    except (KeyError, TypeError, ValueError, PreviewError):
+        raise PreviewError(409, error) from None
+
+
 def _paired(workbench, workbench_sha, package):
     report, rows, _ = migration._source_registry(workbench, workbench_sha)
     draft.require(rows['registry_meta'][0]['connection_id'] == package['connectionId'],
@@ -33,6 +66,7 @@ def _paired(workbench, workbench_sha, package):
                   'ANALYSIS_PROJECT_NOT_REGISTERED', 409)
     sessions = {row['session_id']: row for row in package['tables']['analysis_sessions']}
     revisions = {(row['session_id'], row['revision']): row for row in package['tables']['analysis_revisions']}
+    evidence = {row['evidence_ref_id']: row for row in package['tables'].get('analysis_evidence_refs', [])}
     libraries = {row['project_code']: Path(workbench)/('workbench-library' if row['storage_key'] == 'legacy'
         else 'project-spaces/libraries/'+row['storage_key'])/'library.sqlite3' for row in rows['project_workspaces']}
     def database(path):
@@ -68,12 +102,39 @@ def _paired(workbench, workbench_sha, package):
         if not path.is_file(): continue
         with database(path) as db:
             if not db.execute("select 1 from sqlite_master where name='work_order_analysis_links' and type='table'").fetchone(): continue
+            if db.execute("select 1 from sqlite_master where name='work_order_assistant_transfers'").fetchone():
+                orphan = db.execute('''select 1 from work_order_assistant_transfers t
+                    left join work_order_analysis_links l on l.order_id=t.order_id and l.order_revision=t.order_revision
+                    where l.order_id is null limit 1''').fetchone()
+                draft.require(not orphan, 'ANALYSIS_PAIR_ASSISTANT_MISMATCH', 409)
             for order, order_revision, session_id, revision, digest in db.execute('select * from work_order_analysis_links'):
                 session = sessions.get(session_id); saved = revisions.get((session_id, revision))
                 draft.require(session and saved and session['project_code'] == project and saved['content_sha256'] == digest,
                               'ANALYSIS_PAIR_LINK_MISMATCH', 409)
                 event = db.execute('select action,actor from work_order_events where order_id=? and revision=?', (order, order_revision)).fetchone()
-                draft.require(event == ('link_analysis', session['owner_id']), 'ANALYSIS_PAIR_LINK_MISMATCH', 409)
+                draft.require(event in (('link_analysis', session['owner_id']), ('adopt_assistant', session['owner_id'])),
+                              'ANALYSIS_PAIR_LINK_MISMATCH', 409)
+                if event[0] == 'adopt_assistant':
+                    has_table = db.execute("select 1 from sqlite_master where name='work_order_assistant_transfers'").fetchone()
+                    transfer = db.execute('select run_id,snapshot_json from work_order_assistant_transfers where order_id=? and order_revision=?',
+                                          (order, order_revision)).fetchone() if has_table else None
+                    diagnostic = db.execute('select snapshot,source_graph from work_order_diagnostics where order_id=? and order_revision=?',
+                                            (order, order_revision)).fetchone()
+                    draft.require(transfer and diagnostic, 'ANALYSIS_PAIR_ASSISTANT_MISMATCH', 409)
+                    with database(Path(workbench)/'workbench-library/library.sqlite3') as shared:
+                        shared.row_factory = sqlite3.Row
+                        exists = shared.execute("select 1 from sqlite_master where name='assistant_runs'").fetchone()
+                        record = shared.execute('''select r.*, t.conversation_id,t.turn_no,t.parent_run_id
+                            from assistant_runs r left join assistant_conversation_turns t on t.run_id=r.id where r.id=?''',
+                            (transfer[0],)).fetchone() if exists else None
+                    transfer_value = json.loads(transfer[1])
+                    for source in transfer_value['sources']:
+                        fixed = evidence.get(source['evidenceRefId'])
+                        draft.require(fixed and fixed['session_id'] == session_id and fixed['actor_id'] == session['owner_id']
+                                      and fixed['descriptor_sha256'] == source['sourceRevision'] and fixed['source_kind'] == source['kind'],
+                                      'ANALYSIS_PAIR_ASSISTANT_MISMATCH', 409)
+                    _assistant_transfer(dict(record) if record else None, transfer_value, package['connectionId'], project, order_revision, session_id,
+                                        revision, session['owner_id'], digest, json.loads(diagnostic[0]), json.loads(diagnostic[1]))
     return report
 
 

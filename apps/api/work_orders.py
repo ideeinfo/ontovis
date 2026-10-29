@@ -83,6 +83,13 @@ class WorkOrders:
                     begin select raise(abort, 'immutable analysis link'); end;
                 create trigger if not exists work_order_analysis_links_no_delete before delete on work_order_analysis_links
                     begin select raise(abort, 'retained analysis link'); end;
+                create table if not exists work_order_assistant_transfers (
+                    order_id text not null references work_orders(order_id), order_revision integer not null,
+                    run_id text not null, snapshot_json text not null, primary key(order_id,order_revision));
+                create trigger if not exists work_order_assistant_transfers_no_update before update on work_order_assistant_transfers
+                    begin select raise(abort, 'immutable assistant transfer'); end;
+                create trigger if not exists work_order_assistant_transfers_no_delete before delete on work_order_assistant_transfers
+                    begin select raise(abort, 'retained assistant transfer'); end;
             ''')
 
     @staticmethod
@@ -135,7 +142,10 @@ class WorkOrders:
         record = db.execute('select * from work_order_diagnostics where order_id=? order by order_revision desc limit 1', (identifier,)).fetchone()
         graph = json.loads(record['source_graph']) if record else diagnosis(row['fault_code'])
         plan = json.loads(record['snapshot']) if record else initial_plan(row['fault_code'], graph)
+        transfers = [json.loads(saved[0]) for saved in db.execute(
+            'select snapshot_json from work_order_assistant_transfers where order_id=? order by order_revision', (identifier,))]
         return {**self._public(row), 'diagnosis': graph, 'investigation': plan,
+                **({'assistantTransfers': transfers} if transfers else {}),
                 'investigationRevision': record['order_revision'] if record else None,
                 'investigationComplete': bool(record) and complete(plan),
                 'investigationHistory': [{'orderRevision': saved['order_revision'], 'actor': saved['actor'], 'recordedAt': saved['recorded_at']}
@@ -248,6 +258,40 @@ class WorkOrders:
             db.execute('insert into work_order_requests values(?,?,?)', (request_id, fingerprint, encoded(result)))
             guard()  # The connect context rolls back when authorization changes.
             return result
+
+    def apply_assistant(self, body, actor, guard, proposed, analysis):
+        from .assistant_work_orders import selected_items, merge_plan
+        require(set(body) == {'requestId', 'orderId', 'expectedOrderRevision', 'runId', 'expectedProposalSha256', 'items'})
+        identifier = text(body['orderId'], 100)
+        require(type(body['expectedOrderRevision']) is int and 0 < body['expectedOrderRevision'] < 100)
+        require(body['runId'] == proposed['runId'] and body['expectedProposalSha256'] == proposed['proposalSha256'],
+                'ASSISTANT_PROPOSAL_CHANGED', 409)
+        def operation(db):
+            value = self._detail(db, identifier)
+            require(value['orderRevision'] == body['expectedOrderRevision'], 'WORK_ORDER_CHANGED', 409)
+            require(value['state'] in ('diagnosing', 'investigating'), 'WORK_ORDER_STATE_CONFLICT', 409)
+            rows = selected_items(body['items'], proposed, value['diagnosis'])
+            plan = merge_plan(value, proposed, rows)
+            self._retain(db, value, actor)
+            revision = value['orderRevision'] + 1; stamp = datetime.now(timezone.utc).isoformat()
+            keys = {key for item in rows for key in item['refs']}
+            transfer = {key: proposed[key] for key in ('runId', 'runVersion', 'proposalSha256', 'conversationId', 'conversationVersion',
+                        'analysisSessionId', 'analysisRevision')}
+            transfer.update(orderRevision=revision, analysisSha256=analysis['contentSha256'], actor=actor,
+                            recordedAt=stamp, items=rows, sources=[s for s in proposed['sources'] if s['key'] in keys],
+                            engineeringConfirmation=False)
+            db.execute('insert into work_order_assistant_transfers values(?,?,?,?)',
+                       (identifier, revision, proposed['runId'], encoded(transfer)))
+            db.execute('insert into work_order_analysis_links values(?,?,?,?,?)',
+                       (identifier, revision, proposed['analysisSessionId'], proposed['analysisRevision'], analysis['contentSha256']))
+            db.execute('insert into work_order_diagnostics values(?,?,?,?,?,?)',
+                       (identifier, revision, encoded(plan), encoded(value['diagnosis']), actor, stamp))
+            db.execute('update work_orders set revision=?,updated_at=? where order_id=?', (revision, stamp, identifier))
+            db.execute('insert into work_order_events values(?,?,?,?,?,?,?,?)',
+                       (identifier, revision, 'adopt_assistant', actor, stamp, value['state'], value['state'], '采纳助手排查建议（待核验）'))
+            result = self._detail(db, identifier); self._retain(db, result, actor)
+            return result
+        return self._mutate(body, actor, guard, operation)
 
     def seed(self, body, targets, actor, guard):
         require(set(body) == {'requestId', 'expectedSnapshotRevision'})
