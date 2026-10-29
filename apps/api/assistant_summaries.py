@@ -16,13 +16,8 @@ def redact(value, private=()):
 
 def summarize(reader, kind, descriptor, private=()):
     if kind=='document' and descriptor.get('knowledgeNodeId'):
-        from .analysis_preview import document_preview
-        value=document_preview(reader,descriptor,{})
-        node=next((n for n in value.get('nodes',[]) if n['id']==descriptor['knowledgeNodeId']),None)
-        result={'kind':'document','page':descriptor['pageNumber'],'knowledgeState':value.get('state'),
-            'selectedNode':None if not node else {k:node.get(k) for k in ('kind','title','statement','faultCode')},
-            'properties':{} if not node else dict(list(node.get('properties',{}).items())[:5]),
-            'gaps':value.get('gaps',[])[:3],'scope':'仅所选知识节点，不含文档原图或整批原文'}
+        from .assistant_knowledge import read_neighborhood, summary
+        return summary(read_neighborhood(reader,descriptor),descriptor,lambda text:redact(text,private))
     else:
         value=reader.read(kind,descriptor)
         if kind=='object':
