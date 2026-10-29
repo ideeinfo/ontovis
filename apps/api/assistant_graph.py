@@ -51,8 +51,12 @@ def graph_summary(value, redact):
               scope='按精确工程UID读取的有限两跳关联；定义归属、资料定位和候选接线不代表现场事实确认')
     priorities={'CANDIDATE_CONNECTION':0,'DRAWING_LOCATION':1,'DEFINITION_MEMBER':2,'INSTANCE_OF':3,'KNOWLEDGE_MAPPING':4}
     # Spread the summary across relation types before including more of the same type.
-    counts={};chosen=[]
-    for edge in sorted(value['relations'],key=lambda r:(priorities[r['type']],r['id'])):
+    counts={};chosen=[];pairs=set()
+    for edge in sorted(value['relations'],key=lambda r:(priorities[r['type']],value['root'] not in (r['source'],r['target']),r['id'])):
+        endpoints=tuple(sorted((edge['source'],edge['target']))) if edge['type']=='CANDIDATE_CONNECTION' else (edge['source'],edge['target'])
+        pair=(edge['type'],*endpoints)
+        if pair in pairs:continue
+        pairs.add(pair)
         index=counts.get(edge['type'],0);counts[edge['type']]=index+1;chosen.append((index,edge))
     omitted=False
     def encoded():return json.dumps(data,ensure_ascii=False,separators=(',',':'))

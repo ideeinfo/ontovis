@@ -228,11 +228,13 @@ def request(sessions,sid,path,payload):
             return reply({'graph':value,'evidenceRefId':ref['evidenceRefId'],'modelCalls':0})
         if action=='summary':
             fixed,reader=prepare(authorize)
-            result=[]
-            for i,(ref,descriptor) in enumerate(fixed):
+            def preview(item):
+                i,(ref,descriptor)=item
                 require(ref['sourceKind'] in policy['policy']['allowedKinds'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
-                result.append({'key':f'E{i+1}','kind':ref['sourceKind'],'evidenceRefId':ref['evidenceRefId'],
-                    **material_summary(reader,ref['sourceKind'],descriptor,(project,access.get('projectName')))})
+                return {'key':f'E{i+1}','kind':ref['sourceKind'],'evidenceRefId':ref['evidenceRefId'],
+                    **material_summary(reader,ref['sourceKind'],descriptor,(project,access.get('projectName')))}
+            with ThreadPoolExecutor(max_workers=policy['policy']['parallel'],thread_name_prefix='ontovis-summary') as pool:
+                result=list(pool.map(preview,enumerate(fixed)))
             authorize(True);return reply({'items':result,'modelCalls':0})
         require(type(body['question']) is str and 0<len(body['question'].strip())<=1000 and '\0' not in body['question'])
         require(policy['policy']['enabled'],'ASSISTANT_POLICY_DISABLED',409)

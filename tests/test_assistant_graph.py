@@ -42,3 +42,11 @@ class GraphSummaryTests(unittest.TestCase):
         data=graph();saved=copy.deepcopy(data);text=api.graph_summary(data,lambda s:s)
         result=json.loads(text);self.assertIn('待复核',text);self.assertEqual('needs_review',result['associations'][0]['status'])
         self.assertNotIn('object:root',text);self.assertNotIn('recordId',text);self.assertLessEqual(len(text),1000);self.assertEqual(saved,data)
+
+    def test_selected_root_precedes_second_hop_and_parallel_wires_are_not_repeated_in_summary(self):
+        data=graph();data['nodes'].append(dict(id='remote',kind='object',title='跨柜端子'))
+        direct=data['relations'][0];data['relations']=[{**direct,'id':'a-remote','source':'object:other','target':'remote'},
+            {**direct,'id':'b-root'},{**direct,'id':'c-parallel'}]
+        value=json.loads(api.graph_summary(data,lambda s:s))
+        self.assertEqual('端子排',value['associations'][0]['target']);self.assertIn('传感器',value['associations'][0]['source'])
+        self.assertEqual(2,len(value['associations']))
