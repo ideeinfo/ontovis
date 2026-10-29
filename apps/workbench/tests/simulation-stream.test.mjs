@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {ApiError,WorkbenchApi} from '../src/api.ts';
-import {EventStreamDecoder,readServerEvents} from '../src/eventStream.ts';
+import {EventStreamDecoder,readServerEvents,StreamReadError} from '../src/eventStream.ts';
 import {applySimulationEvent,emptySimulationStream} from '../src/simulationStream.ts';
 import {receiveSimulation,streamDelay} from '../src/useSimulationStream.ts';
 
@@ -122,4 +122,9 @@ test('cancelling backoff returns promptly without another connection',async()=>{
   const controller=new AbortController(),pending=streamDelay(100000,controller.signal);controller.abort();
   await assert.rejects(pending,{name:'AbortError'});
   await assert.rejects(streamDelay(100000,controller.signal),{name:'AbortError'});
+});
+test('a changed stream source stops as a conflict so the UI can restart without its old cursor',async()=>{
+  let calls=0,last;const api={revision:'r1',epoch:0,async subscribeSimulation(){calls++;throw new StreamReadError('STREAM_SOURCE_CHANGED');}};
+  await receiveSimulation(api,baseline,stateAt(60),60,new AbortController().signal,(_,status,error)=>{last={status,error};},async()=>assert.fail('conflicts cannot retry'));
+  assert.equal(calls,1);assert.equal(last.status,'stopped');assert.equal(last.error.status,409);assert.equal(last.error.code,'STREAM_SOURCE_CHANGED');
 });

@@ -34,7 +34,7 @@ export async function receiveSimulation(api:StreamApi,detail:SimulationDetail,in
       throw new ApiError(502,'STREAM_INTERRUPTED');
     }catch(caught){
       if(signal.aborted||cancelled(caught))return;
-      const error=caught instanceof StreamReadError?new ApiError(502,caught.message):caught;
+      const error=caught instanceof StreamReadError?new ApiError(caught.message==='STREAM_SOURCE_CHANGED'?409:502,caught.message):caught;
       const terminal=error instanceof ApiError&&(error.status===401||error.status===403||error.status===409||error.status===422||error.code==='STREAM_SOURCE_CHANGED');
       if(terminal||failures>=backoff.length){onChange(state,'stopped',error);return;}
       onChange(state,'reconnecting',error);
