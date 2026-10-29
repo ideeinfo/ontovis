@@ -59,3 +59,4 @@
 - [Q-17模拟流与游标恢复](q17-simulated-stream-20261029/README.md)：受保护SSE、有界恢复/质量/撤权及配对备份独立恢复。
 - [Q-18单台设备模拟监测](q18-equipment-monitoring-20261029/README.md)：单台固定采用目标、质量/过期、共享构件定位及公网验收。
 - [Q-22项目策略与Q-24受限助手](q22-qwen-assistant-20261029/README.md)：独立Qwen用途、所选摘要/引用/取消、正常账号真实调用、入口修正和两份完整配对恢复。
+- [分析助手资料选择排版](assistant-material-layout-20261029/README.md)：逐行勾选、类型/名称与E编号、长名称换行及三视口验收。
