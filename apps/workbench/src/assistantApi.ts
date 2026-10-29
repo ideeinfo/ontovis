@@ -23,6 +23,12 @@ export function filterEngineeringGraph(graph:EngineeringGraph,relation:string,qu
  const q=query.trim().toLocaleLowerCase(),nodes=new Map(graph.nodes.map(n=>[n.id,n]));
  return graph.relations.filter(edge=>(!relation||edge.type===relation)&&(!q||[nodes.get(edge.source)?.title,nodes.get(edge.target)?.title,relationLabels[edge.type]?.join(' ')].some(v=>v?.toLocaleLowerCase().includes(q))));
 }
+export function groupEngineeringEdges(edges:EngineeringGraph['relations']){
+ const groups=new Map<string,EngineeringGraph['relations']>();
+ for(const edge of edges){const key=edge.type==='CANDIDATE_CONNECTION'?JSON.stringify([edge.type,...[edge.source,edge.target].sort()]):edge.id;
+  const existing=groups.get(key);if(existing)existing.push(edge);else groups.set(key,[edge]);}
+ return [...groups.values()];
+}
 export function mergeConversationTurns(previous:AssistantRun[],latest:AssistantRun|null){
  const rows=new Map(previous.map(r=>[r.runId,r]));if(latest)rows.set(latest.runId,latest);
  return [...rows.values()].sort((a,b)=>(a.conversationVersion??0)-(b.conversationVersion??0));

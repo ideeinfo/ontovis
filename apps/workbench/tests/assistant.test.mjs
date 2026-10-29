@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
-import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,filterEngineeringGraph,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
+import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,filterEngineeringGraph,groupEngineeringEdges,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
 
 const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],reads:8,parallel:2,seconds:120};
 const view={revision:1,accessRevision:'grant',policy,service:{serviceRevision:'r'}};
@@ -81,6 +81,14 @@ test('graph filtering operates only on returned associations and preserves candi
   {id:'two',source:'sensor',target:'drawing',type:'DRAWING_LOCATION',status:'recorded'}]};
  assert.equal(filterEngineeringGraph(graph,'','X91')[0].status,'needs_review');assert.equal(filterEngineeringGraph(graph,'DRAWING_LOCATION','温度').length,1);
  assert.equal(filterEngineeringGraph(graph,'KNOWLEDGE_MAPPING','').length,0);assert.equal(graph.relations.length,2);
+});
+test('parallel candidate wires group without dropping their distinct provenance or directed associations',()=>{
+ const edges=[{id:'a',type:'CANDIDATE_CONNECTION',source:'sensor',target:'terminal',provenance:{recordId:'port1'}},
+  {id:'b',type:'CANDIDATE_CONNECTION',source:'terminal',target:'sensor',provenance:{recordId:'port2'}},
+  {id:'c',type:'DRAWING_LOCATION',source:'sensor',target:'drawing'},
+  {id:'d',type:'DRAWING_LOCATION',source:'sensor',target:'drawing'}];
+ const groups=groupEngineeringEdges(edges);assert.equal(groups.length,3);assert.deepEqual(groups[0].map(e=>e.provenance.recordId),['port1','port2']);
+ assert.equal(edges.length,4);assert.equal(groups[1].length,1);
 });
 test('temporary status failures recover the same saved run without starting or calling a model',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});const calls=[],updates=[],errors=[],abort=new AbortController();
