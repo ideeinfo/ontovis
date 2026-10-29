@@ -12,7 +12,7 @@ export interface EquipmentConfigurationSnapshot {displayName:string;objectKind:s
   models:{modelVersionId:string;mappings:SharedMapping[]}[]}
 export interface EquipmentConfiguration {configurationId:string;configurationRevision:string;snapshot:EquipmentConfigurationSnapshot;equipmentCount:number|null;savedAt:string}
 export interface EquipmentAdoption {equipment_uid:string;configuration_id:string;assignment_revision:string}
-export interface SourceAdoption extends ProjectApplicationRef {adoptionId:string;roleKey:string|null;name:string;variant:string;previousAdoptionId:string|null}
+export interface SourceAdoption extends ProjectApplicationRef {adoptionId:string;roleKey:string|null;name:string;previousAdoptionId:string|null}
 export interface EquipmentRecord {item:EngineeringObject&{equipmentState?:'active'|'inactive'};context:Installation;children:EngineeringObject[];adoption:SourceAdoption|null;attributes:{values:PropertyValue[]}|null}
 export interface EquipmentConfigurations {items:EquipmentConfiguration[];assignments:EquipmentAdoption[];objects:EngineeringObject[];models:ProjectModelVersion[];capabilities:{canWrite:boolean}}
 export type EquipmentCatalogItem=EngineeringObject&{sceneUseCount:number};
@@ -23,13 +23,13 @@ const ROOT='/api/workbench/equipment';
 export interface SourceReference {provider?:string;url?:string;kind?:string;version?:string;note?:string}
 export interface PropertyValue {propertyKey:string;propertyRevisionId:string;status:string;value:unknown;unit:string|null;source?:SourceReference}
 export interface EquipmentApplication {applicationId:string;revisionId:string;headRevisionId:string;revision:number;projectCode:string;
-  snapshot:{name:string;variant:string;variantBasis:string;specificationRevisionId:string;rootDefinition:{entityUid:string;expectedEntityRevision:string}|null;
+  snapshot:{name:string;specificationRevisionId:string;rootDefinition:{entityUid:string;expectedEntityRevision:string}|null;
     mappings:{roleKey:string;entityUid:string;expectedEntityRevision:string}[]};specification:{name:string;objectKind:string;manufacturer:string|null}}
 export interface ApplicationBundle {application:EquipmentApplication;objects:EngineeringObject[];
   specification:{revision:number;revisionId:string;headRevisionId:string;code:string;snapshot:{name:string;manufacturer:string|null;nature:string;
     classificationRef:{code:string};values:PropertyValue[];roles:{roleKey:string;name:string;quantity:number;optional:boolean}[];sources:SourceReference[]}};
   template:{fields:{propertyKey:string;propertyRevisionId:string;definition:{nameZh:string;nameEn:string;unit:string|null};inherited:boolean}[]}}
-export interface ApplicationSummary {applicationId:string;revisionId:string;revision:number;name:string;variant:string;specificationName:string;equipmentCount:number}
+export interface ApplicationSummary {applicationId:string;revisionId:string;revision:number;name:string;specificationName:string;equipmentCount:number}
 export interface SharedPhoto {documentId:string;contentVersionId:string;renditionId:string;displayRevision:string;title:string;viewLabel:string;
   sources:string[];regionCount:number;availability:string}
 export interface SharedPhotoRegion {object:EngineeringObject;photo:ObjectPhoto}

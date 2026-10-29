@@ -54,3 +54,20 @@ test('shared photo pages and renditions keep source identity and request limits'
   assert.equal(sent[0].body.limit,12);assert.equal(sent[1].body.limit,50);assert.equal(sent[2].body.representation,'thumbnail');assert.equal(sent[2].body.expectedDisplayRevision,'digest');assert.equal(sent[2].body.contentVersionId,'version');
   assert.ok(sent.every(call=>call.body.entityUid===identity.entityUid&&call.body.projectRef.projectCode===project.projectCode));
 });
+
+
+test('fixed application reads accept independent models without retired configuration labels',async()=>{
+  const fixed={applicationId:'application',revisionId:'application:r2',specificationRevisionId:'specification:r1'};
+  const summary={...fixed,revision:2,name:'Project engineering mapping',specificationName:'Independent geared model',equipmentCount:15};
+  const bundle={application:{...fixed,headRevisionId:'application:r3',snapshot:{name:summary.name,specificationRevisionId:fixed.specificationRevisionId,mappings:[]}},specification:{revisionId:fixed.specificationRevisionId,snapshot:{name:summary.specificationName}}};
+  const requests=[];
+  const api=new WorkbenchApi(async(path,options)=>{requests.push({path,body:JSON.parse(options.body)});return new Response(JSON.stringify(path.endsWith('/detail')?bundle:{items:[summary],total:1,offset:0,limit:50}),{headers:{'Content-Type':'application/json','X-Session-Revision':'session:1'}});});
+  api.session('session:1');api.selectProject(project);
+  const service=new EquipmentApi(api);
+  assert.deepEqual((await service.applications()).items,[summary]);
+  assert.deepEqual(await service.application(fixed.revisionId),bundle);
+  assert.equal(requests[1].body.applicationRevisionId,fixed.revisionId);
+  assert.deepEqual(requests[1].body.projectRef,project);
+  assert.equal(bundle.application.snapshot.specificationRevisionId,'specification:r1');
+  assert.notEqual(bundle.application.revisionId,bundle.application.headRevisionId);
+});
