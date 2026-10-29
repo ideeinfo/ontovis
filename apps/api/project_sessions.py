@@ -20,6 +20,7 @@ from .work_orders import WorkOrders, require as order_require
 from .demo_faults import DEMO_PROJECT
 from .scene_engineering import SceneEngineeringReader
 from .scene_photos import ScenePhotoReader
+from .simulation_stream import SimulationStreams
 
 
 METHODS = ('scene_request', 'scene_object_request', 'equipment_request', 'resource_request', 'resource_upload',
@@ -56,6 +57,7 @@ class ProjectSessions(UserSessions):
         # Leave room for the registry and a side-by-side acceptance service in
         # the dedicated account's connection budget. No cross-user grant cache.
         self.analysis_slots = BoundedSemaphore(2)
+        self.simulation_streams = SimulationStreams()
         try:
             if registry_backend == 'postgres':
                 from .analysis_drafts import SCHEMA, identifier, profile, require
@@ -354,6 +356,7 @@ class ProjectSessions(UserSessions):
                 item.close()
 
     def close(self):
+        self.simulation_streams.close()
         try:
             for service in {getattr(self, 'shared', None), *self.services.values(), *self.readers.values()}:
                 if service is not None:
@@ -377,6 +380,21 @@ class ProjectSessions(UserSessions):
                             'installationContextId': value['context']['installationContextId'],
                             'hierarchyRevision': value['context']['hierarchyRevision']}
         return targets
+
+    def simulation_stream(self, sid, payload):
+        from .analysis_drafts import require
+        row = self.current(sid, authenticated=True)
+        require(payload.get('expectedSessionRevision') == row.revision, 'SESSION_CHANGED', 409)
+        code = self._ref(payload.get('projectRef'))
+        body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
+        access = self._access(sid, row, code)
+
+        def authorize():
+            current = self._access(sid, row, code)
+            require(current['accessRevision'] == access['accessRevision'], 'ACCESS_CHANGED', 409)
+
+        return self.simulation_streams.subscribe(sid, code, body, row.revision,
+                                                 lambda: self.guard(sid, row), authorize)
 
     def analysis_request(self, sid, path, payload):
         from .analysis_drafts import AnalysisDrafts, identifier, require, validate_snapshot

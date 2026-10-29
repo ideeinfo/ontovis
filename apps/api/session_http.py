@@ -12,6 +12,7 @@ from .terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES
 from .imagery_validation import MAX_BYTES as MAX_IMAGERY_BYTES
 from .imagery_uploads import CHUNK_BYTES
 from .model_resource_metadata import MAX_METADATA_REQUEST_BYTES
+from .simulation_stream import PATH as SIMULATION_STREAM_PATH, event_bytes
 from tools.model_probe import strict_json, ProbeError
 
 def handler_type(sessions: UserSessions, origin: str, *, development=False):
@@ -68,6 +69,32 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             self.end_headers()
             try: self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError): pass
+
+        def simulation_stream(self, sid, payload):
+            subscription = sessions.simulation_stream(sid, payload)
+            try:
+                self.connection.settimeout(5)
+                self.send_response(200)
+                for key, value in (('Content-Type', 'text/event-stream; charset=utf-8'),
+                                   ('Cache-Control', 'no-store'), ('X-Accel-Buffering', 'no'),
+                                   ('X-Content-Type-Options', 'nosniff'), ('Connection', 'close'),
+                                   ('X-Session-Revision', subscription.revision)):
+                    self.send_header(key, value)
+                self.end_headers()
+                self.close_connection = True
+                try:
+                    for frame in subscription.frames():
+                        subscription.check()
+                        self.wfile.write(frame)
+                        self.wfile.flush()
+                except PreviewError as error:
+                    self.wfile.write(event_bytes('stream-error', {'code': error.code, 'status': error.status,
+                        'sessionRevision': subscription.revision}))
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                pass
+            finally:
+                subscription.close()
 
         def dispatch(self):
             hosts, origins = self.headers.get_all('Host', []), self.headers.get_all('Origin', [])
@@ -191,7 +218,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                               '/api/workbench/resources/model/delete', '/api/workbench/resources/model/restore',
                               '/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',
                               '/api/workbench/resources/model/thumbnail/content')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', *project_paths, *analysis_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *equipment_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', SIMULATION_STREAM_PATH, *project_paths, *analysis_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *equipment_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
                     or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json'):
@@ -209,7 +236,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                      270336 if parts.path in ('/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/copy',
                                              '/api/workbench/analysis-sessions/import-history', '/api/workbench/analysis-sessions/evidence/register-batch') else
                      32768 if parts.path == '/api/workbench/work-orders/action' else
-                     16384 if parts.path in (*analysis_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *equipment_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
+                     16384 if parts.path in (SIMULATION_STREAM_PATH, *analysis_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *equipment_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')
             try:
@@ -219,6 +246,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 payload = decode_scene_request(raw) if parts.path in scene_paths else strict_json(raw)
             except (ValueError, UnicodeError, ProbeError): raise PreviewError(422, 'INVALID_REQUEST') from None
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
+            if parts.path == SIMULATION_STREAM_PATH:
+                return self.simulation_stream(sid, payload)
             if parts.path in project_paths:
                 return self.reply(200, sessions.projects_request(sid, parts.path, payload))
             if parts.path in analysis_paths:

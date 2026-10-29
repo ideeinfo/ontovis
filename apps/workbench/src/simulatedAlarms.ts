@@ -1,7 +1,7 @@
 export interface SimulatedDataset {
   datasetId:string;datasetRevision:string;faultCode:string;title:string;presetCause:string;
   cabinet:string;primaryRds:string;timeFrom:string;timeTo:string;retainedEvidenceGap:string;branch?:string;
-  sourceKind:'simulated';sourceConnectionId:string;mode?:'replay';engineeringConfirmation:false;
+  sourceKind:'simulated';sourceConnectionId:string;mode?:'replay';epoch?:string;engineeringConfirmation:false;
 }
 export interface SimulatedAlarm {
   sourceEventId:string;sourceRevision:string;state:'active'|'cleared';severity:string;

@@ -1,4 +1,5 @@
 import type {ProjectRef} from './projectTypes';
+import {readServerEvents,StreamReadError,type ServerEvent} from './eventStream.ts';
 
 export class ApiError extends Error {
   status: number;
@@ -126,6 +127,44 @@ export class WorkbenchApi {
     return this.send<T>(path, body, signal, image, upload ? {file:upload, kind:'legacyModel'} : undefined);
   }
 
+  async subscribeSimulation(body:object,onEvent:(event:ServerEvent)=>void,signal:AbortSignal):Promise<void>{
+    const path='/api/workbench/analysis-sessions/simulation/stream';
+    const epoch=this.epoch,revision=this.revision,project=this.project?{...this.project}:null;
+    const guard=()=>{if(signal.aborted||epoch!==this.epoch||revision!==this.revision)throw new DOMException('Selection or session changed','AbortError');};
+    const fail=(status:number,code:string):never=>{
+      if(status===403&&project){this.invalidate();this.onProjectDenied();}
+      else if(status===401){this.invalidate();this.onDenied(status);}
+      throw new ApiError(status,code);
+    };
+    guard();
+    if(!project)throw new ApiError(422,'PROJECT_REQUIRED');
+    const response=await this.transport(path,{method:'POST',credentials:'same-origin',cache:'no-store',signal,
+      headers:{'Content-Type':'application/json','Accept':'text/event-stream'},
+      body:JSON.stringify({...body,projectRef:project,expectedSessionRevision:revision})});
+    try{
+      guard();
+      if(!response.ok){
+        const value=await response.json().catch(()=>({}));guard();
+        fail(response.status,typeof value?.code==='string'?value.code:'SOURCE_UNAVAILABLE');
+      }
+      if(response.headers.get('Content-Type')?.split(';')[0].trim()!=='text/event-stream'
+          ||response.headers.get('X-Session-Revision')!==revision||!response.body)throw new ApiError(502,'STREAM_PROTOCOL_INVALID');
+      await readServerEvents(response.body,event=>{
+        guard();
+        if(event.event==='stream-error'){
+          let value;try{value=JSON.parse(event.data);}catch{throw new ApiError(502,'STREAM_PROTOCOL_INVALID');}
+          if(value?.sessionRevision!==revision||!Number.isInteger(value.status)||value.status<400||value.status>599||typeof value.code!=='string')throw new ApiError(502,'STREAM_PROTOCOL_INVALID');
+          fail(value.status,value.code);
+        }
+        onEvent(event);
+      },guard);
+    }catch(error){
+      if(!response.body?.locked)await response.body?.cancel().catch(()=>{});
+      if(error instanceof StreamReadError)throw new ApiError(502,error.message);
+      throw error;
+    }
+  }
+
   private async send<T>(path: string, body?: object, signal?: AbortSignal,
     image: boolean | 'model' | 'source' | BinaryDescriptor = false, upload?: {file: Blob; kind: UploadKind}): Promise<T> {
     const epoch = this.epoch, revision = this.revision,project=this.project?{...this.project}:null;
@@ -190,6 +229,11 @@ export class WorkbenchApi {
 
 export function failureMessage(error: unknown, locale = 'zh'): string {
   const modelErrors:Record<string,[string,string]> = {
+    STREAM_LIMIT_EXCEEDED:['模拟订阅已达当前连接上限，请停止其他订阅后重试。','The simulation connection limit was reached. Stop another subscription and retry.'],
+    STREAM_CURSOR_EXPIRED:['续读位置已过期，请返回回放并重新订阅。','The resume position expired. Return to replay and start a new subscription.'],
+    STREAM_SOURCE_CHANGED:['模拟来源版本已变化，请重新读取后订阅。','The simulated source changed. Reload before subscribing.'],
+    STREAM_PROTOCOL_INVALID:['订阅数据不完整，已保留最后读取位置。','The stream data is invalid. The last applied position is retained.'],
+    STREAM_STALLED:['订阅暂未收到新数据，正在尝试续读。','No stream data arrived. Attempting to resume.'],
     WORK_ORDER_WRITE_FORBIDDEN:['当前项目仅管理员可修改工单。','Only project administrators can update work orders.'],
     WORK_ORDER_CHANGED:['工单已变化，请重新读取后再操作。','This work order changed. Reload before continuing.'],
     WORK_ORDER_STATE_CONFLICT:['当前工单状态不允许此操作，请重新读取。','This action is not available in the current state. Reload.'],

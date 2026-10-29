@@ -27,6 +27,14 @@ def location_for(path):
 
 
 class WorkbenchDeploymentTests(unittest.TestCase):
+    def test_simulation_stream_is_exact_bounded_and_not_buffered_or_compressed(self):
+        root='/api/workbench/analysis-sessions/simulation/stream'
+        body=location_for(root)
+        for directive in ('client_max_body_size 16k;', 'proxy_buffering off;', 'gzip off;', 'proxy_read_timeout 20s;'):
+            self.assertIn(directive,body)
+        for suffix in ('/', '/extra'):
+            with self.assertRaises(AssertionError):location_for(root+suffix)
+
     def test_json_reads_are_compressed_without_enabling_api_caching(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
         self.assertIn('application/json', re.search(r'gzip_types\s+([^;]+);', nginx)[1].split())
