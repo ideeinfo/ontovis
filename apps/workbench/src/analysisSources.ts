@@ -2,7 +2,7 @@ import type {DraftApi} from './AnalysisWorkspace';
 import type {SourceRef} from './analysisCanvas';
 import type {ProjectModelVersion} from './resourceTypes';
 import type {PhotoSelector} from './workOrderTypes';
-import type {Investigation} from './workOrderTypes';
+import type {Investigation,DiagnosticNode} from './workOrderTypes';
 import type {ObjectClassification} from './types';
 import type {SimulatedTrend,SimulatedDataset,SimulatedAlarm} from './simulatedAlarms';
 
@@ -22,7 +22,7 @@ export type EvidenceSource=Partial<Omit<ProjectModelVersion,'state'> & Simulated
   dataset?:SimulatedDataset;items?:SimulatedAlarm[];mappingKind?:string;
   orderId?:string;orderRevision?:number;faultCode?:string;state?:string;investigation?:Investigation;
   checks?:string[];note?:string;
-  diagnosis?:{gap?:string};events?:{recordedAt:string;action:string;note:string}[];
+  diagnosis?:{gap?:string;nodes?:DiagnosticNode[]};events?:{recordedAt:string;action:string;note:string}[];
 };
 export type EvidenceDetail={evidenceRefId:string;sourceKind:SourceKind;sourceRevision:string;availability:'available'|'restricted'|'unavailable'|'changed';reason?:string;source?:EvidenceSource};
 export type SourceAnchor={entityUid?:string;selector?:PhotoSelector|null;componentKeys?:string[];nodeId?:string;pageNumber?:number;drawingUid?:string;referenceKind?:'name_candidate'|'historical_binding'};

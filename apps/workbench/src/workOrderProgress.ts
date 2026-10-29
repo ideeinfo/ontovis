@@ -1,7 +1,8 @@
 import type {EvidenceSource,Recommendation} from './analysisSources';
 import type {Investigation,WorkOrderDetail,AssistantTransfer} from './workOrderTypes';
 
-export type ProgressSource=Pick<EvidenceSource,'orderId'|'orderRevision'|'state'|'title'|'investigation'|'checks'|'note'>;
+export type ProgressSource=Pick<EvidenceSource,'orderId'|'orderRevision'|'state'|'title'|'investigation'|'checks'|'note'|'diagnosis'>;
+export const progressTargetLabel=(key:string,source:ProgressSource)=>source.diagnosis?.nodes?.find(row=>row.locateKey===key)?.label;
 export type ProgressRow={id:string;kind:'hypothesis'|'step';before?:Investigation['hypotheses'][number]|Investigation['steps'][number];after?:Investigation['hypotheses'][number]|Investigation['steps'][number];change:'added'|'removed'|'changed'|'unchanged'};
 const signature=(row:NonNullable<ProgressRow['before']>)=>'description' in row?[row.description,row.status,row.basis]:[row.title,row.targetKey,row.outcome,row.result];
 const same=(a:NonNullable<ProgressRow['before']>,b:NonNullable<ProgressRow['after']>)=>JSON.stringify(signature(a))===JSON.stringify(signature(b));
