@@ -141,3 +141,26 @@ class AssistantHttpTests(unittest.TestCase):
             _,items=self.request('conversations',{'analysisSessionId':self.analysis,'expectedAnalysisRevision':1});self.assertEqual(1,len(items['items']))
             self.assertEqual(self.request('conversation',{'conversationId':first['conversationId']},project='B')[0],404)
             ProjectsAuthority.permissions['member'].pop('Demo-PDS');self.assertEqual(self.request('conversation',{'conversationId':first['conversationId']})[0],403)
+
+    def test_large_history_can_read_one_turn_without_another_model_call(self):
+        self.enable();result={'answer':answer(),'usage':{},'serviceRevision':'a'*64,'purpose':'ontovis_analysis','modelCalls':1,'engineeringConfirmation':False}
+        event=self.event
+        def descriptor(_self,actor,body,guard):
+            guard();return {'evidenceRefId':body['evidenceRefId'],'sourceKind':'alarm','sourceRevision':'r'}, {
+                'datasetId':event['datasetId'],'datasetRevision':event['datasetRevision'],
+                'eventId':body['evidenceRefId']}
+        with patch('apps.api.analysis_evidence.AnalysisEvidence.descriptor',descriptor),patch('apps.api.analysis_source_reader.AnalysisSourceReader.read',return_value=sim.alarms(event['datasetId'])),patch('apps.api.assistant_service.call_source',return_value=result) as model:
+            previous=None;ids=[]
+            for _ in range(3):
+                body={**self.start_body(),'evidenceRefIds':[str(uuid4()) for _ in range(4)]}
+                if previous:body.update(conversationId=previous['conversationId'],expectedConversationVersion=previous['conversationVersion'],parentRunId=previous['runId'])
+                status,previous=self.request('start',body);self.assertEqual(200,status,previous);ids.append(previous['runId'])
+                for _ in range(100):
+                    _,previous=self.request('status',{'runId':previous['runId']})
+                    if previous['state']=='complete':break
+                    time.sleep(.01)
+                self.assertEqual('complete',previous['state'])
+            _,detail=self.request('conversation',{'conversationId':previous['conversationId']})
+            self.assertEqual('ASSISTANT_HISTORY_SCOPE_LIMIT',detail['items'][0]['error']);self.assertIsNone(detail['items'][0]['result'])
+            _,earlier=self.request('status',{'runId':ids[0]});self.assertEqual('complete',earlier['state']);self.assertIsNotNone(earlier['result'])
+            self.assertEqual(3,model.call_count)
