@@ -314,7 +314,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   }
   function openRelation(link:CardSourceRelation){setSelected(link.to.id);openSource(link.to,link.anchor);}
   async function addAndOpen(item:Recommendation){const id=await addSource(item);if(id){setExpandedAnchor(null);setExpanded(id);}}
-  const sourceContent=(card:CanvasCard,full=false)=>sources&&<AnalysisSourceCard key={card.id+(full?':full':':inline')} card={card} sources={sources} en={en} full={full} anchor={full?expandedAnchor:null} onAddMaterial={editable?item=>void addAndOpen(item):undefined} active={full||openPreviews.has(card.id)}
+  const sourceContent=(card:CanvasCard,full=false)=>sources&&<AnalysisSourceCard key={card.id+(full?':full':':inline')} card={card} sources={sources} en={en} full={full} anchor={full?expandedAnchor:null} onAddMaterial={editable?item=>void addAndOpen(item):undefined} onUpdateWorkOrder={editable&&card.kind==='work_order'?async item=>{const loaded=await addSources([item],card.id);if(loaded)setNotice(t('已载入工单进展，保存为新修订后可继续分析。','Order progress loaded. Save a new revision to continue analysis.'));return !!loaded;}:undefined} active={full||openPreviews.has(card.id)}
     onActivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,true))} onDeactivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,false))} onOpen={()=>openSource(card)} onRelated={chooseRelated} onPage={(page,value)=>pageAction.current(card,page,value)}
     onAvailability={(id,state)=>setReferenceState(previous=>previous[id]===state?previous:{...previous,[id]:state})}
     onView={view=>viewAction.current(card.id,view)} cursor={card.historical?undefined:trendCursor} onCursor={card.historical?undefined:setTrendCursor}

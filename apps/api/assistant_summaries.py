@@ -15,6 +15,36 @@ def redact(value, private=()):
     value=re.sub(r'(?<!\w)(?:/Users/|/home/|[A-Za-z]:\\)[^\s,;，；]+|(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)','[个人信息已隐去]',value)
     return value
 
+def work_order_summary(value, private):
+    """Bound human records without turning them into independently verified facts."""
+    plan = value.get('investigation') or {}
+    hypotheses, steps = plan.get('hypotheses', []), plan.get('steps', [])
+    short = lambda text, limit: redact(text or '', private)[:limit]
+    def chosen(rows, field, build, maximum):
+        ranked = sorted(enumerate(rows, 1), key=lambda pair: (not bool(pair[1].get(field)), pair[0]))
+        return [build(number, row) for number, row in ranked[:maximum]]
+    result = {'kind': 'work_order', 'faultCode': value.get('faultCode'), 'state': value.get('state'),
+              'revision': value.get('orderRevision'), 'engineeringConfirmation': False,
+              'meaning': '固定版本的模拟工单及人工记录；候选判断/观察不是现场事实，不据此确认根因。',
+              'totalHypotheses': len(hypotheses), 'totalSteps': len(steps),
+              'hypotheses': chosen(hypotheses, 'basis', lambda n, row: {
+                  'number': n, 'text': short(row.get('description'), 65), 'state': row.get('status'),
+                  'record': short(row.get('basis'), 100)}, 2),
+              'steps': chosen(steps, 'result', lambda n, row: {
+                  'number': n, 'text': short(row.get('title'), 65), 'state': row.get('outcome'),
+                  'record': short(row.get('result'), 100)}, 3)}
+    def encode():
+        result['omittedHypotheses'] = len(hypotheses) - len(result['hypotheses'])
+        result['omittedSteps'] = len(steps) - len(result['steps'])
+        return json.dumps(result, ensure_ascii=False, separators=(',', ':'))
+    text = encode()
+    while len(text) > 1000:
+        group = 'steps' if len(result['steps']) >= len(result['hypotheses']) else 'hypotheses'
+        if not result[group]: break
+        result[group].pop()
+        text = encode()
+    return text
+
 def summarize(reader, kind, descriptor, private=()):
     if kind=='document' and descriptor.get('knowledgeNodeId'):
         from .assistant_knowledge import read_neighborhood, summary
@@ -68,8 +98,7 @@ def summarize(reader, kind, descriptor, private=()):
             result={'kind':kind,'report':{k:report.get(k) for k in ('nodes','triangles','coordinateVerification')},
                 'precision':'既有模型/绑定摘要；柜体可能为示意代理，不代表内部器件精确几何。','geometrySent':False}
         elif kind=='work_order':
-            result={'kind':kind,'faultCode':value.get('faultCode'),'state':value.get('state'),'revision':value.get('orderRevision'),
-                'history':'固定历史参考；同码不能直接复用根因结论。'}
+            return work_order_summary(value, private)
         else:require(False,'ASSISTANT_TOOL_NOT_ALLOWED',422)
     text=redact(json.dumps(result,ensure_ascii=False,separators=(',',':')),private)
     return text if len(text)<=1000 else text[:970]+'…[摘要已截断]'
