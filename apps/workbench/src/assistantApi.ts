@@ -55,3 +55,24 @@ export class AssistantApi {
  async cancel(run:AssistantRun){try{return await this.api.request<AssistantRun>(ASSISTANT_ROOT+'/cancel',{runId:run.runId,expectedVersion:run.version});}
   catch(error){if(error instanceof ApiError&&error.code==='ASSISTANT_RUN_CHANGED'){const latest=await this.status(run);return this.api.request<AssistantRun>(ASSISTANT_ROOT+'/cancel',{runId:latest.runId,expectedVersion:latest.version});}throw error;}}
 }
+
+/** Retry status reads only. A failed read must never submit another model operation. */
+export function watchAssistantRun(service:Pick<AssistantApi,'status'>,initial:AssistantRun,signal:AbortSignal,
+ update:(run:AssistantRun)=>void,failed:(error:unknown,retrying:boolean)=>void){
+ let run=initial,retries=0,stopped=false,timer:ReturnType<typeof setTimeout>|undefined;
+ const stop=()=>{stopped=true;if(timer!==undefined)clearTimeout(timer);signal.removeEventListener('abort',stop);};
+ const schedule=(delay:number)=>{timer=setTimeout(()=>void poll(),delay);};
+ const poll=async()=>{
+  try{
+   const value=await service.status(run,signal);if(signal.aborted||stopped)return;
+   run=value;retries=0;update(value);if(running(value)&&!signal.aborted&&!stopped)schedule(2000);
+  }catch(error){
+   if(signal.aborted||stopped)return;
+   const temporary=error instanceof TypeError||error instanceof ApiError&&[429,502,503,504].includes(error.status);
+   const delay=temporary?[1000,2500,5000][retries++]:undefined;
+   failed(error,delay!==undefined);if(delay!==undefined&&!signal.aborted&&!stopped)schedule(delay);
+  }
+ };
+ if(!signal.aborted){signal.addEventListener('abort',stop,{once:true});schedule(500);}
+ return stop;
+}

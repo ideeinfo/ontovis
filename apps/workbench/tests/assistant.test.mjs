@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
-import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,policyChanges,policyProblems,running} from '../src/assistantApi.ts';
+import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
 
 const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],reads:8,parallel:2,seconds:120};
 const view={revision:1,accessRevision:'grant',policy,service:{serviceRevision:'r'}};
@@ -60,4 +60,39 @@ test('long model results are excerpted without truncating the fixed reference fo
  const rows=Array.from({length:5},()=>({text:'需人工核验'.repeat(60),refs:['E1']}));
  const run={state:'complete',result:{...result,answer:{observations:rows,hypotheses:rows,gaps:rows,nextSteps:rows}},sources:[{key:'E1',availability:'available',evidenceRefId:'fixed-ref',sourceRevision:'r'.repeat(64)}]};
  const note=answerNote(run);assert.ok(note.length<4000);assert.ok(note.endsWith('r'.repeat(64)));
+});
+
+const settle=()=>new Promise(resolve=>setImmediate(resolve));
+test('temporary status failures recover the same saved run without starting or calling a model',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});const calls=[],updates=[],errors=[],abort=new AbortController();
+ const api=new AssistantApi({request:async(path,body)=>{calls.push({path,body});if(calls.length===1)throw new ApiError(502,'SOURCE_UNAVAILABLE');return {runId:'saved',state:'complete',version:8};}});
+ const stop=watchAssistantRun(api,{runId:'saved',state:'model',version:5},abort.signal,r=>updates.push(r),(e,retry)=>errors.push(retry));
+ t.mock.timers.tick(500);await settle();assert.deepEqual(errors,[true]);assert.equal(updates.length,0);
+ t.mock.timers.tick(1000);await settle();assert.equal(updates[0].state,'complete');
+ t.mock.timers.tick(60000);await settle();assert.equal(calls.length,2);
+ assert.ok(calls.every(c=>c.path==='/api/workbench/assistant/status'&&c.body.runId==='saved'));stop();
+});
+test('status retries stop after three retries and leave manual recovery available',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});let reads=0;const errors=[],abort=new AbortController();
+ const stop=watchAssistantRun({status:async()=>{reads++;throw new TypeError('network');}},{runId:'saved',state:'model'},abort.signal,()=>assert.fail(),(e,retry)=>errors.push(retry));
+ for(const delay of [500,1000,2500,5000]){t.mock.timers.tick(delay);await settle();}
+ t.mock.timers.tick(60000);await settle();assert.equal(reads,4);assert.deepEqual(errors,[true,true,true,false]);stop();
+});
+test('permission and version failures do not retry automatically',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ for(const status of [401,403,404,409,422]){
+  let reads=0;const errors=[],abort=new AbortController();
+  const stop=watchAssistantRun({status:async()=>{reads++;throw new ApiError(status,'FORBIDDEN');}},{runId:'saved',state:'model'},abort.signal,()=>assert.fail(),(e,retry)=>errors.push(retry));
+  t.mock.timers.tick(500);await settle();t.mock.timers.tick(60000);await settle();assert.equal(reads,1);assert.deepEqual(errors,[false]);stop();
+ }
+});
+test('changing context cancels pending reads and ignores late responses',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});let resolve,reads=0;const abort=new AbortController();
+ const stop=watchAssistantRun({status:()=>{reads++;return new Promise(done=>{resolve=done;});}},{runId:'old',state:'model'},abort.signal,()=>assert.fail('late update'),()=>assert.fail('late error'));
+ t.mock.timers.tick(500);await settle();abort.abort();resolve({runId:'old',state:'complete'});await settle();t.mock.timers.tick(60000);await settle();assert.equal(reads,1);stop();
+});
+test('a changed terminal receipt remains changed and never resumes polling or shows its hidden answer',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});let reads=0;const updates=[],abort=new AbortController();
+ const stop=watchAssistantRun({status:async()=>{reads++;return {runId:'saved',state:'changed',result:null};}},{runId:'saved',state:'model'},abort.signal,r=>updates.push(r),()=>assert.fail());
+ t.mock.timers.tick(500);await settle();t.mock.timers.tick(60000);await settle();assert.equal(reads,1);assert.equal(updates[0].state,'changed');assert.equal(updates[0].result,null);stop();
 });
