@@ -9,7 +9,7 @@ import type {EditableSceneSnapshot} from './sceneTypes';
 import {equipmentSimulationTarget} from './equipmentSimulationTarget';
 import {useSimulationStream} from './useSimulationStream';
 import {alarmAt,initialReplay,type SimulationCatalogue,type SimulationDetail} from './simulatedAlarms';
-import {alarmLabel,sceneAlarmInstances,type SceneAlarm} from './sceneAlarm';
+import {alarmLabel,sceneAlarmInstances,sceneAlarmState,type SceneAlarm} from './sceneAlarm';
 import './sceneAlarm.css';
 const ROOT='/api/workbench/analysis-sessions/simulation';
 export function SceneAlarmPanel({api,snapshot,en,onAlarm,onFocus,onClose}:{api:WorkbenchApi;snapshot:EditableSceneSnapshot;en:boolean;
@@ -44,9 +44,9 @@ export function SceneAlarmPanel({api,snapshot,en,onAlarm,onFocus,onClose}:{api:W
  // Remount the stream hook on identity changes in the parent; data never follows a shared model name.
  const stream=useSimulationStream(api,detail),view=stream.view,visible=view?.state.detail;
  const target=source&&profile?equipmentSimulationTarget(source.record,source.context,source.bundle,profile):null;
- const state:SceneAlarm['state']=stream.stale?'stale':visible?alarmAt(visible,view!.state.sequence):'pending';
+ const state=sceneAlarmState(view?.state.sequence,stream.stale,visible?alarmAt(visible,view!.state.sequence):'pending');
  const receiving=!!view&&['connecting','connected','catchup','reconnecting'].includes(view.status);
- useEffect(()=>{onAlarm(view&&target&&instance?{instanceId:instance.sceneModelInstanceId,state,
+ useEffect(()=>{onAlarm(view&&target&&instance&&state?{instanceId:instance.sceneModelInstanceId,state,
   label:`${en?'Simulation':'模拟'} · ${profile?.faultCode} · ${alarmLabel(state,en)}`,target:target.item.displayName}:null);
  },[!!view,view?.status,target?.item.entityUid,instance?.sceneModelInstanceId,profile?.faultCode,state,en,onAlarm]);
  useEffect(()=>()=>onAlarm(null),[onAlarm]);
@@ -59,7 +59,7 @@ export function SceneAlarmPanel({api,snapshot,en,onAlarm,onFocus,onClose}:{api:W
   {!!error&&<p role="alert">{failureMessage(error,en?'en':'zh')}<Btn onClick={()=>setReload(v=>v+1)}><RefreshCw size={13}/>{en?'Retry':'重试'}</Btn></p>}
   <div className="sw-alarm-controls">{receiving?<Btn onClick={stream.stop}><Pause size={14}/>{en?'Stop':'停止订阅'}</Btn>:<Btn primary disabled={!target||!detail||loading||!!error} onClick={()=>stream.start(view?.status==='complete'?0:view?.fromSecond??60,!!view&&view.status!=='complete')}><Play size={14}/>{view?(en?'Continue':'继续演练'):(en?'Start exercise':'开始演练')}</Btn>}
    <Btn disabled={!instance} onClick={()=>{if(instance){onFocus(instance.sceneModelInstanceId);setCollapsed(true);}}}><Focus size={14}/>{en?'Locate device':'定位设备'}</Btn>{view&&<Btn onClick={()=>{stream.reset();stream.start(0);}}><RefreshCw size={14}/>{en?'Restart':'重新演练'}</Btn>}</div>
-  </>}{view&&<p className={`sw-alarm-status ${state}`} role="status">{alarmLabel(state,en)} · {view.state.sequence} s{view.error?` · ${failureMessage(view.error,en?'en':'zh')}`:''}</p>}
+  </>}{view&&<p className={`sw-alarm-status ${state||'pending'}`} role="status">{state?`${alarmLabel(state,en)} · ${view.state.sequence} s`:(en?'Waiting for the first frame…':'等待首帧…')}{view.error?` · ${failureMessage(view.error,en?'en':'zh')}`:''}</p>}
   {!collapsed&&<small>{en?'Source clock is simulated. No production point mapping or automatic scene save.':'使用模拟源时钟；尚未接真实测点，不自动保存场景。'} {en?'Hidden or unloaded models stay unchanged.':'隐藏或未加载的模型不会自动加载。'}</small>}
  </section>;
 }

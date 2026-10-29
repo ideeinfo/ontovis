@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {sceneAlarmInstances,alarmLabel} from '../src/sceneAlarm.ts';
+import {sceneAlarmInstances,alarmLabel,sceneAlarmState} from '../src/sceneAlarm.ts';
 const ref={ontobaseConnectionId:'source',projectCode:'P',entityUid:'device-7'};
 const instance=(id,objectRef=ref)=>({sceneModelInstanceId:id,rootBinding:objectRef?{objectRef}:null,modelVersionId:'same-version'});
 test('only unique physical device bindings participate; shared model versions never identify a device',()=>{
@@ -17,4 +17,9 @@ test('same UID text in another project remains a different reference',()=>{
 });
 test('stale, restored and pending states remain distinct in both languages',()=>{
  assert.equal(alarmLabel('stale'),'数据过期');assert.equal(alarmLabel('cleared',true),'Cleared');assert.notEqual(alarmLabel('pending'),alarmLabel('active'));
+});
+test('no alarm or stale state is assigned before a valid first frame',()=>{
+ assert.equal(sceneAlarmState(undefined,true,'active'),null);assert.equal(sceneAlarmState(-1,true,'active'),null);
+ assert.equal(sceneAlarmState(0,false,'pending'),'pending');assert.equal(sceneAlarmState(60,false,'active'),'active');
+ assert.equal(sceneAlarmState(150,false,'cleared'),'cleared');assert.equal(sceneAlarmState(60,true,'active'),'stale');
 });
