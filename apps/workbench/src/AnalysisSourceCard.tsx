@@ -66,7 +66,7 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     {card.kind==='object'&&<><strong>{value.item?.displayName||card.title}</strong><p>{value.item?.identifiers?.filter(i=>i.role==='primary').map(i=>i.value).join(' · ')}</p>
       <p>{en?'Engineering category':'工程分类'}：{objectCategory({objectKind:value.item?.objectKind||'unknown',classification:value.item?.classification},en?'en':'zh')}</p>
       <p><small>{en?'Object scope':'对象范围'}：{value.item?.objectScope==='definition'?(en?'Project definition':'项目定义'):value.item?.objectScope==='installation'?(en?'Installed object':'安装对象'):value.item?.objectScope==='unclassified'?(en?'Definition / installation scope not specified':'定义/安装范围未标注'):value.item?.objectScope||'—'}</small></p>
-      <Btn onClick={()=>onRelated?.(value)}>{en?'Related materials':'推荐相关资料'}</Btn></>}
+      {onRelated&&<Btn onClick={()=>onRelated(value)}>{en?'Related materials':'推荐相关资料'}</Btn>}</>}
     {card.kind==='alarm'&&<><span className="ad-badge">{en?'Simulated alarm':'模拟报警'}</span><p>{value.dataset?.presetCause}</p><dl>{value.items?.map(row=><div key={row.sourceRevision}><dt>{row.state==='active'?(en?'Occurred':'发生'):(en?'Recovered':'恢复')}</dt><dd>{new Date(row.sourceTime).toLocaleString(en?'en-GB':'zh-CN')} · {row.severity}</dd></div>)}</dl></>}
     {card.kind==='trend'&&value.samples&&<><span className="ad-badge">{en?'Simulation · fixed window':'模拟数据 · 固定时间窗'}</span><AnalysisTrend trends={[value as SimulatedTrend]} en={en} cursor={cursor} onCursor={onCursor}/></>}
     {progressOpen&&card.kind==='work_order'&&<WorkOrderProgressDialog api={sources.api} before={value} en={en} canLoad={!!onUpdateWorkOrder} onLoad={onUpdateWorkOrder} onClose={()=>setProgressOpen(false)}/>}

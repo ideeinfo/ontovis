@@ -15,6 +15,7 @@ import './analysisMaterials.css';
 import {noteSections,readNote,writeNote} from './analysisNotes';
 import {applyCanvasAction} from './analysisActions';
 import {AssistantPanel} from './AssistantPanel';
+import {WorkOrderReferenceView} from './WorkOrderReferenceView';
 
 export interface DraftApi {revision:string;epoch:number;project:ProjectScope|null;request<T>(path:string,body?:object,signal?:AbortSignal,image?:boolean|'model'|'source'):Promise<T>}
 type Detail=DraftReceipt&{snapshot:CanvasSnapshot};
@@ -32,7 +33,13 @@ const zhError:Record<string,string>={ANALYSIS_BUSY:'分析读取较忙，请稍�
   ANALYSIS_REVIEW_NOT_CONFIGURED:'当前分析尚未开放结论确认。',ACCESS_CHANGED:'项目权限已变化，请重新打开分析。',
   NOT_FOUND_OR_FORBIDDEN:'分析不存在或当前账号无权查看。',INVALID_REQUEST:'请检查分析名称、内容和时间范围。'};
 
-export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkOrder}:{api:DraftApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void;initialEntry?:AnalysisEntry|null;onOpenWorkOrder?:(code:string)=>void}) {
+type WorkspaceProps={api:DraftApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void;initialEntry?:AnalysisEntry|null;onOpenWorkOrder?:(code:string)=>void};
+export function AnalysisWorkspace(props:WorkspaceProps){
+ const entry=props.initialEntry;
+ if(entry&&'workOrderReference' in entry)return <WorkOrderReferenceView api={props.api} entry={entry} en={props.locale==='en'} onReturn={props.onOpenWorkOrder?()=>props.onOpenWorkOrder!(entry.workOrderReference.orderId):undefined}/>;
+ return <CanvasWorkspace {...props}/>;
+}
+function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkOrder}:WorkspaceProps) {
   const en=locale==='en'; const t=(zh:string,eng:string)=>en?eng:zh;
   const listId=useId();
   const [list,setList]=useState<Listing|null>(null),[query,setQuery]=useState(''),[filter,setFilter]=useState(''),[reload,setReload]=useState(0);

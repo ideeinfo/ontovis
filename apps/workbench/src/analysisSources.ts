@@ -5,9 +5,10 @@ import type {PhotoSelector} from './workOrderTypes';
 import type {Investigation,DiagnosticNode} from './workOrderTypes';
 import type {ObjectClassification} from './types';
 import type {SimulatedTrend,SimulatedDataset,SimulatedAlarm} from './simulatedAlarms';
+import type {WorkOrderReferenceEntry} from './workOrderReferences';
 
 export const ANALYSIS_ROOT='/api/workbench/analysis-sessions';
-export type AnalysisEntry={projectOnly:true}|{entityUid:string;expectedEntityRevision:string;timeTo:string}|{datasetId:string;datasetRevision:string}|{orderId:string}|{analysisSessionId:string;analysisRevision:number;assistantRunId?:string};
+export type AnalysisEntry={projectOnly:true}|{entityUid:string;expectedEntityRevision:string;timeTo:string}|{datasetId:string;datasetRevision:string}|{orderId:string}|{analysisSessionId:string;analysisRevision:number;assistantRunId?:string}|WorkOrderReferenceEntry;
 export type SourceKind='object'|'drawing'|'document'|'photo'|'model'|'trend'|'alarm'|'work_order';
 export type RecommendationMatch='binding'|'historical_binding'|'name_candidate'|'catalogue_search'|'simulation_mapping'|'simulation_rule';
 export type Recommendation={key:string;kind:SourceKind;title:string;reason:string;identifier?:string;selector:Record<string,string|number>;preview?:EvidenceSource;matchType?:RecommendationMatch};
