@@ -2,6 +2,7 @@ import {ApiError} from './api.ts';
 import type {CanvasCard,CanvasSnapshot,ProjectScope} from './analysisCanvas';
 import type {DraftReceipt} from './analysisDraftState';
 import type {AssistantTransfer} from './workOrderTypes';
+import type {EvidenceDetail,EvidenceSource} from './analysisSources';
 
 export const referenceNames:Record<string,[string,string]>={object:['工程对象','Object'],drawing:['图纸','Drawing'],document:['文档','Document'],photo:['照片','Photo'],model:['三维模型','3D model'],trend:['趋势','Trend'],alarm:['故障报警','Alarm'],work_order:['工单','Work order']};
 export type WorkOrderReferenceEntry={analysisSessionId:string;analysisRevision:number;assistantRunId?:never;workOrderReference:{orderId:string;orderRevision:number;analysisSha256:string;key:string;kind:string;evidenceRefId:string;sourceRevision:string}};
@@ -21,4 +22,11 @@ export function workOrderReferenceCard(entry:WorkOrderReferenceEntry,detail:Draf
  const card=cards.find(card=>!card.historical)??cards[0];
  if(!card)throw new ApiError(409,'WORK_ORDER_REFERENCE_CHANGED');
  return card;
+}
+
+export function workOrderReferenceMaterial(entry:WorkOrderReferenceEntry,detail:EvidenceDetail):EvidenceSource{
+ const ref=entry.workOrderReference;
+ if(detail.evidenceRefId!==ref.evidenceRefId||detail.sourceKind!==ref.kind||detail.sourceRevision!==ref.sourceRevision)throw new ApiError(409,'WORK_ORDER_REFERENCE_CHANGED');
+ if(detail.availability!=='available'||!detail.source)throw new ApiError(409,'WORK_ORDER_REFERENCE_UNAVAILABLE');
+ return detail.source;
 }

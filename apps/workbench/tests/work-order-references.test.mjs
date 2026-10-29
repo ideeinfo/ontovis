@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {workOrderReferenceEntry,workOrderReferenceCard} from '../src/workOrderReferences.ts';
+import {workOrderReferenceEntry,workOrderReferenceCard,workOrderReferenceMaterial} from '../src/workOrderReferences.ts';
 const scope={ontobaseConnectionId:'source-one',projectCode:'P'};
 const transfer={analysisSessionId:'analysis-one',analysisRevision:3,analysisSha256:'a'.repeat(64),orderRevision:7,sources:[{key:'E5',kind:'document',evidenceRefId:'manual-ref',sourceRevision:'b'.repeat(64)}]};
 const item={refs:['E5']};
@@ -36,4 +36,14 @@ test('multiple representations of the identical fixed reference prefer a current
 test('model source references resolve model cards using the same fixed identities',()=>{
  const value=workOrderReferenceEntry('order-one',{...transfer,sources:[{...transfer.sources[0],kind:'model'}]},item,'E5');
  const model={...card,kind:'model3d'};assert.equal(workOrderReferenceCard(value,{...detail,snapshot:{...detail.snapshot,cards:[model]}},scope),model);
+});
+test('parallel source reads must match the original fixed reference before rendering',()=>{
+ const source={title:'Fixed manual',pageNumber:49};
+ const metadata={evidenceRefId:'manual-ref',sourceKind:'document',sourceRevision:'b'.repeat(64),availability:'available',source};
+ assert.equal(workOrderReferenceMaterial(entry(),metadata),source);
+ for(const patch of [{evidenceRefId:'other'},{sourceKind:'photo'},{sourceRevision:'c'.repeat(64)}])assert.throws(()=>workOrderReferenceMaterial(entry(),{...metadata,...patch}),/WORK_ORDER_REFERENCE_CHANGED/);
+});
+test('restricted, unavailable and incomplete source results cannot reveal prefetched content',()=>{
+ const metadata={evidenceRefId:'manual-ref',sourceKind:'document',sourceRevision:'b'.repeat(64),availability:'available',source:{title:'Private manual'}};
+ for(const patch of [{availability:'restricted'},{availability:'unavailable'},{availability:'changed'},{source:undefined}])assert.throws(()=>workOrderReferenceMaterial(entry(),{...metadata,...patch}),/WORK_ORDER_REFERENCE_UNAVAILABLE/);
 });
