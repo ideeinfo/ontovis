@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
-import {AssistantApi,answerNote,policyProblems,running} from '../src/assistantApi.ts';
+import {AssistantApi,answerNote,policyChanges,policyProblems,running} from '../src/assistantApi.ts';
 
 const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],reads:8,parallel:2,seconds:120};
 const view={revision:1,accessRevision:'grant',policy,service:{serviceRevision:'r'}};
+test('policy differences compare source sets and still expose a same-count substitution',()=>{
+ assert.deepEqual(policyChanges(policy,{...policy,allowedKinds:['trend','alarm']}),[]);
+ assert.deepEqual(policyChanges(policy,{...policy,allowedKinds:['object','alarm']}),['allowedKinds']);
+ assert.deepEqual(policyChanges(policy,{...policy,enabled:true}),['enabled']);
+});
 test('project policy only accepts the approved service, sources and upper bounds',()=>{
  assert.deepEqual(policyProblems(policy),[]);
  for(const change of [{serviceRef:'custom-endpoint'},{enabled:1},{allowedKinds:['script']},{reads:9},{parallel:3},{seconds:121},{seconds:NaN},{allowedKinds:['alarm','alarm']}])assert.ok(policyProblems({...policy,...change}).length);
