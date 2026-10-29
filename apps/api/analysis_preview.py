@@ -194,7 +194,27 @@ def document_preview(reader, descriptor, options):
     params = {'view': 'application', 'limit': 100, 'cursor': options.get('cursor', 0)}
     if options.get('q'): params['q'] = options['q']
     elif fixed.get('knowledgeNodeId') and options.get('graphScope') != 'all': params['root'] = fixed['knowledgeNodeId']
-    value = reader.reader._request('GET', reader.reader.prefix + '/knowledge-releases/' + fixed['knowledgeReleaseId'] + '/graph?' + urlencode(params))
+    bounded = bool(fixed.get('knowledgeNodeId') and options.get('graphScope', 'related') == 'related'
+                   and not options.get('q') and not options.get('cursor'))
+    neighborhood = None
+    if bounded:
+        from .assistant_knowledge import read_neighborhood
+        neighborhood = read_neighborhood(reader, {**fixed, **({'knowledgeNodeId': options['nodeId']} if options.get('nodeId') else {})})
+        value = {'document_id': neighborhood['documentId'], 'content_version_id': neighborhood['contentVersionId'],
+                 'available_for_analysis': neighborhood['availableForAnalysis'], 'state': neighborhood['state'],
+                 'scope': {'coverage': 'partial' if neighborhood['truncated'] else 'related'}, 'next_cursor': None,
+                 'nodes': [{'local_id': row['id'], 'kind': row['kind'], 'payload': {'properties': {
+                     OB + key: [{'value': row[field]}] for key, field in
+                     (('title', 'title'), ('statement', 'statement'), ('fault_code', 'faultCode'))}}}
+                     for row in neighborhood['nodes']],
+                 'relations': [{'local_id': row['id'], 'payload': {'subject_id': row['source'],
+                     'object_id': row['target'], 'predicate': row['predicate']}} for row in neighborhood['relations']]}
+        if neighborhood['truncated']:
+            result['gaps'].append('关联视图为有限邻域；可在全部节点中继续检索。')
+        if neighborhood['missingEvidenceCount']:
+            result['gaps'].append('部分关联暂无完整原文依据。')
+    else:
+        value = reader.reader._request('GET', reader.reader.prefix + '/knowledge-releases/' + fixed['knowledgeReleaseId'] + '/graph?' + urlencode(params))
     d.require(value['document_id'] == fixed['documentId'] and value['content_version_id'] == fixed['contentVersionId'], 'SOURCE_CHANGED', 409)
     d.require(value['available_for_analysis'], 'KNOWLEDGE_RELEASE_UNAVAILABLE', 409)
     result.update(releaseId=fixed['knowledgeReleaseId'], state=value['state'], scope=value.get('scope'),
@@ -223,7 +243,16 @@ def document_preview(reader, descriptor, options):
                             'label': n['payload']['predicate'].removeprefix(OB)} for n in value['relations']]
     focus = options.get('nodeId') or fixed.get('knowledgeNodeId') or (result['nodes'][0]['id'] if result['nodes'] else None)
     if focus:
-        ev = node_evidence(reader, fixed, focus)
+        if neighborhood and focus in node_ids:
+            evidence_ids = set(next(row['evidenceIds'] for row in neighborhood['nodes'] if row['id'] == focus))
+            for relation in neighborhood['relations']:
+                if focus in (relation['source'], relation['target']):
+                    evidence_ids.update(relation['evidenceIds'])
+            ev = {'items': [{'local_id': row['id'], 'raw_text': row['text'],
+                            'selector': {'page': row['page'], 'bbox': row.get('bbox'), 'rendition_id': row.get('renditionId')}}
+                           for row in neighborhood['evidence'] if row['id'] in evidence_ids]}
+        else:
+            ev = node_evidence(reader, fixed, focus)
         result['focusId'] = focus
         result['evidence'] = [{'id': row['local_id'], 'text': row.get('raw_text'), 'page': row['selector'].get('page'),
                               'bbox': bbox(row['selector'].get('bbox')), 'renditionId': row['selector'].get('rendition_id')}

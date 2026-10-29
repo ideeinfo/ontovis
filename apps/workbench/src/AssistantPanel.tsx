@@ -1,20 +1,22 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {Plus,RefreshCw,Send,Square} from 'lucide-react';
+import {AssistantRetrieval} from './AssistantRetrieval';
+import type {SourceAnchor} from './analysisSources';
 import {Btn} from './Primitives';
 import {cancelled} from './api';
 import type {DraftApi} from './AnalysisWorkspace';
 import type {CanvasCard} from './analysisCanvas';
 import type {DraftReceipt} from './analysisDraftState';
-import {AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantEvidenceKey,assistantMessage,running,sourceLabels,watchAssistantRun,type AssistantConversation,type AssistantPolicyView,type AssistantRun,type AssistantSource} from './assistantApi';
+import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantEvidenceKey,assistantMessage,running,sourceLabels,watchAssistantRun,type AssistantConversation,type AssistantPolicyView,type AssistantRun,type AssistantSource} from './assistantApi';
 import {AssistantGraph} from './AssistantGraph';
 import {AssistantTurn} from './AssistantTurn';
 import {AssistantWorkOrderDialog} from './AssistantWorkOrderDialog';
 import './assistant.css';
 
-export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,initialRunId}:{api:DraftApi&{assistantScope?:()=>DraftApi};cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string)=>void;initialRunId?:string}){
+export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,initialRunId}:{api:DraftApi&{assistantScope?:()=>DraftApi};cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string)=>void;initialRunId?:string}){
  const service=useMemo(()=>new AssistantApi(api),[api]);const t=(zh:string,english:string)=>en?english:zh;
  const available=cards.filter((card,index,all)=>card.source&&all.findIndex(v=>v.source?.id===card.source!.id)===index),inventory=available.map(card=>card.source!.id).join(':');
- const [view,setView]=useState<AssistantPolicyView|null>(null),[selected,setSelected]=useState<string[]>(()=>available.slice(0,8).map(c=>c.source!.id));
+ const [view,setView]=useState<AssistantPolicyView|null>(null),[selected,setSelected]=useState<string[]>(()=>defaultAssistantEvidence(available));
  const [question,setQuestion]=useState(''),[run,setRun]=useState<AssistantRun|null>(null),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[reload,setReload]=useState(0),[summaries,setSummaries]=useState<AssistantSource[]|null>(null),[pending,setPending]=useState<string|null>(null);
  const [pollState,setPollState]=useState<'reading'|'retrying'|'paused'>('reading'),[pollReload,setPollReload]=useState(0);
  const [conversations,setConversations]=useState<AssistantConversation[]>([]),[conversation,setConversation]=useState<AssistantConversation|null>(null),[turns,setTurns]=useState<AssistantRun[]>([]),[hasEarlier,setHasEarlier]=useState(false);
@@ -76,7 +78,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  async function checkTurn(item:AssistantRun){const key=context;setBusy(true);setError(null);try{const value=await service.status(item);
   if(alive.current&&current.current===key){setTurns(previous=>mergeConversationTurns(previous,value));if(run?.runId===value.runId)setRun(value);}
  }catch(e){if(alive.current&&current.current===key)setError(e);}finally{if(alive.current&&current.current===key)setBusy(false);}}
- async function preview(){if(!receipt)return;const key=context;setBusy(true);setError(null);try{const value=await api.request<{items:AssistantSource[]}>(ASSISTANT_ROOT+'/summary',selection());if(alive.current&&current.current===key)setSummaries(value.items);}catch(e){if(alive.current&&current.current===key)setError(e);}finally{if(alive.current&&current.current===key)setBusy(false);}}
+ async function preview(){if(!receipt)return;const key=context;setBusy(true);setError(null);try{const value=await api.request<{items:AssistantSource[]}>(ASSISTANT_ROOT+'/summary',{...selection(),question:question.trim()});if(alive.current&&current.current===key)setSummaries(value.items);}catch(e){if(alive.current&&current.current===key)setError(e);}finally{if(alive.current&&current.current===key)setBusy(false);}}
  const names:Record<string,[string,string]>={reading:['读取所选资料','Reading selected materials'],model:['Qwen 整理中','Qwen is organizing evidence'],validating:['校验引用','Checking references'],complete:['引用校验完成','References checked'],partial:['部分资料缺失','Some sources are unavailable'],cancel_requested:['正在停止，等待后台确认','Stopping; waiting for server acknowledgement'],cancelled:['已取消','Cancelled'],interrupted:['运行已中断','Interrupted'],failed:['运行未完成','Incomplete'],changed:['来源或策略已变化','Sources or policy changed']};
  const focusedEarlier=!!initialRunId&&run?.runId===initialRunId&&!!conversation&&conversation.headRunId!==initialRunId;
  const active=running(run),locked=busy||running(run)||loadingHistory||!!pending,limit=view?.policy.reads??8;
@@ -87,19 +89,20 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {loadingHistory&&<p role="status">{t('读取已保存对话…','Loading saved conversation…')}</p>}
   <details className="as-sources" open={!transcript.length}><summary>{t('本次资料','Selected materials')} · {selected.length} / {limit}</summary>
   <div className="as-section-heading"><h4 id="as-materials-title">{t('本次资料','Selected materials')}</h4><span>{t('已选','Selected')} {selected.length} / {limit}</span></div>
-  <p className="as-material-hint">{t('E 编号与本次回答中的资料引用对应。','E numbers match the material references in this answer.')}</p>
+  <p className="as-material-hint">{t('默认选取最多6份资料，为定向检索留出额度；E编号对应本次回答引用。','Up to six materials are selected initially to reserve targeted reads. E numbers match answer references.')}</p>
   <div className="as-materials" role="group" aria-labelledby="as-materials-title">{available.length?available.map(card=>{
    const key=assistantEvidenceKey(card.source!.id,selected),disabled=active||busy||!key&&selected.length>=limit;
    return <label className="as-material-row" data-selected={!!key} data-disabled={disabled} key={card.id}><input type="checkbox" aria-label={card.title+(card.historical?' · '+t('历史参考','Historical reference'):'')} aria-describedby={'as-material-type-'+card.id} checked={!!key} disabled={disabled} onChange={event=>{setSelected(ids=>event.target.checked?[...ids,card.source!.id]:ids.filter(id=>id!==card.source!.id));setSummaries(null);}}/><span className="as-material-copy"><span className="as-material-meta" id={'as-material-type-'+card.id}>{key&&<span className="as-evidence-key">{key}</span>}<span>{sourceLabels[card.kind==='model3d'?'model':card.kind]?.[en?1:0]||t('资料','Material')}{card.historical?' · '+t('历史参考','Historical reference'):''}</span></span><strong>{card.title}</strong></span></label>;
   }):<p>{t('加入一份固定资料后即可提问。','Add a fixed material to ask a question.')}</p>}</div>
   <Btn disabled={!receipt||!selected.length||busy||active} onClick={()=>void preview()}>{t('查看拟发送摘要','Preview outgoing summaries')}</Btn>
-  {summaries&&<details open className="as-summaries"><summary>{t('摘要预览 · 未调用模型','Summary preview · no model call')}</summary>{summaries.map(row=><p key={row.key}><strong>{row.key} · {sourceLabels[row.kind]?.[en?1:0]}</strong><span>{row.summary}</span></p>)}</details>}
+  {summaries&&<details open className="as-summaries"><summary>{t('摘要预览 · 未调用模型','Summary preview · no model call')}</summary>{summaries.map(row=><p key={row.key}><strong>{row.key} · {sourceLabels[row.kind]?.[en?1:0]}</strong><span>{row.summary}</span></p>)}<AssistantRetrieval sources={summaries} cards={cards} en={en} onFocus={onFocus}/></details>}
   </details>
+  <p className="ap-caption">{t('按问题在已选资料中检索；可展开查看检索过程。','Retrieval follows the question within selected materials; expand the process to inspect it.')}</p>
   <AssistantGraph service={service} cards={available} receipt={receipt} en={en} onFocus={onFocus}/>
   <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><AssistantTurn key={item.runId} run={item} cards={cards} en={en} canAddNote={!locked&&canAddNote} canCheck={!locked} canTransfer={!locked&&canTransfer} onTransfer={()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/>)}</div>
   {transferRun&&<AssistantWorkOrderDialog key={`${context}:${transferRun.runId}`} api={api} run={transferRun} cards={cards} en={en} preferredOrderId={preferredOrderId} faultCode={faultCode} enabled={canTransfer&&!locked} onClose={()=>setTransferRun(null)} onOpenOrder={onOpenOrder} onFocus={onFocus}/>}
   {focusedEarlier&&<p className="ap-caption">{t('正在查看工单采纳的历史轮次。','Viewing the historical turn adopted by the work order.')}<Btn disabled={locked} onClick={()=>void openConversation(conversation!.conversationId)}>{t('打开完整对话后继续','Open full conversation to continue')}</Btn></p>}
-  <label className="as-question">{t('继续提问','Continue the conversation')}<textarea aria-label={t('向分析助手提问','Ask the analysis assistant')} maxLength={1000} disabled={locked||focusedEarlier} value={question} placeholder={t('例如：对比当前报警、趋势和手册，列出支持依据与缺口。','Compare the alarm, trend and manual; list supporting evidence and gaps.')} onChange={event=>setQuestion(event.target.value)}/></label>
+  <label className="as-question">{t('继续提问','Continue the conversation')}<textarea aria-label={t('向分析助手提问','Ask the analysis assistant')} maxLength={1000} disabled={locked||focusedEarlier} value={question} placeholder={t('例如：对比当前报警、趋势和手册，列出支持依据与缺口。','Compare the alarm, trend and manual; list supporting evidence and gaps.')} onChange={event=>{setQuestion(event.target.value);setSummaries(null);}}/></label>
   <div className="ap-actions"><Btn primary disabled={locked||focusedEarlier||!receipt||!selected.length||!question.trim()||!view?.policy.enabled||!view.service.enabled||!view.service.canRun||!!pending} onClick={()=>void start()}><Send size={14}/>{t('发送','Send')}</Btn><Btn disabled={!active||busy||run?.state==='cancel_requested'} onClick={()=>void stop()}><Square size={14}/>{t('停止','Stop')}</Btn></div>
   {pending&&busy&&<p role="status">{t('正在提交本轮问题…','Submitting this question…')}</p>}
   {pending&&!busy&&<div><p>{t('请求结果尚未确认，请先检查运行，避免重复调用。','The start result is uncertain. Check the run before sending again.')}</p><Btn onClick={()=>void inspectRun()}>{t('检查运行','Check run')}</Btn></div>}

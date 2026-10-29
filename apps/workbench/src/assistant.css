@@ -42,3 +42,4 @@
 .ad-workspace .ad-inspector.ad-assistant{width:420px;max-width:42vw}
 @media(max-width:1050px){.ad-workspace .ad-inspector.ad-assistant{width:350px;max-width:45vw}}
 @media(max-width:650px){.ad-workspace .ad-inspector.ad-assistant{width:min(420px,95%);max-width:95%}}
+.as-retrieval{border:1px solid var(--borderSubtle);border-radius:6px;padding:10px;margin:10px 0;font-size:11px;line-height:1.6}.as-retrieval summary{cursor:pointer;font-size:13px}.as-retrieval ol{margin:8px 0;padding-left:22px}.as-retrieval li{padding:7px 0;border-bottom:1px solid var(--borderSubtle);overflow-wrap:anywhere}.as-retrieval li:last-child{border:0}.as-retrieval li>span,.as-retrieval li>strong{display:block}.as-retrieval li>span{color:var(--textSecondary)}

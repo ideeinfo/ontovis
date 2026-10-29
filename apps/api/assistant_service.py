@@ -10,6 +10,7 @@ from .authority import PreviewError
 from .assistant_store import AssistantStore, ACTIVE, identifier, require, validate_policy
 from .assistant_summaries import summarize, redact, validate_answer
 from .assistant_graph import material_summary
+from .assistant_retrieval import plan as retrieval_plan, retrieve
 from .assistant_conversations import build_history
 from .assistant_transport import call_source
 
@@ -65,19 +66,22 @@ class AssistantRuntime:
             require(not job.cancelled.is_set(),job.stop_code,409)
             require(time.monotonic()<deadline,'ASSISTANT_TIMEOUT',504)
             current=self.store.policy(job.project)['policy']
-            require(current['enabled'] and current['reads']>=len(body['evidenceRefIds'])
+            require(current['enabled'] and current['reads']>=planned_operations
                 and current['parallel']>=policy['policy']['parallel'] and current['seconds']>=policy['policy']['seconds']
                 and set(policy['policy']['allowedKinds'])<=set(current['allowedKinds']), 'ASSISTANT_POLICY_CHANGED',409)
             require(self.store.run(job.project,job.owner,run_id)['state']!='cancel_requested','ASSISTANT_CANCELLED',409)
             authorize(force)
+        planned_operations = len(body['evidenceRefIds'])
         try:
             guard(True)
             fixed,reader=prepare(guard)
             require(all(ref['sourceKind'] in policy['policy']['allowedKinds'] for ref,_ in fixed),'ASSISTANT_TOOL_NOT_ALLOWED',403)
+            plans = retrieval_plan(fixed, body['question'], policy['policy']['reads'])
+            planned_operations = sum(item['operations'] for item in plans)
             def one(index,item):
                 ref,descriptor=item;guard()
                 try:
-                    material=material_summary(reader,ref['sourceKind'],descriptor,job.private)
+                    material=retrieve(reader,ref['sourceKind'],descriptor,plans[index],job.private)
                     guard()
                     return {'key':f'E{index+1}','kind':ref['sourceKind'],**material,'evidenceRefId':ref['evidenceRefId'],
                         'sourceRevision':ref['sourceRevision'],'availability':'available'}
@@ -215,7 +219,7 @@ def request(sessions,sid,path,payload):
     if action in ('summary','start','graph'):
         common={'analysisSessionId','expectedAnalysisRevision','evidenceRefIds'}
         start=common|{'requestId','question','expectedPolicyRevision','expectedAccessRevision','expectedServiceRevision'}
-        require(set(body) in ((common,) if action in ('summary','graph') else (start,start|{'conversationId','expectedConversationVersion','parentRunId'})))
+        require(set(body) in ((common, common|{'question'}) if action == 'summary' else (common,) if action == 'graph' else (start,start|{'conversationId','expectedConversationVersion','parentRunId'})))
         identifier(body['analysisSessionId']);require(type(body['expectedAnalysisRevision']) is int and 1<=body['expectedAnalysisRevision']<=1000)
         ids=body['evidenceRefIds'];require(type(ids) is list and 1<=len(ids)<=8 and all(type(e) is str for e in ids) and len(set(ids))==len(ids))
         for e in ids:identifier(e)
@@ -228,12 +232,14 @@ def request(sessions,sid,path,payload):
             value=read_graph(reader,descriptor);authorize(True)
             return reply({'graph':value,'evidenceRefId':ref['evidenceRefId'],'modelCalls':0})
         if action=='summary':
+            require(type(body.get('question','')) is str and len(body.get('question',''))<=1000)
             fixed,reader=prepare(authorize)
+            plans=retrieval_plan(fixed,body.get('question',''),policy['policy']['reads'])
             def preview(item):
                 i,(ref,descriptor)=item
                 require(ref['sourceKind'] in policy['policy']['allowedKinds'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
                 return {'key':f'E{i+1}','kind':ref['sourceKind'],'evidenceRefId':ref['evidenceRefId'],
-                    **material_summary(reader,ref['sourceKind'],descriptor,(project,access.get('projectName')))}
+                    **retrieve(reader,ref['sourceKind'],descriptor,plans[i],(project,access.get('projectName')))}
             with ThreadPoolExecutor(max_workers=policy['policy']['parallel'],thread_name_prefix='ontovis-summary') as pool:
                 result=list(pool.map(preview,enumerate(fixed)))
             authorize(True);return reply({'items':result,'modelCalls':0})
@@ -272,11 +278,14 @@ def request(sessions,sid,path,payload):
                 'ASSISTANT_POLICY_CHANGED',409)
             from .assistant_store import digest
             previous={v['evidenceRefId']:v for v in json.loads(record['sources_json'])}
+            require(sum(previous.get(ref['evidenceRefId'],{}).get('retrieval',{}).get('plan',{}).get('operations',1) for ref,_ in fixed)<=current['policy']['reads'],'ASSISTANT_POLICY_CHANGED',409)
             for ref,descriptor in fixed:
-                key=digest([ref['sourceKind'],descriptor])
+                old=previous.get(ref['evidenceRefId'],{})
+                selected_plan=old.get('retrieval',{}).get('plan')
+                key=digest([ref['sourceKind'],descriptor,selected_plan])
                 if key not in validation_cache:
                     require(read_count[0]<8,'ASSISTANT_HISTORY_SCOPE_LIMIT',409);read_count[0]+=1
-                    validation_cache[key]=material_summary(reader,ref['sourceKind'],descriptor,(project,access.get('projectName')))
+                    validation_cache[key]=(retrieve(reader,ref['sourceKind'],descriptor,selected_plan,(project,access.get('projectName'))) if selected_plan else material_summary(reader,ref['sourceKind'],descriptor,(project,access.get('projectName'))))
                 old=previous.get(ref['evidenceRefId'],{});value=validation_cache[key]
                 if old.get('summaryHash'):
                     require(old['summaryHash']==value['summaryHash'] and old.get('retrievalRevision')==value.get('retrievalRevision'),

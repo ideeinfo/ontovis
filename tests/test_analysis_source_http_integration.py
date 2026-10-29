@@ -59,6 +59,27 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             {key:{'entityUid':'synthetic-'+key} for key in ('CN','CN1')},'fixture-admin',lambda:None)
         return project,created,orders
 
+    def test_metadata_batch_keeps_input_order_and_at_most_two_reads(self):
+        from threading import Lock
+        import time
+        created,_=self.create();ids=[str(uuid4()) for _ in range(6)]
+        active=peak=0;lock=Lock()
+        def descriptor(_store,actor,body,guard):
+            guard();identity=body['evidenceRefId']
+            return {'evidenceRefId':identity,'sourceKind':'model','sourceRevision':'a'*64},{'marker':identity}
+        def read(_reader,kind,descriptor):
+            nonlocal active,peak
+            with lock:active+=1;peak=max(peak,active)
+            try:
+                time.sleep(.005*(len(ids)-ids.index(descriptor['marker'])))
+                return {'marker':descriptor['marker']}
+            finally:
+                with lock:active-=1
+        with patch('apps.api.analysis_evidence.AnalysisEvidence.descriptor',descriptor),patch('apps.api.analysis_source_reader.AnalysisSourceReader.read',read):
+            status,value,*_=self.request(ROOT+'/evidence/batch',self.body(analysisSessionId=created['analysisSessionId'],evidenceRefIds=ids))
+        self.assertEqual(status,200,value);self.assertEqual(peak,2)
+        self.assertEqual([item['source']['marker'] for item in value['items']],ids)
+
     def test_model_handle_read_binary_and_replay_preserve_fixed_identity(self):
         created,model,data,body,ref=self.register()
         self.assertEqual(self.request(ROOT+'/evidence/register',body)[1]['evidenceRefId'],ref['evidenceRefId'])

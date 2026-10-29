@@ -55,7 +55,10 @@ export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{ca
   const chooseNode=(id:string)=>{setNode(id);setSelected(id);setCitation(null);};
   const showPage=(value:number)=>{setPage(value);setCitation(null);};
   const showEvidence=(evidence:NonNullable<SourcePreview['evidence']>[number])=>{setPage(evidence.page);setCitation(region(evidence.bbox,source.sourceSha256||''));setMode('page');};
-  const showOriginal=()=>{const first=preview?.evidence?.[0];if(first)showEvidence(first);else setMode('page');};
+  const showOriginal=()=>{const evidence=preview?.evidence||[];
+    const first=evidence.find(row=>chosenNode?.faultCode&&row.text?.trim()===chosenNode.faultCode)
+      ??evidence.find(row=>row.text&&row.text.trim().length>5&&chosenNode?.statement?.includes(row.text.trim()))??evidence[0];
+    if(first)showEvidence(first);else setMode('page');};
   const showSection=(value:string)=>{setSection(value);setSelected('');setCursor(0);setFilter('');setQuery('');};
   return <div className="ac-evidence-viewer">
     <aside className="ac-preview-list">

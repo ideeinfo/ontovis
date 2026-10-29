@@ -24,7 +24,7 @@ def proposal(run):
              'conversationVersion': run.get('conversationVersion', 0), 'analysisSessionId': run['analysisSessionId'],
              'analysisRevision': run['analysisRevision'], 'items': items,
              'sources': [{key: source[key] for key in ('key', 'kind', 'evidenceRefId', 'sourceRevision',
-                         'summaryHash', 'retrievalRevision') if key in source} for source in sources.values()],
+                         'summaryHash', 'retrievalRevision', 'retrieval') if key in source} for source in sources.values()],
              'observations': run['result']['answer']['observations'], 'engineeringConfirmation': False}
     return {**value, 'proposalSha256': digest(value)}
 

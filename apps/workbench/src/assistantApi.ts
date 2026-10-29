@@ -1,7 +1,16 @@
 import {ApiError,failureMessage} from './api.ts';
+import type {CanvasCard} from './analysisCanvas';
+import type {SourceAnchor} from './analysisSources';
 import type {DraftApi} from './AnalysisWorkspace';
 export const ASSISTANT_ROOT='/api/workbench/assistant';
 export const sourceLabels:Record<string,[string,string]>={object:['工程对象摘要','Object summary'],alarm:['模拟报警','Simulated alarm'],trend:['趋势汇总','Trend summary'],drawing:['图纸元数据','Drawing metadata'],photo:['照片定位元数据','Photo location metadata'],model:['模型绑定摘要','Model binding metadata'],document:['文档知识摘录','Document knowledge excerpt'],work_order:['历史工单摘要','Historical work order']};
+export function defaultAssistantEvidence(cards:CanvasCard[]){
+ const kinds=['alarm','object','document','trend','work_order','model3d','drawing','photo'];
+ const selected:string[]=[];
+ for(const kind of kinds){const card=cards.find(c=>c.kind===kind&&c.source&&!c.historical)??cards.find(c=>c.kind===kind&&c.source);if(card&&!selected.includes(card.source!.id))selected.push(card.source!.id);if(selected.length===6)break;}
+ for(const card of cards){if(selected.length===6)break;if(card.source&&!selected.includes(card.source.id))selected.push(card.source.id);}
+ return selected;
+}
 export interface AssistantPolicy {enabled:boolean;serviceRef:string;allowedKinds:string[];reads:number;parallel:number;seconds:number}
 export interface AssistantPolicyView {revision:number;policy:AssistantPolicy;canManage:boolean;accessRevision:string;savedAt:string|null;
  service:{enabled:boolean;canRun:boolean;serviceRef?:string;serviceRevision?:string;modelId?:string;reason?:string};}
@@ -10,7 +19,9 @@ export function policyChanges(current:AssistantPolicy,next:AssistantPolicy){
   ?JSON.stringify([...current.allowedKinds].sort())!==JSON.stringify([...next.allowedKinds].sort())
   :current[key]!==next[key]);
 }
-export interface AssistantSource {key:string;kind:string;evidenceRefId:string;sourceRevision?:string;summary?:string;availability?:string;reason?:string;summaryHash?:string;retrievalRevision?:string}
+export interface RetrievalTrace {version:1;plan:{tool:string;faultCode:string|null;operations:number};anchor:{nodeId:string;pageNumber:number}|null;tools:{tool:string;state:string;matches?:number;nodes?:number;relations?:number;truncated?:boolean}[]}
+export function assistantSourceAnchor(source:AssistantSource):SourceAnchor|null{const anchor=source.retrieval?.anchor;return source.kind==='document'&&source.retrieval?.version===1&&anchor&&typeof anchor.nodeId==='string'&&anchor.nodeId.length>0&&anchor.nodeId.length<=160&&Number.isInteger(anchor.pageNumber)&&anchor.pageNumber>=1?anchor:null;}
+export interface AssistantSource {retrieval?:RetrievalTrace;key:string;kind:string;evidenceRefId:string;sourceRevision?:string;summary?:string;availability?:string;reason?:string;summaryHash?:string;retrievalRevision?:string}
 export interface AssistantRun {runId:string;state:string;version:number;analysisSessionId:string;analysisRevision:number;policyRevision:number;
  question?:string;conversationId?:string|null;conversationVersion?:number;parentRunId?:string|null;
  progress:{key:string;state:string}[];sources:AssistantSource[];error:string|null;result:null|{answer:Record<'observations'|'hypotheses'|'gaps'|'nextSteps',{text:string;refs:string[]}[]>;usage:Record<string,number>;modelCalls:number;engineeringConfirmation:false;partial:boolean;context?:{includedTurns:number;skippedTurns:{runId:string;reason:string}[]}};}

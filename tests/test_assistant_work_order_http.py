@@ -101,7 +101,7 @@ class AssistantWorkOrderHttpTests(unittest.TestCase):
 
     def test_material_summary_changes_hide_suggestions_without_another_model(self):
         _, preview = self.preview(); body = self.body(preview)
-        with patch('apps.api.assistant_service.material_summary', return_value={'summaryHash': 'f'*64}):
+        with patch('apps.api.assistant_retrieval.material_summary', return_value={'summaryHash': 'f'*64}):
             self.assertEqual(409, self.preview()[0]); self.assertEqual(409, self.request('work-order-apply', body)[0])
         self.assertEqual(2, self.orders.detail({'orderId': body['orderId']})['orderRevision'])
         self.assertEqual(1, self.model.call_count)

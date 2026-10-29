@@ -29,9 +29,11 @@ import type {ImageryRecord} from './resourceTypes';
 import {SceneLoadingProgress} from './SceneLoadingProgress';
 import {SceneLoadingTracker,sceneLoadingPlan,sceneLoadingIdentity,modelLoadingKey,terrainLoadingKey,imageryLoadingKey,type SceneLoadingState} from './sceneLoading';
 import './sceneViewport.css';
+import type {SceneAlarm} from './sceneAlarm';
 
 export interface SceneCameraControl {getView:()=>SceneView;setView:(value:SceneView)=>void;ready:()=>boolean}
 export interface SceneViewportProps {
+  alarm?:SceneAlarm|null;onAlarmFocus?:()=>void;
   preparationKey?:string;preparationError?:unknown;onRetryPreparation?:()=>void;
   environmentPreview?:{value:SceneEnvironmentV1|null}|null;
   api:WorkbenchApi;snapshot:EditableSceneSnapshot;modelRefs:ModelResourceRef[];terrainVersion:TerrainVersion|null;
@@ -70,7 +72,7 @@ function disposeMaterial(material:THREE.Material|THREE.Material[]) {
 export function SceneViewport(props:SceneViewportProps) {
   const {locale,resolved}=usePreferences();
   const current=useRef({...props,locale,resolved});current.current={...props,locale,resolved};
-  const mount=useRef<HTMLDivElement>(null),runtime=useRef<Runtime|null>(null);
+  const mount=useRef<HTMLDivElement>(null),runtime=useRef<Runtime|null>(null),alarmMarker=useRef<HTMLButtonElement>(null);
   const [loadingState,setLoadingState]=useState<SceneLoadingState>();
   const [reading,setReading]=useState(true),[error,setError]=useState<unknown>(null),[moving,setMoving]=useState(false);
   const [waterOverride,setWaterOverride]=useState<boolean|null>(null),[cloudOverride,setCloudOverride]=useState<boolean|null>(null),[reduced,setReduced]=useState(()=>matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -128,6 +130,8 @@ export function SceneViewport(props:SceneViewportProps) {
     grass.colorSpace=THREE.SRGBColorSpace;grass.needsUpdate=true;
     const environment=new SceneEnvironmentRuntime(scene,renderer,sun,light,terrainMaterial,grass);
     const entries=new Map<string,Entry>(),selectionBoxes=new SceneModelSelectionBoxes(scene);
+    const alarmBox=new THREE.Box3Helper(new THREE.Box3(),0xb8792c);alarmBox.visible=false;scene.add(alarmBox);
+    let alarmEntry:Entry|undefined,alarmBounds=new THREE.Box3();const alarmPoint=new THREE.Vector3();
     let terrain:THREE.Mesh<THREE.BufferGeometry,THREE.MeshStandardMaterial>|null=null,terrainKey='';
     let preview:THREE.Group|null=null,previewKey='',restoreView:SceneView|null=null;
     let previewInspection:ModelPreviewInspection|null=null,lastPreviewFocus='';
@@ -162,6 +166,16 @@ export function SceneViewport(props:SceneViewportProps) {
       const motion=motionState.current,playing=environment.playing(motion.waterOverride,motion.reduced),cloudPlaying=environment.cloudsPlaying(motion.cloudOverride,motion.reduced);
       const wave=environment.beforeRender(performance.now(),orbit.target,playing,cloudPlaying);
       if(dirtyFrame||tween||wave){
+        const alarm=current.current.alarm,entry=alarm?entries.get(alarm.instanceId):undefined,marker=alarmMarker.current;
+        const show=!!alarm&&!!entry&&entry.root.visible&&!current.current.previewModel;
+        alarmBox.visible=show;
+        if(show&&entry&&alarm){
+          if(alarmEntry!==entry){entry.root.updateMatrixWorld(true);alarmBounds.setFromObject(entry.root);alarmEntry=entry;}
+          alarmBox.box.copy(alarmBounds);(alarmBox.material as THREE.LineBasicMaterial).color.set(alarm.state==='active'?0xb8792c:alarm.state==='cleared'?0x36806b:0x77877d);
+          alarmBounds.getCenter(alarmPoint);alarmPoint.y=alarmBounds.max.y;alarmPoint.project(camera);
+          if(marker){marker.style.display=alarmPoint.z>=-1&&alarmPoint.z<=1&&Math.abs(alarmPoint.x)<=1&&Math.abs(alarmPoint.y)<=1?'block':'none';
+            marker.style.left=`${(alarmPoint.x+1)*element.clientWidth/2}px`;marker.style.top=`${(1-alarmPoint.y)*element.clientHeight/2}px`;}
+        }else if(marker)marker.style.display='none';
         try{renderer.render(scene,camera);dirtyFrame=false;}
         catch(value){loading?.fail();setReading(false);report(value);return;}
         if(awaitingDisplay===loading&&awaitingDisplay){awaitingDisplay.drawn();awaitingDisplay=null;resourcesLoading=false;setReading(false);}
@@ -542,18 +556,19 @@ export function SceneViewport(props:SceneViewportProps) {
       selectionBoxes.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
       componentBox.geometry.dispose();disposeMaterial(componentBox.material);
       grid.geometry.dispose();disposeMaterial(grid.material);terrainMaterial.dispose();grass.dispose();scene.clear();
-      renderer.dispose();renderer.forceContextLoss();canvas.remove();runtime.current=null;
+      alarmBox.geometry.dispose();disposeMaterial(alarmBox.material);renderer.dispose();renderer.forceContextLoss();canvas.remove();runtime.current=null;
     };
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
   useEffect(()=>{runtime.current?.preload();},[props.placementModel]);
   useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
-  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,waterOverride,cloudOverride,reduced,locale,resolved]);
+  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,props.alarm,waterOverride,cloudOverride,reduced,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
   useEffect(()=>{if(props.focusRequest)runtime.current?.focus(props.focusRequest.instanceIds??props.focusRequest.instanceId);},[props.focusRequest?.token]);
   useEffect(()=>{runtime.current?.componentFocus();},[props.componentFocus,props.snapshot,props.modelRefs,props.selectedId,props.personalVisibility,props.previewModel]);
   useEffect(()=>{runtime.current?.previewSelection();},[props.previewSelection]);
   return <section className="ov-scene-viewport" aria-label={message('view')}>
     <div className="ov-scene-viewport-stage"><div ref={mount} className="ov-scene-viewport-canvas"/>
+      {props.alarm&&<button ref={alarmMarker} style={{display:'none'}} type="button" className={`ov-scene-alarm-marker ${props.alarm.state}`} aria-label={`${props.alarm.label} · ${props.alarm.target}`} onClick={props.onAlarmFocus}>{props.alarm.label}</button>}
       {(reading||!!displayError) && <div className="ov-scene-viewport-state" role={displayError?'alert':undefined}>{displayError?<>{displayError instanceof ApiError&&/IMAGERY/.test(displayError.code)?imageryFailure(displayError,locale):errorMessage}
         <button className="ov-btn" onClick={()=>props.preparationError?props.onRetryPreparation?.():webglFailure.current?setRendererAttempt(value=>value+1):setAttempt(value=>value+1)}>{message('retry')}</button></>:<SceneLoadingProgress locale={locale} state={loadingState}/>}</div>}
       <div className="ov-scene-viewport-tools"><IconBtn label={message('zoomIn')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(.8);}}><ZoomIn size={16}/></IconBtn>

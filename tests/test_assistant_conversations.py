@@ -96,6 +96,14 @@ class ConversationTests(unittest.TestCase):
             history,skipped=build_history([row],current,'s'*64);self.assertFalse(history);self.assertEqual(1,len(skipped))
         self.assertFalse(build_history([row],[source],'changed')[0])
 
+    def test_legacy_manual_memory_requires_same_fixed_reference_and_exact_summary(self):
+        source=dict(key='E1',kind='document',evidenceRefId=self.ref,sourceRevision='r',summaryHash='hash',availability='available')
+        row=self.complete(self.begin(),[source]);current={**source,'retrievalRevision':'bounded', 'retrieval':{'version':1}}
+        history,skipped=build_history([row],[current],'s'*64)
+        self.assertEqual(len(history),1);self.assertFalse(skipped)
+        for changed in ({'summaryHash':'different'},{'sourceRevision':'other'},{'availability':'unavailable'}):
+            self.assertFalse(build_history([row],[{**current,**changed}],'s'*64)[0])
+
     def test_context_budget_is_four_turns_and_does_not_mutate_receipts(self):
         current=self.complete(self.begin());rows=[copy.deepcopy(current) for _ in range(8)];saved=copy.deepcopy(rows)
         history,_=build_history(rows,json.loads(current['sources_json']),'s'*64)

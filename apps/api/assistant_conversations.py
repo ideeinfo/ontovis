@@ -13,10 +13,15 @@ def build_history(records, summaries, service_revision, private=()):
         valid=row['service_revision']==service_revision and bool(previous)
         for source in previous:
             now=current.get(source['evidenceRefId'])
+            # Legacy manual summaries had no retrieval revision. They remain
+            # usable only when the fixed reference and exact redacted text match.
+            legacy_manual = (source.get('kind') == 'document' and not source.get('retrieval')
+                             and source.get('retrievalRevision') is None and now
+                             and now.get('retrieval', {}).get('version') == 1)
             if (source.get('availability')!='available' or not now
                     or source.get('sourceRevision')!=now.get('sourceRevision')
                     or not source.get('summaryHash') or source['summaryHash']!=now.get('summaryHash')
-                    or source.get('retrievalRevision')!=now.get('retrievalRevision')):
+                    or not legacy_manual and source.get('retrievalRevision')!=now.get('retrievalRevision')):
                 valid=False;break
             mapping[source['key']]=now['key']
         if not valid:

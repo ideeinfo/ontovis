@@ -43,6 +43,16 @@ class SourceViewerTests(TestCase):
                 'version':{'id':self.document['contentVersionId']},'release_id':self.document['knowledgeReleaseId'],'local_id':node['local_id']}
             return {'nodes':[node]}
         if '/versions/' in path:return {'item':{'id':self.document['contentVersionId'],'source_sha256':self.sha}}
+        if url.path.endswith('/neighborhood'):
+            return {'format':'ontobase-document-neighborhood-v1','scope':'published_document_knowledge',
+                'projectCode':'P','releaseId':self.document['knowledgeReleaseId'],'documentId':self.document['documentId'],
+                'contentVersionId':self.document['contentVersionId'],'root':'fault-13001','depth':2,
+                'engineeringConfirmation':False,'availableForAnalysis':self.published,
+                'state':'published' if self.published else 'withdrawn',
+                'nodes':[{'id':'fault-13001','kind':'FaultDefinition','title':'Cabinet temperature high',
+                    'statement':'13001: temperature above threshold','faultCode':'13001','evidenceIds':['ev'],'evidenceComplete':True}],
+                'relations':[],'evidence':[{'id':'ev','page':48,'text':'13001: temperature above threshold','bbox':self.location['bbox']}],
+                'truncated':False,'missingEvidenceCount':0}
         if url.path.endswith('/evidence'):return {'document_id':self.document['documentId'],'content_version_id':self.document['contentVersionId'],
             'items':[{'local_id':'ev','raw_text':'13001: temperature above threshold','selector':{'page':48,'bbox':self.location['bbox'],'rendition_id':'page48'}}]}
         if url.path.endswith('/graph'):return {'document_id':self.document['documentId'],'content_version_id':self.document['contentVersionId'],
@@ -122,7 +132,9 @@ class SourceViewerTests(TestCase):
     def test_document_graph_preserves_version_page_and_current_mapping(self):
         result=document_preview(self.reader,self.document,{'cursor':0})
         self.assertEqual(result['focusId'],'fault-13001');self.assertEqual(result['evidence'][0]['page'],48)
-        self.assertEqual(result['objectMappings'][0]['entityUid'],'sensor');self.assertEqual(result['nextCursor'],100)
+        self.assertEqual(result['objectMappings'][0]['entityUid'],'sensor');self.assertIsNone(result['nextCursor'])
+        self.assertFalse(any('/graph?' in call.args[1] or call.args[1].endswith('/evidence')
+                             for call in self.wrapper._request.call_args_list))
         self.location['row_version']=3
         self.assertEqual(document_preview(self.reader,self.document,{})['objectMappings'],[])
         self.project='OTHER';self.location['row_version']=2

@@ -6,6 +6,7 @@ import hmac
 import json
 from pathlib import Path
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Lock
 from urllib.parse import quote
 
@@ -512,16 +513,24 @@ class ProjectSessions(UserSessions):
                 elif action == 'evidence/batch':
                     require(set(body) == {'analysisSessionId','evidenceRefIds'} and type(body['evidenceRefIds']) is list
                             and 1 <= len(body['evidenceRefIds']) <= 12)
-                    values = []
                     fixed = [sources.descriptor(actor, {'analysisSessionId':body['analysisSessionId'], 'evidenceRefId':evidence_id}, guard) for evidence_id in body['evidenceRefIds']]
                     release_store()
-                    for evidence_id,(reference,descriptor) in zip(body['evidenceRefIds'],fixed):
+                    def read_evidence(item):
+                        evidence_id,(reference,descriptor) = item
                         try:
-                            values.append({**reference,'availability':'available','source':reader.read(reference['sourceKind'],descriptor)})
+                            return {**reference,'availability':'available','source':reader.read(reference['sourceKind'],descriptor)}
                         except PreviewError as error:
                             if error.status == 401: raise
                             if error.status not in (403,404,409,410,502,503,504): raise
-                            values.append({'evidenceRefId':evidence_id,'availability':'restricted' if error.status == 403 else 'unavailable','reason':error.code})
+                            return {'evidenceRefId':evidence_id,'availability':'restricted' if error.status == 403 else 'unavailable','reason':error.code}
+                    items = list(zip(body['evidenceRefIds'], fixed))
+                    if len(items) == 1:
+                        values = [read_evidence(items[0])]
+                    else:
+                        # As in assistant source reads, only two metadata reads run
+                        # together. PG handles are already released; order stays fixed.
+                        with ThreadPoolExecutor(max_workers=2, thread_name_prefix='ontovis-metadata') as pool:
+                            values = list(pool.map(read_evidence, items))
                     value = {'items':values}
                 elif action == 'evidence/relationships':
                     require(set(body) == {'analysisSessionId', 'evidenceRefIds'} and type(body['evidenceRefIds']) is list and 1 <= len(body['evidenceRefIds']) <= 50)
