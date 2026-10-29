@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
-import {AssistantApi,answerNote,assistantMessage,policyChanges,policyProblems,running} from '../src/assistantApi.ts';
+import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,policyChanges,policyProblems,running} from '../src/assistantApi.ts';
 
 const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],reads:8,parallel:2,seconds:120};
 const view={revision:1,accessRevision:'grant',policy,service:{serviceRevision:'r'}};
+test('material E labels follow the submitted selection order, including removal and re-selection',()=>{
+ assert.equal(assistantEvidenceKey('alarm',['manual','alarm']),'E2');
+ assert.equal(assistantEvidenceKey('manual',['manual','alarm']),'E1');
+ assert.equal(assistantEvidenceKey('photo',['manual','alarm']),null);
+ assert.equal(assistantEvidenceKey('alarm',['alarm']),'E1');
+ assert.equal(assistantEvidenceKey('manual',['alarm','manual']),'E2');
+});
 test('a cancelled run explains the stop without claiming that its material versions changed',()=>{
  assert.equal(assistantMessage('ASSISTANT_CANCELLED'),'本次运行已停止，未采用模型结果。');
  assert.match(assistantMessage(new ApiError(409,'ASSISTANT_CANCELLED'),true),/stopped/);

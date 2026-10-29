@@ -14,6 +14,9 @@ export interface AssistantSource {key:string;kind:string;evidenceRefId:string;so
 export interface AssistantRun {runId:string;state:string;version:number;analysisSessionId:string;analysisRevision:number;policyRevision:number;
  progress:{key:string;state:string}[];sources:AssistantSource[];error:string|null;result:null|{answer:Record<'observations'|'hypotheses'|'gaps'|'nextSteps',{text:string;refs:string[]}[]>;usage:Record<string,number>;modelCalls:number;engineeringConfirmation:false;partial:boolean};}
 export const running=(run:AssistantRun|null)=>!!run&&['reading','model','validating','cancel_requested'].includes(run.state);
+export function assistantEvidenceKey(evidenceRefId:string,selected:string[]){
+ const index=selected.indexOf(evidenceRefId);return index<0?null:`E${index+1}`;
+}
 export function policyProblems(value:AssistantPolicy){
  const errors:string[]=[];
  if(typeof value.enabled!=='boolean')errors.push('enabled');
