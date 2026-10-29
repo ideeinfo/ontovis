@@ -1,5 +1,7 @@
 # 本机交付与验证输出
 
+- [Q-19固定手册知识邻域、证据追溯与助手状态恢复](q19-manual-neighborhood-20261029/README.md)
+
 - [Q-23九类来源画布、完整13001案例与独立复发验收](q23-implementation-20261026/README.md)
 
 - [Q-23详细操作设计与Cognite演示逐步浏览](q23-operation-design-20261026/README.md)
