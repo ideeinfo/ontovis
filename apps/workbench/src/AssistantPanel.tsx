@@ -107,7 +107,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {pending&&busy&&<p role="status">{t('正在提交本轮问题…','Submitting this question…')}</p>}
   {pending&&!busy&&<div><p>{t('请求结果尚未确认，请先检查运行，避免重复调用。','The start result is uncertain. Check the run before sending again.')}</p><Btn onClick={()=>void inspectRun()}>{t('检查运行','Check run')}</Btn></div>}
   {!!error&&<div><p role="alert">{assistantMessage(error,en)}</p>{run&&!pending&&<><p className="ap-caption">{pollState==='retrying'?t('正在重试读取运行状态；不会重新调用模型。','Retrying the saved run status. The model will not be called again.'):t('可检查本次运行，读取已保存的回执。','Check this run to read its saved receipt.')}</p><Btn disabled={busy} onClick={()=>void inspectRun()}>{t('检查运行','Check run')}</Btn></>}</div>}
-  {run&&<section className="as-run"><p role="status">{names[run.state]?.[en?1:0]||run.state}{run.progress.length?' · '+run.progress.length+'/'+selected.length:''}</p>{run.error&&<p>{assistantMessage(run.error,en)}</p>}
+  {run&&<section className="as-run"><p role="status">{names[run.state]?.[en?1:0]||run.state}{run.progress.length?' · '+run.progress.length+'/'+run.sources.length:''}</p>{run.error&&<p>{assistantMessage(run.error,en)}</p>}
 
   </section>}
  </div>;
