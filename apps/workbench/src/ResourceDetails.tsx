@@ -1,5 +1,6 @@
 import {ModelResourceMetadata} from './ModelMetadataDetails';
 import {ModelBasicInfo} from './ModelBasicInfo';
+import {ModelSourceReport} from './ModelSourceReport';
 import type {ReactNode} from 'react';
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {Eye, MapPin} from 'lucide-react';
@@ -26,6 +27,7 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
     onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, hidePreview=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary,canGenerateThumbnail=false,onThumbnailUpdated,versions,canEditInfo=false,onInfoUpdated}: Props) {
   const {locale} = usePreferences(), t = (key: Parameters<typeof resourceText>[1]) => resourceText(locale,key);
   const [uses,setUses] = useState<ModelUses|null>(null), [usesOpen,setUsesOpen] = useState(false);
+  const [sourceReport,setSourceReport]=useState(false);
   const [usesBusy,setUsesBusy] = useState(false), [usesError,setUsesError] = useState<unknown>(null);
   const [calibrating,setCalibrating] = useState(false), [saving,setSaving] = useState(false), [error,setError] = useState<unknown>(null);
   const [thumbnailBusy,setThumbnailBusy]=useState(false);
@@ -46,7 +48,7 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
   const useGate = useMemo(()=>new ResourceRequestGate(),[]), saveGate = useMemo(()=>new ResourceRequestGate(),[]);
   const requestId = useRef(new ResourceRequestId());
   useEffect(()=>{
-    setUses(null);setUsesOpen(false);setUsesError(null);setError(null);setCalibrating(false);setSaving(false);setUsesBusy(false);
+    setUses(null);setUsesOpen(false);setUsesError(null);setError(null);setCalibrating(false);setSaving(false);setUsesBusy(false);setSourceReport(false);
     return ()=>{useGate.cancel();saveGate.cancel();};
   },[version.modelVersionId,useGate,saveGate]);
   function failed(value:unknown, usage=false) {
@@ -107,6 +109,7 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
         }} onClick={onPlace}><MapPin size={14}/>{t('place')}</Btn>}</>}
       {onReplace&&<Btn disabled={!canReplace||!usable} title={!usable?placementHint:undefined} onClick={onReplace}>{t('replaceSelected')}</Btn>}
       {canCalibrate&&<Btn onClick={openCalibration}>{t('calibrate')}</Btn>}
+      <Btn onClick={()=>setSourceReport(true)}>{locale==='zh'?'源属性报告':'Source property report'}</Btn>
     </div>
     {placementIssue==='MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED'&&<p className="ov-resource-caption">{t('geographicCalibrationRequired')}</p>}
     <dl className="ov-resource-facts">
@@ -141,6 +144,8 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
       {usesBusy&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
       <div className="ov-resource-actions"><Btn disabled={usesBusy} onClick={()=>void readUses()}>{t('reloadUses')}</Btn>{uses?.nextCursor&&<Btn disabled={usesBusy} onClick={()=>void readUses(uses.nextCursor!)}>{t('more')}</Btn>}</div>
     </details>
+    {sourceReport&&<ModelSourceReport key={`${version.modelVersionId}:${version.contentRevision}:${version.sha256}`} api={api} version={version}
+      onClose={()=>setSourceReport(false)} onPrivateDenied={()=>{setSourceReport(false);onPrivateDenied();}}/>}
     {calibrating&&<Modal title={t('calibrate')} description={t('calibrationDescription')} onClose={()=>{if(!saving)setCalibrating(false);}}>
       <div className="ov-resource-form">
         <p className="ov-resource-caption">{t('calibrationDescription')}</p>

@@ -1,6 +1,7 @@
 import type {ModelResourceMetadata} from './modelResourceMetadata';
 import type {ModelLifecycleRequest,ModelLifecycleResult} from './resourceTypes';
 import {ApiError, type WorkbenchApi} from './api.ts';
+import {checkedModelInspection} from './modelInspection.ts';
 import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
   SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest, SceneLifecycle, SceneLifecycleRequest, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
 import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelRequest, LegacyModelCatalog, ModelInfoRequest, ModelThumbnailInfo, ModelThumbnailReference, ModelUses, ModelUsesRequest,
@@ -105,6 +106,11 @@ export class SceneApi {
     return this.api.content(ROOT + 'resources/model/content', {modelVersionId: version.modelVersionId,
       expectedContentRevision: version.contentRevision, expectedSha256: version.sha256},
     {mime:'model/gltf-binary', maxBytes:version.bytes, sha256:version.sha256}, signal);
+  }
+  async modelInspection(version:ModelThumbnailReference,signal?:AbortSignal){
+    const value=await this.api.request<unknown>(ROOT+'resources/model/inspection',{
+      modelVersionId:version.modelVersionId,expectedContentRevision:version.contentRevision,expectedSha256:version.sha256},signal);
+    return checkedModelInspection(value,version);
   }
   uploadModel(file: Blob, metadata: UploadModelMetadata, signal?: AbortSignal) {
     return this.api.uploadModel<ProjectModelWrite>(file, metadata, signal);
