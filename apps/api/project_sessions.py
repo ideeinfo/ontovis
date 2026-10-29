@@ -58,6 +58,7 @@ class ProjectSessions(UserSessions):
         # the dedicated account's connection budget. No cross-user grant cache.
         self.analysis_slots = BoundedSemaphore(2)
         self.simulation_streams = SimulationStreams()
+        self.assistant = None
         try:
             if registry_backend == 'postgres':
                 from .analysis_drafts import SCHEMA, identifier, profile, require
@@ -356,6 +357,7 @@ class ProjectSessions(UserSessions):
                 item.close()
 
     def close(self):
+        if self.assistant is not None:self.assistant.close()
         self.simulation_streams.close()
         try:
             for service in {getattr(self, 'shared', None), *self.services.values(), *self.readers.values()}:
@@ -395,6 +397,10 @@ class ProjectSessions(UserSessions):
 
         return self.simulation_streams.subscribe(sid, code, body, row.revision,
                                                  lambda: self.guard(sid, row), authorize)
+
+    def assistant_request(self,sid,path,payload):
+        from .assistant_service import request
+        return request(self,sid,path,payload)
 
     def analysis_request(self, sid, path, payload):
         from .analysis_drafts import AnalysisDrafts, identifier, require, validate_snapshot

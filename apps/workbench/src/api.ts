@@ -15,6 +15,8 @@ export interface BinaryDescriptor {
 type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk';
 const MIB = 1024 * 1024;
 const writeOnlyDenials: Record<string, readonly string[]> = {
+  ASSISTANT_RUN_FORBIDDEN: ['/api/workbench/assistant/start','/api/workbench/assistant/summary','/api/workbench/assistant/publish','/api/workbench/assistant/rollback','/api/workbench/assistant/cancel'],
+  ASSISTANT_TOOL_NOT_ALLOWED: ['/api/workbench/assistant/start','/api/workbench/assistant/summary'],
   ANALYSIS_WRITE_FORBIDDEN: ['/api/workbench/analysis-sessions/import-history','/api/workbench/analysis-sessions/evidence/register-batch','/api/workbench/analysis-sessions/start', '/api/workbench/analysis-sessions/copy', '/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/restore', '/api/workbench/analysis-sessions/evidence/register', '/api/workbench/analysis-sessions/link-work-order'],
   WORK_ORDER_WRITE_FORBIDDEN: ['/api/workbench/work-orders/seed-demo', '/api/workbench/work-orders/action'],
   IMAGERY_WRITE_FORBIDDEN:['/api/workbench/imagery/upload','/api/workbench/imagery/uploads/start',
@@ -90,6 +92,7 @@ export class WorkbenchApi {
   constructor(transport: typeof fetch = (input, init) => fetch(input, init)) { this.transport = transport; }
   invalidate() { this.epoch += 1; }
   session(revision: string) { this.invalidate(); this.revision = revision; }
+  assistantScope() {const scope=new WorkbenchApi(this.transport);scope.revision=this.revision;scope.project=this.project?{...this.project}:null;return scope;}
 
   upload<T>(file:Blob, metadata:object, signal?:AbortSignal) {
     return this.send<T>('/api/workbench/models/upload', metadata, signal, false, {file, kind:'legacyModel'});

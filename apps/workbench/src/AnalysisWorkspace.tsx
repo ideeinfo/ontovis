@@ -1,5 +1,5 @@
 import {useEffect,useId,useMemo,useRef,useState,type PointerEvent as ReactPointerEvent} from 'react';
-import {GitBranch,Hand,History,LayoutGrid,Maximize,MousePointer2,Pin,Plus,Save,Search,StickyNote,Trash2,Undo2,Redo2,X,ZoomIn,ZoomOut,PanelLeft,PanelRight,Copy,Group,RotateCcw,RefreshCw} from 'lucide-react';
+import {GitBranch,Hand,History,LayoutGrid,Maximize,MousePointer2,Pin,Plus,Save,Search,StickyNote,Trash2,Undo2,Redo2,X,ZoomIn,ZoomOut,PanelLeft,PanelRight,Copy,Group,RotateCcw,RefreshCw,Sparkles} from 'lucide-react';
 import {Btn,IconBtn,Modal} from './Primitives';
 import {addManualRelation,frameBounds,selectedInBox,arrangeCards,fitViewport,moveCard,removeCard,resizeCard,RESIZE_HANDLES,zoomAt,type ResizeHandle,type CanvasSnapshot,type ProjectScope,type RelationKind,type CanvasCard,type CardView} from './analysisCanvas';
 import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle,type AnalysisListItem,type DraftReceipt,type PendingDraft} from './analysisDraftState';
@@ -14,6 +14,7 @@ import './analysisWorkspace.css';
 import './analysisMaterials.css';
 import {noteSections,readNote,writeNote} from './analysisNotes';
 import {applyCanvasAction} from './analysisActions';
+import {AssistantPanel} from './AssistantPanel';
 
 export interface DraftApi {revision:string;epoch:number;project:ProjectScope|null;request<T>(path:string,body?:object,signal?:AbortSignal,image?:boolean|'model'|'source'):Promise<T>}
 type Detail=DraftReceipt&{snapshot:CanvasSnapshot};
@@ -43,7 +44,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
   const [target,setTarget]=useState(''),[relationKind,setRelationKind]=useState<RelationKind>('hypothesis'),[reason,setReason]=useState('');
   const [undo,setUndo]=useState<CanvasSnapshot[]>([]);
   const [redo,setRedo]=useState<CanvasSnapshot[]>([]),[multi,setMulti]=useState<string[]>([]);
-  const [listVisible,setListVisible]=useState(!initialEntry),[materialsOpen,setMaterialsOpen]=useState(!!initialEntry),[right,setRight]=useState(false);
+  const [listVisible,setListVisible]=useState(!initialEntry),[materialsOpen,setMaterialsOpen]=useState(!!initialEntry),[right,setRight]=useState(false),[assistantOpen,setAssistantOpen]=useState(false);
   const [trashView,setTrashView]=useState(false),[deleteTarget,setDeleteTarget]=useState<AnalysisListItem|null>(null),[lifecycleUnknown,setLifecycleUnknown]=useState(false);
   const [lifecycleNotice,setLifecycleNotice]=useState('');
   const lifecyclePending=useRef<{item:AnalysisListItem;action:'trash'|'untrash';task:ReturnType<typeof pendingLifecycle>}|null>(null);
@@ -318,7 +319,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
     onAvailability={(id,state)=>setReferenceState(previous=>previous[id]===state?previous:{...previous,[id]:state})}
     onView={view=>viewAction.current(card.id,view)} cursor={card.historical?undefined:trendCursor} onCursor={card.historical?undefined:setTrendCursor}
     onTrend={(id,value)=>setTrendData(previous=>previous[id]===value?previous:{...previous,[id]:value})}/>;
-  return <section className={`ad-workspace${draft?' ad-has-draft':''}${right?' ac-right-open':''}`} aria-label={t('分析工作空间','Analysis workspace')}>
+  return <section className={`ad-workspace${draft?' ad-has-draft':''}${right||assistantOpen?' ac-right-open':''}`} aria-label={t('分析工作空间','Analysis workspace')}>
     {listVisible&&<aside id={listId} className="ad-list" aria-label={t('画布列表','Canvas list')}><header><strong>{trashView?t('回收站','Recycle bin'):t('画布列表','Canvas list')}</strong><span>{list?.total??'—'}</span><IconBtn label={t('隐藏画布列表','Hide canvas list')} onClick={()=>{setListVisible(false);heading.current?.querySelector<HTMLButtonElement>('.ad-list-toggle')?.focus();}}><X size={14}/></IconBtn></header>
       <div className="ad-list-tools"><Btn aria-pressed={trashView} onClick={()=>{setTrashView(v=>!v);setQuery('');setFilter('');setList(null);}}><Trash2 size={14}/>{trashView?t('正常画布','Active canvases'):t('回收站','Recycle bin')}</Btn><IconBtn label={t('刷新画布列表','Refresh canvas list')} disabled={loading} onClick={()=>setReload(v=>v+1)}><RefreshCw size={14}/></IconBtn></div>
       <form className="ad-search" onSubmit={event=>{event.preventDefault();setFilter(query);}}><Search size={14}/><input aria-label={t('搜索画布','Search canvases')} placeholder={t('搜索名称','Search titles')} value={query} onChange={event=>setQuery(event.target.value)}/><button>{t('搜索','Search')}</button></form>
@@ -356,7 +357,8 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
           <Btn disabled={!editable} onClick={()=>setWindowDialog({from:draft.context.timeFrom,to:draft.context.timeTo})}>{t('时间范围','Time window')}</Btn>
           <Btn disabled={draft.cards.filter(c=>c.kind==='trend'&&trendData[c.id]).length<2} onClick={()=>{setCompareIds(draft.cards.filter(c=>c.kind==='trend'&&trendData[c.id]).slice(0,4).map(c=>c.id));setCompare(true);}}>{t('趋势对比','Compare trends')}</Btn>
           <Btn disabled={!receipt||busy||!writable||fixed||archived||lifecycleUnknown} onClick={()=>{setOrderId(draft.context.workOrderId||'');setLinkOrderOpen(true);}}>{t('保存并关联工单','Save & link')}</Btn>
-          <IconBtn label={t('查看详情','Show details')} aria-pressed={right} onClick={()=>{setRight(v=>!v);setMaterialsOpen(false);}}><PanelRight size={16}/></IconBtn>
+          <Btn aria-pressed={assistantOpen} onClick={()=>{setAssistantOpen(v=>!v);setRight(false);}}><Sparkles size={15}/>{t('分析助手','Assistant')}</Btn>
+          <IconBtn label={t('查看详情','Show details')} aria-pressed={right} onClick={()=>{setRight(v=>!v);setAssistantOpen(false);setMaterialsOpen(false);}}><PanelRight size={16}/></IconBtn>
         </div>
         <div className="ad-canvas-row"><div ref={canvas} className={`ad-canvas ad-tool-${tool}`} tabIndex={0} aria-label={t('分析画布','Analysis canvas')}
           onKeyDown={event=>{if((event.target as HTMLElement).closest('input,textarea,select,[data-canvas-inner]'))return;if(event.key==='Escape'){setSelected('');setMulti([]);setExpanded('');setLinkOpen(false);}else if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();undoChange(event.shiftKey);}else if(event.code==='Space'){space.current=true;event.preventDefault();}}} onKeyUp={event=>{if(event.code==='Space')space.current=false;}} onBlur={()=>{space.current=false;drag.current=null;}}
@@ -394,6 +396,7 @@ export function AnalysisWorkspace({api,locale='zh',onDirtyChange,initialEntry,on
           <Btn className="ac-save-view" disabled={!editable||!receipt} onClick={()=>void commit()}>{t('保存当前视图','Save current view')}</Btn>
           <span className="ad-hint">{t('中键拖动平移 · 滚轮缩放画布 · 拖标题移动 · 拖边角调整大小','Middle drag to pan · Wheel to zoom canvas · Drag title to move · Edges to resize')}</span>
         </div>
+        {assistantOpen&&<aside className="ad-inspector ad-assistant"><header><strong>{t('分析助手','Analysis assistant')}</strong><IconBtn label={t('关闭助手','Close assistant')} onClick={()=>setAssistantOpen(false)}><X size={16}/></IconBtn></header><AssistantPanel api={api} cards={draft.cards} receipt={receipt} en={en} canAddNote={editable&&draft.cards.length<50} onFocus={focusCard} onAddNote={text=>{if(!editable||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('助手整理 · 待人工核验','Assistant note · requires verification'),note:text,x:40+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:340,height:300,pinned:false}]});setSelected(id);}}/></aside>}
         {right&&<aside className="ad-inspector"><header><strong>{t(selectedCard?'卡片详情':'分析范围',selectedCard?'Card details':'Analysis context')}</strong><IconBtn label={t('关闭详情','Close details')} onClick={()=>setRight(false)}><X size={16}/></IconBtn></header>{selectedCard?<>
           <label>{t('卡片名称','Card title')}<input maxLength={120} disabled={!editable||selectedCard.historical||!!selectedCard.source&&referenceState[selectedCard.source.id]!=='available'} value={label(selectedCard)} onChange={event=>apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,title:event.target.value}:card)})}/></label>
           {selectedCard.kind==='analysis'?<>{noteSections.map(([key,eng])=><label key={key}>{t(key,eng)}<textarea className="ac-note-section" maxLength={4000} disabled={!editable||selectedCard.historical} value={readNote(selectedCard.note||'')[key]} onChange={event=>{const note=writeNote({...readNote(selectedCard.note||''),[key]:event.target.value});if(note.length<=4000)apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,note}:card)});}}/></label>)}<small>{(selectedCard.note||'').length} / 4000</small>
