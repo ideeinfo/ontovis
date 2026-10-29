@@ -36,7 +36,13 @@ class FixedDocuments:
             newerVersionAvailable=document['current_version_id'] != version_id, sourceType='project_document', selector=None)
 
     def content(self, body):
-        fixed = self.metadata(body)
+        d.require(type(body) is dict and body.get('representation','display') in ('preview','display'),'INVALID_REQUEST',422)
+        fixed = self.metadata({key:value for key,value in body.items() if key!='representation'})
         path = self.reader.prefix + '/documents/' + fixed['documentId'] + '/content?' + urlencode({
             'version_id': fixed['contentVersionId'], 'rendition': 'display', 'page': fixed['pageNumber']})
-        return self.reader.authority.document_page(path, photo=fixed['kind'] == 'photo')
+        def read():return self.reader.authority.document_page(path,photo=fixed['kind']=='photo')
+        if fixed['kind']=='photo' and body.get('representation')=='preview':
+            from .analysis_media import derived,photo_image
+            return derived(('project-photo-4096-jpeg-82',getattr(self.reader,'connection_id',''),self.reader.prefix,
+                fixed['documentId'],fixed['contentVersionId'],fixed['sourceSha256']),lambda:photo_image(read()))
+        return read()

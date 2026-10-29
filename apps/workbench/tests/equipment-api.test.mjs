@@ -99,6 +99,8 @@ test('fixed document bytes retain content version and hash for every PDF page or
     assert.equal(sent.path,'/api/workbench/equipment/materials/content');
     assert.equal(sent.body.contentVersionId,'fixed-version');assert.equal(sent.body.pageNumber,3);
     assert.equal(sent.body.sourceSha256,fixed.sourceSha256);assert.equal(sent.body.renditionId,undefined);
+    assert.equal(sent.body.representation,'preview');
+    await new EquipmentApi(api).materialContent(fixed,3,undefined,'display');assert.equal(sent.body.representation,'display');
   }
 });
 

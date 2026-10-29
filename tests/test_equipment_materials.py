@@ -1,5 +1,6 @@
 """Read-only material relay, fixed documents and ordinary analysis-photo contracts."""
 import copy
+from io import BytesIO
 from email.message import Message
 from types import SimpleNamespace
 import unittest
@@ -67,6 +68,22 @@ class FixedMaterialTests(unittest.TestCase):
         source.document['status']='recycled'
         with self.assertRaises(PreviewError) as error:reader.content(body)
         self.assertEqual(error.exception.status,410);source.authority.document_page.assert_not_called()
+
+    def test_photo_preview_is_bounded_cached_and_still_revalidates_before_every_read(self):
+        from PIL import Image
+        source=DocumentReader();source.version['preview_kind']='image'
+        image=BytesIO();Image.new('RGB',(5000,20),'green').save(image,'PNG')
+        source.authority.document_page.return_value=dict(content=image.getvalue(),mediaType='image/png',sha256='b'*64)
+        fixed=FixedDocuments(source);body=dict(documentId=DOC,contentVersionId=VERSION,sourceSha256='a'*64,representation='preview')
+        first=fixed.content(body);self.assertEqual(first['mediaType'],'image/jpeg')
+        with Image.open(BytesIO(first['content'])) as preview:self.assertEqual(preview.width,4096)
+        self.assertEqual(fixed.content(body),first);self.assertEqual(source.authority.document_page.call_count,1)
+        self.assertEqual(len(source.calls),4)
+        self.assertEqual(fixed.content(body|{'representation':'display'})['content'],image.getvalue())
+        source.document['status']='recycled'
+        with self.assertRaises(PreviewError):fixed.content(body)
+        self.assertEqual(source.authority.document_page.call_count,2)
+        with self.assertRaises(PreviewError):fixed.content(body|{'representation':'arbitrary'})
 
     def test_ordinary_photo_registers_whole_image_and_never_claims_old_object_region(self):
         reader=DocumentReader();reader.version['preview_kind']='image'
