@@ -27,6 +27,7 @@ class WorkOrderProgressSummaryTests(unittest.TestCase):
         self.assertEqual(result['steps'][0]['state'],'observed');self.assertIn('未作现场测量',result['steps'][0]['record'])
         self.assertEqual(value,before)
         self.assertNotIn('do-not-send',json.dumps(result));self.assertIn('不是现场事实',result['meaning'])
+        self.assertIn('不能据此断言现场未执行',result['meaning'])
 
     def test_redaction_precedes_excerpt_and_does_not_break_json(self):
         value=self.value();value['investigation']['steps'][0]['result']='password=fixture-secret https://private.invalid x@private.test /Users/example/doc 13812345678 '+'长'*2000
@@ -51,6 +52,7 @@ class WorkOrderProgressSummaryTests(unittest.TestCase):
         result=json.loads(summarize(Reader(value),'work_order',{}))
         self.assertEqual(result['steps'][0]['number'],6)
         self.assertIn('未作现场测量',result['steps'][0]['record'])
+        self.assertEqual(result['pendingStepNumbers'],[1,2,3,4,5])
 
     def test_legacy_order_without_structured_plan_is_not_given_fabricated_results(self):
         result=json.loads(summarize(Reader({'faultCode':'13002','orderRevision':1,'state':'closed'}),'work_order',{}))

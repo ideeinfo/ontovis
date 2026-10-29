@@ -25,8 +25,9 @@ def work_order_summary(value, private):
         return [build(number, row) for number, row in ranked[:maximum]]
     result = {'kind': 'work_order', 'faultCode': value.get('faultCode'), 'state': value.get('state'),
               'revision': value.get('orderRevision'), 'engineeringConfirmation': False,
-              'meaning': '固定版本的模拟工单及人工记录；候选判断/观察不是现场事实，不据此确认根因。',
+              'meaning': '固定模拟工单及人工记录，不是现场事实，不确认根因；pending仅指待登记，不能据此断言现场未执行。',
               'totalHypotheses': len(hypotheses), 'totalSteps': len(steps),
+              'pendingStepNumbers': [n for n, row in enumerate(steps, 1) if row.get('outcome') == 'pending'],
               'hypotheses': chosen(hypotheses, 'basis', lambda n, row: {
                   'number': n, 'text': short(row.get('description'), 65), 'state': row.get('status'),
                   'record': short(row.get('basis'), 100)}, 2),
