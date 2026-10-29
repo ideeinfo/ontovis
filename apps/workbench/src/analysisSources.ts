@@ -12,7 +12,7 @@ export type SourceKind='object'|'drawing'|'document'|'photo'|'model'|'trend'|'al
 export type RecommendationMatch='binding'|'historical_binding'|'name_candidate'|'catalogue_search'|'simulation_mapping'|'simulation_rule';
 export type Recommendation={key:string;kind:SourceKind;title:string;reason:string;identifier?:string;selector:Record<string,string|number>;preview?:EvidenceSource;matchType?:RecommendationMatch};
 export type Recommendations={items:Recommendation[];nextOffset:number|null;nextCursor?:string|null;gaps:string[];dataset:SimulatedDataset|null};
-export type EvidenceSource=Partial<ProjectModelVersion & SimulatedTrend>&{
+export type EvidenceSource=Partial<Omit<ProjectModelVersion,'state'> & SimulatedTrend>&{
   title?:string;pageNumber?:number;pageCount?:number;versionNumber?:number;newerVersionAvailable?:boolean;
   documentId?:string;contentVersionId?:string;sourceSha256?:string;selector?:PhotoSelector|null;
   photoPurpose?:'object_location'|'field_record';equipmentEntityUid?:string|null;
@@ -21,6 +21,7 @@ export type EvidenceSource=Partial<ProjectModelVersion & SimulatedTrend>&{
   item?:{entityUid:string;entityRevision:string;displayName?:string;objectKind?:string;objectScope?:string;classification?:ObjectClassification|null;identifiers?:{value:string;role:string}[];definitionParentEntityUid?:string};
   dataset?:SimulatedDataset;items?:SimulatedAlarm[];mappingKind?:string;
   orderId?:string;orderRevision?:number;faultCode?:string;state?:string;investigation?:Investigation;
+  checks?:string[];note?:string;
   diagnosis?:{gap?:string};events?:{recordedAt:string;action:string;note:string}[];
 };
 export type EvidenceDetail={evidenceRefId:string;sourceKind:SourceKind;sourceRevision:string;availability:'available'|'restricted'|'unavailable'|'changed';reason?:string;source?:EvidenceSource};
