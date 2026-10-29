@@ -94,6 +94,12 @@ class AssistantTests(unittest.TestCase):
         summary=json.loads(summarize(Reader(),'trend',{}));self.assertEqual(summary['badQualityCount'],1);self.assertEqual(summary['sampleCount'],181)
         self.assertEqual(summary['max'],72);self.assertEqual(summary['min'],24)
 
+    def test_alarm_duration_comes_from_event_timestamps_not_manual_trigger_delay(self):
+        value=json.loads(summarize(Reader(),'alarm',{}))
+        self.assertEqual([120.0],value['activeToClearSeconds'])
+        self.assertIn('不得用手册延时替代',value['timingMeaning'])
+        self.assertEqual(['active','cleared'],[row['state'] for row in value['events']])
+
     def test_metadata_summaries_never_request_binary_content(self):
         class Meta(Reader):
             def content(self,*_):raise AssertionError('binary content requested')

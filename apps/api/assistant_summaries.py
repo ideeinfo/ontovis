@@ -2,6 +2,7 @@
 import json
 import math
 import re
+from datetime import datetime
 from .assistant_store import require
 
 def redact(value, private=()):
@@ -26,9 +27,25 @@ def summarize(reader, kind, descriptor, private=()):
                 'reviewStatus':item.get('reviewStatus'),'classification':{k:category.get(k) for k in ('code','nameZh')},
                 'physicalPath':value.get('ancestors',{}).get('completeness'),'precision':'工程定义、安装目标与几何表示不同；未据模型确认现场位置'}
         elif kind=='alarm':
+            events = value.get('items', [])[:4]
+            active, intervals = None, []
+            for event in events:
+                raw = event.get('sourceTime')
+                if not isinstance(raw, str): continue
+                try: stamp = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+                except ValueError: continue
+                if stamp.tzinfo is None: continue
+                if event.get('state') == 'active' and active is None:
+                    active = stamp
+                elif event.get('state') == 'cleared' and active is not None:
+                    seconds = (stamp-active).total_seconds()
+                    if seconds >= 0: intervals.append(seconds)
+                    active = None
             result={'kind':kind,'simulated':True,'faultCode':(value.get('dataset') or {}).get('faultCode'),
                 'scenario':(value.get('dataset') or {}).get('title'),
-                'events':[{k:row.get(k) for k in ('state','severity','sourceTime')} for row in value.get('items',[])[:4]],
+                'events':[{k:row.get(k) for k in ('state','severity','sourceTime')} for row in events],
+                'activeToClearSeconds':intervals,
+                'timingMeaning':'发生至恢复间隔由事件时间计算，与手册触发延时不同；不得用手册延时替代事件持续时间。',
                 'confirmation':'预设模拟事件，不代表设备确诊故障'}
         elif kind=='trend':
             samples=value.get('samples',[]);valid=[p['value'] for p in samples if p.get('quality')=='good' and type(p.get('value')) in (int,float) and math.isfinite(p['value'])]

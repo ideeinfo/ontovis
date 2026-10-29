@@ -31,7 +31,7 @@ export function transferMessage(error:unknown,en:boolean){
  ASSISTANT_TRANSFER_INVALID:['请检查所选条目、长度和关联对象。','Check selected items, text length and object references.'],
  ASSISTANT_PROPOSAL_CHANGED:['建议内容已有变化，请重新读取后比较。','Suggestions changed. Reload and compare before saving.'],
  WORK_ORDER_CHANGED:['工单已有新版本；你的编辑保留，重新读取后再比较。','The work order changed. Your edits are retained; reload and compare.'],
- WORK_ORDER_STATE_CONFLICT:['请先受理工单；仅诊断中、排查中的工单可加入条目。','Accept the order first. Only diagnosing or investigating orders can receive items.'],
+ WORK_ORDER_STATE_CONFLICT:['仅诊断中、排查中的工单可加入条目；待受理的工单请先受理，其他状态仅支持查看。','Only diagnosing or investigating orders can receive items. Accept open orders first; other states are read only.'],
  WORK_ORDER_PLAN_LIMIT:['本单最多6条假设、12个步骤，请减少选择或先整理现有方案。','This order supports six hypotheses and twelve steps. Select fewer items or edit its existing plan.'],
  WORK_ORDER_ITEM_DUPLICATE:['本单已有相同内容，请取消重复条目。','The order already contains this text. Deselect duplicate items.'],
  ASSISTANT_ITEM_ALREADY_APPLIED:['部分条目已被采纳，请重新读取后选择其余条目。','Some items were already adopted. Reload to select remaining items.']};
