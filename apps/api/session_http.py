@@ -192,7 +192,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                                   '/evidence/register', '/evidence/detail', '/evidence/content', '/evidence/batch', '/evidence/preview', '/evidence/relationships', '/evidence/preview-content', '/start', '/copy', '/recommendations', '/history-candidates', '/import-history', '/evidence/register-batch',
                                                   '/link-work-order', '/simulation/catalogue', '/simulation/detail', '/simulation/qualify'))
             assistant_paths=tuple('/api/workbench/assistant/'+action for action in
-                ('policy','preview','history','publish','rollback','summary','start','status','cancel'))
+                ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
                                   '/api/workbench/objects/evidence/content', '/api/workbench/objects/photos/resolve',

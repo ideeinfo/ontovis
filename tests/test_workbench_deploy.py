@@ -28,7 +28,7 @@ def location_for(path):
 
 class WorkbenchDeploymentTests(unittest.TestCase):
     def test_assistant_routes_are_explicit_bounded_and_do_not_publish_arbitrary_tools(self):
-        for action in ('policy','preview','history','publish','rollback','summary','start','status','cancel'):
+        for action in ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation'):
             root='/api/workbench/assistant/'+action
             body=location_for(root)
             for directive in ('client_max_body_size 16k;','proxy_buffering off;','proxy_read_timeout 60s;'):

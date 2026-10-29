@@ -121,3 +121,23 @@ class AssistantHttpTests(unittest.TestCase):
             time.sleep(.05)
             ProjectsAuthority.permissions['member'].pop('Demo-PDS')
             status,value=self.request('status',{'runId':started['runId']});self.assertEqual(status,403);self.assertNotIn('result',value)
+
+    def test_two_http_turns_restore_the_same_conversation_without_recalling_provider(self):
+        self.enable();result={'answer':answer(),'usage':{},'serviceRevision':'a'*64,'purpose':'ontovis_analysis','modelCalls':1,'engineeringConfirmation':False}
+        def finished(run_id):
+            for _ in range(100):
+                _,run=self.request('status',{'runId':run_id})
+                if run['state'] not in ('reading','model','validating'):return run
+                time.sleep(.01)
+            self.fail('turn did not finish')
+        with patch('apps.api.assistant_service.call_source',return_value=result) as model:
+            _,first=self.request('start',{**self.start_body(),'conversationId':None,'expectedConversationVersion':0,'parentRunId':None});first=finished(first['runId'])
+            body={**self.start_body(),'question':'基于上一轮还缺哪些现场资料？','conversationId':first['conversationId'],'expectedConversationVersion':1,'parentRunId':first['runId']}
+            status,second=self.request('start',body);self.assertEqual(status,200,second);second=finished(second['runId'])
+            self.assertEqual('complete',second['state']);self.assertEqual(1,second['result']['context']['includedTurns'])
+            self.assertEqual(1,len(model.call_args.args[2]['history']))
+            _,head=self.request('conversation',{'conversationId':first['conversationId']});self.assertEqual(2,head['version']);self.assertEqual(2,len(head['items']))
+            self.assertEqual(2,model.call_count)
+            _,items=self.request('conversations',{'analysisSessionId':self.analysis,'expectedAnalysisRevision':1});self.assertEqual(1,len(items['items']))
+            self.assertEqual(self.request('conversation',{'conversationId':first['conversationId']},project='B')[0],404)
+            ProjectsAuthority.permissions['member'].pop('Demo-PDS');self.assertEqual(self.request('conversation',{'conversationId':first['conversationId']})[0],403)

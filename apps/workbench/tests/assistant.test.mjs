@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
-import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
+import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,filterEngineeringGraph,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
 
 const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],reads:8,parallel:2,seconds:120};
 const view={revision:1,accessRevision:'grant',policy,service:{serviceRevision:'r'}};
@@ -63,6 +63,25 @@ test('long model results are excerpted without truncating the fixed reference fo
 });
 
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
+test('conversation pages and UID graph use only the fixed owned analysis endpoints',async()=>{
+ const calls=[],service=new AssistantApi({request:async(path,body,signal)=>{calls.push({path,body,signal});return {};}}),abort=new AbortController();
+ await service.conversations('analysis',3,abort.signal);await service.conversation('conversation',4,abort.signal);await service.graph('analysis',3,'fixed-object',abort.signal);
+ assert.deepEqual(calls.map(c=>c.path),['/api/workbench/assistant/conversations','/api/workbench/assistant/conversation','/api/workbench/assistant/graph']);
+ assert.deepEqual(calls[1].body,{conversationId:'conversation',beforeTurn:4});assert.deepEqual(calls[2].body,{analysisSessionId:'analysis',expectedAnalysisRevision:3,evidenceRefIds:['fixed-object']});
+ assert.ok(calls.every(c=>c.signal===abort.signal));assert.ok(calls.every(c=>!c.path.includes('start')));
+});
+test('new turn receipts replace by run identity and preserve earlier conversation order',()=>{
+ const before=[{runId:'second',conversationVersion:2,state:'model'},{runId:'first',conversationVersion:1,state:'complete'}];
+ const merged=mergeConversationTurns(before,{runId:'second',conversationVersion:2,state:'complete'});
+ assert.deepEqual(merged.map(v=>v.runId),['first','second']);assert.equal(merged[1].state,'complete');assert.equal(before[0].state,'model');
+});
+test('graph filtering operates only on returned associations and preserves candidate status',()=>{
+ const graph={nodes:[{id:'sensor',title:'温度变送器'},{id:'terminal',title:'X91端子排'},{id:'drawing',title:'机舱传感器图纸'}],relations:[
+  {id:'one',source:'sensor',target:'terminal',type:'CANDIDATE_CONNECTION',status:'needs_review'},
+  {id:'two',source:'sensor',target:'drawing',type:'DRAWING_LOCATION',status:'recorded'}]};
+ assert.equal(filterEngineeringGraph(graph,'','X91')[0].status,'needs_review');assert.equal(filterEngineeringGraph(graph,'DRAWING_LOCATION','温度').length,1);
+ assert.equal(filterEngineeringGraph(graph,'KNOWLEDGE_MAPPING','').length,0);assert.equal(graph.relations.length,2);
+});
 test('temporary status failures recover the same saved run without starting or calling a model',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});const calls=[],updates=[],errors=[],abort=new AbortController();
  const api=new AssistantApi({request:async(path,body)=>{calls.push({path,body});if(calls.length===1)throw new ApiError(502,'SOURCE_UNAVAILABLE');return {runId:'saved',state:'complete',version:8};}});
