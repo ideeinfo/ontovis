@@ -86,7 +86,7 @@ export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{ca
         {preview?.scope&&<details><summary>{t('适用范围','Applicability')}</summary><p>{preview.scope.coverage==='partial'?t('当前图谱覆盖部分文档内容。','The graph covers part of this document.'):t('以当前文档版本为准。','Applies to this document version.')}</p>{preview.limitations?.unknown_applicability===true&&<p>{t('来源尚未明确适用机型或安装范围，使用时需结合当前设备核对。','The source has not specified applicable equipment or installation scope.')}</p>}</details>}
 
       </>:chosen?<><span className="ad-badge">{t(chosen.bbox?'可定位':'未定位',chosen.bbox?'Locatable':'No region')}</span><h3>{chosen.title}</h3><dl>{Object.entries(chosen.properties||{}).filter(([key,value])=>key!=='来源批次'&&value!=null&&value!=='').map(([key,value])=><div key={key}><dt>{key}</dt><dd>{typeof value==='object'?JSON.stringify(value):propertyNames[String(value)]||String(value)}</dd></div>)}</dl>
-        {chosen.selector&&<Btn primary disabled={!onAdd} onClick={()=>onAdd?.({key:chosen.id,kind:'drawing',title:chosen.targetTitle||chosen.title,reason:chosen.reason||t('图纸中的已登记引用','Recorded drawing reference'),selector:chosen.selector!})}><ExternalLink size={14}/>{t('打开引用图纸并放入画布','Open referenced drawing')}</Btn>}
+        {chosen.selector&&onAdd&&<Btn primary onClick={()=>onAdd?.({key:chosen.id,kind:'drawing',title:chosen.targetTitle||chosen.title,reason:chosen.reason||t('图纸中的已登记引用','Recorded drawing reference'),selector:chosen.selector!})}><ExternalLink size={14}/>{t('打开引用图纸并放入画布','Open referenced drawing')}</Btn>}
       </>:<p>{t('选择图面中的对象，或从左侧列表交叉定位。','Select an object on the drawing or in the list.')}</p>}
     </aside>
   </div>;

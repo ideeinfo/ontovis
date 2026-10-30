@@ -6,7 +6,7 @@ import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecy
 import {RowActions,RowContext,type ListAction} from './ListMenus';
 import {AnalysisMaterialPanel} from './AnalysisMaterialPanel';
 import {materialPosition,relatedMaterialSection,withPrimaryAlarm} from './analysisMaterials';
-import {AnalysisSources,ANALYSIS_ROOT,setCardPreviewOpen,type AnalysisEntry,type Recommendation,type Recommendations,type EvidenceSource,type SourceAnchor} from './analysisSources';
+import {AnalysisSources,ANALYSIS_ROOT,analysisEntryRequest,setCardPreviewOpen,type AnalysisEntry,type Recommendation,type Recommendations,type EvidenceSource,type SourceAnchor} from './analysisSources';
 import {AnalysisSourceCard,AnalysisTrend,materialNames} from './AnalysisSourceCard';
 import {useSourceRelations,SourceRelationLines,SourceRelationDetails,type CardSourceRelation} from './AnalysisSourceRelations';
 import type {SimulatedTrend} from './simulatedAlarms';
@@ -93,9 +93,11 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   const visibleRelations=sourceRelations.relations.filter(link=>[link.from,link.to].every(card=>!referenceState[card.source!.id]||referenceState[card.source!.id]==='available'));
   const analysisEntry=useMemo<AnalysisEntry|null>(()=>draft?(draft.context.datasetId&&draft.context.datasetRevision?{datasetId:draft.context.datasetId,datasetRevision:draft.context.datasetRevision}:{projectOnly:true}):initialEntry&& !('analysisSessionId' in initialEntry)&&!('entityUid' in initialEntry)?initialEntry:null,[draft?.context.datasetId,draft?.context.datasetRevision,!!draft,initialEntry]);
   useEffect(()=>{
-    if(!initialEntry)return;const abort=new AbortController();request.current=abort;setBusy(true);setError(null);setMaterialsOpen(true);
-    const isFixed='analysisSessionId' in initialEntry;setFixed(isFixed);if(isFixed&&initialEntry.assistantRunId)setAssistantOpen(true);
-    void api.request<Detail&{resumed:boolean;historyImported:boolean;missingHistorySources?:unknown[]}>(ROOT+(isFixed?'/detail':'/start'),isFixed?{analysisSessionId:initialEntry.analysisSessionId,analysisRevision:initialEntry.analysisRevision}:{entry:initialEntry,requestId:startId.current},abort.signal)
+    if(!initialEntry)return;
+    if('newDraft' in initialEntry){fresh();setMaterialsOpen(false);return;}
+    const abort=new AbortController();request.current=abort;setBusy(true);setError(null);setMaterialsOpen(true);
+    const opening=analysisEntryRequest(initialEntry,startId.current)!,isFixed=opening.fixed;setFixed(isFixed);if('analysisSessionId' in initialEntry&&initialEntry.assistantRunId)setAssistantOpen(true);
+    void api.request<Detail&{resumed:boolean;historyImported:boolean;missingHistorySources?:unknown[]}>(opening.path,opening.body,abort.signal)
       .then(value=>{if(!abort.signal.aborted){adopt(value);setNotice(isFixed?t('工单关联版本 · 只读查看','Linked revision · read only'):value.historyImported?t('已调入历史参考，本次记录独立保存','History loaded; current investigation is independent'):value.resumed?t('已继续本次分析','Resumed analysis'):'');}})
       .catch(value=>{if(!abort.signal.aborted)failure(value);}).finally(()=>{if(!abort.signal.aborted)setBusy(false);});
     return()=>abort.abort();

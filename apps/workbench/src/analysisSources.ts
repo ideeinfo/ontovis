@@ -8,7 +8,14 @@ import type {SimulatedTrend,SimulatedDataset,SimulatedAlarm} from './simulatedAl
 import type {WorkOrderReferenceEntry} from './workOrderReferences';
 
 export const ANALYSIS_ROOT='/api/workbench/analysis-sessions';
-export type AnalysisEntry={projectOnly:true}|{entityUid:string;expectedEntityRevision:string;timeTo:string}|{datasetId:string;datasetRevision:string}|{orderId:string}|{analysisSessionId:string;analysisRevision:number;assistantRunId?:string}|WorkOrderReferenceEntry;
+export type AnalysisEntry={projectOnly:true}|{entityUid:string;expectedEntityRevision:string;timeTo:string}|{datasetId:string;datasetRevision:string}|{orderId:string}|{analysisSessionId:string;analysisRevision:number;assistantRunId?:string;openLatest?:true}|{newDraft:true}|WorkOrderReferenceEntry;
+export function analysisEntryRequest(entry:AnalysisEntry,requestId:string){
+ if('newDraft'in entry)return null;
+ if('analysisSessionId'in entry){const fixed=!('openLatest'in entry&&entry.openLatest);
+  return {path:ANALYSIS_ROOT+'/detail',body:{analysisSessionId:entry.analysisSessionId,...(fixed?{analysisRevision:entry.analysisRevision}:{})},fixed};
+ }
+ return {path:ANALYSIS_ROOT+'/start',body:{entry,requestId},fixed:false};
+}
 export type SourceKind='object'|'drawing'|'document'|'photo'|'model'|'trend'|'alarm'|'work_order';
 export type RecommendationMatch='binding'|'historical_binding'|'name_candidate'|'catalogue_search'|'simulation_mapping'|'simulation_rule';
 export type Recommendation={key:string;kind:SourceKind;title:string;reason:string;reasonEn?:string;identifier?:string;selector:Record<string,string|number>;preview?:EvidenceSource;matchType?:RecommendationMatch;availability?:'available'|'unavailable'|'field_record'};

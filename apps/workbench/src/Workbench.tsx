@@ -99,13 +99,13 @@ export function Workbench() {
   const [initialAnalysisEntry,setInitialAnalysisEntry]=useState<import('./analysisSources').AnalysisEntry|null>(null);
   const [pendingOrderLeave,setPendingOrderLeave]=useState<(()=>void)|null>(null);
   function leaveOrders(change:()=>void){if((page==='orders'||page==='analysis'||page==='hierarchy'||page==='ai'||page==='data')&&ordersDirty)setPendingOrderLeave(()=>change);else change();}
-  function navigate(next:Page,legacyVersionId:string|null=null,orderQuery='',analysisEntry:import('./analysisSources').AnalysisEntry|null=null){
+  function navigate(next:Page,legacyVersionId:string|null=null,orderQuery='',analysisEntry:import('./analysisSources').AnalysisEntry|null=null,afterNavigate?:()=>void){
     if(!canNavigate(next,!!project))next='project';
     if(next==='bindings'&&legacyVersionId===null)next='hierarchy';
     const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setResourceSceneId(undefined);setLegacyReady(null);
       api.selectProject(next==='models'?null:project?.projectRef||null);setError(null);
       if(next==='bindings'){setModelVersionId(legacyVersionId);setModel(null);setContext(null);setDetail(null);setModelReload(value=>value+1);}
-      setInitialOrderQuery(orderQuery);setInitialAnalysisEntry(analysisEntry);setPage(next);setLeft(false);setRight(false);};
+      setInitialOrderQuery(orderQuery);setInitialAnalysisEntry(analysisEntry);setPage(next);setLeft(false);setRight(false);afterNavigate?.();};
     if(page==='scene'&&(next!=='scene'||sceneEntry!==null)&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else leaveOrders(change);
   }
 
@@ -307,7 +307,7 @@ export function Workbench() {
         </aside>
       </div>}</main>
     </div></div>}
-    {active&&project&&cockpitVisited&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><ProjectCockpit key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}`} api={api} project={project} active={cockpitOpen} initialEntry={cockpitEntry} onExit={closeCockpit} onWorkspace={sceneId=>{setCockpitOpen(false);navigate('scene');setResourceSceneId(sceneId);}}/></Suspense>}
+    {active&&project&&cockpitVisited&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><ProjectCockpit key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}`} api={api} project={project} active={cockpitOpen} initialEntry={cockpitEntry} onExit={closeCockpit} onAnalysisWorkspace={entry=>navigate('analysis',null,'',entry,()=>{setCockpitOpen(false);setReload(value=>value+1);})} onWorkspace={sceneId=>{setCockpitOpen(false);navigate('scene');setResourceSceneId(sceneId);}}/></Suspense>}
     {active&&cockpitPicker&&<Modal className="pc-project-picker" title={locale==='zh'?'选择驾驶舱项目':'Choose a cockpit project'} description={locale==='zh'?'选择本人有权访问的项目。':'Select an accessible project.'} onClose={()=>setCockpitPicker(false)}><ProjectsPanel api={api} onSelect={chooseCockpitProject}/></Modal>}
     {pendingOrderLeave&&<Modal title={page==='data'?(locale==='zh'?'天气配置尚未保存':'Unsaved weather settings'):page==='ai'?(locale==='zh'?'策略修改尚未生效':'Unapplied policy changes'):page==='hierarchy'?(locale==='zh'?'共享配置尚未保存':'Unsaved equipment configuration'):page==='analysis'?(locale==='zh'?'分析修改尚未保存':'Unsaved analysis changes'):(locale==='zh'?'诊断方案尚未保存':'Unsaved investigation')} description={locale==='zh'?'继续离开将放弃当前未保存的修改。':'Leaving discards the current unsaved edits.'} onClose={()=>setPendingOrderLeave(null)}><div className="wo-actions"><Btn onClick={()=>setPendingOrderLeave(null)}>{locale==='zh'?'继续编辑':'Continue editing'}</Btn><Btn onClick={()=>{const change=pendingOrderLeave;setPendingOrderLeave(null);setOrdersDirty(false);change();}}>{locale==='zh'?'放弃修改并离开':'Discard and leave'}</Btn></div></Modal>}
     {modal === 'login' && <Modal className="ov-login-dialog" title={t('signInTitle')} description={t('accountHint')} onClose={closeModal} onCloseAutoFocus={event=>{if(loginButton.current){event.preventDefault();loginButton.current.focus();}}}><form className="ov-simple-login" onSubmit={event => {event.preventDefault();void login();}}>
