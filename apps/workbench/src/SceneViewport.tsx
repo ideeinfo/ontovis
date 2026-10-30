@@ -30,6 +30,7 @@ import {SceneLoadingProgress} from './SceneLoadingProgress';
 import {SceneLoadingTracker,sceneLoadingPlan,sceneLoadingIdentity,modelLoadingKey,terrainLoadingKey,imageryLoadingKey,type SceneLoadingState} from './sceneLoading';
 import './sceneViewport.css';
 import {SceneMotion} from './sceneMotion';
+import {SceneModelView,type ModelViewRequest,type ModelViewStatus} from './sceneModelView';
 import type {MotionRequest,MotionStatus} from './simulatedMotion';
 import type {SceneAlarm} from './sceneAlarm';
 
@@ -37,6 +38,8 @@ export interface SceneCameraControl {getView:()=>SceneView;setView:(value:SceneV
 export interface SceneViewportProps {
   active?:boolean;
   simulatedMotion?:MotionRequest|null;onMotionStatus?:(status:MotionStatus)=>void;
+  modelView?:ModelViewRequest|null;onModelViewStatus?:(status:ModelViewStatus)=>void;
+  onPreparationState?:(key:string,state:'loading'|'ready'|'error')=>void;
   alarm?:SceneAlarm|null;onAlarmFocus?:()=>void;
   preparationKey?:string;preparationError?:unknown;onRetryPreparation?:()=>void;
   environmentPreview?:{value:SceneEnvironmentV1|null}|null;
@@ -100,6 +103,9 @@ export function SceneViewport(props:SceneViewportProps) {
   const webglFailure=useRef(false);
   const message=(key:Parameters<typeof sceneViewportMessage>[1])=>sceneViewportMessage(locale,key);
   const displayError=props.preparationError||error;
+  const preparationIdentity=useRef('');
+  useEffect(()=>{const key=props.preparationKey??'';if(preparationIdentity.current!==key){preparationIdentity.current=key;props.onPreparationState?.(key,'loading');return;}
+    props.onPreparationState?.(key,displayError?'error':reading?'loading':'ready');},[props.preparationKey,props.onPreparationState,displayError,reading]);
   const errorMessage=webglFailure.current?message('unavailable'):displayError instanceof ViewportInteractionError?message(displayError.messageKey):
     displayError instanceof ApiError&&displayError.code==='MODEL_REFERENCE_REQUIRED'?message('modelReferenceRequired'):
     displayError instanceof ApiError&&['INVALID_CALIBRATION','UNSUPPORTED_CALIBRATION'].includes(displayError.code)?message('invalidCalibration'):failureMessage(displayError,locale);
@@ -138,9 +144,24 @@ export function SceneViewport(props:SceneViewportProps) {
     let simulated:{entry:Entry;driver:SceneMotion}|null=null,lastMotionStatus:MotionStatus='loading';
     const motionStatus=(status:MotionStatus)=>{if(status!==lastMotionStatus){lastMotionStatus=status;current.current.onMotionStatus?.(status);}};
     const clearMotion=()=>{simulated?.driver.dispose();simulated=null;};
+    let inspection:{entry:Entry;driver:SceneModelView}|null=null,inspectionView:{instanceId:string;view:SceneView}|null=null,lastModelViewStatus:ModelViewStatus='loading';
+    const modelViewStatus=(status:ModelViewStatus)=>{if(status!==lastModelViewStatus){lastModelViewStatus=status;current.current.onModelViewStatus?.(status);}};
+    const clearModelView=(restore=false)=>{inspection?.driver.dispose();inspection=null;
+      if(restore&&inspectionView){const saved=inspectionView;inspectionView=null;if(current.current.selectedId===saved.instanceId)moveView(saved.view);}
+    };
+    const syncModelView=()=>{
+      const state=current.current,request=state.modelView,entry=request?entries.get(request.instanceId):undefined;
+      if(!request||!entry?.root.visible||state.active===false||document.hidden||state.editing||state.previewModel||state.componentFocus){clearModelView(true);modelViewStatus('loading');return;}
+      clearMotion();
+      if(inspection&&(inspection.entry!==entry||!inspection.driver.matches(request)))clearModelView();
+      if(!inspection){const driver=SceneModelView.create(entry.root,entry.version,request);if(!driver){clearModelView(true);modelViewStatus('unavailable');return;}
+        if(!inspectionView||inspectionView.instanceId!==request.instanceId)inspectionView={instanceId:request.instanceId,view:view(camera,orbit)};
+        inspection={entry,driver};const destination=selectedModelView(camera,driver.focusBounds(),camera.position.clone().sub(orbit.target));if(destination)moveView(destination);
+      }modelViewStatus('ready');
+    };
     const syncMotion=()=>{
       const state=current.current,request=state.simulatedMotion,entry=request?entries.get(request.instanceId):undefined;
-      if(!request||!entry?.root.visible||state.active===false||document.hidden||state.editing||state.previewModel){clearMotion();motionStatus('loading');return;}
+      if(!request||state.modelView||!entry?.root.visible||state.active===false||document.hidden||state.editing||state.previewModel){clearMotion();motionStatus('loading');return;}
       if(simulated&&(simulated.entry!==entry||!simulated.driver.matches(request)))clearMotion();
       if(!simulated){const driver=SceneMotion.create(entry.root,entry.version,request);if(!driver){motionStatus('unavailable');return;}simulated={entry,driver};}
       simulated.driver.update(request,performance.now());motionStatus('ready');
@@ -289,7 +310,7 @@ export function SceneViewport(props:SceneViewportProps) {
       const state=current.current;
       if(drag&&(!state.editing||state.disabled||state.previewModel||state.pendingPlacement))cancelDrag();
       for(const item of state.snapshot.instances){const entry=entries.get(item.sceneModelInstanceId);if(entry)entry.root.visible=(state.personalVisibility[item.sceneModelInstanceId]??item.visible)&&!preview;}
-      syncMotion();
+      syncModelView();syncMotion();
       grid.visible=state.snapshot.coordinateFrame.mode==='local_plane'&&!preview;
       if(terrain)terrain.visible=state.terrainVisible&&!preview;
       imageryLayer.visible(state.terrainVisible&&!!state.imageryVisible&&!preview);
@@ -332,7 +353,7 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const sync=async()=>{
       const ticket=++generation;loadingAbort?.abort();loadingAbort=new AbortController();const signal=loadingAbort.signal;
-      const state=current.current;clearMotion();cancelDrag();resourcesLoading=true;setError(null);awaitingDisplay=null;
+      const state=current.current;clearMotion();clearModelView();inspectionView=null;cancelDrag();resourcesLoading=true;setError(null);awaitingDisplay=null;
       const plan=sceneLoadingPlan(state.snapshot,state.modelRefs,state.previewModel);
       if(!loading||loading.identity!==sceneLoadingIdentity(plan,state.preparationKey)||loading.state().stage==='failed'){
         loading?.cancel();loading=new SceneLoadingTracker(plan,value=>{if(!stale())setLoadingState(value);},state.preparationKey);
@@ -540,7 +561,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const dragover=(event:DragEvent)=>{const state=current.current;if(state.editing&&!state.disabled&&!state.previewModel
       &&(state.onResourceDrop&&event.dataTransfer?.types.includes(DROP_MIME)||state.onEquipmentDrop&&event.dataTransfer?.types.includes('application/x-ontovis-equipment'))){event.preventDefault();event.dataTransfer.dropEffect='copy';}};
     const visible=()=>{
-      if(document.hidden||current.current.active===false){environment.suspend();clearMotion();if(hiddenAt===null)hiddenAt=performance.now();cancelAnimationFrame(frame);frame=0;}
+      if(document.hidden||current.current.active===false){environment.suspend();clearMotion();clearModelView(true);if(hiddenAt===null)hiddenAt=performance.now();cancelAnimationFrame(frame);frame=0;}
       else {if(tween&&hiddenAt!==null)tween.start+=performance.now()-hiddenAt;hiddenAt=null;appearance();request();}
     };
     const resize=new ResizeObserver(()=>{
@@ -571,7 +592,7 @@ export function SceneViewport(props:SceneViewportProps) {
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
       orbit.removeEventListener('change',request);orbit.removeEventListener('start',orbitStart);orbit.removeEventListener('end',emit);
-      clearMotion();sceneControls.dispose();environment.dispose();imageryLayer.dispose();previewInspection?.dispose();previewInspection=null;
+      clearMotion();clearModelView();sceneControls.dispose();environment.dispose();imageryLayer.dispose();previewInspection?.dispose();previewInspection=null;
       current.current.onPreviewStructure?.(null);
       selectionBoxes.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
       componentBox.geometry.dispose();disposeMaterial(componentBox.material);
@@ -582,7 +603,7 @@ export function SceneViewport(props:SceneViewportProps) {
   useEffect(()=>{runtime.current?.preload();},[props.placementModel]);
   useEffect(()=>{runtime.current?.visibility();},[props.active]);
   useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
-  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,props.alarm,props.simulatedMotion,waterOverride,cloudOverride,reduced,locale,resolved]);
+  useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,props.alarm,props.simulatedMotion,props.modelView,waterOverride,cloudOverride,reduced,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
   useEffect(()=>{if(props.focusRequest)runtime.current?.focus(props.focusRequest.instanceIds??props.focusRequest.instanceId);},[props.focusRequest?.token]);
   useEffect(()=>{runtime.current?.componentFocus();},[props.componentFocus,props.snapshot,props.modelRefs,props.selectedId,props.personalVisibility,props.previewModel]);
