@@ -184,3 +184,16 @@ test('isolation ghosts basic materials and respects source opacity and hidden st
  assert.equal(f.effect.isFadedOccluder(f.proxy),true);assert.equal(f.effect.isFadedOccluder(f.cabinet),false);
  f.effect.restore();assert.equal(f.interior.material,original);assert.equal(f.shell.material,material);
 });
+
+
+test('alarm anchors follow current source/proxy meshes without changing the active material selection',()=>{
+ const f=fixture();f.effect.apply(['CT'],theme,true);const selected=f.cabinet.material,other=f.proxy.material;
+ f.proxy.position.set(10,20,30);const bounds=f.effect.componentBounds(['CN']);
+ assert.deepEqual(bounds.min.toArray(),[9.5,19.5,29.5]);assert.deepEqual(bounds.max.toArray(),[10.5,20.5,30.5]);
+ assert.equal(f.cabinet.material,selected);assert.equal(f.proxy.material,other);
+ f.proxy.position.x=25;assert.equal(f.effect.componentBounds(['CN']).getCenter(new THREE.Vector3()).x,25);
+ f.proxy.visible=false;assert.ok(f.effect.componentBounds(['CN']).isEmpty());f.proxy.visible=true;
+ f.proxy.userData.ontoVisModelVersionId='other';assert.ok(f.effect.componentBounds(['CN']).isEmpty());
+ assert.ok(f.effect.componentBounds(['missing']).isEmpty());assert.ok(f.effect.componentBounds(['CT','CT']).isEmpty());
+ f.effect.dispose();assert.ok(f.effect.componentBounds(['CT']).isEmpty());
+});

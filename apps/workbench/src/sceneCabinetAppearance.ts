@@ -53,8 +53,25 @@ export class SceneCabinetAppearance {
     this.activeKey=key;
   }
   selectionBounds(target=new THREE.Box3()):THREE.Box3 {
+    return this.displayedBounds(this.selected,target);
+  }
+  componentBounds(componentKeys:readonly string[],target=new THREE.Box3()):THREE.Box3 {
+    target.makeEmpty();
+    const id=this.root.userData.sceneModelInstanceId,version=this.version.modelVersionId,keys=new Set(componentKeys);
+    if(this.disposed||!this.root.visible||typeof id!=='string'||!id||this.root.userData.ontoVisModelVersionId!==version||
+      !keys.size||keys.size!==componentKeys.length||[...keys].some(key=>this.version.components.filter(part=>part.componentKey===key).length!==1))return target;
+    const meshes:THREE.Mesh[]=[];
+    this.root.traverse(node=>{
+      if(!(node instanceof THREE.Mesh)||node.userData.sceneModelInstanceId!==id||node.userData.ontoVisModelVersionId!==version)return;
+      const data=node.userData,component=this.version.components.find(part=>part.componentKey===data.ontoVisComponentKey);
+      if(component&&keys.has(component.componentKey)&&(sourceIndex(data.ontoVisNodeIndex)&&component.nodeIndices.includes(data.ontoVisNodeIndex)||
+        data.ontoVisProxySchematic===true&&component.geometryQuality==='proxy_schematic'&&component.nodeIndices.length===0))meshes.push(node);
+    });
+    return this.displayedBounds(meshes,target);
+  }
+  private displayedBounds(meshes:THREE.Mesh[],target:THREE.Box3):THREE.Box3 {
     target.makeEmpty();this.root.updateWorldMatrix(true,true);
-    for(const mesh of this.selected){
+    for(const mesh of meshes){
       let visible=true;
       for(let node:THREE.Object3D|null=mesh;node;node=node.parent){if(!node.visible){visible=false;break;}if(node===this.root)break;}
       if(!visible)continue;

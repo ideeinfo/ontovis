@@ -40,17 +40,46 @@ export function terrainSafeView(view:SceneView,terrain:Object3D|null):SceneView 
   return {eye:eye.toArray() as SceneVector3,target:[...view.target]};
 }
 
-/** Arrival shows a central group at equipment scale; fit-all remains an explicit overview action. */
-export function arrivalModelView(camera:PerspectiveCamera,entries:ReadonlyMap<string,{root:Object3D}>,ids:string[],direction:Vector3):SceneView|null {
-  const models=[...new Set(ids)].flatMap(id=>{const bounds=selectedModelBounds(entries,[id]);return bounds.isEmpty()?[]:[{id,bounds,center:bounds.getCenter(new Vector3())}];});
-  if(!models.length)return null;
-  const median=(axis:'x'|'z')=>models.map(item=>item.center[axis]).sort((a,b)=>a-b)[Math.floor(models.length/2)];
-  const center=new Vector3(median('x'),0,median('z'));
-  const anchor=[...models].sort((a,b)=>Math.hypot(a.center.x-center.x,a.center.z-center.z)-Math.hypot(b.center.x-center.x,b.center.z-center.z))[0].center;
-  const nearest=models.sort((a,b)=>a.center.distanceToSquared(anchor)-b.center.distanceToSquared(anchor)).slice(0,3);
-  const box=new Box3();for(const item of nearest)box.union(item.bounds);
-  const axis=direction.clone();if(Math.hypot(axis.x,axis.z)<1e-6)axis.set(.9,0,1.2);axis.y=Math.hypot(axis.x,axis.z)*.35;
-  return selectedModelView(camera,box,axis);
+export interface OverviewFrame {left:number;right:number;top:number;bottom:number}
+const emptyFrame:OverviewFrame={left:0,right:0,top:0,bottom:0};
+
+/** Fit the complete asset bounds inside the unobstructed screen area, rather than the terrain. */
+function framedModelView(camera:PerspectiveCamera,box:Box3,direction:Vector3,frame:OverviewFrame,minimum=3):SceneView|null {
+  if(box.isEmpty())return null;
+  const inset=(value:number)=>Number.isFinite(value)?Math.max(0,Math.min(.44,value)):0;
+  const left=inset(frame.left),rightInset=inset(frame.right),top=inset(frame.top),bottom=inset(frame.bottom);
+  const halfX=1-left-rightInset,halfY=1-top-bottom,cx=left-rightInset,cy=bottom-top;
+  const tanY=Math.tan(MathUtils.degToRad(camera.fov/2)),tanX=tanY*camera.aspect;
+  const axis=direction.clone().normalize(),right=new Vector3(0,1,0).cross(axis).normalize(),up=axis.clone().cross(right).normalize();
+  const center=box.getCenter(new Vector3()),corners:{x:number;y:number;z:number}[]=[];
+  let distance=minimum;
+  for(const x of [box.min.x,box.max.x])for(const y of [box.min.y,box.max.y])for(const z of [box.min.z,box.max.z]){
+    const delta=new Vector3(x,y,z).sub(center);
+    const point={x:delta.dot(right)/tanX,y:delta.dot(up)/tanY,z:delta.dot(axis)};
+    corners.push(point);distance=Math.max(distance,point.z+camera.near*2);
+  }
+  const minX=cx-halfX,maxX=cx+halfX,minY=cy-halfY,maxY=cy+halfY;
+  for(const a of corners)for(const b of corners)distance=Math.max(distance,
+    (maxX*b.z-minX*a.z+b.x-a.x)/(2*halfX),(maxY*b.z-minY*a.z+b.y-a.y)/(2*halfY));
+  distance*=1.06;
+  const shiftX=(Math.max(...corners.map(p=>minX*(distance-p.z)-p.x))+Math.min(...corners.map(p=>maxX*(distance-p.z)-p.x)))/2;
+  const shiftY=(Math.max(...corners.map(p=>minY*(distance-p.z)-p.y))+Math.min(...corners.map(p=>maxY*(distance-p.z)-p.y)))/2;
+  const target=center.clone().addScaledVector(right,-shiftX*tanX).addScaledVector(up,-shiftY*tanY);
+  return {eye:target.clone().addScaledVector(axis,distance).toArray() as SceneVector3,target:target.toArray() as SceneVector3};
+}
+
+export function arrivalModelView(camera:PerspectiveCamera,entries:ReadonlyMap<string,{root:Object3D}>,ids:string[],direction:Vector3,frame:OverviewFrame=emptyFrame,terrain:Object3D|null=null):SceneView|null {
+  const box=selectedModelBounds(entries,ids);if(box.isEmpty())return null;
+  const axis=direction.clone();if(Math.hypot(axis.x,axis.z)<1e-6)axis.set(.9,0,1.2);
+  axis.y=Math.hypot(axis.x,axis.z)*.55;
+  let destination=framedModelView(camera,box,axis,frame);
+  for(let i=0;destination&&i<4;i++){
+    const safe=terrainSafeView(destination,terrain);
+    if(safe.eye.every((value,index)=>Math.abs(value-destination!.eye[index])<1e-6))return destination;
+    const delta=new Vector3(...safe.eye).sub(new Vector3(...safe.target));
+    destination=framedModelView(camera,box,delta,frame,delta.length());
+  }
+  return destination;
 }
 
 export class SceneModelSelectionBoxes {

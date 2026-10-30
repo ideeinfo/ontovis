@@ -24,6 +24,7 @@ export function useCockpitAlarmTargets(api:WorkbenchApi,catalog:CockpitCatalog|n
   }).catch(error=>{if(!abort.signal.aborted&&!cancelled(error))setFailure({key,error});});return()=>abort.abort();
  },[api,key]);
  const current=source?.key===key?source:null,error=failure?.key===key?failure.error:null;
+ const targetRows=useMemo(()=>rows?.map(row=>({...row,target:current&&placement?cockpitAlarmTarget(placement,current.record,current.context,current.bundle,row.dataset):null}))||[],[rows,current,placement]);
  return {placements,placement,choose:setChoice,loading:!!key&&!current&&!error,error,reload:()=>setAttempt(value=>value+1),
-  rows:rows?.map(row=>({...row,target:current&&placement?cockpitAlarmTarget(placement,current.record,current.context,current.bundle,row.dataset):null}))||[]};
+  rows:targetRows};
 }

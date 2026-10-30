@@ -64,17 +64,25 @@ test('single selection and missing model ids never allocate an unrelated multi-s
   selection.update(entries,['missing','missing']);assert.equal(selection.helpers.size,0);selection.dispose();
 });
 
-test('arrival frames the central three assets at a low angle without hiding the wider scene',async()=>{
+test('arrival fits all turbines, including outer units, inside the area clear of side panels',async()=>{
  const {arrivalModelView}=await import('../src/sceneModelFocus.ts');
- const entries=new Map();
- for(let i=0;i<7;i++){const root=new Group();root.add(new Mesh(new BoxGeometry(10,80,10)));root.position.set(i*100,40,0);entries.set(String(i),{root});}
- const camera=new PerspectiveCamera(42,16/9,.1,100000),ids=[...entries.keys()];
- const all=selectedModelView(camera,selectedModelBounds(entries,ids),new Vector3(1,1,1));
- const close=arrivalModelView(camera,entries,ids,new Vector3(1,1,1));
- assert.ok(new Vector3(...close.eye).distanceTo(new Vector3(...close.target))<new Vector3(...all.eye).distanceTo(new Vector3(...all.target)));
- assert.deepEqual(close.target,[300,40,0]);
- const direction=new Vector3(...close.eye).sub(new Vector3(...close.target));assert.ok(Math.abs(direction.y/Math.hypot(direction.x,direction.z)-.35)<1e-12);
- assert.ok([...entries.values()].every(item=>item.root.visible));assert.equal(arrivalModelView(camera,entries,[],direction),null);
+ for(const aspect of [16/9,4/3,.7]){
+  const entries=new Map();
+  for(let i=0;i<7;i++){const value=model(i*180,40+i*5,(i%3)*100);entries.set(String(i),value);}
+  entries.set('unrelated-terrain-sized-sample',model(100000,0,100000));
+  const camera=new PerspectiveCamera(42,aspect,.1,100000),ids=[...entries.keys()].slice(0,7),frame={left:.25,right:.21,top:.12,bottom:.14};
+  const result=arrivalModelView(camera,entries,ids,new Vector3(1,100,1),frame),box=selectedModelBounds(entries,ids);
+  camera.position.fromArray(result.eye);camera.lookAt(new Vector3(...result.target));camera.updateMatrixWorld(true);camera.updateProjectionMatrix();
+  const points=[];
+  for(const x of [box.min.x,box.max.x])for(const y of [box.min.y,box.max.y])for(const z of [box.min.z,box.max.z]){
+   const point=new Vector3(x,y,z).project(camera);points.push(point);
+   assert.ok(point.x>=-1+2*frame.left&&point.x<=1-2*frame.right);assert.ok(point.y>=-1+2*frame.bottom&&point.y<=1-2*frame.top);assert.ok(point.z>-1&&point.z<1);
+  }
+  const ratio=(axis)=>Math.max(...points.map(p=>p[axis]))-Math.min(...points.map(p=>p[axis]));
+  assert.ok(ratio('x')>2*(1-frame.left-frame.right)*.8||ratio('y')>2*(1-frame.top-frame.bottom)*.8);
+  const direction=new Vector3(...result.eye).sub(new Vector3(...result.target));assert.ok(Math.abs(direction.y/Math.hypot(direction.x,direction.z)-.55)<1e-12);
+  assert.ok([...entries.values()].every(item=>item.root.visible));assert.equal(arrivalModelView(camera,entries,[],direction),null);
+ }
 });
 
 test('inspection cameras rise above original terrain and clear a foreground ridge without moving the terrain or target',()=>{
