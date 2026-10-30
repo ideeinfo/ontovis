@@ -149,8 +149,8 @@ test('isolating a mapped part ghosts its assembly without hiding descendants or 
  const f=fixture(),other=fixture('instance-B',f.material);
  f.shell.add(f.cabinet);
  f.effect.apply(['CT'],theme,true);
- assert.equal(f.shell.visible,true);assert.equal(f.shell.material.visible,true);assert.equal(f.shell.material.opacity,.11);assert.equal(f.shell.material.depthWrite,false);
- assert.equal(f.cabinet.material.visible,true);assert.equal(f.interior.material.visible,true);assert.equal(f.interior.material.opacity,.2);
+ assert.equal(f.shell.visible,true);assert.equal(f.shell.material.visible,true);assert.equal(f.shell.material.opacity,.32);assert.equal(f.shell.material.depthWrite,false);
+ assert.equal(f.cabinet.material.visible,true);assert.equal(f.interior.material.visible,true);assert.equal(f.interior.material.opacity,.5);
  assert.equal(f.effect.isFadedOccluder(f.shell),true);
  assert.equal(other.shell.material,f.material);assert.equal(f.material.visible,true);
  const hidden=f.shell.material,cleanup=disposed(hidden);
@@ -169,7 +169,7 @@ test('isolation ghosts basic materials and respects source opacity and hidden st
  const material=new THREE.MeshBasicMaterial({transparent:true,opacity:.5}),f=fixture('instance-A',material);
  f.interior.material=material.clone();f.interior.material.visible=false;
  const original=f.interior.material;f.effect.apply(['CT'],theme,true);
- assert.equal(f.shell.material.opacity,.055);assert.equal(f.proxy.material.opacity,.1);
+ assert.equal(f.shell.material.opacity,.16);assert.equal(f.proxy.material.opacity,.25);
  assert.equal(f.interior.material.visible,false);assert.equal(f.cabinet.material.opacity,.5);
  assert.equal(f.effect.isFadedOccluder(f.proxy),true);assert.equal(f.effect.isFadedOccluder(f.cabinet),false);
  f.effect.restore();assert.equal(f.interior.material,original);assert.equal(f.shell.material,material);

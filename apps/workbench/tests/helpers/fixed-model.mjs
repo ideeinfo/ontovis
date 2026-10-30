@@ -1,13 +1,15 @@
 import {createHash} from 'node:crypto';
 import * as THREE from 'three';
-import {MOTION_MODEL_SHA,MOTION_MERGED_SHA,MOTION_SOURCE} from '../../src/simulatedMotion.ts';
+import {MOTION_MODEL_SHA,MOTION_MERGED_SHA,MOTION_SOURCE,motionProfile} from '../../src/simulatedMotion.ts';
 import {WorkbenchApi} from '../../src/api.ts';
 import {SceneResourceCache,cloneModel,modelSourceNode} from '../../src/sceneResourceCache.ts';
 const sample=(overrides={})=>({sourceId:MOTION_SOURCE,epoch:'demo',seq:1,issuedAt:0,validUntil:2500,rpm:10,yawDeg:90,rpmUnit:'rpm',yawUnit:'deg',quality:'good',...overrides});
-export async function fixture(merged=false){
- const positions=new Float32Array([0,0,0,1,0,0,0,1,0]),nodes=Array.from({length:merged?184:20},(_,i)=>({name:'untrusted-name-'+i}));
+export async function fixture(merged=false,sha=merged?MOTION_MERGED_SHA:MOTION_MODEL_SHA){
+ const profile=motionProfile(sha);
+ const positions=new Float32Array([0,0,0,1,0,0,0,1,0]),nodes=Array.from({length:profile.nodes},(_,i)=>({name:'untrusted-name-'+i}));
  nodes[0].children=[1,2];nodes[1].children=Array.from({length:12},(_,i)=>i+3);nodes[2].children=[15,16,17,18,19];nodes[2].translation=[0,90,6.67];
  if(merged){nodes[1].children=[...Array.from({length:140},(_,i)=>i+3),...Array.from({length:8},(_,i)=>i+176)];nodes[2].children=Array.from({length:33},(_,i)=>i+143);}
+ if(profile.layout==='baked'){nodes[1].children=Array.from({length:profile.nodes-3},(_,i)=>i+3);nodes[2].children=[];nodes[2].translation=[0,0,0];}
  for(let i=3;i<nodes.length;i++)nodes[i].mesh=0;
  const doc={asset:{version:'2.0'},scene:0,scenes:[{nodes:[0]}],nodes,meshes:[{primitives:[{attributes:{POSITION:0}}]}],
   buffers:[{byteLength:positions.byteLength}],bufferViews:[{buffer:0,byteLength:positions.byteLength}],accessors:[{bufferView:0,componentType:5126,type:'VEC3',count:3,min:[0,0,0],max:[1,1,0]}]};
@@ -20,8 +22,8 @@ export async function fixture(merged=false){
  const api=new WorkbenchApi();api.session('fixture');const cache=new SceneResourceCache(api,{source:{model:async()=>version,modelContent:async()=>new Blob([bytes])}});
  const resource=await cache.model(version),a=cloneModel(resource,'a'),b=cloneModel(resource,'b');
  // Synthetic geometry exercises the reviewed profile without distributing third-party model bytes.
- const adapted={...version,sha256:merged?MOTION_MERGED_SHA:MOTION_MODEL_SHA};const now=performance.now();
- const request={instanceId:'a',modelVersionId:'v1',contentRevision:'content:1',sha256:merged?MOTION_MERGED_SHA:MOTION_MODEL_SHA,epoch:'demo',playing:true,axes:true,sample:sample({issuedAt:now,validUntil:now+2500,yawDeg:90,rpm:10})};
+ const adapted={...version,sha256:sha};const now=performance.now();
+ const request={instanceId:'a',modelVersionId:'v1',contentRevision:'content:1',sha256:sha,epoch:'demo',playing:true,axes:true,sample:sample({issuedAt:now,validUntil:now+2500,yawDeg:90,rpm:10})};
  return {cache,resource,a,b,adapted,request,now};
 }
 export const node=(root,i)=>{let match;root.traverse(n=>{if(modelSourceNode(n)?.index===i)match=n;});return match;};

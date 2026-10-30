@@ -1,8 +1,6 @@
 /** Explicit local demonstration; these values never represent equipment telemetry. */
 export const MOTION_SOURCE='ontovis-local-motion-demo-v1';
-export const MOTION_MODEL_SHA='078bbc161a9c9c8cbe0bbc872ca825b6a222d4d4c22f8c16c7889908a97a5806';
-export const MOTION_MERGED_SHA='fb7963a94988d67a16c5ef08c024b200881df53d4f4e2e2cde27661861d9d9b1';
-export function motionProfile(sha:string){return sha===MOTION_MODEL_SHA?{nodes:20,movingEnd:14,rotorStart:15,rotorEnd:19}:sha===MOTION_MERGED_SHA?{nodes:184,movingEnd:142,rotorStart:143,rotorEnd:175}:null;}
+export {MOTION_MODEL_SHA,MOTION_MERGED_SHA,motionProfile} from './motionProfiles.ts';
 export type MotionQuality='good'|'bad'|'stale'|'offline';
 export interface MotionSample {
  sourceId:typeof MOTION_SOURCE;epoch:string;seq:number;issuedAt:number;validUntil:number;
@@ -10,7 +8,7 @@ export interface MotionSample {
 }
 export interface MotionRequest {
  instanceId:string;modelVersionId:string;contentRevision:string;sha256:string;epoch:string;
- playing:boolean;axes:boolean;sample:MotionSample;
+ playing:boolean;axes:boolean;sample:MotionSample;initialPhase?:number;initialYaw?:number;yawRate?:number;
 }
 export type MotionStatus='ready'|'unavailable'|'loading';
 export function yawDelta(current:number,target:number){return ((target-current+540)%360+360)%360-180;}
@@ -32,12 +30,12 @@ export class SimulatedMotionClock {
   this.sample=sample;return true;
  }
  suspend(){this.last=null;}
- step(now:number,playing:boolean){
+ step(now:number,playing:boolean,yawRate=30){
   const sample=this.sample;
   if(!playing||!sample||now>=sample.validUntil){this.last=null;return false;}
   const dt=this.last===null?0:Math.max(0,Math.min(.1,(now-this.last)/1000));this.last=now;
   const delta=yawDelta(this.yaw,sample.yawDeg);
-  this.yaw=(this.yaw+Math.sign(delta)*Math.min(Math.abs(delta),30*dt)+360)%360;
+  this.yaw=(this.yaw+Math.sign(delta)*Math.min(Math.abs(delta),yawRate*dt)+360)%360;
   this.rotor=(this.rotor+sample.rpm*Math.PI/30*dt)%(2*Math.PI);
   return sample.rpm>0||Math.abs(yawDelta(this.yaw,sample.yawDeg))>.00001;
  }

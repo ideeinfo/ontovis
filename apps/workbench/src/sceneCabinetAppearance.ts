@@ -38,7 +38,7 @@ export class SceneCabinetAppearance {
       const original=mesh.material,owned:THREE.Material[]=[],highlight=selected.has(mesh);
       const copy=(material:THREE.Material)=>{
         // Keep the surrounding assembly readable, including mesh parents of the selection.
-        if(isolate&&!highlight){const value=material.clone();value.transparent=true;value.opacity=material.opacity*(shells.has(mesh.userData.component)?.11:.2);value.depthWrite=false;owned.push(value);return value;}
+        if(isolate&&!highlight){const value=material.clone();value.transparent=true;value.opacity=material.opacity*(shells.has(mesh.userData.component)?.32:.5);value.depthWrite=false;owned.push(value);return value;}
         if(!(material instanceof THREE.MeshStandardMaterial))return material;
         const value=material.clone();owned.push(value);
         if(highlight){value.emissive.set(color);value.emissiveIntensity=.25;}

@@ -51,3 +51,12 @@ test('environment-only history preserves instance and geometry identities and le
   const old={displayName:'test',coordinateFrame:frame,terrain:null,instances:[],initialView:{eye:[3,4,5],target:[0,0,0]},defaults:{background:'plain',lighting:'neutral',terrainMaterial:'solid'}};
   const e=environmentPreset('land-day-v1'),h=commitScene(sceneHistory(old),{...old,environment:e});assert.deepEqual(h.present.coordinateFrame,old.coordinateFrame);assert.deepEqual(h.present.instances,[]);assert.ok(!('environment'in h.past[0]));
 });
+
+test('night sky has a stable sparse star field that never alters the horizon band',async()=>{
+ const {skyTexture}=await import('../src/sceneEnvironmentRuntime.ts');
+ const plain=skyTexture('#070e23','#25344f'),starred=skyTexture('#070e23','#25344f',1),repeat=skyTexture('#070e23','#25344f',1);
+ assert.deepEqual(starred.image.data,repeat.image.data);let changed=0;
+ for(let i=0;i<plain.image.data.length;i+=4)if(plain.image.data[i]!==starred.image.data[i]){changed++;assert.ok(Math.floor(i/4/1024)>512*.57);}
+ assert.ok(changed>200&&changed<=300);
+ plain.dispose();starred.dispose();repeat.dispose();
+});

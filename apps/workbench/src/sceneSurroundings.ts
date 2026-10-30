@@ -63,7 +63,7 @@ export class SceneSurroundings {
   private key='';private profile:'land'|'offshore'|null=null;private pattern:ReturnType<typeof waterMaterial>|null=null;
   private horizon={value:new THREE.Color()};
   constructor(scene:THREE.Scene){this.scene=scene;}
-  configure(value:SceneEnvironmentV1|null,terrain:THREE.Mesh|null,normals:THREE.DataTexture|null,visible:boolean){
+  configure(value:SceneEnvironmentV1|null,terrain:THREE.Mesh|null,normals:THREE.DataTexture|null,visible:boolean,night=false){
     if(!value||value.surroundings?.mode!=='auto'||!terrain||!visible){this.dispose();return;}
     const profile=value.surroundings.profile,water=profile==='offshore'&&!!normals,key=JSON.stringify([terrain.uuid,terrain.geometry.uuid,profile,water?normals!.uuid:null]);
     if(key!==this.key){
@@ -85,7 +85,8 @@ export class SceneSurroundings {
       this.scene.add(this.mesh);this.key=key;this.profile=profile;
     }
     this.mesh!.matrix.copy(terrain.matrixWorld);this.horizon.value.set(value.atmosphere.horizonColor);
-    this.mesh!.material.color.set(profile==='offshore'?value.water.color:'#98a58b');
+    this.mesh!.material.color.set(profile==='offshore'?value.water.color:night?'#1b2639':'#98a58b');
+    if(!this.pattern&&this.mesh!.material.toneMapped!==night){this.mesh!.material.toneMapped=night;this.mesh!.material.needsUpdate=true;}
     if(this.pattern){const material=this.pattern.material;material.roughness=value.water.roughness;material.normalScale.setScalar(value.water.rippleStrength);}
   }
   update(phase:number,value:SceneEnvironmentV1,heading:number){this.pattern?.update(phase,value.water.wavelengthM,value.water.travelSpeedMps,heading);}

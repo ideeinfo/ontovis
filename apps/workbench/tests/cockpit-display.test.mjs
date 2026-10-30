@@ -32,3 +32,12 @@ test('Valid forecast drives conditions; manual lighting overrides only presentat
  const fog=presentationEnvironment(null,null,'scene','fog').value;assert.equal(fog.atmosphere.fog.mode,'linear');
  const clear=presentationEnvironment(fog,null,'scene','clear').value;assert.equal(clear.atmosphere.fog.mode,'off');assert.equal(clear.atmosphere.clouds.enabled,false);
 });
+
+test('night uses blue sky, brighter fill and lit imagery without changing the saved configuration',()=>{
+ const base=environmentPreset('land-day-v1'),before=structuredClone(base),forecast={forecast:{condition:'clear',cloudPercent:0,symbol:'clearsky_night'}};
+ const night=presentationEnvironment(base,forecast,'scene','forecast');
+ assert.equal(night.night,true);assert.equal(night.value.atmosphere.topColor,'#070e23');assert.equal(night.value.atmosphere.horizonColor,'#25344f');
+ assert.ok(night.value.lighting.hemisphereIntensity>=1);assert.equal(night.value.lighting.sun.enabled,false);assert.equal(night.value.surface.imageryShading,'lit');
+ assert.equal(presentationEnvironment(base,null,'night','off').night,true);
+ assert.equal(presentationEnvironment(base,forecast,'day','forecast').night,false);assert.deepEqual(base,before);
+});

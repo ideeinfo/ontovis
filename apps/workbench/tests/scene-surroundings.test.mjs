@@ -37,3 +37,13 @@ test('both source-colored land and water surroundings participate in scene fog',
  for(const profile of ['land-day-v1','offshore-overview-v1']){layer.configure(environmentPreset(profile),t,normal,true);assert.equal(scene.children[0].material.fog,true);}
  layer.dispose();t.geometry.dispose();t.material.dispose();normal.dispose();
 });
+
+test('night surroundings lose the green daylight band and restore their exact daytime display',()=>{
+ const scene=new THREE.Scene(),t=terrain(),layer=new SceneSurroundings(scene),e=environmentPreset('land-day-v1'),before=structuredClone(e);
+ layer.configure(e,t,null,true);const mesh=scene.children[0],geometry=mesh.geometry;
+ assert.equal(mesh.material.color.getHexString(),'98a58b');assert.equal(mesh.material.toneMapped,false);
+ layer.configure(e,t,null,true,true);assert.equal(scene.children[0],mesh);assert.equal(mesh.geometry,geometry);
+ assert.equal(mesh.material.color.getHexString(),'1b2639');assert.equal(mesh.material.toneMapped,true);
+ layer.configure(e,t,null,true);assert.equal(mesh.material.color.getHexString(),'98a58b');assert.equal(mesh.material.toneMapped,false);
+ assert.deepEqual(e,before);layer.dispose();t.geometry.dispose();t.material.dispose();
+});

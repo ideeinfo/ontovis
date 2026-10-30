@@ -76,7 +76,7 @@ export class SceneClouds {
     cloudLight:{value:new THREE.Color()},cloudShade:{value:new THREE.Color()}};
   private scale=1;private speed=0;private heading=0;
   constructor(scene:THREE.Scene){this.scene=scene;}
-  configure(environment:SceneEnvironmentV1|null,heading:number,sunHeading=0){
+  configure(environment:SceneEnvironmentV1|null,heading:number,sunHeading=0,night=false){
     const value=environment?.atmosphere.clouds;
     if(!value?.enabled){this.dispose();return;}
     if(!this.mesh){
@@ -91,7 +91,7 @@ export class SceneClouds {
     this.scale=.22/value.scaleM;this.speed=value.speedMps;this.heading=heading;
     this.uniforms.cloudShape.value.set(value.coverage,value.density,this.scale,0);
     const sun=environment!.lighting.sun;this.uniforms.cloudSun.value.set(Math.sin(sunHeading),-Math.cos(sunHeading));
-    this.uniforms.cloudLight.value.set('#fffdf7').lerp(new THREE.Color(sun.color),sun.enabled ? .3 : 0);
+    this.uniforms.cloudLight.value.set(night?'#7184a2':'#fffdf7').lerp(new THREE.Color(sun.color),sun.enabled ? .3 : 0);
     this.uniforms.cloudShade.value.set(environment!.atmosphere.horizonColor).multiplyScalar(.72);
   }
   update(phase:number){this.uniforms.cloudTravel.value.set(Math.sin(this.heading),-Math.cos(this.heading)).multiplyScalar(phase*this.speed*this.scale);}
