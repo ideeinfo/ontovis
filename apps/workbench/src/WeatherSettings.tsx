@@ -25,7 +25,7 @@ export function WeatherSettings({api,en=false,active=true,onDirtyChange}:{api:Wo
   const fingerprint=JSON.stringify([view.revision,draft]);if(request.current?.fingerprint!==fingerprint)request.current={fingerprint,id:crypto.randomUUID()};
   try{if(kind==='test'){
    const result=await api.request<WeatherView>(WEATHER_ROOT+'test',{config:draft,sceneId,expectedAccessRevision:view.accessRevision},controller.signal);
-   if(!controller.signal.aborted&&serial===intent.current){setPreview(result);setNotice(t('草稿查询已完成，配置尚未保存。','Draft query completed; settings were not saved.'));}
+   if(!controller.signal.aborted&&serial===intent.current){setPreview(result);setNotice(t('查询完成，未修改已保存配置。','Query completed; saved settings are unchanged.'));}
   }else{
    const result=await api.request<WeatherConfigView>(WEATHER_ROOT+'save',{config:draft,expectedRevision:view.revision,expectedAccessRevision:view.accessRevision,requestId:request.current.id},controller.signal);
    if(!controller.signal.aborted&&serial===intent.current){setView(result);setDraft(structuredClone(result.config));setPreview(null);setNotice(t('配置已保存','Settings saved')+' · r'+result.revision);}
