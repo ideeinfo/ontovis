@@ -3,6 +3,7 @@ import type {AnalysisEntry} from './analysisSources';
 import type {DraftApi} from './AnalysisWorkspace';
 import type {DraftReceipt} from './analysisDraftState';
 import {AssistantApi,type AssistantRun} from './assistantApi.ts';
+import {noteSections,readNote} from './analysisNotes.ts';
 
 const ROOT='/api/workbench/analysis-sessions';
 export type CockpitAnalysisDetail=DraftReceipt&{snapshot:CanvasSnapshot};
@@ -45,7 +46,10 @@ export async function cockpitAnalysisIndex(api:DraftApi,entry:AnalysisEntry|null
 export function cockpitAnalysisPage(cards:CanvasCard[],requestedPage=0,capacity:3|5=5){
  const center=cards.find(card=>card.kind==='alarm'&&!card.historical)||cards.find(card=>card.kind==='alarm')||cards[0];
  const priority=['drawing','model3d','document','photo','trend','object','analysis','work_order','alarm'];
- const others=cards.filter(card=>card.id!==center?.id).map((card,index)=>({card,index})).sort((a,b)=>priority.indexOf(a.card.kind)-priority.indexOf(b.card.kind)||a.index-b.index).map(item=>item.card);
+ const ranked=cards.filter(card=>card.id!==center?.id).map((card,index)=>({card,index})).sort((a,b)=>priority.indexOf(a.card.kind)-priority.indexOf(b.card.kind)||a.index-b.index).map(item=>item.card);
+ const kinds=new Set<string>(),first:CanvasCard[]=[],rest:CanvasCard[]=[];
+ for(const card of ranked){if(kinds.has(card.kind))rest.push(card);else{first.push(card);kinds.add(card.kind);}}
+ const others=[...first,...rest];
  const count=Math.max(1,Math.ceil(others.length/capacity)),page=Math.max(0,Math.min(count-1,requestedPage));
  const slots=capacity===3?[[18,28,304,286],[678,28,304,286],[678,382,304,286]]:[[18,18,292,274],[354,18,292,274],[690,18,292,274],[18,402,292,280],[690,402,292,280]];
  const visible=others.slice(page*capacity,(page+1)*capacity).map((card,i)=>({...card,x:slots[i][0],y:slots[i][1],width:slots[i][2],height:slots[i][3]}));
@@ -55,6 +59,14 @@ export function cockpitAnalysisPage(cards:CanvasCard[],requestedPage=0,capacity:
 export function cockpitAnalysisPageFor(cards:CanvasCard[],id:string,capacity:3|5=5){
  const layout=cockpitAnalysisPage(cards,0,capacity);if(layout.center?.id===id)return 0;
  const index=layout.others.findIndex(card=>card.id===id);return index<0?0:Math.floor(index/capacity);
+}
+export function cockpitNoteRecords(cards:CanvasCard[],en=false){
+ const sections={观察:'observations',原因假设:'hypotheses',检查步骤:'checks',检查结果:'results',反证与缺口:'gaps',下一步:'nextSteps'};
+ return cards.filter(card=>card.kind==='analysis'&&card.note?.trim()).flatMap(card=>{
+  if(!noteSections.some(([name])=>card.note!.split('\n').some(line=>line.startsWith(name+'：'))))return [{id:card.id,title:card.title,rows:[{text:card.note!,refs:[] as string[]}]}];
+  const fields=readNote(card.note!);
+  return noteSections.flatMap(([name,english])=>fields[name]?[{id:sections[name],title:en?english:name,rows:[{text:fields[name],refs:[] as string[]}]}]:[]);
+ });
 }
 export function cockpitAnalysisHistorical(detail:CockpitAnalysisDetail,entry:FaultEntry|null){
  return !!entry&&'datasetId'in entry&&(detail.snapshot.context.datasetId!==entry.datasetId||detail.snapshot.context.datasetRevision!==entry.datasetRevision);

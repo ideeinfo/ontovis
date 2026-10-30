@@ -8,7 +8,7 @@ import {SourceRelationLines,useSourceRelations} from './AnalysisSourceRelations'
 import type {CanvasCard} from './analysisCanvas';
 import type {AssistantRun} from './assistantApi';
 import {PageDeck} from './CockpitPanels';
-import {cockpitAnalysisDetail,cockpitAnalysisHistorical,cockpitAnalysisIndex,cockpitAnalysisPage,cockpitAnalysisPageFor,cockpitAnalysisTurns,type CockpitAnalysisDetail,type CockpitFault} from './cockpitAnalysisState';
+import {cockpitAnalysisDetail,cockpitAnalysisHistorical,cockpitAnalysisIndex,cockpitAnalysisPage,cockpitAnalysisPageFor,cockpitAnalysisTurns,cockpitNoteRecords,type CockpitAnalysisDetail,type CockpitFault} from './cockpitAnalysisState';
 import './analysisWorkspace.css';
 import './cockpitAnalysis.css';
 
@@ -70,7 +70,7 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
  function edit(){if(detail)onBackend({analysisSessionId:detail.analysisSessionId,analysisRevision:detail.analysisRevision,openLatest:true});}
  const run=turns?.[turnIndex],answer=run?.result&&['complete','partial'].includes(run.state)?run.result.answer:null;
  const noteCards=detail?.snapshot.cards.filter(card=>card.kind==='analysis'&&card.note?.trim())||[];
- const groups=answer?Object.entries({observations:t('观察','Observations'),hypotheses:t('可能原因 · 待验证','Possible causes · unverified'),gaps:t('证据缺口','Evidence gaps'),nextSteps:t('下一步核验','Next checks')}).flatMap(([id,title])=>answer[id as keyof typeof answer].length?[{id,title,rows:answer[id as keyof typeof answer]}]:[]):noteCards.map(card=>({id:card.id,title:card.title,rows:[{text:card.note!,refs:[] as string[]}]}));
+ const groups=answer?Object.entries({observations:t('观察','Observations'),hypotheses:t('可能原因 · 待验证','Possible causes · unverified'),gaps:t('证据缺口','Evidence gaps'),nextSteps:t('下一步核验','Next checks')}).flatMap(([id,title])=>answer[id as keyof typeof answer].length?[{id,title,rows:answer[id as keyof typeof answer]}]:[]):cockpitNoteRecords(noteCards,en);
  const faultValue=fault?JSON.stringify([fault.datasetId,fault.datasetRevision]):entry&&'datasetId'in entry?JSON.stringify([entry.datasetId,entry.datasetRevision]):'';
  const historical=detail&&cockpitAnalysisHistorical(detail,index?.entry||null);
  const message=error instanceof Error&&error.message==='ANALYSIS_CONTEXT_MISMATCH'?t('画布与当前故障不匹配，请重新选择。','The canvas does not match this fault. Choose again.'):error instanceof Error&&error.message==='ANALYSIS_CHANGED'?t('画布版本已变化，请重新读取。','The canvas revision changed. Reload it.'):failureMessage(error,en?'en':'zh');
@@ -99,7 +99,7 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
    </aside>
   </div>:null}
   {expanded&&<Modal className="pa-expanded" title={expanded.title} description={t('固定来源 · 查看','Fixed source · View')} onClose={()=>{setExpanded(null);setAnchor(null);}}>{content(expanded,true)}</Modal>}
-  {recordOpen&&detail&&<Modal className="pa-record-dialog" title={t('分析记录与范围','Analysis record and scope')} description={detail.snapshot.title+' · r'+detail.analysisRevision} onClose={()=>setRecordOpen(false)}><p>{candidate?.reason}</p><p>{detail.snapshot.context.timeFrom} — {detail.snapshot.context.timeTo} · {detail.snapshot.context.timezone}</p>{run?.question&&<h3>{run.question}</h3>}{groups.map(group=><section key={group.id}><h3>{group.title}</h3>{group.rows.map((row,i)=><p key={i}>{row.text}</p>)}</section>)}{!groups.length&&<p>{t('暂无可展示的已保存记录。','No saved record is available to display.')}</p>}<Btn onClick={edit}><ArrowUpRight size={15}/>{t('在后台继续分析','Continue in workbench')}</Btn></Modal>}
+  {recordOpen&&detail&&<Modal className="pa-record-dialog" title={t('分析记录与范围','Analysis record and scope')} description={detail.snapshot.title+' · r'+detail.analysisRevision} onClose={()=>setRecordOpen(false)}><p>{candidate?.reason}</p><p>{detail.snapshot.context.timeFrom} — {detail.snapshot.context.timeTo} · {detail.snapshot.context.timezone}</p>{run?.question&&<h3>{run.question}</h3>}{groups.map((group,groupIndex)=><section key={group.id+':'+groupIndex}><h3>{group.title}</h3>{group.rows.map((row,i)=><p key={i}>{row.text}</p>)}</section>)}{!groups.length&&<p>{t('暂无可展示的已保存记录。','No saved record is available to display.')}</p>}<Btn onClick={edit}><ArrowUpRight size={15}/>{t('在后台继续分析','Continue in workbench')}</Btn></Modal>}
   {detail&&<button className="pa-query-launch" aria-expanded={queryOpen} aria-controls="pa-floating-query" onClick={()=>queryOpen?closeQuery():setQueryOpen(true)}><Sparkles size={21}/><span>{t('向助手查询当前故障…','Ask about this fault…')}</span><ArrowUpRight size={17}/></button>}
   {queryOpen&&detail&&<aside id="pa-floating-query" ref={queryPanel} className="pa-query ad-inspector ad-assistant" role="dialog" aria-modal="false" aria-labelledby="pa-query-heading" style={queryPosition?{left:queryPosition.x,top:queryPosition.y,right:'auto',bottom:'auto'}:undefined} onKeyDown={event=>{if(event.key==='Escape'){event.stopPropagation();closeQuery();}}}>
    <header onPointerDown={dragQuery} onPointerMove={moveQuery} onPointerUp={endQueryDrag} onPointerCancel={endQueryDrag}><Sparkles size={19}/><div><h2 id="pa-query-heading">{t('查询助手','Query assistant')}</h2><small>{detail.snapshot.title} · r{detail.analysisRevision}</small></div><IconBtn label={t('关闭查询助手','Close query assistant')} onClick={closeQuery}><X size={16}/></IconBtn></header>

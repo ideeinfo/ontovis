@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {cockpitAnalysisIndex,cockpitAnalysisDetail,cockpitAnalysisPage,cockpitAnalysisPageFor,cockpitAnalysisHistorical,cockpitSavedTurns,cockpitAnalysisTurns} from '../src/cockpitAnalysisState.ts';
+import {cockpitAnalysisIndex,cockpitAnalysisDetail,cockpitAnalysisPage,cockpitAnalysisPageFor,cockpitAnalysisHistorical,cockpitSavedTurns,cockpitAnalysisTurns,cockpitNoteRecords} from '../src/cockpitAnalysisState.ts';
 import {analysisEntryRequest} from '../src/analysisSources.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'project'},signal=()=>new AbortController().signal;
 const dataset={datasetId:'fault-a',datasetRevision:'v1'},item={analysisSessionId:'canvas-a',analysisRevision:3,title:'Related canvas',reason:'Same fault',eventId:'fault-a-event-1'};
@@ -75,4 +75,15 @@ test('backend new intent is local; edit reads the latest head while fixed links 
  assert.deepEqual(analysisEntryRequest({...item,openLatest:true},'request'),{path:'/api/workbench/analysis-sessions/detail',body:{analysisSessionId:'canvas-a'},fixed:false});
  assert.deepEqual(analysisEntryRequest(item,'request'),{path:'/api/workbench/analysis-sessions/detail',body:{analysisSessionId:'canvas-a',analysisRevision:3},fixed:true});
  assert.deepEqual(analysisEntryRequest(dataset,'request'),{path:'/api/workbench/analysis-sessions/start',body:{entry:dataset,requestId:'request'},fixed:false});
+});
+
+test('the first evidence group shows different available material types before repeated drawings',()=>{
+ const cards=[card('alarm','alarm'),card('drawing1','drawing'),card('drawing2','drawing'),card('drawing3','drawing'),card('model','model3d'),card('manual','document'),card('photo','photo')];
+ assert.deepEqual(cockpitAnalysisPage(cards,0,3).cards.filter(row=>row.kind!=='alarm').map(row=>row.kind),['drawing','model3d','document']);
+});
+test('saved structured notes keep their actual sections while ordinary notes keep their original text',()=>{
+ const value={...card('note'),note:'观察：已保存观察\n\n原因假设：仍待验证\n\n反证与缺口：尚缺现场证据'};
+ const original=value.note,records=cockpitNoteRecords([value]);
+ assert.deepEqual(records.map(row=>row.id),['observations','hypotheses','gaps']);assert.deepEqual(records.map(row=>row.rows[0].text),['已保存观察','仍待验证','尚缺现场证据']);assert.equal(value.note,original);
+ assert.equal(cockpitNoteRecords([{...card('plain'),note:'自由格式的原始记录'}])[0].rows[0].text,'自由格式的原始记录');
 });
