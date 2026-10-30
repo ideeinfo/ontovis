@@ -19,6 +19,12 @@ export function replayAlarm(row:CockpitAlarmRow,second=HOME_REPLAY_SECOND){
   .sort((a,b)=>Date.parse(a.updatedAt)-Date.parse(b.updatedAt)).at(-1)||null;
 }
 
+export function cockpitAlarmPresentation(row:CockpitAlarmRow,en=false){
+ const alarm=replayAlarm(row),state=!row.detail?'unavailable':alarm?.state||'pending';
+ const status=state==='unavailable'?(en?'Unavailable':'暂不可用'):state==='pending'?(en?'Pending':'未发生'):state==='cleared'?(en?'Cleared':'已恢复'):alarm?.severity==='critical'?(en?'Critical':'严重'):(en?'Warning':'警告');
+ return {alarm,state,status,severity:alarm?.severity};
+}
+
 export async function readCockpitAlarms(api:Pick<WorkbenchApi,'request'>,signal:AbortSignal):Promise<CockpitAlarmRow[]>{
  const catalogue=await api.request<SimulationCatalogue>(ROOT+'/catalogue',{includeDetail:true},signal);
  signal.throwIfAborted();

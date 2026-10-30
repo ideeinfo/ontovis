@@ -148,6 +148,7 @@ export function SceneViewport(props:SceneViewportProps) {
     grass.colorSpace=THREE.SRGBColorSpace;grass.needsUpdate=true;
     const environment=new SceneEnvironmentRuntime(scene,renderer,sun,light,terrainMaterial,grass);
     const entries=new Map<string,Entry>(),selectionBoxes=new SceneModelSelectionBoxes(scene);
+    const selectionColor=()=>current.current.presentation?(getComputedStyle(element).getPropertyValue('--pc-orange').trim()||'#ff790d'):(getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d');
     const simulated=new SceneMotionBatch();let lastMotionStatus='';
     const motionStatus=(status:Record<string,MotionStatus>)=>{const key=JSON.stringify(status);if(key!==lastMotionStatus){lastMotionStatus=key;current.current.onMotionStatus?.(status);}};
     const clearMotion=()=>simulated.clear();
@@ -224,7 +225,7 @@ export function SceneViewport(props:SceneViewportProps) {
           if(componentBox.visible&&componentFocused?.instanceId===alarm.instanceId&&!componentBox.box.isEmpty()){alarmBounds.copy(componentBox.box);alarmEntry=undefined;}
           else if(alarm.bounds){alarmBounds.min.fromArray(alarm.bounds[0]);alarmBounds.max.fromArray(alarm.bounds[1]);alarmEntry=undefined;}
           else if(alarmEntry!==entry){entry.root.updateMatrixWorld(true);alarmBounds.setFromObject(entry.root);alarmEntry=entry;}
-          alarmBox.box.copy(alarmBounds);(alarmBox.material as THREE.LineBasicMaterial).color.set(alarm.state==='active'?0xb8792c:alarm.state==='cleared'?0x36806b:0x77877d);
+          alarmBox.box.copy(alarmBounds);(alarmBox.material as THREE.LineBasicMaterial).color.set(alarm.state==='active'?(current.current.presentation?selectionColor():0xb8792c):alarm.state==='cleared'?0x36806b:0x77877d);
           alarmBounds.getCenter(alarmPoint);alarmPoint.y=alarmBounds.max.y;alarmPoint.project(camera);
           if(marker){marker.style.display=alarmPoint.z>=-1&&alarmPoint.z<=1&&Math.abs(alarmPoint.x)<=1&&Math.abs(alarmPoint.y)<=1?'block':'none';
             marker.style.left=`${(alarmPoint.x+1)*element.clientWidth/2}px`;marker.style.top=`${(1-alarmPoint.y)*element.clientHeight/2}px`;}
@@ -260,7 +261,7 @@ export function SceneViewport(props:SceneViewportProps) {
       if(componentTarget&&!componentFocusCurrent(componentTarget,state.componentFocus,focusContext()))clearComponentFocus();
       const entry=componentTarget?entries.get(componentTarget.instanceId):undefined;
       if(componentPending&&!resourcesLoading&&entry?.key===componentPending.modelKey&&entry.root.visible&&!preview){
-        entry.appearance.apply(componentPending.componentKeys??[],getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d',componentPending.isolate);
+        entry.appearance.apply(componentPending.componentKeys??[],selectionColor(),componentPending.isolate);
         const displayBox=entry.appearance.selectionBounds(),displayBounds=displayBox.isEmpty()?componentPending.bounds:[displayBox.min.toArray(),displayBox.max.toArray()] as [Vector3,Vector3];
         const destination=componentFocusView(displayBounds,view(camera,orbit),camera.fov,camera.aspect,!!state.presentation);
         if(destination){componentFocused=componentPending;moveView(state.presentation?terrainSafeView(destination,terrain):destination,true,true);}
@@ -272,7 +273,7 @@ export function SceneViewport(props:SceneViewportProps) {
         if(componentBox.box.isEmpty()){componentBox.box.min.fromArray(componentFocused.bounds[0]);componentBox.box.max.fromArray(componentFocused.bounds[1]);}
         componentBox.updateMatrixWorld(true);
       }
-      const color=getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d';
+      const color=selectionColor();
       for(const value of entries.values()){
         if(componentFocused&&value===entry&&componentBox.visible)value.appearance.apply(componentFocused.componentKeys??[],color,componentFocused.isolate);
         else value.appearance.restore();
@@ -307,7 +308,7 @@ export function SceneViewport(props:SceneViewportProps) {
       const state=current.current,identity=previewIdentity(state.previewModel);
       if(identity!==previewInspection.structure.identity)return;
       const selection=state.previewSelection?.identity===identity?state.previewSelection:null;
-      const color=getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d';
+      const color=selectionColor();
       previewInspection.apply(selection,color);
       const node=previewInspection.structure.nodes.find(row=>row.id===selection?.nodeId);
       componentBox.visible=!!node?.bounds;
@@ -339,7 +340,7 @@ export function SceneViewport(props:SceneViewportProps) {
       grid.visible=state.snapshot.coordinateFrame.mode==='local_plane'&&!preview;
       if(terrain)terrain.visible=state.terrainVisible&&!preview;
       imageryLayer.visible(state.terrainVisible&&!!state.imageryVisible&&!preview);
-      const color=getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d';
+      const color=selectionColor();
       const material=selectedBox.material as THREE.LineBasicMaterial;material.color.set(color);
       (componentBox.material as THREE.LineBasicMaterial).color.set(color);
       renderer.domElement.setAttribute('aria-label',sceneViewportMessage(state.locale,'view'));

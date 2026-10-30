@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readCockpitAlarms,replayAlarm,requireReplaySelection} from '../src/cockpitAlarms.ts';
+import {readCockpitAlarms,replayAlarm,requireReplaySelection,cockpitAlarmPresentation} from '../src/cockpitAlarms.ts';
 const start='2026-10-25T00:00:00Z',stamp=s=>new Date(Date.parse(start)+s*1000).toISOString();
 const dataset=(id='SIM-PDS-13001')=>({datasetId:id,datasetRevision:'fixed:1',sourceKind:'simulated',timeFrom:start});
 const detail=d=>({dataset:d,alarms:[{updatedAt:stamp(150),sourceTime:stamp(150),state:'cleared',severity:'warning'},{updatedAt:stamp(30),sourceTime:stamp(30),state:'active',severity:'critical'}],trends:[]});
@@ -30,4 +30,15 @@ test('opening a home case requires that exact identity and revision, never anoth
  const first=dataset(),recurrence=dataset('SIM-PDS-13001-recurrence-1'),catalogue={items:[first,recurrence]};
  assert.equal(requireReplaySelection(catalogue,recurrence),recurrence);
  for(const selection of [{...first,datasetRevision:'old'},dataset('missing')])assert.throws(()=>requireReplaySelection(catalogue,selection),{code:'SIMULATION_DATASET_CHANGED'});
+});
+
+test('home and scene cards share source state and severity without promoting absent or cleared events',()=>{
+ const row={dataset:dataset(),detail:detail(dataset())};
+ assert.equal(cockpitAlarmPresentation(row).status,'严重');
+ assert.equal(cockpitAlarmPresentation(row,true).status,'Critical');
+ row.detail.alarms[1].severity='warning';assert.equal(cockpitAlarmPresentation(row).status,'警告');
+ row.detail.alarms[1].state='cleared';
+ assert.equal(cockpitAlarmPresentation(row).state,'cleared');assert.equal(cockpitAlarmPresentation(row).status,'已恢复');
+ row.detail.alarms=[];assert.equal(cockpitAlarmPresentation(row).status,'未发生');assert.equal(cockpitAlarmPresentation(row).alarm,null);
+ row.detail=null;assert.equal(cockpitAlarmPresentation(row,true).state,'unavailable');assert.equal(cockpitAlarmPresentation(row,true).status,'Unavailable');
 });
