@@ -22,7 +22,8 @@ export function ProjectModelCenter({api,onOpenScene,onConfigure,suspended=false}
   const {locale}=usePreferences(),text=(zh:string,en:string)=>locale==='zh'?zh:en;
   const [preview,setPreview]=useState<ProjectModelVersion|null>(null),[error,setError]=useState<unknown>(null);
   const lastView=useRef<SceneView|null>(null);
-  const snapshot=useMemo(()=>({...previewScene,initialView:lastView.current||previewScene.initialView}),[preview?.modelVersionId,api.epoch]);
+  const restoredView=useMemo(()=>lastView.current,[preview?.modelVersionId,api.epoch,api.revision]);
+  const snapshot=useMemo(()=>({...previewScene,initialView:restoredView||previewScene.initialView}),[restoredView]);
   const inspection=useModelPreview(preview);
   const [detailsTarget,setDetailsTarget]=useState<HTMLDivElement|null>(null);
   function show(value:ProjectModelVersion|null){if(value?.modelVersionId!==preview?.modelVersionId)lastView.current=null;setPreview(value);setError(null);}
@@ -39,7 +40,7 @@ export function ProjectModelCenter({api,onOpenScene,onConfigure,suspended=false}
         <div className="pm-canvas"><Suspense fallback={<p role="status">{text('正在读取模型…','Loading model…')}</p>}>
           <SceneViewport key={preview.modelVersionId} api={api} active={!suspended} snapshot={snapshot} modelRefs={emptyRefs} terrainVersion={null}
             selectedId={null} editing={false} personalVisibility={emptyVisibility} terrainVisible={false} pendingPlacement={false}
-            previewModel={preview} previewSelection={inspection.selection} onPreviewStructure={inspection.ready} onPreviewPick={inspection.pick}
+            previewModel={preview} initialPreviewView={restoredView} previewSelection={inspection.selection} onPreviewStructure={inspection.ready} onPreviewPick={inspection.pick}
             onSelect={ignore} onPoint={ignore} onMove={async()=>false} onViewChange={value=>{lastView.current=value;}} onError={setError}/>
         </Suspense></div>{!!error&&<p role="alert">{failureMessage(error,locale)}</p>}
         <p className="pm-note">{text('资源预览；现场设备身份、安装位置和工程精度需另行核实。','Resource preview; installed identity, placement and engineering accuracy require separate verification.')}</p>

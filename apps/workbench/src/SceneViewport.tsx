@@ -41,6 +41,7 @@ export interface SceneViewportProps {
   selectedId:string|null;editing:boolean;disabled?:boolean;personalVisibility:Record<string,boolean>;
   selectedIds?:string[];gridSnap?:number;cameraControl?:{current:SceneCameraControl|null};onCameraInteraction?:()=>void;
   terrainVisible:boolean;pendingPlacement:boolean;placementModel?:ProjectModelVersion|null;previewModel?:ProjectModelVersion|null;
+  initialPreviewView?:SceneView|null;
   imageryVersion?:ImageryRecord|null;imageryVisible?:boolean;
   viewCommand?:{token:number;view:SceneView};focusRequest?:{token:number;instanceId:string|null;instanceIds?:string[]};
   componentFocus?:ComponentFocusRequest;
@@ -404,7 +405,9 @@ export function SceneViewport(props:SceneViewportProps) {
         const resource=await cache.model(version,signal);if(stale()||ticket!==generation)return;
         preview=cloneModel(resource,'resource-preview',{calibrated:false});scene.add(preview);previewKey=key;
         previewInspection=new ModelPreviewInspection(preview,resource.version);
-        current.current.onPreviewStructure?.(previewInspection.structure);appearance();fit();progress.done(modelLoadingKey(version));
+        current.current.onPreviewStructure?.(previewInspection.structure);appearance();
+        if(state.initialPreviewView)moveView(state.initialPreviewView,false);else fit();
+        progress.done(modelLoadingKey(version));
       })());
       const results=await Promise.allSettled(tasks);if(stale()||ticket!==generation)return;
       const failed=results.find(value=>value.status==='rejected');
