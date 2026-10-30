@@ -38,6 +38,16 @@ test('one instance borrows cache data while its material effects leave another i
   b.effect.dispose();a.effect.dispose();
 });
 
+test('selected display bounds follow the current parent pose and exclude enclosing shells and hidden geometry',()=>{
+ const f=fixture(),pose=new THREE.Group();pose.position.set(20,90,30);pose.rotation.y=.7;pose.add(f.cabinet);f.root.add(pose);
+ f.cabinet.position.set(4,0,0);f.shell.scale.setScalar(100);f.root.rotation.y=.3;
+ f.effect.apply(['CT'],theme,true);const first=f.effect.selectionBounds();
+ assert.deepEqual(first,new THREE.Box3().setFromObject(f.cabinet));assert.ok(first.getSize(new THREE.Vector3()).length()<3);
+ pose.rotation.y+=.5;const later=f.effect.selectionBounds();assert.deepEqual(later,new THREE.Box3().setFromObject(f.cabinet));assert.notDeepEqual(first,later);
+ f.cabinet.visible=false;assert.equal(f.effect.selectionBounds().isEmpty(),true);f.cabinet.visible=true;
+ f.effect.restore();assert.equal(f.effect.selectionBounds().isEmpty(),true);f.effect.dispose();
+});
+
 test('a material shared by a cabinet, shell and interior gets separate display roles only where needed',()=>{
   const f=fixture();f.effect.apply(['CT'],theme);
   assert.notEqual(f.cabinet.material,f.shell.material);

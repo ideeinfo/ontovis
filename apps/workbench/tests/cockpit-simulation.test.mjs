@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {modelSimulation,simulationRequests} from '../src/cockpitSimulation.ts';
 import {SceneMotion,SceneMotionBatch} from '../src/sceneMotion.ts';
+import {SceneCabinetAppearance} from '../src/sceneCabinetAppearance.ts';
+import {componentFocusView} from '../src/sceneComponentFocus.ts';
 import {MOTION_MERGED_SHA,motionProfile} from '../src/simulatedMotion.ts';
 import {fixture,node,snapshot} from './helpers/fixed-model.mjs';
 const shafts=[
@@ -48,7 +50,7 @@ test('baked model rotors use source shaft centers; foundations and upper towers 
   rig.dispose();assert.deepEqual(snapshot(f.a),before);f.cache.dispose();
  }
 });
-test('independent drivers run together; inspecting one restores it while others continue, and stale samples freeze',async()=>{
+test('independent drivers run together; explicitly excluding one restores it while others continue, and stale samples freeze',async()=>{
  const f=await fixture(true),beforeA=snapshot(f.a),beforeB=snapshot(f.b),batch=new SceneMotionBatch();
  const a=f.request,b={...a,instanceId:'b',sample:{...a.sample,rpm:4,yawDeg:10}};
  const entries=new Map([['a',{root:f.a,version:f.adapted}],['b',{root:f.b,version:f.adapted}]]);
@@ -58,4 +60,20 @@ test('independent drivers run together; inspecting one restores it while others 
  batch.step(f.now+200);assert.ok(node(f.b,2).quaternion.z>angle);const held=snapshot(f.b);
  assert.equal(batch.step(f.now+3000),false);assert.deepEqual(snapshot(f.b),held);
  batch.clear();assert.deepEqual(snapshot(f.b),beforeB);assert.equal(batch.size,0);f.cache.dispose();
+});
+
+test('isolating a mapped component keeps rotor motion and frames its actual simulated pose while preserving source geometry',async()=>{
+ const f=await fixture(true),source=snapshot(f.resource.scene),other=snapshot(f.b),before=snapshot(f.a),batch=new SceneMotionBatch();
+ const mesh=node(f.a,91);mesh.userData.ontoVisComponentKey='yaw';mesh.position.set(6,90,2);
+ f.adapted.components=[{componentKey:'yaw',nodeIndices:[91],geometryQuality:'source_candidate'}];
+ const appearance=new SceneCabinetAppearance(f.a,f.adapted),request={...f.request,axes:false,initialYaw:18},entries=new Map([['a',{root:f.a,version:f.adapted}]]);
+ assert.deepEqual(batch.sync(entries,[request],f.now),{a:'ready'});batch.step(f.now);appearance.apply(['yaw'],'#007e6d',true);
+ const first=appearance.selectionBounds(),rotor=node(f.a,2).quaternion.clone();
+ batch.step(f.now+100);batch.sync(entries,[request],f.now+100);appearance.apply(['yaw'],'#007e6d',true);batch.step(f.now+200);
+ assert.ok(!node(f.a,2).quaternion.equals(rotor));assert.deepEqual(appearance.selectionBounds(),new THREE.Box3().setFromObject(mesh));
+ assert.notDeepEqual(appearance.selectionBounds(),first);
+ const box=appearance.selectionBounds(),view=componentFocusView([box.min.toArray(),box.max.toArray()],{eye:[20,-5,20],target:[0,0,0]},42,16/9,true);
+ assert.ok(new THREE.Vector3(...view.target).distanceTo(box.getCenter(new THREE.Vector3()))<1e-10);
+ assert.deepEqual(snapshot(f.resource.scene),source);assert.deepEqual(snapshot(f.b),other);
+ appearance.dispose();batch.clear();mesh.position.fromArray(before.find(item=>item.uuid===mesh.uuid).position);assert.deepEqual(snapshot(f.a),before);f.cache.dispose();
 });

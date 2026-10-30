@@ -10,7 +10,7 @@ import {SceneResourceCache,cloneModel} from './sceneResourceCache';
 import {createSceneControls} from './sceneControls';
 import {cursorZoomView,visibleZoomHit} from './sceneZoom';
 import {prepareSceneRenderer} from './sceneRenderer';
-import {SceneModelSelectionBoxes,arrivalModelView,selectedModelBounds,selectedModelView} from './sceneModelFocus';
+import {SceneModelSelectionBoxes,arrivalModelView,selectedModelBounds,selectedModelView,terrainSafeView} from './sceneModelFocus';
 import {SceneCabinetAppearance} from './sceneCabinetAppearance';
 import {ModelPreviewInspection} from './modelPreview';
 import {previewIdentity,type PreviewSelection,type PreviewStructure} from './modelPreviewTypes';
@@ -169,7 +169,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const syncMotion=()=>{
       const state=current.current;
       if(state.active===false||document.hidden||state.editing||state.previewModel){clearMotion();motionStatus({});return;}
-      const requests=(state.simulatedMotions??[]).filter(r=>r.instanceId!==state.modelView?.instanceId&&r.instanceId!==state.componentFocus?.instanceId);
+      const requests=(state.simulatedMotions??[]).filter(r=>r.instanceId!==state.modelView?.instanceId);
       motionStatus(simulated.sync(entries,requests,performance.now()));
     };
     const alarmBox=new THREE.Box3Helper(new THREE.Box3(),0xb8792c);alarmBox.visible=false;scene.add(alarmBox);
@@ -208,6 +208,12 @@ export function SceneViewport(props:SceneViewportProps) {
       const motion=motionState.current,playing=environment.playing(motion.waterOverride,motion.reduced),cloudPlaying=environment.cloudsPlaying(motion.cloudOverride,motion.reduced);
       const wave=environment.beforeRender(performance.now(),orbit.target,playing,cloudPlaying,camera.position);
       const posePlaying=simulated.step(performance.now());
+      const focusedEntry=componentFocused?entries.get(componentFocused.instanceId):undefined;
+      if(componentBox.visible&&focusedEntry&&componentFocused){
+        focusedEntry.appearance.selectionBounds(componentBox.box);
+        if(componentBox.box.isEmpty()){componentBox.box.min.fromArray(componentFocused.bounds[0]);componentBox.box.max.fromArray(componentFocused.bounds[1]);}
+        componentBox.updateMatrixWorld(true);
+      }
       if(dirtyFrame||tween||wave||simulated.size){
         const selected=current.current.selectedId;
         if(selected&&selectedBox.visible&&simulated.has(selected))selectedBox.box.setFromObject(entries.get(selected)!.root);
@@ -215,7 +221,8 @@ export function SceneViewport(props:SceneViewportProps) {
         const show=!!alarm&&!!entry&&entry.root.visible&&!current.current.previewModel;
         alarmBox.visible=show;
         if(show&&entry&&alarm){
-          if(alarm.bounds){alarmBounds.min.fromArray(alarm.bounds[0]);alarmBounds.max.fromArray(alarm.bounds[1]);alarmEntry=undefined;}
+          if(componentBox.visible&&componentFocused?.instanceId===alarm.instanceId&&!componentBox.box.isEmpty()){alarmBounds.copy(componentBox.box);alarmEntry=undefined;}
+          else if(alarm.bounds){alarmBounds.min.fromArray(alarm.bounds[0]);alarmBounds.max.fromArray(alarm.bounds[1]);alarmEntry=undefined;}
           else if(alarmEntry!==entry){entry.root.updateMatrixWorld(true);alarmBounds.setFromObject(entry.root);alarmEntry=entry;}
           alarmBox.box.copy(alarmBounds);(alarmBox.material as THREE.LineBasicMaterial).color.set(alarm.state==='active'?0xb8792c:alarm.state==='cleared'?0x36806b:0x77877d);
           alarmBounds.getCenter(alarmPoint);alarmPoint.y=alarmBounds.max.y;alarmPoint.project(camera);
@@ -253,13 +260,16 @@ export function SceneViewport(props:SceneViewportProps) {
       if(componentTarget&&!componentFocusCurrent(componentTarget,state.componentFocus,focusContext()))clearComponentFocus();
       const entry=componentTarget?entries.get(componentTarget.instanceId):undefined;
       if(componentPending&&!resourcesLoading&&entry?.key===componentPending.modelKey&&entry.root.visible&&!preview){
-        const destination=componentFocusView(componentPending.bounds,view(camera,orbit),camera.fov,camera.aspect,!!state.presentation);
-        if(destination){componentFocused=componentPending;moveView(destination,true,true);}
+        entry.appearance.apply(componentPending.componentKeys??[],getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d',componentPending.isolate);
+        const displayBox=entry.appearance.selectionBounds(),displayBounds=displayBox.isEmpty()?componentPending.bounds:[displayBox.min.toArray(),displayBox.max.toArray()] as [Vector3,Vector3];
+        const destination=componentFocusView(displayBounds,view(camera,orbit),camera.fov,camera.aspect,!!state.presentation);
+        if(destination){componentFocused=componentPending;moveView(state.presentation?terrainSafeView(destination,terrain):destination,true,true);}
         componentPending=null;
       }
       componentBox.visible=!!componentFocused&&!!entry&&entry.key===componentFocused.modelKey&&entry.root.visible&&!preview;
       if(componentFocused&&componentBox.visible){
-        componentBox.box.min.fromArray(componentFocused.bounds[0]);componentBox.box.max.fromArray(componentFocused.bounds[1]);
+        entry!.appearance.selectionBounds(componentBox.box);
+        if(componentBox.box.isEmpty()){componentBox.box.min.fromArray(componentFocused.bounds[0]);componentBox.box.max.fromArray(componentFocused.bounds[1]);}
         componentBox.updateMatrixWorld(true);
       }
       const color=getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d';
@@ -280,6 +290,10 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const fit=(id?:string|null|string[])=>{
       const box=bounds(id);if(box.isEmpty())return;
+      if(current.current.presentation&&id){
+        const destination=componentFocusView([box.min.toArray() as Vector3,box.max.toArray() as Vector3],view(camera,orbit),camera.fov,camera.aspect,true);
+        if(destination)moveView(terrainSafeView(destination,terrain));return;
+      }
       if(Array.isArray(id)){const target=selectedModelView(camera,box,camera.position.clone().sub(orbit.target));if(target)moveView(target);return;}
       const center=box.getCenter(new THREE.Vector3()),size=box.getSize(new THREE.Vector3());
       const distance=Math.max(3,size.length()/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)))*1.15);

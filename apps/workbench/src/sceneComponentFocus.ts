@@ -55,6 +55,11 @@ export function componentFocusView(bounds:Bounds3,current:SceneView,fovDeg:numbe
   let length=Math.hypot(...direction);
   if(!Number.isFinite(length))return null;
   if(length<1e-6){direction=[.9,.55,1.2];length=Math.hypot(...direction);}
+  if(showContext){
+    if(Math.hypot(direction[0],direction[2])<1e-6)direction=[.9,direction[1],1.2];
+    const horizontal=Math.hypot(direction[0],direction[2]);
+    direction[1]=horizontal*Math.max(.3,Math.min(.7,direction[1]/horizontal));length=Math.hypot(...direction);
+  }
   const eye=target.map((number,index)=>number+direction[index]/length*distance) as Vector3;
   return vector(eye)&&vector(target)&&Math.hypot(...eye.map((number,index)=>number-target[index]))>1e-12?{eye,target}:null;
 }

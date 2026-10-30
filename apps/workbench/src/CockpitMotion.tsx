@@ -30,7 +30,7 @@ export function CockpitMotion({simulation,opened,selected,selectedRef,status,en,
    <div className="pc-motion-values"><label>{t('转速','Speed')}<b>{rpm} rpm</b><input aria-label={t('模拟转速','Simulated speed')} type="range" min="0" max="20" step=".5" value={rpm} onChange={e=>change({rpm:Number(e.target.value)})}/></label>
     <label>{t('偏航偏移','Yaw offset')}<b>{yaw}°</b><input aria-label={t('模拟偏航','Simulated yaw')} type="range" min="0" max="359" value={yaw} onChange={e=>change({yaw:Number(e.target.value)})}/></label></div>
    <label className="pc-motion-axis"><input type="checkbox" checked={axes} onChange={e=>change({axes:e.target.checked})}/>{t('显示运动轴线','Show motion axes')}</label>
-   {inspecting&&<small>{t('构件检查使用静态姿态；返回整机后自动继续。','Inspection uses the static pose; return to the whole model to resume.')}</small>}
+   {inspecting&&<small>{t('透视与爆炸查看使用静态姿态；返回实体后自动继续。','X-ray and exploded views use the static pose; solid mode resumes automatically.')}</small>}
   </details>}
   <footer><Rotate3D size={14}/><span>{t('模拟数据 · 与天气及现场遥测独立','Simulated data · independent of weather and telemetry')}</span>{!!failed&&<span role="status">{failed} {t('个模型未通过动作校验','models failed motion validation')}</span>}{opened&&dynamic>0&&ready===0&&!inspecting&&!failed&&<span role="status">{t('等待模型加载','Waiting for models')}</span>}</footer>
  </section>;

@@ -1,4 +1,4 @@
-import {Box3,Box3Helper,MathUtils,Vector3,type Object3D,type PerspectiveCamera} from 'three';
+import {Box3,Box3Helper,MathUtils,Raycaster,Vector3,type Object3D,type PerspectiveCamera} from 'three';
 import type {SceneView,Vector3 as SceneVector3} from './sceneTypes';
 
 /** Selected models define their own frame; a regional terrain must not dilute it. */
@@ -18,6 +18,26 @@ export function selectedModelView(camera:PerspectiveCamera,box:Box3,direction:Ve
   const axis=direction.clone();if(axis.lengthSq()<1e-12)axis.set(.9,.55,1.2);
   return {eye:center.clone().add(axis.normalize().multiplyScalar(distance)).toArray() as SceneVector3,
     target:center.toArray() as SceneVector3};
+}
+
+/** Only the original terrain constrains an inspection camera; visual horizon extensions do not. */
+export function terrainSafeView(view:SceneView,terrain:Object3D|null):SceneView {
+  if(!terrain?.visible)return view;
+  terrain.updateWorldMatrix(true,false);
+  const eye=new Vector3(...view.eye),target=new Vector3(...view.target),box=new Box3().setFromObject(terrain);
+  if(box.isEmpty())return view;
+  const clearance=Math.max(2,eye.distanceTo(target)*.015),ray=new Raycaster();
+  ray.set(new Vector3(eye.x,Math.max(box.max.y,eye.y)+clearance,eye.z),new Vector3(0,-1,0));
+  const ground=ray.intersectObject(terrain,false)[0];
+  if(ground)eye.y=Math.max(eye.y,ground.point.y+clearance);
+  const step=Math.max(clearance,Math.hypot(eye.x-target.x,eye.z-target.z)*.2);
+  for(let i=0;i<8;i++){
+    const direction=target.clone().sub(eye),distance=direction.length();
+    ray.set(eye,direction.normalize());ray.near=0;ray.far=Math.max(0,distance-.5);
+    if(!ray.intersectObject(terrain,false).length)break;
+    eye.y+=step;
+  }
+  return {eye:eye.toArray() as SceneVector3,target:[...view.target]};
 }
 
 /** Arrival shows a central group at equipment scale; fit-all remains an explicit overview action. */

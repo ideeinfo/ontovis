@@ -122,6 +122,17 @@ test('invalid view inputs hold the camera and a coincident eye uses a finite fal
   assert.ok(componentFocusView(request().bounds,{eye:[0,0,0],target:[0,0,0]},42,1).eye.every(Number.isFinite));
 });
 
+test('presentation focus keeps horizontal bearing but corrects underground, upward and vertical camera directions',()=>{
+ const bounds=[[-3,88,-4],[3,92,4]];
+ for(const eye of [[5,-100,8],[5,100,8],[0,100,0]]){
+  const source={eye,target:[0,0,0]},before=structuredClone(source),result=componentFocusView(bounds,source,42,16/9,true);
+  const direction=new THREE.Vector3(...result.eye).sub(new THREE.Vector3(...result.target)),slope=direction.y/Math.hypot(direction.x,direction.z);
+  assert.ok(slope>=.3-1e-10&&slope<=.7+1e-10);assert.deepEqual(source,before);
+  if(eye[0])assert.ok(Math.abs(direction.x/direction.z-eye[0]/eye[2])<1e-10);
+  assert.deepEqual(result.target,[0,90,0]);
+ }
+});
+
 test('changing isolation invalidates only the temporary component display request',()=>{
  const state=context(),value={...request(),isolate:true},target=prepareComponentFocus(value,state);
  assert.equal(target.isolate,true);assert.equal(componentFocusCurrent(target,{...value,isolate:false},state),false);

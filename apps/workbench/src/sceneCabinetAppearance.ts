@@ -11,6 +11,7 @@ export class SceneCabinetAppearance {
   private readonly version:Pick<ProjectModelVersion,'modelVersionId'|'components'>;
   private changes:MaterialChange[]=[];
   private fadedOccluders=new Map<THREE.Mesh,Set<THREE.Material>>();
+  private selected:THREE.Mesh[]=[];
   private activeKey:string|null=null;
   private disposed=false;
   constructor(root:THREE.Group,version:Pick<ProjectModelVersion,'modelVersionId'|'components'>){this.root=root;this.version=version;}
@@ -34,6 +35,7 @@ export class SceneCabinetAppearance {
       if(sourceIndex(data.ontoVisNodeIndex)&&data.ontoVisProxySchematic!==true&&shells.has(data.component))enclosing.push(node);
     });
     if(!selected.size)return;
+    this.selected=[...selected];
     for(const mesh of isolate?meshes:new Set([...selected,...enclosing])){
       const original=mesh.material,owned:THREE.Material[]=[],highlight=selected.has(mesh);
       const copy=(material:THREE.Material)=>{
@@ -50,6 +52,17 @@ export class SceneCabinetAppearance {
     }
     this.activeKey=key;
   }
+  selectionBounds(target=new THREE.Box3()):THREE.Box3 {
+    target.makeEmpty();this.root.updateWorldMatrix(true,true);
+    for(const mesh of this.selected){
+      let visible=true;
+      for(let node:THREE.Object3D|null=mesh;node;node=node.parent){if(!node.visible){visible=false;break;}if(node===this.root)break;}
+      if(!visible)continue;
+      if(!mesh.geometry.boundingBox)mesh.geometry.computeBoundingBox();
+      if(mesh.geometry.boundingBox)target.union(mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld));
+    }
+    return target;
+  }
   isFadedOccluder(object:THREE.Object3D,materialIndex=0):boolean {
     if(!(object instanceof THREE.Mesh))return false;
     const material=Array.isArray(object.material)?object.material[materialIndex]:object.material;
@@ -57,7 +70,7 @@ export class SceneCabinetAppearance {
   }
   restore(){
     for(const {mesh,original,owned} of this.changes){mesh.material=original;for(const material of owned)material.dispose();}
-    this.changes=[];this.fadedOccluders.clear();this.activeKey=null;
+    this.changes=[];this.fadedOccluders.clear();this.selected=[];this.activeKey=null;
   }
   dispose(){this.restore();this.disposed=true;}
 }

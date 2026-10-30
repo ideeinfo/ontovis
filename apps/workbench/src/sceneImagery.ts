@@ -105,7 +105,8 @@ export class SceneImageryLayer {
       material=new THREE.MeshBasicMaterial({map:texture,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1});
       material.onBeforeCompile=shader=>{shader.fragmentShader=shader.fragmentShader.replace('#include <map_fragment>','if (vMapUv.x < 0.0 || vMapUv.x > 1.0 || vMapUv.y < 0.0 || vMapUv.y > 1.0) discard;\n#include <map_fragment>');};
       material.customProgramCacheKey=()=> 'ontovis-imagery-clip-v1';
-      const mesh=new THREE.Mesh(geometry,material);mesh.name='overview-imagery';mesh.renderOrder=1;terrain.add(mesh);
+      // Draw behind transparent equipment, whose ghost materials intentionally do not write depth.
+      const mesh=new THREE.Mesh(geometry,material);mesh.name='overview-imagery';mesh.renderOrder=-10;terrain.add(mesh);
       this.layer={key,mesh,texture,partial,source:material,lit:null};
     }catch(error){geometry?.dispose();material?.dispose();texture?.dispose();throw error;}
   }

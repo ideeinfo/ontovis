@@ -53,6 +53,11 @@ test('real Three overlay reuses fixed vertex values, preserves base geometry and
   try{
     await layer.sync(terrain,terrainVersion,imagery,ref,new AbortController().signal);
     const overlay=terrain.children[0];assert.notEqual(overlay.geometry,terrain.geometry);assert.notEqual(overlay.geometry.getAttribute('position'),base);
+    const ghost=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshBasicMaterial({transparent:true,opacity:.5,depthWrite:false}));
+    assert.ok(overlay.renderOrder<ghost.renderOrder,'imagery must be composited before transparent equipment');
+    assert.equal(overlay.material.depthTest,true);assert.equal(overlay.material.depthWrite,false);
+    layer.shading('lit',true);assert.ok(overlay.renderOrder<ghost.renderOrder);assert.equal(overlay.material.depthTest,true);layer.shading('source-color',true);
+    ghost.geometry.dispose();ghost.material.dispose();
     assert.deepEqual([...overlay.geometry.getAttribute('position').array],[...base.array]);assert.equal(terrain.geometry.getAttribute('uv'),undefined);
     const disposed={geometry:0,material:0,texture:0};for(const [key,item] of Object.entries({geometry:overlay.geometry,material:overlay.material,texture:overlay.material.map}))item.addEventListener('dispose',()=>disposed[key]++);
     await layer.sync(terrain,terrainVersion,imagery,ref,new AbortController().signal);assert.equal(reads,1);

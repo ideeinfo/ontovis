@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {Box3,BoxGeometry,Group,Mesh,MeshBasicMaterial,PerspectiveCamera,Vector3} from 'three';
-import {SceneModelSelectionBoxes,selectedModelBounds,selectedModelView} from '../src/sceneModelFocus.ts';
+import {Box3,BoxGeometry,Group,Mesh,MeshBasicMaterial,PerspectiveCamera,Raycaster,Vector3} from 'three';
+import {SceneModelSelectionBoxes,selectedModelBounds,selectedModelView,terrainSafeView} from '../src/sceneModelFocus.ts';
 import {selectSceneScope} from '../src/sceneOrganization.ts';
 
 function model(x,y,z){const root=new Group();root.add(new Mesh(new BoxGeometry(20,145,30),new MeshBasicMaterial()));root.position.set(x,y,z);return {root};}
@@ -75,4 +75,15 @@ test('arrival frames the central three assets at a low angle without hiding the 
  assert.deepEqual(close.target,[300,40,0]);
  const direction=new Vector3(...close.eye).sub(new Vector3(...close.target));assert.ok(Math.abs(direction.y/Math.hypot(direction.x,direction.z)-.35)<1e-12);
  assert.ok([...entries.values()].every(item=>item.root.visible));assert.equal(arrivalModelView(camera,entries,[],direction),null);
+});
+
+test('inspection cameras rise above original terrain and clear a foreground ridge without moving the terrain or target',()=>{
+ const terrain=new Mesh(new BoxGeometry(4,12,4),new MeshBasicMaterial());terrain.position.y=6;terrain.updateMatrixWorld(true);
+ const source={eye:[0,2,10],target:[0,1,-10]},before=structuredClone(source),matrix=terrain.matrixWorld.clone();
+ const safe=terrainSafeView(source,terrain),eye=new Vector3(...safe.eye),target=new Vector3(...safe.target),ray=new Raycaster(eye,target.clone().sub(eye).normalize(),0,eye.distanceTo(target)-.5);
+ assert.ok(safe.eye[1]>source.eye[1]);assert.equal(ray.intersectObject(terrain,false).length,0);
+ assert.deepEqual(safe.target,source.target);assert.deepEqual(source,before);assert.deepEqual(terrain.matrixWorld.elements,matrix.elements);
+ const below={eye:[0,-3,0],target:[0,20,-10]},raised=terrainSafeView(below,terrain);assert.ok(raised.eye[1]>=14);
+ terrain.visible=false;assert.equal(terrainSafeView(source,terrain),source);assert.equal(terrainSafeView(source,null),source);
+ terrain.geometry.dispose();terrain.material.dispose();
 });
