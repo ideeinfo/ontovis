@@ -14,6 +14,7 @@ import {TerrainImport} from './TerrainImport';
 import {ImageryPanel} from './ImageryPanel';
 import {PublicGeoDataPanel} from './PublicGeoDataPanel';
 import {publicGeoMessages} from './publicGeoMessages';
+import type {PublicGeoCenter} from './publicGeoForm';
 import {imageryText} from './imageryMessages';
 import type {ImageryVersion} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
@@ -26,6 +27,7 @@ export interface Props {
   api:WorkbenchApi;canPlace:boolean;geographic?:boolean;canReplace?:boolean;replaceTargetVersion?:string|null;onReplace?:(version:ProjectModelVersion)=>void;onPlace:(version:ProjectModelVersion)=>void;
   onPreview:(version:ProjectModelVersion|null)=>void;onTerrainReady:(version:TerrainVersion)=>void;
   activeTerrainVersion?:TerrainVersion|null;
+  publicGeoCenter?:PublicGeoCenter;
   onImageryReady?:(value:ImageryVersion)=>void;
   detailsTarget?:HTMLElement|null;
   canAcquire?:boolean;modelsOnly?:boolean;onOpenScene?:(sceneId:string,projectRef?:ProjectRef)=>void;
@@ -33,7 +35,7 @@ export interface Props {
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
 
-export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,onImageryReady,geographic=false,modelSelection,onModelSelected}:Props) {
+export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,publicGeoCenter,onImageryReady,geographic=false,modelSelection,onModelSelected}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
@@ -296,7 +298,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     </section></>}
     {publicAcquisition&&<Modal title={publicGeoMessages[locale].title} description={publicGeoMessages[locale].hint} onClose={()=>setPublicAcquisition(false)}>
       <PublicGeoDataPanel api={api} canWrite={canAcquire&&!denied} onClose={()=>setPublicAcquisition(false)}
-        initialCenter={activeTerrainVersion?{longitude:(activeTerrainVersion.report.source.samplingCentreCoverageWgs84[0]+activeTerrainVersion.report.source.samplingCentreCoverageWgs84[2])/2,latitude:(activeTerrainVersion.report.source.samplingCentreCoverageWgs84[1]+activeTerrainVersion.report.source.samplingCentreCoverageWgs84[3])/2}:undefined}
+        initialCenter={publicGeoCenter}
         onImported={result=>{setResourceRefresh(value=>value+1);setTab(result.terrainVersionId?'terrains':'imagery');}}/>
     </Modal>}
     {deleteTarget&&<Modal title={text('删除模型','Delete model')} description={text('模型将移至回收站，已有场景与历史保留。','The model moves to the recycle bin. Existing scenes and history are retained.')} onClose={closeDelete}>
