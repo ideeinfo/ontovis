@@ -1,5 +1,7 @@
 # 本机交付与验证输出
 
+- [场景信息直接保存与环境即时编辑](scene-direct-edit-20261030/README.md)
+
 - [公开地形与影像使用场景中心](scene-geodata-center-20261030/README.md)
 
 - [保存场景同步保存当前视角](scene-saved-view-20261030/README.md)
