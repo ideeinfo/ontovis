@@ -80,6 +80,5 @@ export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause
   {selectedGroup&&<aside className="pc-globe-choice"><header><strong>{en?'Scene reference points':'场景参考点'}</strong><button aria-label={en?'Close reference points':'关闭参考点'} onClick={()=>setSelected('')}><X size={14}/></button></header><small>{en?'Location accuracy unverified':'位置精度未核实'}</small>{selectedGroup.points.map(point=><button key={point.sceneId} onClick={()=>onOpen(point.sceneId)}>{point.name}<span>↗</span></button>)}</aside>}
   {!fallback&&<button className="pc-globe-pause" aria-label={paused?(en?'Resume globe rotation':'继续地球自转'):(en?'Pause globe rotation':'暂停地球自转')} onClick={onTogglePause}>{paused?<Play size={17}/>:<Pause size={17}/>}</button>}
   <button className="pc-globe-home" aria-label={en?'Reset globe view':'恢复地球视角'} onClick={()=>{setSelected('');runtime.current?.home();}}><Focus size={17}/></button>
-  <div className="pc-globe-credit"><a href="https://svs.gsfc.nasa.gov/2915/" target="_blank" rel="noreferrer">NASA/GSFC SVS · Blue Marble</a><span>{en?'Historical mosaic · illustrative clouds and lighting':'历史合成底图 · 云层与光照为示意'}</span></div>
  </section>;
 }
