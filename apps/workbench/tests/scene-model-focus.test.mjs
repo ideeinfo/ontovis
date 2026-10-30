@@ -74,7 +74,7 @@ test('arrival fits all turbines, including outer units, inside the area clear of
   const result=arrivalModelView(camera,entries,ids,new Vector3(1,100,1),frame),box=selectedModelBounds(entries,ids);
   camera.position.fromArray(result.eye);camera.lookAt(new Vector3(...result.target));camera.updateMatrixWorld(true);camera.updateProjectionMatrix();
   const points=[];
-  for(const x of [box.min.x,box.max.x])for(const y of [box.min.y,box.max.y])for(const z of [box.min.z,box.max.z]){
+  for(const id of ids)for(const box of [selectedModelBounds(entries,[id])])for(const x of [box.min.x,box.max.x])for(const y of [box.min.y,box.max.y])for(const z of [box.min.z,box.max.z]){
    const point=new Vector3(x,y,z).project(camera);points.push(point);
    assert.ok(point.x>=-1+2*frame.left&&point.x<=1-2*frame.right);assert.ok(point.y>=-1+2*frame.bottom&&point.y<=1-2*frame.top);assert.ok(point.z>-1&&point.z<1);
   }
@@ -94,4 +94,14 @@ test('inspection cameras rise above original terrain and clear a foreground ridg
  const below={eye:[0,-3,0],target:[0,20,-10]},raised=terrainSafeView(below,terrain);assert.ok(raised.eye[1]>=14);
  terrain.visible=false;assert.equal(terrainSafeView(source,terrain),source);assert.equal(terrainSafeView(source,null),source);
  terrain.geometry.dispose();terrain.material.dispose();
+});
+
+test('farm overview does not chase an underground target between turbines into a remote overhead camera',async()=>{
+ const {arrivalModelView}=await import('../src/sceneModelFocus.ts');
+ const entries=new Map([['left',model(-500,0,0)],['right',model(500,0,0)]]),camera=new PerspectiveCamera(42,16/9,.1,100000);
+ const ridge=new Mesh(new BoxGeometry(180,220,180),new MeshBasicMaterial());ridge.position.y=100;ridge.updateMatrixWorld(true);
+ const clear=arrivalModelView(camera,entries,['left','right'],new Vector3(1,1,1));
+ const actual=arrivalModelView(camera,entries,['left','right'],new Vector3(1,1,1),undefined,ridge);
+ assert.deepEqual(actual,clear);assert.ok(actual.eye[1]<1000);assert.equal(ridge.position.y,100);
+ ridge.geometry.dispose();ridge.material.dispose();
 });
