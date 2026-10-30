@@ -87,7 +87,7 @@ async function parseModel(bytes:ArrayBuffer) {
   parsedScenes.set(gltf.scene,gltf.scenes);return gltf.scene;
 }
 
-function calibrationMatrix(version:ProjectModelVersion) {
+export function calibrationMatrix(version:ProjectModelVersion) {
   const calibration=version.calibration;
   requireValue(version.canPlace && version.calibrationState===calibration.state && (calibration.state==='verified'||calibration.state==='legacy_display'),
     'MODEL_CALIBRATION_REQUIRED',422);

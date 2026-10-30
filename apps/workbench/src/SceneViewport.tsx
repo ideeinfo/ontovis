@@ -210,7 +210,8 @@ export function SceneViewport(props:SceneViewportProps) {
         const show=!!alarm&&!!entry&&entry.root.visible&&!current.current.previewModel;
         alarmBox.visible=show;
         if(show&&entry&&alarm){
-          if(alarmEntry!==entry){entry.root.updateMatrixWorld(true);alarmBounds.setFromObject(entry.root);alarmEntry=entry;}
+          if(alarm.bounds){alarmBounds.min.fromArray(alarm.bounds[0]);alarmBounds.max.fromArray(alarm.bounds[1]);alarmEntry=undefined;}
+          else if(alarmEntry!==entry){entry.root.updateMatrixWorld(true);alarmBounds.setFromObject(entry.root);alarmEntry=entry;}
           alarmBox.box.copy(alarmBounds);(alarmBox.material as THREE.LineBasicMaterial).color.set(alarm.state==='active'?0xb8792c:alarm.state==='cleared'?0x36806b:0x77877d);
           alarmBounds.getCenter(alarmPoint);alarmPoint.y=alarmBounds.max.y;alarmPoint.project(camera);
           if(marker){marker.style.display=alarmPoint.z>=-1&&alarmPoint.z<=1&&Math.abs(alarmPoint.x)<=1&&Math.abs(alarmPoint.y)<=1?'block':'none';
@@ -247,7 +248,7 @@ export function SceneViewport(props:SceneViewportProps) {
       if(componentTarget&&!componentFocusCurrent(componentTarget,state.componentFocus,focusContext()))clearComponentFocus();
       const entry=componentTarget?entries.get(componentTarget.instanceId):undefined;
       if(componentPending&&!resourcesLoading&&entry?.key===componentPending.modelKey&&entry.root.visible&&!preview){
-        const destination=componentFocusView(componentPending.bounds,view(camera,orbit),camera.fov,camera.aspect);
+        const destination=componentFocusView(componentPending.bounds,view(camera,orbit),camera.fov,camera.aspect,!!state.presentation);
         if(destination){componentFocused=componentPending;moveView(destination,true,true);}
         componentPending=null;
       }

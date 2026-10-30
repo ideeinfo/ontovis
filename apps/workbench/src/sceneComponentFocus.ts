@@ -38,17 +38,19 @@ export function componentFocusCurrent(target:ComponentFocusTarget,request:Compon
 }
 
 export function sameComponentFocusView(a:ComponentFocusTarget|null,b:ComponentFocusTarget|null){
- return !!a&&!!b&&a.sourceKey===b.sourceKey&&componentFocusKey({...a,isolate:false})===componentFocusKey({...b,isolate:false});
+ return !!a&&!!b&&a.sourceKey===b.sourceKey&&a.token===b.token&&a.instanceId===b.instanceId
+  &&JSON.stringify(a.componentKeys??[])===JSON.stringify(b.componentKeys??[])
+  &&a.bounds.every((point,i)=>point.every((value,j)=>Math.abs(value-b.bounds[i][j])<1e-6));
 }
 
 /** Fit the verified world bounds directly from the current eye/target direction. */
-export function componentFocusView(bounds:Bounds3,current:SceneView,fovDeg:number,aspect:number):SceneView|null {
+export function componentFocusView(bounds:Bounds3,current:SceneView,fovDeg:number,aspect:number,showContext=false):SceneView|null {
   if(!validBounds(bounds)||!vector(current.eye)||!vector(current.target)||!Number.isFinite(fovDeg)||
     fovDeg<=0||fovDeg>=179||!Number.isFinite(aspect)||aspect<=0)return null;
   const target=bounds[0].map((number,index)=>number+(bounds[1][index]-number)/2) as Vector3;
   const radius=Math.hypot(...bounds[0].map((number,index)=>bounds[1][index]-number))/2;
   const halfVertical=fovDeg*Math.PI/360,halfHorizontal=Math.atan(Math.tan(halfVertical)*aspect);
-  const distance=Math.max(3,radius/Math.sin(Math.min(halfVertical,halfHorizontal))*1.15);
+  const distance=Math.max(showContext?6:3,radius/Math.sin(Math.min(halfVertical,halfHorizontal))*(showContext?1.7:1.15));
   let direction=current.eye.map((number,index)=>number-current.target[index]);
   let length=Math.hypot(...direction);
   if(!Number.isFinite(length))return null;

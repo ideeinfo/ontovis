@@ -1,5 +1,5 @@
-import type {EditableSceneSnapshot} from './sceneTypes';
-export interface SceneAlarm {instanceId:string;state:'active'|'cleared'|'pending'|'stale';label:string;target:string}
+import type {EditableSceneSnapshot,Bounds3} from './sceneTypes';
+export interface SceneAlarm {instanceId:string;state:'active'|'cleared'|'pending'|'stale';label:string;target:string;bounds?:Bounds3}
 /** A shared definition never identifies a physical scene instance. */
 export function sceneAlarmInstances(snapshot:EditableSceneSnapshot){
  const counts=new Map<string,number>();
