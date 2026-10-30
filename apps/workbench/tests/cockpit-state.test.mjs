@@ -51,3 +51,8 @@ test('scene catalog revision cannot change between pages',async()=>{
  const api=fake();let calls=0;api.request=async()=>({items:[],snapshotRevision:'s'+(++calls),nextCursor:calls===1?'next':null});
  await assert.rejects(readCockpitCatalog(api,new AbortController().signal),{code:'SCENE_CHANGED'});
 });
+
+test('automatic density tolerates subpixel observer rounding without crossing a whole-pixel boundary',()=>{
+ assert.equal(interfaceScale('auto',3840.104,2159.896),2);assert.equal(interfaceScale('auto',2879.9,1619.9),1.5);
+ assert.equal(interfaceScale('auto',3839,2160),1.5);assert.equal(interfaceScale('auto',2880,1619),1);
+});

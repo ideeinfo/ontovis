@@ -7,7 +7,9 @@ import type {SceneOpen,SceneSummary} from './sceneTypes';
 export type InterfaceScale='auto'|'1'|'1.5'|'2';
 export function interfaceScale(value:InterfaceScale,width:number,height:number){
   if(value==='1'||value==='1.5'||value==='2')return Number(value);
-  return width>=3840&&height>=2160?2:width>=2880&&height>=1620?1.5:1;
+  // ResizeObserver may report subpixel rounding at a display-density boundary.
+  const w=Math.round(width),h=Math.round(height);
+  return w>=3840&&h>=2160?2:w>=2880&&h>=1620?1.5:1;
 }
 export type CockpitScene={summary:SceneSummary;opened:SceneOpen|null;error:unknown|null};
 export type CockpitCatalog={scenes:CockpitScene[];equipment:EquipmentCatalogItem[]};
