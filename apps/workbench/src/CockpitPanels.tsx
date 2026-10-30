@@ -1,5 +1,10 @@
-import {useEffect,useRef,useState,type ReactNode} from 'react';
-import {ChevronUp,ChevronDown,CloudSun,ArrowRight} from 'lucide-react';
+import {useEffect,useMemo,useRef,useState,type ReactNode} from 'react';
+import {ChevronUp,ChevronDown,CloudSun,ArrowRight,Box} from 'lucide-react';
+import {SceneApi} from './sceneApi';
+import type {WorkbenchApi} from './api';
+import type {ModelResourceRef} from './sceneTypes';
+import type {ModelThumbnailInfo} from './resourceTypes';
+import {ModelThumbnail} from './ModelThumbnail';
 import {pageWindow} from './cockpitDisplayState';
 import {weatherUsable,type WeatherView} from './weather';
 
@@ -18,4 +23,11 @@ export function CockpitWeatherSummary({value,now,loading,error,en,onDetails}:{va
  {f?<div className="pc-weather-values"><strong>{f.temperatureC??'—'}<small> °C</small></strong><span>{f.windSpeedMs??'—'} m/s<small>{en?'10 m wind':'10 m 风速'}</small></span></div>:<button className="pc-weather-empty" onClick={onDetails}>{loading?(en?'Loading…':'读取中…'):value?.status==='unconfigured'?(en?'Not configured':'未配置'):en?'Forecast unavailable':'预报暂不可用'}</button>}
  {value?.forecast&&<div className="pc-weather-credit"><a href="https://api.met.no/" target="_blank" rel="noreferrer">MET Norway</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a></div>}
  </section>;
+}
+
+export function CockpitModelPreview({api,reference,name}:{api:WorkbenchApi;reference:ModelResourceRef;name:string}){
+ const client=useMemo(()=>new SceneApi(api),[api]),[thumbnail,setThumbnail]=useState<ModelThumbnailInfo>(),[failed,setFailed]=useState(false);
+ useEffect(()=>{const abort=new AbortController();setThumbnail(undefined);setFailed(false);void client.modelThumbnail(reference,abort.signal).then(result=>{if(!abort.signal.aborted)setThumbnail(result.thumbnail);}).catch(()=>{if(!abort.signal.aborted)setFailed(true);});return()=>abort.abort();},[client,api.epoch,api.revision,reference.modelVersionId,reference.contentRevision,reference.sha256]);
+ if(failed)return <span className="pc-thumbnail-unavailable"><Box size={32}/><small>—</small></span>;
+ return <ModelThumbnail api={client} version={{...reference,thumbnail}} name={name} onStatus={(sha,value)=>{if(sha===reference.sha256)setThumbnail(value);}}/>;
 }

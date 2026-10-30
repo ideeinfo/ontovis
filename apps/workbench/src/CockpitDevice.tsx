@@ -8,9 +8,10 @@ import type {AnalysisEntry} from './analysisSources';
 import {EquipmentAttributeDetails} from './EquipmentAttributeDetails';
 import {EquipmentMaterials} from './EquipmentMaterials';
 import {Btn,Modal} from './Primitives';
-import {PageDeck} from './CockpitPanels';
+import {PageDeck,CockpitModelPreview} from './CockpitPanels';
+import type {ModelResourceRef} from './sceneTypes';
 
-export function CockpitDevice({api,uid,en,representationUid,onSelect,onAnalyze,onChoose}:{api:WorkbenchApi;uid:string;en:boolean;representationUid?:string;onSelect:(uid:string)=>void;onAnalyze:(entry:AnalysisEntry)=>void;onChoose:()=>void}){
+export function CockpitDevice({api,uid,en,representationUid,onSelect,onAnalyze,onChoose,model}:{api:WorkbenchApi;uid:string;en:boolean;representationUid?:string;onSelect:(uid:string)=>void;onAnalyze:(entry:AnalysisEntry)=>void;onChoose:()=>void;model?:ModelResourceRef|null}){
  const t=(zh:string,eng:string)=>en?eng:zh;
  const [value,setValue]=useState<{record:EquipmentRecord;context:SceneObjectContext}|null>(null),[error,setError]=useState<unknown>(null),[attempt,setAttempt]=useState(0),[detail,setDetail]=useState(''),[trail,setTrail]=useState<string[]>([]);
  useEffect(()=>{const abort=new AbortController();setValue(null);setError(null);setDetail('');
@@ -29,7 +30,7 @@ export function CockpitDevice({api,uid,en,representationUid,onSelect,onAnalyze,o
  {children.length?<PageDeck key={uid} en={en} label={t('当前层级','Current level')} items={children} rowHeight={68} render={item=><button className="pc-branch" key={item.entityUid} onClick={()=>{setTrail(v=>[...v,uid]);onSelect(item.entityUid);}}><Box size={18}/><span>{item.displayName}</span><ArrowRight size={14}/></button>}/>:<div className="pc-tree-empty"><Box size={26}/><span>{t('当前对象无下级设备','No child equipment')}</span></div>}
  <button className="pc-quality-link" onClick={()=>setDetail('info')}><Info size={13}/>{uid!==representationUid?t('所属设备示意','Containing equipment view'):t('模型示意','Model representation')}</button></section>
  <section className="pc-panel pc-device-card"><header><div><small>{record.context.purpose==='demonstration'?t('演示安装','Demonstration'):t('安装设备','Installed equipment')}</small><h2 title={record.item.displayName}>{record.item.displayName}</h2></div><button aria-label={t('设备身份与精度','Identity and accuracy')} onClick={()=>setDetail('info')}><Info size={17}/></button></header>
- <div className="pc-device-emblem" aria-hidden="true"><Box size={64} strokeWidth={.8}/><span>{record.model?.name||t('工程对象','Engineering object')}</span></div>
+ <div className="pc-device-emblem">{model?<CockpitModelPreview api={api} reference={model} name={t('所属设备模型','Containing equipment model')}/>:<Box size={64} strokeWidth={.8}/>}<span>{record.model?.name||t('工程对象','Engineering object')}</span></div>
  <button className="pc-material-action" onClick={()=>setDetail('materials')}><FileText size={20}/><span>{t('图纸与资料','Drawings & materials')}</span><ArrowRight size={15}/></button>
  <button className="pc-material-action" onClick={()=>setDetail('attributes')}><SlidersHorizontal size={20}/><span>{t('设备参数','Equipment parameters')}</span><ArrowRight size={15}/></button>
  <button className="pc-material-action" onClick={()=>setDetail('info')}><Info size={20}/><span>{t('对象详情','Object details')}</span><ArrowRight size={15}/></button>

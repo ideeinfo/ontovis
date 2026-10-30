@@ -301,8 +301,8 @@ export function SceneViewport(props:SceneViewportProps) {
       const state=current.current,ids=state.selectedIds??(state.selectedId?[state.selectedId]:[]);
       const selectedEntries=ids.flatMap(id=>{const entry=entries.get(id);return entry?.root.visible?[entry]:[];});
       const componentActive=componentHighlight();
-      selectedBox.visible=!componentActive&&selectedEntries.length===1&&!preview;
-      selectionBoxes.update(entries,componentActive||preview?[]:ids);
+      selectedBox.visible=!state.presentation&&!componentActive&&selectedEntries.length===1&&!preview;
+      selectionBoxes.update(entries,state.presentation||componentActive||preview?[]:ids);
       if(selectedBox.visible){selectedBox.box.makeEmpty();for(const entry of selectedEntries){entry.root.updateMatrixWorld(true);selectedBox.box.union(new THREE.Box3().setFromObject(entry.root));}selectedBox.updateMatrixWorld(true);}
       previewSelection();
       request();

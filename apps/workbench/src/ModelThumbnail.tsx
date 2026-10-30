@@ -1,11 +1,11 @@
 import {useEffect,useRef,useState} from 'react';
 import {Box} from 'lucide-react';
 import type {SceneApi} from './sceneApi';
-import type {ModelThumbnailInfo,ProjectModelVersionSummary} from './resourceTypes';
+import type {ModelThumbnailInfo,ModelThumbnailReference} from './resourceTypes';
 import {cancelled} from './api';
 import {usePreferences} from './Preferences';
 
-export function ModelThumbnail({api,version,name,onStatus}:{api:SceneApi;version:ProjectModelVersionSummary|null;
+export function ModelThumbnail({api,version,name,onStatus}:{api:SceneApi;version:(ModelThumbnailReference&{thumbnail?:ModelThumbnailInfo})|null;
   name:string;onStatus:(sha256:string,value:ModelThumbnailInfo)=>void}) {
   const {locale}=usePreferences(),element=useRef<HTMLSpanElement>(null),callback=useRef(onStatus);callback.current=onStatus;
   const [visible,setVisible]=useState(false),[loaded,setLoaded]=useState<{key:string;url:string}|null>(null),[failed,setFailed]=useState(false);
