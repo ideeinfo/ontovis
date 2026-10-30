@@ -63,3 +63,16 @@ test('single selection and missing model ids never allocate an unrelated multi-s
   selection.update(entries,['a']);assert.equal(selection.helpers.size,0);
   selection.update(entries,['missing','missing']);assert.equal(selection.helpers.size,0);selection.dispose();
 });
+
+test('arrival frames the central three assets at a low angle without hiding the wider scene',async()=>{
+ const {arrivalModelView}=await import('../src/sceneModelFocus.ts');
+ const entries=new Map();
+ for(let i=0;i<7;i++){const root=new Group();root.add(new Mesh(new BoxGeometry(10,80,10)));root.position.set(i*100,40,0);entries.set(String(i),{root});}
+ const camera=new PerspectiveCamera(42,16/9,.1,100000),ids=[...entries.keys()];
+ const all=selectedModelView(camera,selectedModelBounds(entries,ids),new Vector3(1,1,1));
+ const close=arrivalModelView(camera,entries,ids,new Vector3(1,1,1));
+ assert.ok(new Vector3(...close.eye).distanceTo(new Vector3(...close.target))<new Vector3(...all.eye).distanceTo(new Vector3(...all.target)));
+ assert.deepEqual(close.target,[300,40,0]);
+ const direction=new Vector3(...close.eye).sub(new Vector3(...close.target));assert.ok(Math.abs(direction.y/Math.hypot(direction.x,direction.z)-.35)<1e-12);
+ assert.ok([...entries.values()].every(item=>item.root.visible));assert.equal(arrivalModelView(camera,entries,[],direction),null);
+});

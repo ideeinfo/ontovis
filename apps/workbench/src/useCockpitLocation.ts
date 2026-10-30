@@ -1,5 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {ApiError,cancelled,type WorkbenchApi} from './api';
+import {EquipmentApi} from './equipmentApi';
+import {cockpitBoundInstance} from './equipmentConfigurationState';
 import {SceneApi} from './sceneApi';
 import type {SceneLocation,SceneLocationRequest} from './sceneEngineeringTypes';
 import type {SceneModelInstance,SceneOpen} from './sceneTypes';
@@ -20,4 +22,16 @@ export function useCockpitLocation(api:WorkbenchApi,opened:SceneOpen|null,instan
   return()=>abort.abort();
  },[api,key]);
  return {value:key&&state.key===key?state.value:null,error:key&&state.key===key?state.error:null,loading:!!key&&(state.key!==key||!state.value&&!state.error),token:state.token};
+}
+
+export function useCockpitBindings(api:WorkbenchApi,opened:SceneOpen|null,instance:SceneModelInstance|undefined,enabled:boolean){
+ const key=enabled&&opened&&instance&&opened.sceneRevision===opened.headRevision?JSON.stringify([opened.sceneId,opened.sceneRevision,instance.sceneModelInstanceId,instance.modelVersionId,api.epoch,api.revision]):'';
+ const [state,setState]=useState<{key:string;value:SceneModelInstance}|null>(null);
+ useEffect(()=>{if(!key||!instance?.rootBinding)return;const abort=new AbortController(),client=new EquipmentApi(api);
+  void Promise.all([client.resolve([instance.rootBinding.objectRef.entityUid],abort.signal),client.configurations(abort.signal)]).then(([result,catalog])=>{
+   const record=result.items.find(item=>item.item.entityUid===instance.rootBinding?.objectRef.entityUid);
+   if(record&&!abort.signal.aborted)setState({key,value:cockpitBoundInstance(instance,record,catalog)});
+  }).catch(()=>{if(!abort.signal.aborted)setState(null);});return()=>abort.abort();
+ },[api,key]);
+ return state?.key===key?state.value:instance;
 }

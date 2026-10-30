@@ -9,7 +9,7 @@ import {SceneResourceCache,cloneModel} from './sceneResourceCache';
 import {createSceneControls} from './sceneControls';
 import {cursorZoomView,visibleZoomHit} from './sceneZoom';
 import {prepareSceneRenderer} from './sceneRenderer';
-import {SceneModelSelectionBoxes,selectedModelBounds,selectedModelView} from './sceneModelFocus';
+import {SceneModelSelectionBoxes,arrivalModelView,selectedModelBounds,selectedModelView} from './sceneModelFocus';
 import {SceneCabinetAppearance} from './sceneCabinetAppearance';
 import {ModelPreviewInspection} from './modelPreview';
 import {previewIdentity,type PreviewSelection,type PreviewStructure} from './modelPreviewTypes';
@@ -456,7 +456,7 @@ export function SceneViewport(props:SceneViewportProps) {
       if(!waitingMetadata&&progress.state().stage==='display')awaitingDisplay=progress;
       appearance();
       if(focusPending!==undefined){const id=focusPending;focusPending=undefined;initialFocusIds=undefined;fit(id);}
-      else if(initialFocusIds&&!waitingMetadata){const target=selectedModelView(camera,selectedModelBounds(entries,initialFocusIds),camera.position.clone().sub(orbit.target));initialFocusIds=undefined;if(target)moveView(target,false);}
+      else if(initialFocusIds&&!waitingMetadata){const target=arrivalModelView(camera,entries,initialFocusIds,camera.position.clone().sub(orbit.target));initialFocusIds=undefined;if(target)moveView(target,false);}
     };
     const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
     const prepareRay=(x:number,y:number)=>{

@@ -16,6 +16,7 @@ import {ResourcePanel} from './ResourcePanel';
 import {ModelComponentTree,ModelComponentProperties,ModelPreviewTools,useModelPreview} from './ModelPreviewInspector';
 import {EquipmentPhotos} from './EquipmentPhotos';
 import {SourceEvidence} from './SourceEvidence';
+import {canContinueEquipmentConfiguration,equipmentConfigurationNeedsCopy} from './equipmentConfigurationState';
 import {objectCategory} from './objectCatalog';
 import './equipmentHierarchy.css';
 
@@ -84,8 +85,10 @@ export function EquipmentHierarchy({api,onAnalyze,onOpenScene,onDirtyChange}:{ap
     if(expected!==definition.item.entityRevision){setError(new Error(t('工程定义已变化，请在源端核对项目采用。','The engineering definition changed. Review the source application.')));return;}
     const rows=remove?others:[...others,{objectRef:definition.objectRef,expectedEntityRevision:expected,componentKeys:[...keys]}];change({...draft,models:draft.models.map(row=>row.modelVersionId===versionId?{...row,mappings:rows}:row)});setError(null);}
   function chooseApplication(value:ApplicationBundle){if(!api.project)return;const app=value.application,source=app.snapshot;
+    if(continuing&&draft&&!canContinueEquipmentConfiguration(draft,app)){setPicker(null);setError(new Error(t('新采用的对象身份或修订与已有映射不一致，请先核对构件绑定。','Object identities or revisions differ. Review the component mappings first.')));return;}
     const ref={applicationId:app.applicationId,applicationRevisionId:app.revisionId,specificationRevisionId:source.specificationRevisionId};
-    if(!continuing){setConfigurationId(crypto.randomUUID());setVersionId('');setSelectedUid(source.mappings[0]?.entityUid??source.rootDefinition?.entityUid??'');}
+    if(!continuing||draft&&equipmentConfigurationNeedsCopy(draft,app))setConfigurationId(crypto.randomUUID());
+    if(!continuing){setVersionId('');setSelectedUid(source.mappings[0]?.entityUid??source.rootDefinition?.entityUid??'');}
     change({displayName:source.name,objectKind:app.specification.objectKind,projectApplicationRef:ref,
       rootDefinition:source.rootDefinition?{objectRef:{...api.project,entityUid:source.rootDefinition.entityUid},expectedEntityRevision:source.rootDefinition.expectedEntityRevision}:null,
       models:continuing&&draft?draft.models:[]});setBundle(value);setExtraObjects(value.objects);setPicker(null);}
@@ -98,7 +101,7 @@ export function EquipmentHierarchy({api,onAnalyze,onOpenScene,onDirtyChange}:{ap
     {reading?<p role="status">{t('正在读取共享绑定…','Loading shared bindings…')}</p>:draft?<>
     <div className="eq-config-bar"><label>{t('固定项目采用','Fixed project application')}<select value={configurationId} onChange={event=>{if(dirty){setNotice(t('请先保存当前修改再切换配置','Save changes before switching'));return;}setConfigurationId(event.target.value);}}>{data?.items.map(row=><option key={row.configurationId} value={row.configurationId}>{row.snapshot.displayName}</option>)}{!configuration&&<option value={configurationId}>{draft.displayName}</option>}</select></label>
     <label>{t('固定模型版本','Fixed model version')}<select value={versionId} onChange={event=>setVersionId(event.target.value)}>{draft.models.map(entry=><option key={entry.modelVersionId} value={entry.modelVersionId}>{versions.find(m=>m.modelVersionId===entry.modelVersionId)?.displayName??entry.modelVersionId}</option>)}</select></label>
-    <Btn disabled={!editable||busy} onClick={()=>setPicker('model')}><Boxes size={14}/>{t('关联模型','Link model')}</Btn><Btn disabled={!bundle} onClick={()=>setPicker('details')}>{t('规格与采用详情','Specification and adoption')}</Btn></div>
+    <Btn disabled={!editable||busy} onClick={()=>setPicker('model')}><Boxes size={14}/>{t('关联模型','Link model')}</Btn><Btn disabled={!bundle} onClick={()=>setPicker('details')}>{t('规格与采用详情','Specification and adoption')}</Btn>{draft.projectApplicationRef&&<Btn disabled={!canWrite||busy||dirty} onClick={()=>{setContinuing(true);setPicker('source');}}>{t('接续采用修订','Continue adoption revision')}</Btn>}</div>
     {!draft.projectApplicationRef&&<div className="eq-message">{t('旧共享绑定继续可读。选择源端项目采用并核对原映射后接续。','Legacy bindings remain readable. Select the source application to continue with the original mappings.')} <Btn disabled={!canWrite||busy} onClick={()=>{setContinuing(true);setPicker('source');}}>{t('接续项目采用','Link source application')}</Btn></div>}
     {sourceBusy&&<p role="status">{t('正在读取源端固定规格…','Loading fixed source specification…')}</p>}
     <div className="eq-workspace"><aside className="eq-object-panel"><header><strong>{t('共享工程对象','Shared engineering objects')}</strong></header><button className="eq-root" onClick={()=>draft.rootDefinition&&setSelectedUid(draft.rootDefinition.objectRef.entityUid)}><ChevronDown size={14}/><Box size={15}/>{draft.displayName}</button>

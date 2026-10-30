@@ -20,6 +20,19 @@ export function selectedModelView(camera:PerspectiveCamera,box:Box3,direction:Ve
     target:center.toArray() as SceneVector3};
 }
 
+/** Arrival shows a central group at equipment scale; fit-all remains an explicit overview action. */
+export function arrivalModelView(camera:PerspectiveCamera,entries:ReadonlyMap<string,{root:Object3D}>,ids:string[],direction:Vector3):SceneView|null {
+  const models=[...new Set(ids)].flatMap(id=>{const bounds=selectedModelBounds(entries,[id]);return bounds.isEmpty()?[]:[{id,bounds,center:bounds.getCenter(new Vector3())}];});
+  if(!models.length)return null;
+  const median=(axis:'x'|'z')=>models.map(item=>item.center[axis]).sort((a,b)=>a-b)[Math.floor(models.length/2)];
+  const center=new Vector3(median('x'),0,median('z'));
+  const anchor=[...models].sort((a,b)=>Math.hypot(a.center.x-center.x,a.center.z-center.z)-Math.hypot(b.center.x-center.x,b.center.z-center.z))[0].center;
+  const nearest=models.sort((a,b)=>a.center.distanceToSquared(anchor)-b.center.distanceToSquared(anchor)).slice(0,3);
+  const box=new Box3();for(const item of nearest)box.union(item.bounds);
+  const axis=direction.clone();if(Math.hypot(axis.x,axis.z)<1e-6)axis.set(.9,0,1.2);axis.y=Math.hypot(axis.x,axis.z)*.35;
+  return selectedModelView(camera,box,axis);
+}
+
 export class SceneModelSelectionBoxes {
   readonly helpers=new Map<string,Box3Helper>();
   private readonly parent:Object3D;
