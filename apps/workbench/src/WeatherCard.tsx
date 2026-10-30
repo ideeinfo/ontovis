@@ -2,6 +2,7 @@ import {CloudSun,CloudRain,CloudSnow,CloudFog,Cloud,Sun,MapPin} from 'lucide-rea
 import {weatherMessage,weatherUsable,type WeatherView} from './weather';
 export function WeatherCard({value,en=false,loading=false,error,now=Date.now()}:{value:WeatherView|null;en?:boolean;loading?:boolean;error?:unknown;now?:number}){
  const t=(zh:string,eng:string)=>en?eng:zh,f=value?.forecast,usable=weatherUsable(value,now),kind=f?.condition;
+ const names={clear:t('晴','Clear'),cloud:t('多云','Cloudy'),rain:t('雨','Rain'),snow:t('雪','Snow'),sleet:t('雨夹雪','Sleet'),fog:t('雾','Fog'),unknown:t('天气类型未知','Unknown weather')};
  const Icon=kind==='rain'?CloudRain:kind==='snow'||kind==='sleet'?CloudSnow:kind==='fog'?CloudFog:kind==='clear'?Sun:kind==='cloud'?Cloud:CloudSun;
  const date=(s:string)=>new Date(s).toLocaleString(en?'en-GB':'zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
  const n=(v:number|null|undefined)=>v===null||v===undefined?'—':String(v);
@@ -10,8 +11,8 @@ export function WeatherCard({value,en=false,loading=false,error,now=Date.now()}:
   {!!error&&<p role="alert">{weatherMessage(error,en)}</p>}{value?.error&&<p role="status">{weatherMessage(value.error,en)}</p>}
   {value?.status==='available'&&!usable&&<p role="status">{t('有效时段已结束，特效已停止。','The valid period ended; effects stopped.')}</p>}
   {value?.point&&<p className="wx-location"><MapPin size={13}/>{value.point.label}</p>}
-  {f&&<><div className="wx-temperature"><Icon size={36}/><strong>{n(f.temperatureC)}<small> °C</small></strong></div><dl><dt>{t('10 m 风速','10 m wind')}</dt><dd>{n(f.windSpeedMs)} m/s</dd><dt>{t('风向（来向）','Wind from')}</dt><dd>{n(f.windFromDeg)}°</dd><dt>{f.intervalHours} h {t('时段降水','precipitation')}</dt><dd>{n(f.precipitationMm)} mm</dd></dl><p className="wx-caption">{t('有效','Valid')} {date(f.validFrom)}–{date(f.validTo)}<br/>{t('发布','Issued')} {date(f.updatedAt)}{value.fetchedAt&&<><br/>{t('获取','Fetched')} {date(value.fetchedAt)}</>}</p></>}
-  {value?.status==='unconfigured'&&<p>{t('在工作台“数据与报警 → 天气接口”配置此场景查询点。','Configure this scene in Data & alarms → Weather API.')}</p>}
+  {f&&<><p>{names[f.condition]} · {t('按预报时段显示','Forecast period')}</p><div className="wx-temperature"><Icon size={36}/><strong>{n(f.temperatureC)}<small> °C</small></strong></div><dl><dt>{t('10 m 风速','10 m wind')}</dt><dd>{n(f.windSpeedMs)} m/s</dd><dt>{t('风向（来向）','Wind from')}</dt><dd>{n(f.windFromDeg)}°</dd><dt>{f.intervalHours} h {t('时段降水','precipitation')}</dt><dd>{n(f.precipitationMm)} mm</dd></dl><p className="wx-caption">{t('有效','Valid')} {date(f.validFrom)}–{date(f.validTo)}<br/>{t('发布','Issued')} {date(f.updatedAt)}{value.fetchedAt&&<><br/>{t('获取','Fetched')} {date(value.fetchedAt)}</>}</p></>}
+  {value?.status==='unconfigured'&&<p>{t('在工作台“数据与告警 → 天气接口”配置此场景查询点。','Configure this scene in Data & alarms → Weather API.')}</p>}
   <footer><a href="https://api.met.no/" target="_blank" rel="noreferrer">MET Norway</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a><p>{t('按预报时段归一化展示；不是现场实测。','Normalized forecast periods; not on-site observations.')}</p></footer>
  </section>;
 }

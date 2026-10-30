@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {weatherUsable,weatherProblems,weatherScenes} from '../src/weather.ts';
 import {WorkbenchApi} from '../src/api.ts';
+import {weatherEnvironment} from '../src/weatherEnvironment.ts';
+import {environmentPreset} from '../src/sceneEnvironment.ts';
 const now=Date.parse('2026-10-30T01:30:00Z'),value={status:'available',forecast:{usable:true,condition:'rain',validFrom:'2026-10-30T01:00:00Z',validTo:'2026-10-30T02:00:00Z',updatedAt:'2026-10-29T23:00:00Z'}};
 test('weather effects expire without waiting for the next network poll',()=>{
  assert.equal(weatherUsable(value,now),true);assert.equal(weatherUsable(value,Date.parse(value.forecast.validTo)),false);
@@ -25,4 +27,13 @@ test('weather write-only denial preserves authorized project but membership deni
  const api=new WorkbenchApi(async()=>new Response(JSON.stringify({code}),{status:403}));api.session('s');api.selectProject({ontobaseConnectionId:'x',projectCode:'p'});api.onProjectDenied=()=>denied++;
  await assert.rejects(api.request('/api/workbench/weather/save',{}),{code});assert.equal(denied,0);
  code='FORBIDDEN';await assert.rejects(api.request('/api/workbench/weather/current',{}),{code});assert.equal(denied,1);
+});
+test('forecast cloud cover changes a transient environment and preserves saved water/pose inputs',()=>{
+ const base=environmentPreset('offshore-overview-v1'),before=structuredClone(base);
+ const sunny=weatherEnvironment(base,{...value,forecast:{...value.forecast,condition:'clear',cloudPercent:0,symbol:'clearsky_day'}});
+ assert.equal(sunny.atmosphere.clouds.enabled,false);assert.deepEqual(base,before);assert.deepEqual(sunny.water,base.water);
+ const fog=weatherEnvironment(base,{...value,forecast:{...value.forecast,condition:'fog',cloudPercent:95,symbol:'fog'}});
+ assert.equal(fog.atmosphere.clouds.coverage,.95);assert.equal(fog.atmosphere.fog.mode,'linear');assert.equal(fog.lighting.sun.enabled,false);
+ const night=weatherEnvironment(base,{...value,forecast:{...value.forecast,condition:'clear',cloudPercent:0,symbol:'clearsky_night'}});
+ assert.equal(night.lighting.sun.enabled,false);assert.deepEqual(night.water,base.water);
 });
