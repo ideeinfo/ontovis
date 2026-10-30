@@ -1,3 +1,4 @@
+import {environmentPlaybackReset} from './sceneEnvironmentEditing';
 import {useEffect,useRef,useState} from 'react';
 import {Focus,Maximize,ZoomIn,ZoomOut} from 'lucide-react';
 import * as THREE from 'three';
@@ -98,6 +99,10 @@ export function SceneViewport(props:SceneViewportProps) {
       previewMotion.current.playback=playback;
       previewMotion.current.cloudPlayback=cloudPlayback;
     }else if(previewMotion.current){const previous=previewMotion.current;setWaterOverride(previous.resetPlayback&&props.snapshot.environment!==previous.environment?null:previous.override);setCloudOverride(previous.cloudReset&&props.snapshot.environment!==previous.environment?null:previous.cloudOverride);previewMotion.current=null;}},[props.environmentPreview]);
+  const previousEnvironment=useRef(props.snapshot.environment);
+  useEffect(()=>{const reset=environmentPlaybackReset(previousEnvironment.current,props.snapshot.environment);previousEnvironment.current=props.snapshot.environment;
+    if(!props.environmentPreview){if(reset.water)setWaterOverride(null);if(reset.clouds)setCloudOverride(null);}
+  },[props.snapshot.environment,props.environmentPreview]);
   useEffect(()=>{const media=matchMedia('(prefers-reduced-motion: reduce)'),change=()=>{setReduced(media.matches);setWaterOverride(null);setCloudOverride(null);};media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
   const [imageryPartial,setImageryPartial]=useState(false);
   const latestError=useRef(error);latestError.current=error;
