@@ -21,8 +21,8 @@
 
 .pc-alarm-unit{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--pc-muted)}.pc-alarm-unit>span{flex:none}.pc-alarm-unit select{min-width:0;width:100%;background:transparent;color:var(--pc-text);border:1px solid var(--pc-border);border-radius:6px;padding:7px}.pc-home-alarm-time>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pc-home-alarm-row:disabled{opacity:.65;cursor:default}.pc-alarm-focus{position:absolute;z-index:4;left:50%;top:66px;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:calc(100% - 640px);padding:12px 16px;border:1px solid #b9885055;border-radius:12px;background:var(--pc-panel);box-shadow:0 10px 36px #0002;color:var(--pc-text);backdrop-filter:blur(14px)}.pc-alarm-focus>svg{color:#c28e4d;flex:none}.pc-alarm-focus>span{display:grid;gap:3px;min-width:0;font-size:11px}.pc-alarm-focus b{color:#c28e4d;font-weight:500}.pc-alarm-focus strong{font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pc-alarm-focus button{white-space:nowrap;font-size:11px}.pc-alarm-focus button:last-child{padding:4px}@container cockpit (max-width:1100px){.pc-alarm-focus{max-width:calc(100% - 530px);gap:7px;padding:9px;top:58px}}
 
-.pc-app{--pc-orange:#ff790d;--pc-orange-text:#ff790d;--pc-orange-tint:rgba(196,83,0,.22);--pc-orange-border:#ff790d70;--pc-critical:#f08d82;--pc-critical-tint:#bd3d3226}
-.pc-root[data-theme=light] .pc-app{--pc-orange:#e96700;--pc-orange-text:#b65308;--pc-orange-tint:rgba(255,135,43,.12);--pc-orange-border:#e9670066;--pc-critical:#ad3e32;--pc-critical-tint:#cd55451a}
+.pc-app,.pc-alarm-dialog,.pc-instance-dialog{--pc-orange:#ff790d;--pc-orange-text:#ff790d;--pc-orange-tint:rgba(196,83,0,.22);--pc-orange-border:#ff790d70;--pc-critical:#f08d82;--pc-critical-tint:#bd3d3226}
+.pc-root[data-theme=light] .pc-app,:root[data-theme=light] :is(.pc-alarm-dialog,.pc-instance-dialog){--pc-orange:#e96700;--pc-orange-text:#b65308;--pc-orange-tint:rgba(255,135,43,.12);--pc-orange-border:#e9670066;--pc-critical:#ad3e32;--pc-critical-tint:#cd55451a}
 .pc-totals .pc-alarm-total,.pc-totals .pc-alarm-total b{color:var(--pc-orange-text)}
 .pc-sim-label{color:var(--pc-muted);font-size:10px!important;font-weight:400;border:1px solid var(--pc-border);border-radius:4px;padding:1px 4px}
 .pc-home-alarms>header{gap:7px}
@@ -54,3 +54,9 @@
 .pc-alarm-focus>svg,.pc-alarm-focus b{color:var(--pc-orange-text)}
 .pc-alarm-focus[data-state=active][data-severity=critical]>svg,.pc-alarm-focus[data-state=active][data-severity=critical] b{color:var(--pc-critical)}
 .pc-app .ov-scene-viewport .ov-scene-alarm-marker.active{background:linear-gradient(130deg,#e57c12,#a34400);border-color:var(--pc-orange);color:white;box-shadow:0 0 18px #ff790d33}
+.pc-instance-dialog .pc-instance-row[data-selected=true]{background:var(--pc-orange-tint);box-shadow:inset 3px 0 var(--pc-orange);border-color:var(--pc-orange-border)}
+.pc-instance-dialog .pc-instance-row[data-selected=true]>button{color:var(--pc-orange-text);font-weight:600}
+.pc-alarm-dialog .ov-badge.amber{color:var(--pc-orange-text);background:var(--pc-orange-tint);border-color:var(--pc-orange-border)}
+.pc-app .ad-card[data-card-kind=alarm]{border-color:var(--pc-orange);box-shadow:0 0 0 1px var(--pc-orange-border)}
+.pc-app .ad-card[data-card-kind=alarm]>header{background:var(--pc-orange-tint);border-bottom-color:var(--pc-orange-border)}
+.pc-app .ad-card[data-card-kind=alarm]>header>:is(.ac-kind,.ac-card-title,svg){color:var(--pc-orange-text)}
