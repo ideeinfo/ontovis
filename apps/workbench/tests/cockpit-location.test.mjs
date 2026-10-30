@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {cockpitLocationCurrent,cockpitPickedObject,cockpitParentPath} from '../src/cockpitLocation.ts';
+import {cockpitLocationCurrent,cockpitPickedObject,cockpitParentPath,readCockpitLocation} from '../src/cockpitLocation.ts';
 const ref={entityUid:'part',projectCode:'project',ontobaseConnectionId:'source'};
 const request={sceneId:'scene',sceneRevision:'r1',contextEpoch:'epoch',selectedObjectRef:ref,representationChoice:{sceneModelInstanceId:'instance',modelVersionId:'model'}};
 const context={item:{entityUid:'part',entityRevision:'part-r1'},ancestors:{path:[{object:{entityUid:'parent'}},{object:{entityUid:'root'}},{object:{entityUid:'outside'}}]}};
@@ -27,4 +27,24 @@ test('model-picked descendants open their actual parent path without escaping th
  assert.deepEqual(cockpitParentPath(context,'root'),['root','parent']);
  assert.deepEqual(cockpitParentPath(context,'missing'),[]);
  assert.deepEqual(cockpitParentPath({...context,item:{entityUid:'root'}},'root'),['root']);
+});
+
+test('context validation and spatial lookup start together; location still waits for both revisions',async()=>{
+ let contextDone,locationDone;const calls=[];
+ const client={objectContext:(uid,expected,signal)=>{calls.push(['context',uid,signal]);return new Promise(resolve=>contextDone=resolve);},locate:(value,signal)=>{calls.push(['locate',value,signal]);return new Promise(resolve=>locationDone=resolve);}};
+ const signal=new AbortController().signal,pending=readCockpitLocation(client,request,signal);
+ assert.equal(calls.length,2);assert.equal(calls[0][1],'part');assert.equal(calls[1][1],request);assert.ok(calls.every(call=>call[2]===signal));
+ contextDone({...context,objectRef:ref});locationDone(located());assert.deepEqual(await pending,located());
+});
+test('parallel focus rejects changed engineering revisions and aborted late replies',async()=>{
+ const client={objectContext:async()=>({...context,objectRef:ref}),locate:async()=>({...located(),selectedObject:{...located().selectedObject,entityRevision:'new'}})};
+ await assert.rejects(readCockpitLocation(client,request,new AbortController().signal),{code:'ENGINEERING_CHANGED'});
+ const abort=new AbortController();abort.abort();
+ await assert.rejects(readCockpitLocation({...client,locate:async()=>located()},request,abort.signal),{name:'AbortError'});
+});
+
+test('alarm focus revalidates the cabinet revision shown on its card',async()=>{
+ const client={objectContext:async()=>({...context,objectRef:ref}),locate:async()=>located()};
+ await assert.rejects(readCockpitLocation(client,request,new AbortController().signal,'old'),{code:'ENGINEERING_CHANGED'});
+ assert.equal((await readCockpitLocation(client,request,new AbortController().signal,'part-r1')).status,'located');
 });

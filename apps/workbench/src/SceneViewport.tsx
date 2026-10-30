@@ -16,7 +16,7 @@ import {previewIdentity,type PreviewSelection,type PreviewStructure} from './mod
 import {sceneModelRayHit,type SceneComponentPick} from './sceneComponentPick';
 import {toDisplay,trueHeadingToThreeYaw} from './sceneTransforms';
 import {sceneViewportMessage} from './sceneViewportMessages';
-import {componentFocusCurrent,componentFocusKey,componentFocusView,prepareComponentFocus,type ComponentFocusRequest,type ComponentFocusTarget} from './sceneComponentFocus';
+import {componentFocusCurrent,componentFocusKey,componentFocusView,prepareComponentFocus,sameComponentFocusView,type ComponentFocusRequest,type ComponentFocusTarget} from './sceneComponentFocus';
 import type {ProjectModelVersion,TerrainVersion} from './resourceTypes';
 import type {EditableSceneSnapshot,ModelResourceRef,SceneModelInstance,SceneView,Vector3} from './sceneTypes';
 import {snapPoint} from './sceneOrganization';
@@ -175,7 +175,7 @@ export function SceneViewport(props:SceneViewportProps) {
     let previewInspection:ModelPreviewInspection|null=null,lastPreviewFocus='';
     let generation=0,frame=0,hiddenAt:number|null=null,loadingAbort:AbortController|null=null;
     let focusPending:string|null|string[]|undefined,initialFocusIds=current.current.initialFocusIds;
-    let tween:{start:number;from:SceneView;to:SceneView}|null=null;
+    let tween:{start:number;duration:number;from:SceneView;to:SceneView}|null=null;
     let componentTween=false,lastComponentRequest:string|null=null;
     let componentTarget:ComponentFocusTarget|null=null,componentPending:ComponentFocusTarget|null=null,componentFocused:ComponentFocusTarget|null=null;
     let pointer:{x:number;y:number;id:number}|null=null;
@@ -196,7 +196,7 @@ export function SceneViewport(props:SceneViewportProps) {
       if(wheelPending){const pending=wheelPending;wheelPending=null;
         if(!resourcesLoading&&!current.current.disabled)zoomAt(pending.x,pending.y,Math.pow(.95,pending.delta/100));}
       if(tween){
-        const progress=Math.min(1,(performance.now()-tween.start)/900),ease=progress*progress*(3-2*progress);
+        const progress=Math.max(0,Math.min(1,(performance.now()-tween.start)/tween.duration)),ease=progress*progress*(3-2*progress);
         camera.position.lerpVectors(new THREE.Vector3(...tween.from.eye),new THREE.Vector3(...tween.to.eye),ease);
         orbit.target.lerpVectors(new THREE.Vector3(...tween.from.target),new THREE.Vector3(...tween.to.target),ease);orbit.update();
         if(progress>=1){tween=null;componentTween=false;emit();}
@@ -224,7 +224,7 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const moveView=(target:SceneView,animated=true,component=false)=>{
       componentTween=component;
-      if(animated&&!matchMedia('(prefers-reduced-motion: reduce)').matches)tween={start:performance.now(),from:view(camera,orbit),to:structuredClone(target)};
+      if(animated&&!matchMedia('(prefers-reduced-motion: reduce)').matches)tween={start:performance.now(),duration:component?300:900,from:view(camera,orbit),to:structuredClone(target)};
       else {tween=null;componentTween=false;camera.position.fromArray(target.eye);orbit.target.fromArray(target.target);orbit.update();emit();}
       request();
     };
@@ -238,8 +238,10 @@ export function SceneViewport(props:SceneViewportProps) {
     const componentHighlight=()=>{
       const state=current.current,key=componentFocusKey(state.componentFocus);
       if(key!==lastComponentRequest){
-        clearComponentFocus();lastComponentRequest=key;
-        componentTarget=prepareComponentFocus(state.componentFocus,focusContext());componentPending=componentTarget;
+        const next=prepareComponentFocus(state.componentFocus,focusContext());
+        if(sameComponentFocusView(componentFocused,next)){componentTarget=next;componentFocused=next;componentPending=null;}
+        else {clearComponentFocus();componentTarget=next;componentPending=next;}
+        lastComponentRequest=key;
         if(componentTarget)focusPending=undefined;
       }
       if(componentTarget&&!componentFocusCurrent(componentTarget,state.componentFocus,focusContext()))clearComponentFocus();

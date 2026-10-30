@@ -2,6 +2,15 @@ import type {SceneLocation,SceneLocationRequest,SceneObjectContext} from './scen
 import type {SceneModelInstance} from './sceneTypes';
 import type {SceneComponentPick} from './sceneComponentPick';
 import {componentFocusKey} from './sceneComponentFocus.ts';
+import {ApiError} from './api.ts';
+import type {SceneApi} from './sceneApi';
+
+export async function readCockpitLocation(client:Pick<SceneApi,'objectContext'|'locate'>,request:SceneLocationRequest,signal:AbortSignal,expectedEntityRevision?:string){
+ const [context,value]=await Promise.all([client.objectContext(request.selectedObjectRef.entityUid,undefined,signal),client.locate(request,signal)]);
+ signal.throwIfAborted();
+ if(context.item.entityUid!==request.selectedObjectRef.entityUid||context.objectRef.entityUid!==request.selectedObjectRef.entityUid||expectedEntityRevision&&context.item.entityRevision!==expectedEntityRevision||!cockpitLocationCurrent(value,request,context))throw new ApiError(409,'ENGINEERING_CHANGED');
+ return value;
+}
 
 export function cockpitLocationCurrent(value:SceneLocation,request:SceneLocationRequest,context:SceneObjectContext):boolean {
  const ref=request.selectedObjectRef,actual=value.selectedObject.objectRef;

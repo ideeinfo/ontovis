@@ -36,3 +36,9 @@ export function globeDriftRadians(elapsedMs:number,resumedMs:number,enabled:bool
  const phase=Math.max(0,Math.min(1,resumedMs/1400)),ease=phase*phase*(3-2*phase);
  return Math.max(0,Math.min(elapsedMs,100))/1000*(Math.PI/300)*ease;
 }
+
+/** New flights start now; only a flight already running when hidden is suspended. */
+export function resumedGlobeFlightStart(start:number,hiddenAt:number|null,now:number,newFlight:boolean){
+ return newFlight?now:hiddenAt===null?start:start+Math.max(0,now-hiddenAt);
+}
+export function globeFlightProgress(start:number,now:number){return Math.max(0,Math.min(1,(now-start)/900));}

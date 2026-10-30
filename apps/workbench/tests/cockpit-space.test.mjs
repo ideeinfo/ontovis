@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {globeVector,globeDriftRadians,sceneGlobePoint,clusterGlobePoints,preparedNavigation,mayFinishNavigation} from '../src/cockpitSpace.ts';
+import {globeVector,globeDriftRadians,sceneGlobePoint,clusterGlobePoints,preparedNavigation,mayFinishNavigation,globeFlightProgress,resumedGlobeFlightStart} from '../src/cockpitSpace.ts';
 const point=(id,longitude,latitude)=>({sceneId:id,revision:'rev:1',name:id,longitude,latitude});
 const row=(longitude,latitude)=>({summary:{sceneId:'s',displayName:'Scene'},opened:{sceneRevision:'r1',snapshot:{coordinateFrame:{mode:'projected_site',anchor:{geographicAnchor:[longitude,latitude]}}}}});
 test('globe drift is frame-rate independent, ramps in, stops when disabled and cannot leap after a stall',()=>{
@@ -25,4 +25,18 @@ test('Only current prepared target enters arrival; late ready/error results cann
  assert.equal(preparedNavigation(current,'fixed:1','ready'),current);assert.equal(preparedNavigation(current,current.key,'loading'),current);assert.equal(preparedNavigation(null,current.key,'ready'),null);
  const arrived=preparedNavigation(current,current.key,'ready');assert.equal(arrived.phase,'arriving');assert.equal(preparedNavigation(arrived,current.key,'error'),arrived);assert.equal(mayFinishNavigation(arrived,2),true);assert.equal(mayFinishNavigation(arrived,1),false);assert.equal(mayFinishNavigation(null,2),false);
  const failed=preparedNavigation(current,current.key,'error');assert.equal(failed.phase,'failed');assert.equal(mayFinishNavigation(failed,2),false);assert.equal(preparedNavigation(failed,current.key,'ready'),failed);
+});
+
+test('returning after a long scene or analysis visit starts a new flight now, without the hidden time',()=>{
+ for(const duration of [1000,60000,3600000]){
+  const now=1000+duration,start=resumedGlobeFlightStart(now,1000,now,true);
+  assert.equal(start,now);assert.equal(globeFlightProgress(start,now),0);
+  assert.equal(globeFlightProgress(start,now+450),.5);assert.equal(globeFlightProgress(start,now+900),1);
+ }
+});
+test('hiding an existing flight preserves its progress, and future clocks cannot extrapolate the camera',()=>{
+ const start=resumedGlobeFlightStart(100,400,10000,false);
+ assert.equal(globeFlightProgress(start,10000),1/3);
+ assert.equal(globeFlightProgress(10000,500),0);assert.equal(globeFlightProgress(100,20000),1);
+ assert.equal(resumedGlobeFlightStart(100,null,500,false),100);
 });

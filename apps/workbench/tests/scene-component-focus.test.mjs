@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import {componentFocusCurrent,componentFocusKey,componentFocusView,prepareComponentFocus} from '../src/sceneComponentFocus.ts';
+import {componentFocusCurrent,componentFocusKey,componentFocusView,prepareComponentFocus,sameComponentFocusView} from '../src/sceneComponentFocus.ts';
 
 const item=(id='instance-A',model='model-A')=>({sceneModelInstanceId:id,displayName:id,modelVersionId:model,
   placement:{position:{mode:'local',xM:30,zM:40},height:{mode:'local_relative',relativeHeightM:2},headingDeg:30},
@@ -126,4 +126,10 @@ test('changing isolation invalidates only the temporary component display reques
  const state=context(),value={...request(),isolate:true},target=prepareComponentFocus(value,state);
  assert.equal(target.isolate,true);assert.equal(componentFocusCurrent(target,{...value,isolate:false},state),false);
  assert.equal(componentFocusKey({...value,isolate:'yes'}),null);
+});
+
+test('isolation toggles keep the current camera while a new component or source must refocus',()=>{
+ const a=prepareComponentFocus({...request(),componentKeys:['CT']},context());
+ assert.equal(sameComponentFocusView(a,{...a,isolate:true}),true);
+ for(const b of [{...a,token:2},{...a,sourceKey:'changed'},{...a,componentKeys:['CN1']},{...a,bounds:[[20,30,40],[24,34,44]]},null])assert.equal(sameComponentFocusView(a,b),false);
 });

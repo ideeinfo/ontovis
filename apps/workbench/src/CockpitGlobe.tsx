@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {Focus,Globe2,Pause,Play,X} from 'lucide-react';
 import earthMap from '../../../assets/maps/bluemarble-2048.png';
-import {clusterGlobePoints,globeDriftRadians,globeVector,type GlobePoint} from './cockpitSpace';
+import {clusterGlobePoints,globeDriftRadians,globeVector,globeFlightProgress,resumedGlobeFlightStart,type GlobePoint} from './cockpitSpace';
 import './cockpitSpace.css';
 
 export type GlobeFlight={token:number;longitude:number;latitude:number;direction:'in'|'out'};
@@ -44,8 +44,9 @@ export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause
   const refresh=()=>{
    const state=latest.current;controls.enabled=state.active&&state.flight?.direction!=='in';
    material.color.set(state.light?0xe2e8d8:0xb6cecb);glowMaterial.uniforms.tint.value.set(state.light?0x799a8d:0x518d9a);cloudMaterial.uniforms.opacity.value=state.light ? .12 : .2;
-   if(state.flight&&state.flight.token!==lastFlight){lastFlight=state.flight.token;focus(state.flight.longitude,state.flight.latitude,state.flight.direction==='in'?1.14:3.65);}
-   if(!state.active||document.hidden){cancelAnimationFrame(frame);frame=0;lastDraw=0;drifting=false;if(hiddenAt===null)hiddenAt=performance.now();if(!state.active)tween=null;}else{if(hiddenAt!==null){if(tween)tween.start+=performance.now()-hiddenAt;resumeAt=performance.now();}hiddenAt=null;schedule();}
+   const newFlight=!!state.flight&&state.flight.token!==lastFlight;
+   if(state.flight&&newFlight){lastFlight=state.flight.token;focus(state.flight.longitude,state.flight.latitude,state.flight.direction==='in'?1.14:3.65);}
+   if(!state.active||document.hidden){cancelAnimationFrame(frame);frame=0;lastDraw=0;drifting=false;if(hiddenAt===null)hiddenAt=performance.now();if(!state.active)tween=null;}else{if(hiddenAt!==null){if(tween)tween.start=resumedGlobeFlightStart(tween.start,hiddenAt,performance.now(),newFlight);resumeAt=performance.now();lastDraw=0;}hiddenAt=null;schedule();}
   };
   function draw(){
    frame=0;if(disposed||failed||document.hidden||!latest.current.active)return;
@@ -53,7 +54,7 @@ export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause
    if(canDrift&&!drifting)resumeAt=Math.max(resumeAt,now);
    const angle=globeDriftRadians(lastDraw?now-lastDraw:0,now-resumeAt,canDrift);lastDraw=now;drifting=canDrift;
    if(angle){camera.position.applyAxisAngle(new THREE.Vector3(0,1,0),angle);controls.update();}
-   if(tween){const progress=Math.min(1,(performance.now()-tween.start)/900),e=progress*progress*(3-2*progress);
+   if(tween){const progress=globeFlightProgress(tween.start,now),e=progress*progress*(3-2*progress);
     const direction=tween.from.clone().normalize(),rotation=new THREE.Quaternion().setFromUnitVectors(direction,tween.to.clone().normalize());
     direction.applyQuaternion(new THREE.Quaternion().slerp(rotation,e));camera.position.copy(direction.multiplyScalar(THREE.MathUtils.lerp(tween.from.length(),tween.to.length(),e)));controls.update();if(progress===1)tween=null;}
    camera.updateMatrixWorld();const width=element.clientWidth,height=element.clientHeight;

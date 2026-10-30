@@ -37,6 +37,10 @@ export function componentFocusCurrent(target:ComponentFocusTarget,request:Compon
   return current!==null&&current.requestKey===target.requestKey&&current.sourceKey===target.sourceKey;
 }
 
+export function sameComponentFocusView(a:ComponentFocusTarget|null,b:ComponentFocusTarget|null){
+ return !!a&&!!b&&a.sourceKey===b.sourceKey&&componentFocusKey({...a,isolate:false})===componentFocusKey({...b,isolate:false});
+}
+
 /** Fit the verified world bounds directly from the current eye/target direction. */
 export function componentFocusView(bounds:Bounds3,current:SceneView,fovDeg:number,aspect:number):SceneView|null {
   if(!validBounds(bounds)||!vector(current.eye)||!vector(current.target)||!Number.isFinite(fovDeg)||

@@ -145,12 +145,12 @@ test('only the three existing source shell display hints fade while other source
   assert.deepEqual(f.root.children,nodes);assert.equal(f.cabinet.geometry,f.geometry);f.effect.dispose();
 });
 
-test('isolating a mapped part hides other geometry without hiding descendants of a mesh parent',()=>{
+test('isolating a mapped part ghosts its assembly without hiding descendants or touching other instances',()=>{
  const f=fixture(),other=fixture('instance-B',f.material);
  f.shell.add(f.cabinet);
  f.effect.apply(['CT'],theme,true);
- assert.equal(f.shell.visible,true);assert.equal(f.shell.material.visible,false);
- assert.equal(f.cabinet.material.visible,true);assert.equal(f.interior.material.visible,false);
+ assert.equal(f.shell.visible,true);assert.equal(f.shell.material.visible,true);assert.equal(f.shell.material.opacity,.11);assert.equal(f.shell.material.depthWrite,false);
+ assert.equal(f.cabinet.material.visible,true);assert.equal(f.interior.material.visible,true);assert.equal(f.interior.material.opacity,.2);
  assert.equal(f.effect.isFadedOccluder(f.shell),true);
  assert.equal(other.shell.material,f.material);assert.equal(f.material.visible,true);
  const hidden=f.shell.material,cleanup=disposed(hidden);
@@ -163,4 +163,14 @@ test('unknown isolated selection restores all materials and does not leave a bla
  const f=fixture();f.effect.apply(['CT'],theme,true);f.effect.apply(['missing'],theme,true);
  for(const mesh of [f.cabinet,f.proxy,f.shell,f.interior])assert.equal(mesh.material,f.material);
  f.effect.dispose();
+});
+
+test('isolation ghosts basic materials and respects source opacity and hidden state',()=>{
+ const material=new THREE.MeshBasicMaterial({transparent:true,opacity:.5}),f=fixture('instance-A',material);
+ f.interior.material=material.clone();f.interior.material.visible=false;
+ const original=f.interior.material;f.effect.apply(['CT'],theme,true);
+ assert.equal(f.shell.material.opacity,.055);assert.equal(f.proxy.material.opacity,.1);
+ assert.equal(f.interior.material.visible,false);assert.equal(f.cabinet.material.opacity,.5);
+ assert.equal(f.effect.isFadedOccluder(f.proxy),true);assert.equal(f.effect.isFadedOccluder(f.cabinet),false);
+ f.effect.restore();assert.equal(f.interior.material,original);assert.equal(f.shell.material,material);
 });
