@@ -14,7 +14,7 @@ export function useCockpitWeather(api:WorkbenchApi,sceneId:string,active:boolean
  useEffect(()=>{if(!active||!visible)return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[active,visible]);
  return {value,error,loading,now,usable:active&&visible&&weatherUsable(value,now)};
 }
-export function WeatherEffects({value,enabled}:{value:WeatherView|null;enabled:boolean}){
- const condition=value?.forecast?.condition;if(!enabled||!condition)return null;
- return <div className={'wx-effects wx-'+condition} aria-hidden="true"><div className="wx-atmosphere"/>{['rain','snow','sleet'].includes(condition)&&Array.from({length:40},(_,i)=><i key={i} style={{left:((i*37)%101)+'%',animationDelay:-(i%13)*.31+'s',animationDuration:(condition==='rain'?.7+(i%4)*.1:4+(i%7)*.6)+'s',opacity:.2+(i%5)*.1}}/>)}</div>;
+export function WeatherEffects({value,enabled,condition:override,paused=false}:{value:WeatherView|null;enabled:boolean;condition?:string;paused?:boolean}){
+ const condition=override||value?.forecast?.condition;if(!enabled||!condition)return null;
+ return <div className={'wx-effects wx-'+condition} aria-hidden="true" data-paused={paused}><div className="wx-atmosphere"/>{['rain','snow','sleet'].includes(condition)&&Array.from({length:40},(_,i)=><i key={i} style={{left:((i*37)%101)+'%',animationDelay:-(i%13)*.31+'s',animationDuration:(condition==='rain'?.7+(i%4)*.1:4+(i%7)*.6)+'s',opacity:.2+(i%5)*.1}}/>)}</div>;
 }

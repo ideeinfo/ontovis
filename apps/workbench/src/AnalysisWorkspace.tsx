@@ -33,15 +33,15 @@ const zhError:Record<string,string>={ANALYSIS_BUSY:'分析读取较忙，请稍�
   ANALYSIS_REVIEW_NOT_CONFIGURED:'当前分析尚未开放结论确认。',ACCESS_CHANGED:'项目权限已变化，请重新打开分析。',
   NOT_FOUND_OR_FORBIDDEN:'分析不存在或当前账号无权查看。',INVALID_REQUEST:'请检查分析名称、内容和时间范围。'};
 
-type WorkspaceProps={api:DraftApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void;initialEntry?:AnalysisEntry|null;onOpenWorkOrder?:(code:string)=>void};
+type WorkspaceProps={presentation?:boolean;api:DraftApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void;initialEntry?:AnalysisEntry|null;onOpenWorkOrder?:(code:string)=>void};
 export function AnalysisWorkspace(props:WorkspaceProps){
  const entry=props.initialEntry;
  if(entry&&'workOrderReference' in entry)return <WorkOrderReferenceView api={props.api} entry={entry} en={props.locale==='en'} onReturn={props.onOpenWorkOrder?()=>props.onOpenWorkOrder!(entry.workOrderReference.orderId):undefined}/>;
  return <CanvasWorkspace {...props}/>;
 }
-function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkOrder}:WorkspaceProps) {
+function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkOrder,presentation=false}:WorkspaceProps) {
   const en=locale==='en'; const t=(zh:string,eng:string)=>en?eng:zh;
-  const listId=useId();
+  const listId=useId(),listScroll=useRef<HTMLUListElement>(null);
   const [list,setList]=useState<Listing|null>(null),[query,setQuery]=useState(''),[filter,setFilter]=useState(''),[reload,setReload]=useState(0);
   const [draft,setDraft]=useState<CanvasSnapshot|null>(null),[receipt,setReceipt]=useState<DraftReceipt|null>(null),[saved,setSaved]=useState('');
   const [selected,setSelected]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState<unknown>(null);
@@ -331,10 +331,10 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
       <div className="ad-list-tools"><Btn aria-pressed={trashView} onClick={()=>{setTrashView(v=>!v);setQuery('');setFilter('');setList(null);}}><Trash2 size={14}/>{trashView?t('正常画布','Active canvases'):t('回收站','Recycle bin')}</Btn><IconBtn label={t('刷新画布列表','Refresh canvas list')} disabled={loading} onClick={()=>setReload(v=>v+1)}><RefreshCw size={14}/></IconBtn></div>
       <form className="ad-search" onSubmit={event=>{event.preventDefault();setFilter(query);}}><Search size={14}/><input aria-label={t('搜索画布','Search canvases')} placeholder={t('搜索名称','Search titles')} value={query} onChange={event=>setQuery(event.target.value)}/><button>{t('搜索','Search')}</button></form>
       <Btn primary disabled={!writable||busy||uncertain||lifecycleUnknown} onClick={()=>change(()=>{fresh();setTrashView(false);})}><Plus size={14}/>{t('新建分析','New analysis')}</Btn>
-      <ul className="ad-list-items ov-list" aria-label={trashView?t('画布回收站','Canvas recycle bin'):t('画布列表','Canvas list')}>{list?.items.map(item=>{const actions=listActions(item);return <RowContext key={item.analysisSessionId} name={item.title} disabled={busy||lifecycleUnknown} actions={actions}><li className={`ov-list-item${receipt?.analysisSessionId===item.analysisSessionId?' selected':''}`}><button type="button" className="ov-list-main" disabled={busy||lifecycleUnknown} aria-current={receipt?.analysisSessionId===item.analysisSessionId?'page':undefined} onClick={()=>change(()=>void open(item.analysisSessionId))}><span className="ov-list-copy"><strong>{item.title}</strong><small>{t(statuses.find(s=>s[0]===item.status)?.[1]||'分析中',statuses.find(s=>s[0]===item.status)?.[2]||'Analyzing')} · r{item.analysisRevision}</small><time>{new Date(item.updatedAt).toLocaleString(en?'en-GB':'zh-CN')}</time></span></button><RowActions name={item.title} actions={actions} locale={locale} disabled={busy||lifecycleUnknown}/></li></RowContext>;})}
+      <ul ref={listScroll} className={"ad-list-items ov-list"+(presentation?" pc-paged-native":"")} aria-label={trashView?t('画布回收站','Canvas recycle bin'):t('画布列表','Canvas list')}>{list?.items.map(item=>{const actions=listActions(item);return <RowContext key={item.analysisSessionId} name={item.title} disabled={busy||lifecycleUnknown} actions={actions}><li className={`ov-list-item${receipt?.analysisSessionId===item.analysisSessionId?' selected':''}`}><button type="button" className="ov-list-main" disabled={busy||lifecycleUnknown} aria-current={receipt?.analysisSessionId===item.analysisSessionId?'page':undefined} onClick={()=>change(()=>void open(item.analysisSessionId))}><span className="ov-list-copy"><strong>{item.title}</strong><small>{t(statuses.find(s=>s[0]===item.status)?.[1]||'分析中',statuses.find(s=>s[0]===item.status)?.[2]||'Analyzing')} · r{item.analysisRevision}</small><time>{new Date(item.updatedAt).toLocaleString(en?'en-GB':'zh-CN')}</time></span></button><RowActions name={item.title} actions={actions} locale={locale} disabled={busy||lifecycleUnknown}/></li></RowContext>;})}
         {!loading&&list&&!list.total&&<li><p>{trashView?t('回收站为空','Recycle bin is empty'):t('还没有分析','No analyses yet')}</p></li>}{loading&&<li><p role="status">{t('正在读取…','Loading…')}</p></li>}
         {list?.nextCursor&&<li><Btn disabled={loading} onClick={()=>void more()}>{t('加载更多','Load more')}</Btn></li>}</ul>
-      <footer>{t('仅本人可见','Private to you')}</footer>
+      <footer>{t('仅本人可见','Private to you')}{presentation&&<span className="pc-list-page-buttons"><Btn aria-label={t('上一页画布','Previous canvases')} onClick={()=>listScroll.current?.scrollBy({top:-listScroll.current.clientHeight,behavior:'smooth'})}>↑</Btn><Btn aria-label={t('下一页画布','Next canvases')} onClick={()=>listScroll.current?.scrollBy({top:listScroll.current.clientHeight,behavior:'smooth'})}>↓</Btn></span>}</footer>
     </aside>}
     <div className="ad-editor">
       <header ref={heading} className="ad-heading"><Btn className="ad-list-toggle" title={listVisible?t('隐藏画布列表','Hide canvas list'):t('显示画布列表','Show canvas list')} aria-expanded={listVisible} aria-controls={listId} onClick={()=>setListVisible(v=>!v)}><PanelLeft size={16}/>{t('画布列表','Canvas list')}</Btn>{draft&&<>
