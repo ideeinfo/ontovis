@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {pageWindow,presentationEnvironment} from '../src/cockpitDisplayState.ts';
+import {deckCapacity,pageWindow,presentationEnvironment} from '../src/cockpitDisplayState.ts';
 import {environmentPreset} from '../src/sceneEnvironment.ts';
+test('Presentation minimum rows fit within the measured deck and retain every page item',()=>{
+ for(const minimum of [3,5])for(const height of [210,300,480]){
+  const value=deckCapacity(height,124,minimum);assert.ok(value.count>=minimum);assert.ok(value.rowHeight*value.count<=height-42+.00001);
+  const seen=[];for(let i=0;i<Math.ceil(13/value.count);i++){const p=pageWindow(13,i,value.count);seen.push(...Array.from({length:p.end-p.start},(_,n)=>p.start+n));}assert.deepEqual(seen,Array.from({length:13},(_,n)=>n));
+ }
+});
 test('Paging adapts to short panels, reaches every item and clamps after filtering',()=>{
  const visited=[];for(let i=0;i<5;i++){const page=pageWindow(13,i,3);visited.push(...Array.from({length:page.end-page.start},(_,n)=>page.start+n));}
  assert.deepEqual(visited,Array.from({length:13},(_,n)=>n));

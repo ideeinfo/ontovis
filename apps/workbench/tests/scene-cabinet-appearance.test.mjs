@@ -144,3 +144,23 @@ test('only the three existing source shell display hints fade while other source
   f.effect.restore();for(const mesh of shells)assert.equal(mesh.material,f.material);
   assert.deepEqual(f.root.children,nodes);assert.equal(f.cabinet.geometry,f.geometry);f.effect.dispose();
 });
+
+test('isolating a mapped part hides other geometry without hiding descendants of a mesh parent',()=>{
+ const f=fixture(),other=fixture('instance-B',f.material);
+ f.shell.add(f.cabinet);
+ f.effect.apply(['CT'],theme,true);
+ assert.equal(f.shell.visible,true);assert.equal(f.shell.material.visible,false);
+ assert.equal(f.cabinet.material.visible,true);assert.equal(f.interior.material.visible,false);
+ assert.equal(f.effect.isFadedOccluder(f.shell),true);
+ assert.equal(other.shell.material,f.material);assert.equal(f.material.visible,true);
+ const hidden=f.shell.material,cleanup=disposed(hidden);
+ f.effect.apply(['CT'],theme,false);
+ assert.equal(cleanup.count,1);assert.equal(f.shell.material.visible,true);assert.equal(f.shell.material.opacity,.2);
+ f.effect.restore();assert.equal(f.shell.material,f.material);assert.equal(f.cabinet.material,f.material);
+ f.effect.dispose();other.effect.dispose();
+});
+test('unknown isolated selection restores all materials and does not leave a blank model',()=>{
+ const f=fixture();f.effect.apply(['CT'],theme,true);f.effect.apply(['missing'],theme,true);
+ for(const mesh of [f.cabinet,f.proxy,f.shell,f.interior])assert.equal(mesh.material,f.material);
+ f.effect.dispose();
+});

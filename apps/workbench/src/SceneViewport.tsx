@@ -46,6 +46,7 @@ export interface SceneViewportProps {
   environmentPreview?:{value:SceneEnvironmentV1|null}|null;
   api:WorkbenchApi;snapshot:EditableSceneSnapshot;modelRefs:ModelResourceRef[];terrainVersion:TerrainVersion|null;
   selectedId:string|null;editing:boolean;disabled?:boolean;personalVisibility:Record<string,boolean>;
+  initialFocusIds?:string[];
   selectedIds?:string[];gridSnap?:number;cameraControl?:{current:SceneCameraControl|null};onCameraInteraction?:()=>void;
   terrainVisible:boolean;pendingPlacement:boolean;placementModel?:ProjectModelVersion|null;previewModel?:ProjectModelVersion|null;
   initialPreviewView?:SceneView|null;
@@ -173,7 +174,7 @@ export function SceneViewport(props:SceneViewportProps) {
     let preview:THREE.Group|null=null,previewKey='',restoreView:SceneView|null=null;
     let previewInspection:ModelPreviewInspection|null=null,lastPreviewFocus='';
     let generation=0,frame=0,hiddenAt:number|null=null,loadingAbort:AbortController|null=null;
-    let focusPending:string|null|string[]|undefined;
+    let focusPending:string|null|string[]|undefined,initialFocusIds=current.current.initialFocusIds;
     let tween:{start:number;from:SceneView;to:SceneView}|null=null;
     let componentTween=false,lastComponentRequest:string|null=null;
     let componentTarget:ComponentFocusTarget|null=null,componentPending:ComponentFocusTarget|null=null,componentFocused:ComponentFocusTarget|null=null;
@@ -255,7 +256,7 @@ export function SceneViewport(props:SceneViewportProps) {
       }
       const color=getComputedStyle(document.documentElement).getPropertyValue('--primary').trim()||'#007e6d';
       for(const value of entries.values()){
-        if(componentFocused&&value===entry&&componentBox.visible)value.appearance.apply(componentFocused.componentKeys??[],color);
+        if(componentFocused&&value===entry&&componentBox.visible)value.appearance.apply(componentFocused.componentKeys??[],color,componentFocused.isolate);
         else value.appearance.restore();
       }
       return componentTarget!==null;
@@ -454,7 +455,8 @@ export function SceneViewport(props:SceneViewportProps) {
       resourcesLoading=waitingMetadata||progress.state().stage==='display';
       if(!waitingMetadata&&progress.state().stage==='display')awaitingDisplay=progress;
       appearance();
-      if(focusPending!==undefined){const id=focusPending;focusPending=undefined;fit(id);}
+      if(focusPending!==undefined){const id=focusPending;focusPending=undefined;initialFocusIds=undefined;fit(id);}
+      else if(initialFocusIds&&!waitingMetadata){const target=selectedModelView(camera,selectedModelBounds(entries,initialFocusIds),camera.position.clone().sub(orbit.target));initialFocusIds=undefined;if(target)moveView(target,false);}
     };
     const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
     const prepareRay=(x:number,y:number)=>{
@@ -479,20 +481,20 @@ export function SceneViewport(props:SceneViewportProps) {
     const wheel=(event:WheelEvent)=>{
       if(current.current.disabled||!orbit.enabled||!orbit.enableZoom||resourcesLoading)return;
       event.preventDefault();event.stopImmediatePropagation();
-      current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;
+      initialFocusIds=undefined;current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;
       const delta=-event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?element.clientHeight:1)*(event.ctrlKey?10:1);
       wheelPending={x:event.clientX,y:event.clientY,delta:Math.max(-1200,Math.min(1200,(wheelPending?.delta??0)+delta))};request();
     };
     const hitModel=(x:number,y:number)=>{
       prepareRay(x,y);
       const active=current.current.componentPickingInstanceId;
-      const entry=active?entries.get(active):undefined,target=active?entry?.root:models;if(!target)return null;
+      const entry=active?entries.get(active):undefined,target=active&&!current.current.presentation?entry?.root:models;if(!target)return null;
       return sceneModelRayHit(ray.intersectObject(target,true),models,active&&entry?
         {instanceId:active,isFadedOccluder:(object,index)=>entry.appearance.isFadedOccluder(object,index)}:undefined);
     };
     const hitId=(x:number,y:number)=>hitModel(x,y)?.sceneModelInstanceId??null;
     const down=(event:PointerEvent)=>{
-      if(event.button!==0)return;current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;
+      if(event.button!==0)return;initialFocusIds=undefined;current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;
       pointer={x:event.clientX,y:event.clientY,id:event.pointerId};
       const state=current.current;if(state.disabled||state.previewModel||!state.editing||state.pendingPlacement||movePending||state.componentPickingInstanceId)return;
       const id=hitId(event.clientX,event.clientY),item=state.snapshot.instances.find(value=>value.sceneModelInstanceId===id);
@@ -534,6 +536,7 @@ export function SceneViewport(props:SceneViewportProps) {
       if(state.componentPickingInstanceId){
         const hit=hitModel(event.clientX,event.clientY);
         if(hit?.sceneModelInstanceId===state.componentPickingInstanceId&&hit.component)state.onComponentPick?.(hit.component);
+        else if(state.presentation)state.onSelect(hit?.sceneModelInstanceId??null);
         return;
       }
       if(state.editing&&state.pendingPlacement){const point=groundPoint(event.clientX,event.clientY);if(point)state.onPoint(point.toArray() as Vector3);else report(new ApiError(422,'OUTSIDE_COVERAGE'));}
@@ -569,21 +572,21 @@ export function SceneViewport(props:SceneViewportProps) {
       // Layout dimensions exclude the enclosing analysis canvas's CSS zoom.
       const width=Math.max(1,element.clientWidth),height=Math.max(1,element.clientHeight);
       camera.aspect=width/height;camera.updateProjectionMatrix();renderer.setSize(width,height);request();});resize.observe(element);
-    const orbitStart=()=>{current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;};orbit.addEventListener('change',request);orbit.addEventListener('start',orbitStart);orbit.addEventListener('end',emit);
+    const orbitStart=()=>{initialFocusIds=undefined;current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;};orbit.addEventListener('change',request);orbit.addEventListener('start',orbitStart);orbit.addEventListener('end',emit);
     const canvas=renderer.domElement;
     canvas.addEventListener('wheel',wheel,{capture:true,passive:false});
     canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',motion);canvas.addEventListener('pointerup',up);
     canvas.addEventListener('pointercancel',cancelDrag);canvas.addEventListener('keydown',escape);canvas.addEventListener('drop',drop);canvas.addEventListener('dragover',dragover);
     document.addEventListener('visibilitychange',visible);
     runtime.current={sync:()=>void sync(),preload,appearance,visibility:visible,componentFocus:highlight,previewSelection:highlight,
-      fit:()=>{clearComponentFocus();if(previewInspection){previewInspection.restore();current.current.onPreviewPick?.(previewInspection.structure.identity,null);fit();request();return;}
+      fit:()=>{initialFocusIds=undefined;clearComponentFocus();if(previewInspection){previewInspection.restore();current.current.onPreviewPick?.(previewInspection.structure.identity,null);fit();request();return;}
         if(resourcesLoading)focusPending=null;else fit();highlight();},
-      focus:id=>{clearComponentFocus();if(previewInspection){previewInspection.restore();current.current.onPreviewPick?.(previewInspection.structure.identity,null);fit();request();return;}
+      focus:id=>{initialFocusIds=undefined;clearComponentFocus();if(previewInspection){previewInspection.restore();current.current.onPreviewPick?.(previewInspection.structure.identity,null);fit();request();return;}
         if(resourcesLoading||(Array.isArray(id)?id.some(member=>!entries.has(member)):id&&!entries.has(id)))focusPending=id;else fit(id);highlight();},
-      setView:target=>{if(restoreView)restoreView=structuredClone(target);else moveView(target);},
-      zoom:factor=>{tween=null;componentTween=false;componentPending=null;const rect=canvas.getBoundingClientRect();zoomAt(rect.left+rect.width/2,rect.top+rect.height/2,factor);request();}};
+      setView:target=>{initialFocusIds=undefined;if(restoreView)restoreView=structuredClone(target);else moveView(target);},
+      zoom:factor=>{initialFocusIds=undefined;tween=null;componentTween=false;componentPending=null;const rect=canvas.getBoundingClientRect();zoomAt(rect.left+rect.width/2,rect.top+rect.height/2,factor);request();}};
     const cameraControl:SceneCameraControl={getView:()=>view(camera,orbit),ready:()=>!disposed&&!stale()&&!resourcesLoading&&!preview&&!latestError.current,
-      setView:target=>{if(disposed||stale())return;if(componentTarget||componentFocused)clearComponentFocus();moveView(target,false);}};
+      setView:target=>{if(disposed||stale())return;initialFocusIds=undefined;if(componentTarget||componentFocused)clearComponentFocus();moveView(target,false);}};
     if(current.current.cameraControl)current.current.cameraControl.current=cameraControl;
     moveView(current.current.snapshot.initialView,false);void sync();
     return ()=>{

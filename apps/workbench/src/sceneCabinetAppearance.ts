@@ -14,17 +14,18 @@ export class SceneCabinetAppearance {
   private activeKey:string|null=null;
   private disposed=false;
   constructor(root:THREE.Group,version:Pick<ProjectModelVersion,'modelVersionId'|'components'>){this.root=root;this.version=version;}
-  apply(componentKeys:readonly string[],color:string){
+  apply(componentKeys:readonly string[],color:string,isolate=false){
     if(this.disposed)return;
     const id=this.root.userData.sceneModelInstanceId,version=this.version.modelVersionId;
     const keys=new Set(componentKeys),components=this.version.components;
     if(!this.root.visible||typeof id!=='string'||!id||this.root.userData.ontoVisModelVersionId!==version||
       !keys.size||keys.size!==componentKeys.length||[...keys].some(key=>typeof key!=='string'||!key||
         components.filter(component=>component.componentKey===key).length!==1)){this.restore();return;}
-    const key=JSON.stringify([[...keys].sort(),color]);if(key===this.activeKey)return;
+    const key=JSON.stringify([[...keys].sort(),color,isolate]);if(key===this.activeKey)return;
     this.restore();
-    const selected=new Set<THREE.Mesh>(),enclosing:THREE.Mesh[]=[];
+    const selected=new Set<THREE.Mesh>(),enclosing:THREE.Mesh[]=[],meshes:THREE.Mesh[]=[];
     this.root.traverse(node=>{
+      if(node instanceof THREE.Mesh)meshes.push(node);
       if(!(node instanceof THREE.Mesh)||node.userData.sceneModelInstanceId!==id||node.userData.ontoVisModelVersionId!==version)return;
       const data=node.userData,component=components.find(item=>item.componentKey===data.ontoVisComponentKey);
       if(component&&keys.has(component.componentKey)&&(sourceIndex(data.ontoVisNodeIndex)&&component.nodeIndices.includes(data.ontoVisNodeIndex)||
@@ -33,9 +34,11 @@ export class SceneCabinetAppearance {
       if(sourceIndex(data.ontoVisNodeIndex)&&data.ontoVisProxySchematic!==true&&shells.has(data.component))enclosing.push(node);
     });
     if(!selected.size)return;
-    for(const mesh of new Set([...selected,...enclosing])){
+    for(const mesh of isolate?meshes:new Set([...selected,...enclosing])){
       const original=mesh.material,owned:THREE.Material[]=[],highlight=selected.has(mesh);
       const copy=(material:THREE.Material)=>{
+        // Material visibility keeps selected descendants of mesh parents renderable.
+        if(isolate&&!highlight){const value=material.clone();value.visible=false;owned.push(value);return value;}
         if(!(material instanceof THREE.MeshStandardMaterial))return material;
         const value=material.clone();owned.push(value);
         if(highlight){value.emissive.set(color);value.emissiveIntensity=.25;}

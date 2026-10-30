@@ -121,3 +121,9 @@ test('invalid view inputs hold the camera and a coincident eye uses a finite fal
   assert.equal(componentFocusView(request().bounds,view,42,NaN),null);
   assert.ok(componentFocusView(request().bounds,{eye:[0,0,0],target:[0,0,0]},42,1).eye.every(Number.isFinite));
 });
+
+test('changing isolation invalidates only the temporary component display request',()=>{
+ const state=context(),value={...request(),isolate:true},target=prepareComponentFocus(value,state);
+ assert.equal(target.isolate,true);assert.equal(componentFocusCurrent(target,{...value,isolate:false},state),false);
+ assert.equal(componentFocusKey({...value,isolate:'yes'}),null);
+});

@@ -7,6 +7,11 @@ export function pageWindow(total:number,page:number,size:number){
  const count=Math.max(1,Math.floor(size)||1),pages=Math.max(1,Math.ceil(total/count)),current=Math.max(0,Math.min(pages-1,Math.floor(page)||0));
  return {page:current,pages,start:current*count,end:Math.min(total,(current+1)*count)};
 }
+export function deckCapacity(height:number,rowHeight:number,minimumRows=1){
+ const available=Math.max(1,height-42),minimum=Math.max(1,Math.floor(minimumRows));
+ const count=Math.max(minimum,Math.floor(available/rowHeight));
+ return {count,rowHeight:Math.min(rowHeight,available/count)};
+}
 /** Presentation preferences never modify the saved scene or forecast. */
 export function presentationEnvironment(base:SceneEnvironmentV1|null|undefined,forecast:WeatherView|null,light:CockpitLight,weather:CockpitWeather):{value:SceneEnvironmentV1}|null{
  if(light==='scene'&&(weather==='off'||weather==='forecast'&&!forecast))return null;
