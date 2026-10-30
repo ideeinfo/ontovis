@@ -1,5 +1,7 @@
 # 本机交付与验证输出
 
+- [公开地形与影像使用场景中心](scene-geodata-center-20261030/README.md)
+
 - [保存场景同步保存当前视角](scene-saved-view-20261030/README.md)
 
 - [Q-19固定手册知识邻域、证据追溯与助手状态恢复](q19-manual-neighborhood-20261029/README.md)
