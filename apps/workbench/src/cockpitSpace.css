@@ -2,3 +2,5 @@
 
 .pc-model-view{display:grid;gap:8px;border-bottom:1px solid var(--pc-border);padding-bottom:13px}.pc-model-view>div{display:flex;gap:3px;border:1px solid var(--pc-border);border-radius:8px;padding:3px}.pc-model-view button{display:flex;align-items:center;justify-content:center;gap:5px;flex:1;font-size:12px;padding:8px 3px;border-radius:5px}.pc-model-view button[aria-pressed=true]{background:#458f7940;color:var(--pc-green)}.pc-model-view button:disabled{cursor:default;opacity:.45}.pc-model-view p{font-size:11px!important;color:var(--pc-muted)}
 @container cockpit (max-width:700px){.pc-assets.pc-space-hidden{display:none}.pc-assets.pc-space-departing{position:absolute;width:100%;z-index:2}.pc-assets{padding-top:330px}}
+
+.pc-globe-pause{position:absolute;bottom:26px;right:80px;z-index:4;border:1px solid var(--pc-border)!important;background:var(--pc-panel)!important;border-radius:8px;padding:10px!important}@container cockpit (max-width:700px){.pc-globe-pause{right:65px;bottom:15px}}

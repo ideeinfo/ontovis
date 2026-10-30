@@ -5,19 +5,21 @@ import {Badge,Btn,IconBtn} from './Primitives';
 import {RowActions,RowContext} from './ListMenus';
 import {alarmAt,initialReplay,sampleAt,trendDomain,trendSegments,type SimulationCatalogue,type SimulationDetail} from './simulatedAlarms';
 import {useSimulationStream} from './useSimulationStream';
+import {requireReplaySelection,type ReplaySelection} from './cockpitAlarms';
 import './dataAlarms.css';
 
 const ROOT='/api/workbench/analysis-sessions/simulation';
 type DataApi=Pick<WorkbenchApi,'request'|'revision'|'epoch'|'subscribeSimulation'>;
-export function DataAlarms({api,active=true,locale='zh',onOpenWorkOrders,onAnalyze}:{api:DataApi;active?:boolean;locale?:string;onOpenWorkOrders:(faultCode:string)=>void;onAnalyze?:(entry:{datasetId:string;datasetRevision:string})=>void}){
+export function DataAlarms({api,active=true,locale='zh',initialDataset,onOpenWorkOrders,onAnalyze}:{api:DataApi;active?:boolean;locale?:string;initialDataset?:ReplaySelection;onOpenWorkOrders:(faultCode:string)=>void;onAnalyze?:(entry:{datasetId:string;datasetRevision:string})=>void}){
   const en=locale==='en',[catalogue,setCatalogue]=useState<SimulationCatalogue|null>(null),[detail,setDetail]=useState<SimulationDetail|null>(null);
-  const [selected,setSelected]=useState(''),[query,setQuery]=useState(''),[metric,setMetric]=useState('sensor_temperature');
+  const [selected,setSelected]=useState(initialDataset?.datasetId||''),[query,setQuery]=useState(''),[metric,setMetric]=useState('sensor_temperature');
   const [second,setSecond]=useState(60),[playing,setPlaying]=useState(false),[refresh,setRefresh]=useState(0);
   const [loading,setLoading]=useState(true),[error,setError]=useState<unknown>(null),[unavailable,setUnavailable]=useState(false);
   const [reading,setReading]=useState(false);
   useEffect(()=>{
     const abort=new AbortController();setCatalogue(null);setDetail(null);setLoading(true);setError(null);setUnavailable(false);setPlaying(false);
     void api.request<SimulationCatalogue>(ROOT+'/catalogue',{includeDetail:true,...(selected?{datasetId:selected}:{})},abort.signal).then(value=>{
+      if(initialDataset&&selected===initialDataset.datasetId)requireReplaySelection(value,initialDataset);
       if(!abort.signal.aborted){setCatalogue(value);setSelected(previous=>value.items.some(row=>row.datasetId===previous)?previous:value.items[0]?.datasetId||'');}
     }).catch(value=>{if(!abort.signal.aborted&&!cancelled(value)){
       if(value instanceof ApiError&&value.code==='SIMULATION_PROJECT_REQUIRED')setUnavailable(true);else setError(value);

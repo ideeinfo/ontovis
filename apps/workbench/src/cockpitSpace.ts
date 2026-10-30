@@ -29,3 +29,10 @@ export function preparedNavigation(current:SpaceNavigation|null,key:string,state
  return {...current,phase:state==='ready'?'arriving':'failed'};
 }
 export function mayFinishNavigation(current:SpaceNavigation|null,token:number){return current?.token===token&&current.phase==='arriving';}
+
+/** A display orbit, capped after a stalled frame and eased back in after interaction. */
+export function globeDriftRadians(elapsedMs:number,resumedMs:number,enabled:boolean){
+ if(!enabled||!Number.isFinite(elapsedMs)||!Number.isFinite(resumedMs))return 0;
+ const phase=Math.max(0,Math.min(1,resumedMs/1400)),ease=phase*phase*(3-2*phase);
+ return Math.max(0,Math.min(elapsedMs,100))/1000*(Math.PI/300)*ease;
+}
