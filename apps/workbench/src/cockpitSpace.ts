@@ -42,3 +42,6 @@ export function resumedGlobeFlightStart(start:number,hiddenAt:number|null,now:nu
  return newFlight?now:hiddenAt===null?start:start+Math.max(0,now-hiddenAt);
 }
 export function globeFlightProgress(start:number,now:number){return Math.max(0,Math.min(1,(now-start)/900));}
+
+/** A flight's final frame must hand the loop back to idle drift even without a controls-change event. */
+export function globeFramePlan(hasFlight:boolean,driftAllowed:boolean){return {drift:driftAllowed&&!hasFlight,continue:hasFlight||driftAllowed};}

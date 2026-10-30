@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {Focus,Globe2,Pause,Play,X} from 'lucide-react';
 import earthMap from '../../../assets/maps/bluemarble-2048.png';
-import {clusterGlobePoints,globeDriftRadians,globeVector,globeFlightProgress,resumedGlobeFlightStart,type GlobePoint} from './cockpitSpace';
+import {clusterGlobePoints,globeDriftRadians,globeVector,globeFlightProgress,resumedGlobeFlightStart,globeFramePlan,type GlobePoint} from './cockpitSpace';
 import './cockpitSpace.css';
 
 export type GlobeFlight={token:number;longitude:number;latitude:number;direction:'in'|'out'};
@@ -50,7 +50,7 @@ export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause
   };
   function draw(){
    frame=0;if(disposed||failed||document.hidden||!latest.current.active)return;
-   const now=performance.now(),state=latest.current,canDrift=!state.paused&&!state.inspecting&&!interacting&&!media.matches&&!tween&&state.flight?.direction!=='in';
+   const now=performance.now(),state=latest.current,plan=globeFramePlan(!!tween,!state.paused&&!state.inspecting&&!interacting&&!media.matches&&state.flight?.direction!=='in'),canDrift=plan.drift;
    if(canDrift&&!drifting)resumeAt=Math.max(resumeAt,now);
    const angle=globeDriftRadians(lastDraw?now-lastDraw:0,now-resumeAt,canDrift);lastDraw=now;drifting=canDrift;
    if(angle){camera.position.applyAxisAngle(new THREE.Vector3(0,1,0),angle);controls.update();}
@@ -62,7 +62,7 @@ export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause
     const point=new THREE.Vector3(...globeVector(group.longitude,group.latitude)),front=point.dot(camera.position)>1.025;
     point.multiplyScalar(1.016).project(camera);button.style.display=front&&point.z>=-1&&point.z<=1?'':'none';button.style.left=`${element.offsetLeft+(point.x+1)*width/2}px`;button.style.top=`${element.offsetTop+(1-point.y)*height/2}px`;
    }
-   try{renderer.render(scene,camera);}catch{failed=true;setFallback(true);return;}if(tween||canDrift)schedule();
+   try{renderer.render(scene,camera);}catch{failed=true;setFallback(true);return;}if(plan.continue)schedule();
   }
   const resize=new ResizeObserver(()=>{const width=Math.max(1,element.clientWidth),height=Math.max(1,element.clientHeight);renderer.setSize(width,height);camera.aspect=width/height;camera.updateProjectionMatrix();schedule();});resize.observe(element);
   const change=()=>schedule(),start=()=>{tween=null;interacting=true;drifting=false;},end=()=>{interacting=false;resumeAt=performance.now()+4500;lastDraw=0;schedule();};controls.addEventListener('change',change);controls.addEventListener('start',start);controls.addEventListener('end',end);

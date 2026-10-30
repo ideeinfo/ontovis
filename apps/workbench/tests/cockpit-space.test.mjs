@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {globeVector,globeDriftRadians,sceneGlobePoint,clusterGlobePoints,preparedNavigation,mayFinishNavigation,globeFlightProgress,resumedGlobeFlightStart} from '../src/cockpitSpace.ts';
+import {globeVector,globeDriftRadians,sceneGlobePoint,clusterGlobePoints,preparedNavigation,mayFinishNavigation,globeFlightProgress,resumedGlobeFlightStart,globeFramePlan} from '../src/cockpitSpace.ts';
 const point=(id,longitude,latitude)=>({sceneId:id,revision:'rev:1',name:id,longitude,latitude});
 const row=(longitude,latitude)=>({summary:{sceneId:'s',displayName:'Scene'},opened:{sceneRevision:'r1',snapshot:{coordinateFrame:{mode:'projected_site',anchor:{geographicAnchor:[longitude,latitude]}}}}});
 test('globe drift is frame-rate independent, ramps in, stops when disabled and cannot leap after a stall',()=>{
@@ -39,4 +39,17 @@ test('hiding an existing flight preserves its progress, and future clocks cannot
  assert.equal(globeFlightProgress(start,10000),1/3);
  assert.equal(globeFlightProgress(10000,500),0);assert.equal(globeFlightProgress(100,20000),1);
  assert.equal(resumedGlobeFlightStart(100,null,500,false),100);
+});
+
+test('the last flight frame schedules idle drift without an OrbitControls change; pause still settles',()=>{
+ for(const driftAllowed of [true,false]){
+  let flight=true,pending=true;const frames=[];
+  for(let n=0;pending&&n<4;n++){
+   const plan=globeFramePlan(flight,driftAllowed);frames.push(plan.drift);
+   if(globeFlightProgress(0,900+n*16)===1)flight=false;
+   pending=plan.continue;
+  }
+  assert.deepEqual(frames,driftAllowed?[false,true,true,true]:[false,false]);
+  assert.equal(pending,driftAllowed);
+ }
 });
