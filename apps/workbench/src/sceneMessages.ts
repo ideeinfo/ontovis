@@ -8,6 +8,7 @@ const copy = {
   loading:['正在读取…','Loading…'], retry:['重试','Retry'], saved:['已保存','Saved'], unsaved:['未保存','Unsaved'],
   saveUnknown:['保存结果尚未确认，请重试确认或重新读取。','Save result is unconfirmed. Retry to confirm, or reload.'],
   read:['浏览','View'], edit:['布置','Arrange'], save:['保存','Save'], saving:['正在保存…','Saving…'],
+  saveViewHint:['保存场景内容和当前视角','Save scene content and the current view'],
   back:['返回场景列表','Back to scenes'], content:['内容','Contents'], resources:['资源','Resources'],
   noContents:['从资源中选择模型，再点击场景放置。','Choose a model from Resources, then click the scene to place it.'],
   noSelection:['选择一个模型查看属性','Select a model to view its properties'],
