@@ -270,6 +270,7 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     MODEL_CALIBRATION_REQUIRED:['请先核对模型单位、基点和正面朝向。','Verify the model units, base point and forward direction first.'],
     MODEL_STORAGE_UNAVAILABLE:['模型暂存或保存失败，请重试；不要重复创建版本。','Model storage failed. Retry the same request.'],
     SCENE_WRITE_FORBIDDEN:['当前仅可查看，未保存的修改仍保留。','You can currently view this scene. Unsaved edits are retained.'],
+    COCKPIT_CATALOG_LIMIT:['项目资源目录过大或分页异常，当前汇总不可用。','The project catalog is too large or its pagination is inconsistent; totals are unavailable.'],
     SCENE_CHANGED:['场景已有新版本，保留当前修改后重新读取。','A newer scene exists. Keep your edits and reload before retrying.'],
     SCENE_DELETED:['场景已移到回收站，恢复后可继续查看和编辑。','This scene is in the recycle bin. Restore it to view or edit.'],
     INVALID_SCENE_ENVIRONMENT:['环境参数不符合范围，请检查后重试。','Check the environment parameter ranges and retry.'],

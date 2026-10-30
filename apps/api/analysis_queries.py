@@ -232,6 +232,9 @@ def start_analysis(store, actor, reader, body, authorize):
     history = matching_history(store,actor,dataset,primary['item']['entityUid'] if primary else None,authorize)
     event_id = dataset['datasetId']+'-event-1'
     same = next((h for h in history if h['snapshot']['context'].get('eventId') == event_id
+                 and all(h['snapshot']['context'].get(key) == dataset[key]
+                         for key in ('sourceConnectionId','datasetId','datasetRevision','timeFrom','timeTo'))
+                 and h['snapshot']['context'].get('objectIds') == ([primary['item']['entityUid']] if primary else [])
                  and (not order or h['snapshot']['context'].get('workOrderId') == body['entry']['orderId'])),None)
     if same:
         return {**same,'resumed':True,'historyImported':False,'gap':gap}

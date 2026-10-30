@@ -16,6 +16,8 @@ import { SourceEvidence } from './SourceEvidence';
 import {ProjectModelCenter} from './ProjectModelCenter';
 import { BindingEditor } from './BindingEditor';
 import type {SceneWorkspaceHandle} from './SceneWorkspace';
+import type {CockpitEntry} from './ProjectCockpit';
+import './projectCockpit.css';
 import {SceneApi} from './sceneApi';
 import {LegacySceneEntryReader} from './legacySceneEntry';
 import type {LegacySceneEntryTarget} from './sceneTypes';
@@ -28,6 +30,7 @@ import {keepWorkspaceOnSessionFailure} from './sessionAvailability';
 
 const api = new WorkbenchApi();
 const ModelViewport = lazy(() => import('./ModelViewport').then(module => ({default:module.ModelViewport})));
+const ProjectCockpit = lazy(() => import('./ProjectCockpit').then(module => ({default:module.ProjectCockpit})));
 const SceneWorkspace = lazy(() => import('./SceneWorkspace').then(module => ({default:module.SceneWorkspace})));
 const WorkOrders = lazy(() => import('./WorkOrders').then(module => ({default:module.WorkOrders})));
 const AnalysisWorkspace = lazy(() => import('./AnalysisWorkspace').then(module => ({default:module.AnalysisWorkspace})));
@@ -64,6 +67,16 @@ export function Workbench() {
   const [left, setLeft] = useState(false), [right, setRight] = useState(false);
   const [focusSignal, setFocusSignal] = useState(0);
   const [page, setPage] = useState<Page>('project');
+  const [cockpitOpen,setCockpitOpen]=useState(false),[cockpitVisited,setCockpitVisited]=useState(false),[cockpitPicker,setCockpitPicker]=useState(false);
+  const [cockpitEntry,setCockpitEntry]=useState<CockpitEntry|null>(null);
+  const cockpitButton=useRef<HTMLButtonElement>(null);
+  function closeCockpit(){setCockpitOpen(false);const target=isGlobalPage(page)?null:project?.projectRef||null;if(JSON.stringify(api.project)!==JSON.stringify(target))api.selectProject(target);requestAnimationFrame(()=>cockpitButton.current?.focus());}
+  function openCockpit(){
+    const change=()=>{if(isGlobalPage(page)||!project){setCockpitPicker(true);return;}
+      setCockpitEntry(page==='scene'?sceneWorkspace.current?.cockpitEntry()||null:null);setCockpitVisited(true);setCockpitOpen(true);};
+    if(page==='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else leaveOrders(change);
+  }
+  function chooseCockpitProject(value:ProjectSummary){api.selectProject(value.projectRef);setProject(value);setProjectName(value.displayName);setCockpitEntry(null);setCockpitPicker(false);setCockpitVisited(true);setCockpitOpen(true);}
   const [navExpanded, setNavExpanded] = useState(false);
   const [layout, setLayout] = useState('balanced');
   const [modelVersionId,setModelVersionId] = useState<string|null>(null);
@@ -97,6 +110,7 @@ export function Workbench() {
   }
 
   function clear(state:string, text:MessageKey | null) {
+    setCockpitOpen(false);setCockpitVisited(false);setCockpitPicker(false);setCockpitEntry(null);
     setPendingOrderLeave(null);setOrdersDirty(false);
     sessionReady.current=false;setSessionCheck('loading');
     legacyEntry.current.cancel();setSceneEntry(null);setResourceSceneId(undefined);setLegacyReady(null);
@@ -142,7 +156,7 @@ export function Workbench() {
   }
   useEffect(() => {
     mounted.current=true;
-    api.onProjectDenied=()=>{api.selectProject(null);setProject(null);setProjectName('');setSceneEntry(null);setResourceSceneId(undefined);setContext(null);setDetail(null);setModel(null);setPage('project');setError(new ApiError(403,'FORBIDDEN'));};
+    api.onProjectDenied=()=>{setCockpitOpen(false);setCockpitVisited(false);setCockpitPicker(false);setCockpitEntry(null);api.selectProject(null);setProject(null);setProjectName('');setSceneEntry(null);setResourceSceneId(undefined);setContext(null);setDetail(null);setModel(null);setPage('project');setError(new ApiError(403,'FORBIDDEN'));};
     api.onDenied = status => {const checking=!!inspection.current;cancelInspection();clear(status === 401 ? 'expired' : 'denied', status === 401 ? 'expired' : 'denied');if(checking){setSessionCheck('failed');
       if(mustSignOut.current){setMessage('logoutFailed');loginOpen.current=true;setModal('login');}}else if(!authBusy.current)void inspect();};
     void inspect();
@@ -256,9 +270,10 @@ export function Workbench() {
   const [,title,ModuleIcon] = navigation.find(row => row[0] === page)!;
   const header=workbenchHeader(page,t(title),projectName||project?.displayName||'');
   const workspace = page === 'bindings';
-  return <>{!active&&<LandingPage onLogin={()=>void openLogin()} videoSrc={import.meta.env.VITE_LOGIN_VIDEO_SRC} posterSrc={import.meta.env.VITE_LOGIN_POSTER_SRC} suspended={modal==='login'} loginButtonRef={loginButton}/>}{active&&<div className="ov-app ov-compact">
+  return <>{!active&&<LandingPage onLogin={()=>void openLogin()} videoSrc={import.meta.env.VITE_LOGIN_VIDEO_SRC} posterSrc={import.meta.env.VITE_LOGIN_POSTER_SRC} suspended={modal==='login'} loginButtonRef={loginButton}/>}{active&&<div className="ov-app ov-compact" hidden={cockpitOpen} inert={cockpitOpen}>
     <header className="cw-header"><a className="cw-brand" href="#project" onClick={event => {event.preventDefault();navigate('project');}} aria-label="ONTOVis"><img src={logo} alt="ONTOVis 本源数智" fetchPriority="high"/></a><span className="cw-divider"/>
       {isGlobalPage(page)?<span className="cw-project" title={header}><ModuleIcon size={15}/><span>{header}</span></span>:<button className="cw-project" type="button" title={header} onClick={() => navigate('project')}><ModuleIcon size={15}/><span>{header}</span><ChevronDown size={12}/></button>}<span className="cw-grow"/>
+      <button type="button" className="ov-btn" ref={cockpitButton} onClick={openCockpit}><LayoutDashboard size={16}/>{locale==='zh'?'驾驶舱':'Cockpit'}</button>
       {active ? <Dropdown.Root><Dropdown.Trigger asChild><button type="button" className="cw-avatar" aria-label={t('account')}>{session?.username?.slice(0,2).toUpperCase() || <User size={16}/>}</button></Dropdown.Trigger><Dropdown.Portal><Dropdown.Content className="cw-menu ov-list-menu" align="end" sideOffset={8}>
         <div className="cw-user-info"><strong>{session?.username}</strong><span className="cw-caption">{projectName}</span></div>
         <Dropdown.Item className="ov-list-menu-item" onSelect={() => setModal('account')}><User size={15}/>{t('account')}</Dropdown.Item><Dropdown.Separator className="ov-list-menu-separator"/>
@@ -273,16 +288,16 @@ export function Workbench() {
     </nav>
       <main className="cw-main"><div className="cw-toolbar">{workspace && <IconBtn label={t('objects')} onClick={() => {setLeft(value => !value);setRight(false);}}><PanelLeft size={17}/></IconBtn>}<div className="cw-page-title"><span className="cw-breadcrumb">{t('projectManagement')}<ChevronRight size={11}/>{t(title)}</span><h1>{t(title)}</h1></div>{workspace && <><span className="cw-divider"/><span className="cw-equipment">{context?.context.displayName}</span>{context && <Badge tone="amber">{t('demo')}</Badge>}</>}<span className="cw-grow"/>{workspace && <div className="cw-layout" role="group" aria-label={t('workbenchLayout')}>{(['balanced','modelLayout','drawingLayout'] as const).map(value => <button type="button" key={value} aria-pressed={layout === value} className={layout === value ? 'active' : ''} onClick={() => setLayout(value)}>{t(value)}</button>)}</div>}<IconBtn label={t('refresh')} disabled={!active || loading} onClick={refresh}><RefreshCw size={15} className={loading ? 'cw-spin' : ''}/></IconBtn>{workspace && <IconBtn label={t('details')} onClick={() => {setRight(value => !value);setLeft(false);}}><PanelRight size={17}/></IconBtn>}</div>
       {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}{!error&&active&&message==='unavailable'&&sessionCheck==='failed'&&<Btn onClick={()=>void inspect()}>{t('retry')}</Btn>}</div>}
-      {page==='scene'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${JSON.stringify(project?.projectRef)}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceSceneId||''}`} api={api} ref={sceneWorkspace} initialEntry={sceneEntry} initialSceneId={resourceSceneId} project={project} onProjectCreated={enterProject} onProjectName={setProjectName} onConfigure={()=>navigate('hierarchy')}/></Suspense>}
+      {page==='scene'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${JSON.stringify(project?.projectRef)}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceSceneId||''}`} api={api} suspended={cockpitOpen} ref={sceneWorkspace} initialEntry={sceneEntry} initialSceneId={resourceSceneId} project={project} onProjectCreated={enterProject} onProjectName={setProjectName} onConfigure={()=>navigate('hierarchy')}/></Suspense>}
       {page==='orders'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><WorkOrders key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} initialQuery={initialOrderQuery} onDirtyChange={setOrdersDirty} onAnalyze={orderId=>navigate('analysis',null,'',{orderId})} onOpenReference={entry=>navigate('analysis',null,'',entry)} onOpenAnalysis={(analysisSessionId,analysisRevision,assistantRunId)=>navigate('analysis',null,'',{analysisSessionId,analysisRevision,...(assistantRunId?{assistantRunId}:{})})}/></Suspense>}
       {page==='analysis'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><AnalysisWorkspace initialEntry={initialAnalysisEntry} onOpenWorkOrder={code=>navigate('orders',null,code)} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onDirtyChange={setOrdersDirty}/></Suspense>}
-      {page==='data'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><DataAlarms onAnalyze={entry=>navigate('analysis',null,'',entry)} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onOpenWorkOrders={code=>navigate('orders',null,code)}/></Suspense>}
+      {page==='data'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><DataAlarms active={!cockpitOpen} onAnalyze={entry=>navigate('analysis',null,'',entry)} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onOpenWorkOrders={code=>navigate('orders',null,code)}/></Suspense>}
       {page==='ai'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><AiPolicy key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} en={locale==='en'} onDirtyChange={setOrdersDirty}/></Suspense>}
       {!workspace&&page!=='ai'&&page!=='scene'&&page!=='orders'&&page!=='analysis'&&page!=='data'&&<div className="cw-page-content">{page==='models'&&active?<ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} onConfigure={()=>navigate('hierarchy')} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>:page==='hierarchy'&&active&&project?<EquipmentHierarchy key={JSON.stringify(project.projectRef)} api={api} onDirtyChange={setOrdersDirty} onOpenScene={()=>navigate('scene')} onAnalyze={entry=>navigate('analysis',undefined,undefined,entry)}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
       {page==='scene'&&!active&&<p className="cw-state">{t('loginPrompt')}</p>}
       {workspace&&(!active||legacyReady===entryIdentity)&&<div className={`cw-workspace layout-${layout}`}>
         <ObjectsPanel key={`${session?.sessionRevision}:${reload}:${context?.context.hierarchyRevision}`} api={api} view={context} selected={selection.uid} ancestors={detail?.ancestors.path.map(row=>row.object.entityUid) || []} onSelect={select} className={left ? 'is-open' : ''}/>
-        <Suspense fallback={<section className="cw-panel cw-scene"><p className="cw-state" role="status">{t('loading')}</p></section>}>{active&&workspace ? <ModelViewport key={`${session?.sessionRevision}:${reload}:${modelVersionId}:${modelReload}`} api={api} active={active&&workspace} detail={detail} model={model} modelVersionId={modelVersionId} onModel={setModel} onSelect={uid => select(uid)} focusSignal={focusSignal}/> : <section className="cw-panel cw-scene"><header><strong>{t('modelView')}</strong></header><p className="cw-state">{t('loginPrompt')}</p></section>}</Suspense>
+        <Suspense fallback={<section className="cw-panel cw-scene"><p className="cw-state" role="status">{t('loading')}</p></section>}>{active&&workspace ? <ModelViewport key={`${session?.sessionRevision}:${reload}:${modelVersionId}:${modelReload}`} api={api} active={active&&workspace&&!cockpitOpen} detail={detail} model={model} modelVersionId={modelVersionId} onModel={setModel} onSelect={uid => select(uid)} focusSignal={focusSignal}/> : <section className="cw-panel cw-scene"><header><strong>{t('modelView')}</strong></header><p className="cw-state">{t('loginPrompt')}</p></section>}</Suspense>
         <aside className={`cw-panel cw-inspector ${right ? 'is-open' : ''}`}><header><strong>{detail?.item.displayName || (selection.uid ? t('loading') : t('select'))}</strong>{detail && <Badge tone={detail.item.reviewStatus === 'confirmed' ? 'neutral' : 'amber'}>{detail.item.reviewStatus === 'confirmed' ? t('confirmed') : t('unverified')}</Badge>}</header>
           {detail && context && <Tabs.Root value={tab} onValueChange={setTab}><Tabs.List className="cw-tabs" aria-label={t('details')}>{(['details','properties','drawings'] as const).map(value => <Tabs.Trigger value={value} key={value} className={tab === value ? 'active' : ''}>{t(value)}</Tabs.Trigger>)}</Tabs.List>
             <div className="cw-inspector-scroll"><Tabs.Content value="details"><dl className="cw-kv"><dt>{t('equipmentHierarchy')}</dt><dd><ObjectHierarchy detail={detail} onSelect={uid=>select(uid)}/></dd><dt>{t('category')}</dt><dd>{objectCategory(detail.item,locale)}</dd><dt>{t('location')}</dt><dd>{host}</dd>{location && <><dt>{t('modelView')}</dt><dd>{location.binding.displayName || location.binding.componentKey}</dd></>}</dl><Btn disabled={!location} onClick={() => setFocusSignal(value => value+1)}><Focus size={14}/>{t('locate')}</Btn><details className="cw-details"><summary>{t('moreInfo')}<ChevronDown size={12}/></summary><p>{t('reviewNote')}</p>{detail.item.classification && detail.item.classification.reviewState!=='confirmed' && <p>{t('classificationUnverified')}</p>}{location?.mode === 'ancestor' && <p>{t('noGeometry')}</p>}{!detail.item.installationContextId && <p>{t('sourceOnly')}</p>}{detail.ancestors.completeness === 'incomplete' && <p>{t('incomplete')}</p>}</details>{modelVersionId && detail.item.objectKind==='cabinet' && <BindingEditor key={selection.uid} api={api} model={model} object={detail.item} context={context.context} onReload={()=>setModelReload(v=>v+1)}/>}</Tabs.Content>
@@ -292,6 +307,8 @@ export function Workbench() {
         </aside>
       </div>}</main>
     </div></div>}
+    {active&&project&&cockpitVisited&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><ProjectCockpit key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}`} api={api} project={project} active={cockpitOpen} initialEntry={cockpitEntry} onExit={closeCockpit} onWorkspace={sceneId=>{setCockpitOpen(false);navigate('scene');setResourceSceneId(sceneId);}}/></Suspense>}
+    {active&&cockpitPicker&&<Modal className="pc-project-picker" title={locale==='zh'?'选择驾驶舱项目':'Choose a cockpit project'} description={locale==='zh'?'选择本人有权访问的项目。':'Select an accessible project.'} onClose={()=>setCockpitPicker(false)}><ProjectsPanel api={api} onSelect={chooseCockpitProject}/></Modal>}
     {pendingOrderLeave&&<Modal title={page==='ai'?(locale==='zh'?'策略修改尚未生效':'Unapplied policy changes'):page==='hierarchy'?(locale==='zh'?'共享配置尚未保存':'Unsaved equipment configuration'):page==='analysis'?(locale==='zh'?'分析修改尚未保存':'Unsaved analysis changes'):(locale==='zh'?'诊断方案尚未保存':'Unsaved investigation')} description={locale==='zh'?'继续离开将放弃当前未保存的修改。':'Leaving discards the current unsaved edits.'} onClose={()=>setPendingOrderLeave(null)}><div className="wo-actions"><Btn onClick={()=>setPendingOrderLeave(null)}>{locale==='zh'?'继续编辑':'Continue editing'}</Btn><Btn onClick={()=>{const change=pendingOrderLeave;setPendingOrderLeave(null);setOrdersDirty(false);change();}}>{locale==='zh'?'放弃修改并离开':'Discard and leave'}</Btn></div></Modal>}
     {modal === 'login' && <Modal className="ov-login-dialog" title={t('signInTitle')} description={t('accountHint')} onClose={closeModal} onCloseAutoFocus={event=>{if(loginButton.current){event.preventDefault();loginButton.current.focus();}}}><form className="ov-simple-login" onSubmit={event => {event.preventDefault();void login();}}>
       <input aria-label={t('username')} placeholder={t('username')} autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required disabled={signingIn||signingOut}/><input aria-label={t('password')} placeholder={t('password')} type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={signingIn||signingOut}/>

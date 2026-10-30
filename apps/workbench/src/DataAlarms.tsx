@@ -9,7 +9,7 @@ import './dataAlarms.css';
 
 const ROOT='/api/workbench/analysis-sessions/simulation';
 type DataApi=Pick<WorkbenchApi,'request'|'revision'|'epoch'|'subscribeSimulation'>;
-export function DataAlarms({api,locale='zh',onOpenWorkOrders,onAnalyze}:{api:DataApi;locale?:string;onOpenWorkOrders:(faultCode:string)=>void;onAnalyze?:(entry:{datasetId:string;datasetRevision:string})=>void}){
+export function DataAlarms({api,active=true,locale='zh',onOpenWorkOrders,onAnalyze}:{api:DataApi;active?:boolean;locale?:string;onOpenWorkOrders:(faultCode:string)=>void;onAnalyze?:(entry:{datasetId:string;datasetRevision:string})=>void}){
   const en=locale==='en',[catalogue,setCatalogue]=useState<SimulationCatalogue|null>(null),[detail,setDetail]=useState<SimulationDetail|null>(null);
   const [selected,setSelected]=useState(''),[query,setQuery]=useState(''),[metric,setMetric]=useState('sensor_temperature');
   const [second,setSecond]=useState(60),[playing,setPlaying]=useState(false),[refresh,setRefresh]=useState(0);
@@ -38,6 +38,7 @@ export function DataAlarms({api,locale='zh',onOpenWorkOrders,onAnalyze}:{api:Dat
   },[api,api.revision,api.epoch,profile?.datasetId,profile?.datasetRevision,catalogue?.initialDetail]);
   const visible=detail&&detail.dataset.datasetId===profile?.datasetId&&detail.dataset.datasetRevision===profile.datasetRevision?detail:null;
   const stream=useSimulationStream(api,visible);
+  useEffect(()=>{if(!active){setPlaying(false);stream.stop();}},[active]);
   const shown=stream.mode?stream.view?.state.detail||null:visible;
   const position=stream.mode?Math.max(0,stream.view?.state.sequence??0):second;
   const receiving=!!stream.view&&['connecting','connected','catchup','reconnecting'].includes(stream.view.status);

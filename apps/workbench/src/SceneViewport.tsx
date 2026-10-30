@@ -33,6 +33,7 @@ import type {SceneAlarm} from './sceneAlarm';
 
 export interface SceneCameraControl {getView:()=>SceneView;setView:(value:SceneView)=>void;ready:()=>boolean}
 export interface SceneViewportProps {
+  active?:boolean;
   alarm?:SceneAlarm|null;onAlarmFocus?:()=>void;
   preparationKey?:string;preparationError?:unknown;onRetryPreparation?:()=>void;
   environmentPreview?:{value:SceneEnvironmentV1|null}|null;
@@ -53,7 +54,7 @@ export interface SceneViewportProps {
   onError?:(error:unknown)=>void;
 }
 type Runtime={sync:()=>void;preload:()=>void;appearance:()=>void;fit:()=>void;focus:(id:string|null|string[])=>void;
-  componentFocus:()=>void;previewSelection:()=>void;setView:(view:SceneView)=>void;zoom:(factor:number)=>void};
+  componentFocus:()=>void;previewSelection:()=>void;setView:(view:SceneView)=>void;zoom:(factor:number)=>void;visibility:()=>void};
 type Entry={root:THREE.Group;key:string;appearance:SceneCabinetAppearance};
 class ViewportInteractionError extends Error {
   readonly messageKey:'moveFailed'|'dropInvalid';
@@ -150,10 +151,10 @@ export function SceneViewport(props:SceneViewportProps) {
     const emit=()=>{if(!stale())current.current.onViewChange(view(camera,orbit));};
     let dirtyFrame=true;
     let wheelPending:{x:number;y:number;delta:number}|null=null;
-    const schedule=()=>{if(!disposed&&!document.hidden&&!frame)frame=requestAnimationFrame(render);};
+    const schedule=()=>{if(!disposed&&!document.hidden&&current.current.active!==false&&!frame)frame=requestAnimationFrame(render);};
     const request=()=>{dirtyFrame=true;schedule();};
     const render=()=>{
-      frame=0;if(disposed||document.hidden)return;
+      frame=0;if(disposed||document.hidden||current.current.active===false)return;
       if(stale()){renderer.clear();return;}
       if(wheelPending){const pending=wheelPending;wheelPending=null;
         if(!resourcesLoading&&!current.current.disabled)zoomAt(pending.x,pending.y,Math.pow(.95,pending.delta/100));}
@@ -520,7 +521,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const dragover=(event:DragEvent)=>{const state=current.current;if(state.editing&&!state.disabled&&!state.previewModel
       &&(state.onResourceDrop&&event.dataTransfer?.types.includes(DROP_MIME)||state.onEquipmentDrop&&event.dataTransfer?.types.includes('application/x-ontovis-equipment'))){event.preventDefault();event.dataTransfer.dropEffect='copy';}};
     const visible=()=>{
-      if(document.hidden){environment.suspend();hiddenAt=performance.now();cancelAnimationFrame(frame);frame=0;}
+      if(document.hidden||current.current.active===false){environment.suspend();if(hiddenAt===null)hiddenAt=performance.now();cancelAnimationFrame(frame);frame=0;}
       else {if(tween&&hiddenAt!==null)tween.start+=performance.now()-hiddenAt;hiddenAt=null;appearance();request();}
     };
     const resize=new ResizeObserver(()=>{
@@ -533,7 +534,7 @@ export function SceneViewport(props:SceneViewportProps) {
     canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',motion);canvas.addEventListener('pointerup',up);
     canvas.addEventListener('pointercancel',cancelDrag);canvas.addEventListener('keydown',escape);canvas.addEventListener('drop',drop);canvas.addEventListener('dragover',dragover);
     document.addEventListener('visibilitychange',visible);
-    runtime.current={sync:()=>void sync(),preload,appearance,componentFocus:highlight,previewSelection:highlight,
+    runtime.current={sync:()=>void sync(),preload,appearance,visibility:visible,componentFocus:highlight,previewSelection:highlight,
       fit:()=>{clearComponentFocus();if(previewInspection){previewInspection.restore();current.current.onPreviewPick?.(previewInspection.structure.identity,null);fit();request();return;}
         if(resourcesLoading)focusPending=null;else fit();highlight();},
       focus:id=>{clearComponentFocus();if(previewInspection){previewInspection.restore();current.current.onPreviewPick?.(previewInspection.structure.identity,null);fit();request();return;}
@@ -560,6 +561,7 @@ export function SceneViewport(props:SceneViewportProps) {
     };
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
   useEffect(()=>{runtime.current?.preload();},[props.placementModel]);
+  useEffect(()=>{runtime.current?.visibility();},[props.active]);
   useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
   useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,props.alarm,waterOverride,cloudOverride,reduced,locale,resolved]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
