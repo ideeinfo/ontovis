@@ -7,10 +7,10 @@ export type ModelViewStatus='loading'|'ready'|'unavailable';
 const range=(from:number,to:number)=>Array.from({length:to-from+1},(_,i)=>i+from);
 const shell=[12,13,14,75,...range(115,125),134,135];
 const explodedGroups:{nodes:number[];offset:[number,number,number]}[]=[
- {nodes:[2],offset:[0,10,35]},{nodes:[15,16,...range(17,24)],offset:[0,10,18]},
- {nodes:range(25,31),offset:[0,20,0]},{nodes:range(45,52),offset:[0,20,-16]},
- {nodes:range(53,60),offset:[-12,10,-18]},{nodes:range(61,66),offset:[12,10,-26]},
- {nodes:shell,offset:[0,35,0]},
+ {nodes:[2],offset:[0,2,12]},{nodes:[15,16,...range(17,24)],offset:[0,3,5]},
+ {nodes:range(25,31),offset:[0,5,0]},{nodes:range(45,52),offset:[0,5,-5]},
+ {nodes:range(53,60),offset:[-4,3,-6]},{nodes:range(61,66),offset:[4,3,-9]},
+ {nodes:shell,offset:[0,10,0]},
 ];
 /** A reversible teaching-model inspection. No disassembly procedure is inferred. */
 export class SceneModelView {
@@ -36,7 +36,7 @@ export class SceneModelView {
   });
   if(request.mode==='xray')for(const id of shell)fade(nodes.get(id)!);
   else {for(const group of explodedGroups)for(const id of group.nodes){const node=nodes.get(id)!;this.positions.push({node,position:node.position.clone()});node.position.add(new THREE.Vector3(...group.offset));}
-   root.traverse(node=>{if(modelSchematicKey(node)==='proxy:CN1'){this.positions.push({node,position:node.position.clone()});node.position.add(new THREE.Vector3(16,0,-5));}});
+   root.traverse(node=>{if(modelSchematicKey(node)==='proxy:CN1'){this.positions.push({node,position:node.position.clone()});node.position.add(new THREE.Vector3(5,0,-2));}});
   }
   root.updateMatrixWorld(true);
  }

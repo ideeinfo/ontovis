@@ -16,7 +16,7 @@ test('X-ray clones only shell materials, preserving shared source, another insta
 test('Exploded groups remain below calibrated installation transforms; tower stays fixed; every transform and parent restores exactly',async()=>{
  const f=await fixture(true);f.a.position.set(100,5,200);f.a.rotation.y=.8;const before=snapshot(f.a),other=snapshot(f.b),source=snapshot(f.resource.scene),tower=node(f.a,180).getWorldPosition(new THREE.Vector3()),rotor=node(f.a,2).position.clone();
  const rig=SceneModelView.create(f.a,f.adapted,request(f,'exploded'));assert.ok(rig);
- assert.deepEqual(node(f.a,2).position.toArray(),rotor.add(new THREE.Vector3(0,10,35)).toArray());assert.deepEqual(node(f.a,50).position.toArray(),[0,20,-16]);
+ assert.deepEqual(node(f.a,2).position.toArray(),rotor.add(new THREE.Vector3(0,2,12)).toArray());assert.deepEqual(node(f.a,50).position.toArray(),[0,5,-5]);
  assert.ok(node(f.a,180).getWorldPosition(new THREE.Vector3()).distanceTo(tower)<1e-8);assert.deepEqual(snapshot(f.b),other);assert.deepEqual(snapshot(f.resource.scene),source);
  rig.dispose();rig.dispose();assert.deepEqual(snapshot(f.a),before);f.cache.dispose();
 });
