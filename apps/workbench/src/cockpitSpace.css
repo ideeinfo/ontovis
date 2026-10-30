@@ -4,3 +4,4 @@
 @container cockpit (max-width:700px){.pc-assets.pc-space-hidden{display:none}.pc-assets.pc-space-departing{position:absolute;width:100%;z-index:2}.pc-assets{padding-top:330px}}
 
 .pc-globe-pause{position:absolute;bottom:26px;right:80px;z-index:4;border:1px solid var(--pc-border)!important;background:var(--pc-panel)!important;border-radius:8px;padding:10px!important}@container cockpit (max-width:700px){.pc-globe-pause{right:65px;bottom:15px}}
+.pc-globe-home{right:336px}.pc-globe-pause{right:386px}@container cockpit (max-width:1450px){.pc-globe-home{right:306px}.pc-globe-pause{right:356px}}@container cockpit (max-width:1100px){.pc-globe-home{right:278px}.pc-globe-pause{right:328px}}@container cockpit (max-width:760px){.pc-globe-home{right:20px}.pc-globe-pause{right:70px}}
