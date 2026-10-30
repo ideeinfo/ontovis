@@ -291,7 +291,8 @@ export function SceneViewport(props:SceneViewportProps) {
     const fit=(id?:string|null|string[])=>{
       const box=bounds(id);if(box.isEmpty())return;
       if(current.current.presentation&&id){
-        const destination=componentFocusView([box.min.toArray() as Vector3,box.max.toArray() as Vector3],view(camera,orbit),camera.fov,camera.aspect,true);
+        const angled=componentFocusView([box.min.toArray() as Vector3,box.max.toArray() as Vector3],view(camera,orbit),camera.fov,camera.aspect,true);
+        const destination=angled?selectedModelView(camera,box,new THREE.Vector3(...angled.eye).sub(new THREE.Vector3(...angled.target))):null;
         if(destination)moveView(terrainSafeView(destination,terrain));return;
       }
       if(Array.isArray(id)){const target=selectedModelView(camera,box,camera.position.clone().sub(orbit.target));if(target)moveView(target);return;}
