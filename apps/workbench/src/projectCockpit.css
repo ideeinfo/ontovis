@@ -8,3 +8,4 @@
 @media(prefers-reduced-motion:reduce){.pc-app *{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 
 .pc-device-emblem .ov-model-thumbnail{width:100%;height:86px;max-height:none;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}.pc-device-emblem .ov-model-thumbnail img{width:100%;height:100%;object-fit:contain}.pc-device-emblem .ov-model-thumbnail>span{font-size:10px;color:var(--pc-muted)}.pc-device-emblem>span:last-child{flex:none}@container cockpit (max-height:740px){.pc-device-emblem .ov-model-thumbnail{height:52px}}@container cockpit (max-width:1000px){.pc-device-emblem .ov-model-thumbnail{height:38px}}
+.pc-root[data-theme=light] .pc-device-emblem{background:radial-gradient(ellipse,#648779,#36594e)}.pc-root[data-theme=light] .pc-device-emblem>span{color:#edf5f0}
