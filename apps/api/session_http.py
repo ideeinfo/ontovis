@@ -194,6 +194,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             assistant_paths=tuple('/api/workbench/assistant/'+action for action in
                 ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation',
                  'work-order-preview','work-order-apply'))
+            weather_paths=tuple('/api/workbench/weather/'+action for action in ('config','save','test','current'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
                                   '/api/workbench/objects/evidence/content', '/api/workbench/objects/photos/resolve',
@@ -222,7 +223,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                               '/api/workbench/resources/model/delete', '/api/workbench/resources/model/restore',
                               '/api/workbench/resources/model/thumbnail', '/api/workbench/resources/model/thumbnail/ensure',
                               '/api/workbench/resources/model/thumbnail/content')
-            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', SIMULATION_STREAM_PATH, *project_paths, *analysis_paths, *assistant_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *equipment_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
+            if self.command != 'POST' or parts.path not in ('/api/session/login','/api/session/logout', SIMULATION_STREAM_PATH, *project_paths, *analysis_paths, *assistant_paths, *weather_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *equipment_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *public_geo_paths, *resource_paths) or query:
                 raise PreviewError(404, 'NOT_FOUND')
             if (self.headers.get_all('Transfer-Encoding') or len(self.headers.get_all('Content-Type', [])) != 1
                     or self.headers.get('Content-Type','').split(';')[0].strip() != 'application/json'):
@@ -239,7 +240,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             limit = (MAX_SCENE_BYTES if large_scene else MAX_METADATA_REQUEST_BYTES if metadata_save else
                      270336 if parts.path in ('/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/copy',
                                              '/api/workbench/analysis-sessions/import-history', '/api/workbench/analysis-sessions/evidence/register-batch') else
-                     32768 if parts.path in ('/api/workbench/work-orders/action', '/api/workbench/assistant/work-order-apply') else
+                     32768 if parts.path in (*weather_paths, '/api/workbench/work-orders/action', '/api/workbench/assistant/work-order-apply') else
                      16384 if parts.path in (SIMULATION_STREAM_PATH, *analysis_paths, *assistant_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *equipment_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')
@@ -256,6 +257,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, sessions.projects_request(sid, parts.path, payload))
             if parts.path in assistant_paths:
                 return self.reply(200,sessions.assistant_request(sid,parts.path,payload))
+            if parts.path in weather_paths:
+                return self.reply(200,sessions.weather_request(sid,parts.path,payload))
             if parts.path in analysis_paths:
                 value = sessions.analysis_request(sid, parts.path, payload)
                 if parts.path.endswith(('/evidence/content', '/evidence/preview-content')):

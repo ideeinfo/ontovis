@@ -60,6 +60,7 @@ class ProjectSessions(UserSessions):
         self.analysis_slots = BoundedSemaphore(2)
         self.simulation_streams = SimulationStreams()
         self.assistant = None
+        self.weather = None
         try:
             if registry_backend == 'postgres':
                 from .analysis_drafts import SCHEMA, identifier, profile, require
@@ -401,6 +402,10 @@ class ProjectSessions(UserSessions):
 
     def assistant_request(self,sid,path,payload):
         from .assistant_service import request
+        return request(self,sid,path,payload)
+
+    def weather_request(self,sid,path,payload):
+        from .weather_service import request
         return request(self,sid,path,payload)
 
     def analysis_request(self, sid, path, payload):

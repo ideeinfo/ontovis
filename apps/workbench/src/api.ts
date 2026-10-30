@@ -15,6 +15,7 @@ export interface BinaryDescriptor {
 type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk';
 const MIB = 1024 * 1024;
 const writeOnlyDenials: Record<string, readonly string[]> = {
+  WEATHER_WRITE_FORBIDDEN: ['/api/workbench/weather/save','/api/workbench/weather/test'],
   ASSISTANT_RUN_FORBIDDEN: ['/api/workbench/assistant/start','/api/workbench/assistant/summary','/api/workbench/assistant/publish','/api/workbench/assistant/rollback','/api/workbench/assistant/cancel'],
   ASSISTANT_TOOL_NOT_ALLOWED: ['/api/workbench/assistant/start','/api/workbench/assistant/summary'],
   ANALYSIS_WRITE_FORBIDDEN: ['/api/workbench/analysis-sessions/import-history','/api/workbench/analysis-sessions/evidence/register-batch','/api/workbench/analysis-sessions/start', '/api/workbench/analysis-sessions/copy', '/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/restore', '/api/workbench/analysis-sessions/evidence/register', '/api/workbench/analysis-sessions/link-work-order'],

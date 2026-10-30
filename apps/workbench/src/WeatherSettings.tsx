@@ -1,0 +1,44 @@
+import {useEffect,useRef,useState} from 'react';
+import {CloudSun,MapPin,Plus,RefreshCw,Trash2} from 'lucide-react';
+import {cancelled,type WorkbenchApi} from './api';
+import {Btn} from './Primitives';
+import {WeatherCard} from './WeatherCard';
+import {WEATHER_ROOT,weatherMessage,weatherProblems,weatherScenes,type WeatherConfig,type WeatherConfigView,type WeatherPoint,type WeatherView} from './weather';
+import type {SceneSummary} from './sceneTypes';
+import './weather.css';
+export function WeatherSettings({api,en=false,active=true,onDirtyChange}:{api:WorkbenchApi;en?:boolean;active?:boolean;onDirtyChange:(v:boolean)=>void}){
+ const t=(zh:string,eng:string)=>en?eng:zh;
+ const [view,setView]=useState<WeatherConfigView|null>(null),[draft,setDraft]=useState<WeatherConfig|null>(null),[scenes,setScenes]=useState<SceneSummary[]>([]),[preview,setPreview]=useState<WeatherView|null>(null);
+ const [error,setError]=useState<unknown>(null),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[reload,setReload]=useState(0);
+ const abort=useRef<AbortController|null>(null),intent=useRef(0),request=useRef<{fingerprint:string;id:string}|null>(null);
+ const dirty=!!view&&!!draft&&JSON.stringify(view.config)!==JSON.stringify(draft),valid=!!draft&&!weatherProblems(draft).length;
+ useEffect(()=>{onDirtyChange(dirty);},[dirty,onDirtyChange]);useEffect(()=>()=>onDirtyChange(false),[onDirtyChange]);
+ useEffect(()=>{if(!active)return;const controller=new AbortController();abort.current?.abort();abort.current=controller;const serial=++intent.current;setBusy(true);setError(null);setPreview(null);
+  void Promise.all([api.request<WeatherConfigView>(WEATHER_ROOT+'config',{},controller.signal),weatherScenes(api,controller.signal)]).then(([value,items])=>{if(!controller.signal.aborted&&serial===intent.current){setView(value);setDraft(structuredClone(value.config));setScenes(items);}}).catch(e=>{if(!controller.signal.aborted&&!cancelled(e))setError(e);}).finally(()=>{if(!controller.signal.aborted&&serial===intent.current)setBusy(false);});
+  return()=>{controller.abort();++intent.current;};
+ },[api,api.epoch,api.revision,active,reload]);
+ useEffect(()=>()=>abort.current?.abort(),[]);
+ function change(value:WeatherConfig){setDraft(value);setPreview(null);setNotice('');setError(null);}
+ function point(index:number,value:Partial<WeatherPoint>){if(draft)change({...draft,points:draft.points.map((p,i)=>i===index?{...p,...value}:p)});}
+ async function action(kind:'save'|'test',sceneId?:string){
+  if(!draft||!view||!valid||busy)return;const controller=new AbortController();abort.current?.abort();abort.current=controller;const serial=++intent.current;setBusy(true);setError(null);setNotice('');
+  const fingerprint=JSON.stringify([view.revision,draft]);if(request.current?.fingerprint!==fingerprint)request.current={fingerprint,id:crypto.randomUUID()};
+  try{if(kind==='test'){
+   const result=await api.request<WeatherView>(WEATHER_ROOT+'test',{config:draft,sceneId,expectedAccessRevision:view.accessRevision},controller.signal);
+   if(!controller.signal.aborted&&serial===intent.current){setPreview(result);setNotice(t('草稿查询已完成，配置尚未保存。','Draft query completed; settings were not saved.'));}
+  }else{
+   const result=await api.request<WeatherConfigView>(WEATHER_ROOT+'save',{config:draft,expectedRevision:view.revision,expectedAccessRevision:view.accessRevision,requestId:request.current.id},controller.signal);
+   if(!controller.signal.aborted&&serial===intent.current){setView(result);setDraft(structuredClone(result.config));setPreview(null);setNotice(t('配置已保存','Settings saved')+' · r'+result.revision);}
+  }}catch(e){if(!controller.signal.aborted&&!cancelled(e))setError(e);}finally{if(!controller.signal.aborted&&serial===intent.current)setBusy(false);}
+ }
+ return <section className="wx-settings" aria-label={t('天气接口','Weather API')}><header><div><h2><CloudSun size={18}/>{t('天气接口','Weather API')}</h2><p>{t('配置场景查询点，为驾驶舱提供有来源的预报。','Configure scene query points for sourced cockpit forecasts.')}</p></div><Btn disabled={busy||dirty} onClick={()=>setReload(v=>v+1)}><RefreshCw size={14}/>{t('重新读取','Reload')}</Btn></header>
+  {!!error&&<p role="alert">{weatherMessage(error,en)}</p>}{notice&&<p role="status">{notice}</p>}{busy&&!view&&<p role="status">{t('正在读取配置…','Loading settings…')}</p>}
+  {view&&draft&&<div className="wx-settings-grid"><main><fieldset disabled={busy||!view.canManage}><legend>{t('接口配置','API settings')}</legend><label className="wx-toggle"><input type="checkbox" checked={draft.enabled} onChange={e=>change({...draft,enabled:e.target.checked})}/>{t('启用本项目天气','Enable project weather')}</label><div className="wx-fields"><label>{t('数据来源','Provider')}<input readOnly value="MET Norway · Locationforecast 2.0"/></label><label>{t('最小更新间隔','Minimum update interval')}<select value={draft.refreshMinutes} onChange={e=>change({...draft,refreshMinutes:Number(e.target.value) as WeatherConfig['refreshMinutes']})}>{[180,360,720].map(v=><option key={v} value={v}>{v/60} {t('小时','hours')}</option>)}</select></label><label className="wx-wide">API {t('地址','endpoint')}<input readOnly value={view.endpoint}/></label><label className="wx-wide">{t('联系链接或业务邮箱','Contact link or business email')}<input value={draft.contact} maxLength={200} onChange={e=>change({...draft,contact:e.target.value})}/><small>{t('应能联系到技术维护人员；无需 API Key。','Must reach technical maintainers; no API key needed.')}</small></label></div></fieldset>
+   <fieldset disabled={busy||!view.canManage}><legend><MapPin size={15}/>{t('场景查询点','Scene query points')}</legend>{draft.points.map((p,i)=><div className="wx-point" key={i}><div className="wx-fields"><label>{t('场景','Scene')}<select aria-label={t('场景','Scene')+' '+(i+1)} value={p.sceneId} onChange={e=>point(i,{sceneId:e.target.value})}><option value="">{t('选择场景','Select scene')}</option>{!scenes.some(s=>s.sceneId===p.sceneId)&&p.sceneId&&<option value={p.sceneId}>{t('原场景不可用，请移除或重选','Previous scene unavailable; remove or reselect')}</option>}{scenes.map(s=><option key={s.sceneId} value={s.sceneId}>{s.displayName}</option>)}</select></label><label>{t('查询点名称','Point name')}<input aria-label={t('查询点名称','Point name')+' '+(i+1)} value={p.label} maxLength={80} onChange={e=>point(i,{label:e.target.value})}/></label><label>{t('纬度','Latitude')} · WGS84<input aria-label={t('纬度','Latitude')+' '+(i+1)} type="number" min={-90} max={90} step="0.0001" value={Number.isFinite(p.latitude)?p.latitude:''} onChange={e=>point(i,{latitude:e.target.value===''?NaN:Number(e.target.value)})}/></label><label>{t('经度','Longitude')} · WGS84<input aria-label={t('经度','Longitude')+' '+(i+1)} type="number" min={-180} max={180} step="0.0001" value={Number.isFinite(p.longitude)?p.longitude:''} onChange={e=>point(i,{longitude:e.target.value===''?NaN:Number(e.target.value)})}/></label></div><div className="wx-actions"><Btn disabled={!valid} onClick={()=>void action('test',p.sceneId)}>{t('测试查询','Test query')}</Btn><Btn onClick={()=>change({...draft,points:draft.points.filter((_,j)=>j!==i)})}><Trash2 size={14}/>{t('移除','Remove')}</Btn></div></div>)}
+   {!draft.points.length&&<p>{t('尚未配置场景查询点。','No scene query points configured.')}</p>}<Btn disabled={draft.points.length>=50||!scenes.length} onClick={()=>change({...draft,points:[...draft.points,{sceneId:scenes.find(s=>!draft.points.some(p=>p.sceneId===s.sceneId))?.sceneId||'',label:'',latitude:NaN,longitude:NaN}]})}><Plus size={14}/>{t('添加查询点','Add query point')}</Btn></fieldset>
+   <p className="wx-caption">{t('坐标最多保留四位小数。查询点是天气参考点，不确认场景测绘精度；只向天气来源发送坐标和联系标识。','Coordinates are truncated to four decimals. A point is a weather reference, not a survey certification. Only coordinates and contact identification are sent.')}</p>
+   {!valid&&<p role="status">{t('请填写有效联系标识、场景、点名及经纬度；同一场景只能配置一个点。','Enter valid contact details, scene, point name and coordinates; one point per scene.')}</p>}
+   <div className="wx-actions"><Btn primary disabled={busy||!view.canManage||!valid||!dirty} onClick={()=>void action('save')}>{t('保存配置','Save settings')}</Btn><Btn disabled={busy||!dirty} onClick={()=>change(structuredClone(view.config))}>{t('放弃修改','Discard changes')}</Btn><span>r{view.revision}{dirty?' · '+t('有未保存修改','Unsaved changes'):''}</span></div>{!view.canManage&&<p>{t('当前账号只读；保存与测试查询需要项目管理员。','Read only; saving and test queries require a project administrator.')}</p>}
+  </main><aside><h3>{t('草稿查询预览','Draft query preview')}</h3>{preview?<WeatherCard value={preview} en={en}/>:<p>{t('选择场景查询点并点击“测试查询”。测试不会保存或启用项目配置。','Select a query point and test it. Testing does not save or enable settings.')}</p>}<p className="wx-caption">{t('全球模式预报不能代替现场观测或设备遥测。风速为地面以上 10 m，不用于推算风机转速、偏航或变桨。','Global model forecasts do not replace site observations or equipment telemetry. The 10 m wind cannot determine rotor speed, yaw or pitch.')}</p></aside></div>}
+ </section>;
+}
