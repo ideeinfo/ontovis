@@ -23,3 +23,20 @@
 .pa-card h3{font-size:13px!important}.pa-card .ac-source>p{font-size:13px}.pa-card>footer,.pa-card .ac-source dl{font-size:11px}
 @media(max-height:800px){.pa-card h3{font-size:12px!important}.pa-card .ac-source>p{font-size:12px}.pa-relation-label{max-width:140px;font-size:11px!important}}
 .pa-card>header[data-draggable]{cursor:grab;touch-action:none;user-select:none}.pa-card>header .pa-card-grip{display:grid;place-items:center;width:20px;height:24px;padding:0;margin-left:-4px;margin-right:-5px;flex:none;border:0;border-radius:4px;background:transparent;color:var(--pc-muted);cursor:grab}.pa-card>header .pa-card-grip:focus-visible{outline:2px solid var(--pa-orange);outline-offset:1px}.pa-card>header .pa-card-grip:hover{color:var(--pc-text)}.pa-card[data-front]{z-index:3}.pa-card[data-dragging]{z-index:4;transition:none;box-shadow:0 14px 32px #00181355;border-color:var(--pa-orange)}.pa-card[data-dragging]>header,.pa-card[data-dragging] .pa-card-grip{cursor:grabbing}.pa-board-footer>small:first-child{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pa-board-footer .pa-layout-reset{width:auto;display:flex;gap:5px;padding:0 8px;white-space:nowrap;flex:none;font-size:11px}.pa-layout-reset:disabled{opacity:.4}
+
+/* All diagram geometry shares one uniformly scaled world. */
+.pa-world{position:absolute;left:0;top:0;transform-origin:0 0;isolation:isolate}
+.pa-world .pa-links{width:100%;height:100%}
+.pa-board{touch-action:none;cursor:grab}
+.pa-board:focus-visible{outline:2px solid var(--pc-green);outline-offset:-2px}
+.pa-board[data-panning]{cursor:grabbing;user-select:none}
+.pa-board[data-panning] .pa-world{pointer-events:none}
+.pa-board[data-pan-tool] .pa-card>header[data-draggable]{cursor:grab}
+.pa-canvas-help{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.pa-canvas-tools{display:flex;align-items:center;gap:3px;flex:none;padding:3px;background:var(--pc-panel);border:1px solid var(--pc-border);border-radius:8px}
+.pa-canvas-tools .ov-icon-btn,.pa-canvas-tools .pa-zoom-value{width:29px;height:27px;padding:3px;border:0;border-radius:5px;display:grid;place-items:center;background:transparent;color:var(--pc-muted);box-shadow:none}
+.pa-canvas-tools .pa-zoom-value{width:46px;font-size:11px;font-variant-numeric:tabular-nums}
+.pa-canvas-tools button:hover,.pa-canvas-tools button[aria-pressed=true]{background:#589d7b25;color:var(--pc-text)}
+.pa-world .pa-card{cursor:default;backdrop-filter:none}
+.pa-board-footer>span{white-space:nowrap}
+@media(max-width:1100px){.pa-board-footer{gap:4px}.pa-board-footer>small:first-child{max-width:none}.pa-board-footer .pa-layout-reset{font-size:0;width:27px;padding:0;justify-content:center}.pa-board-footer .pa-layout-reset svg{width:14px}.pa-canvas-tools .ov-icon-btn{width:25px}.pa-canvas-tools .pa-zoom-value{width:39px}}
