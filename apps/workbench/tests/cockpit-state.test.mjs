@@ -104,7 +104,7 @@ test('cancelling retains completed memory but late responses cannot publish; sel
   if(path.endsWith('/scenes/open')){opened.push(body.sceneId);await gates[Number(body.sceneId)].promise;return {...scene(['u1']),sceneId:body.sceneId,projectCode:'P',sceneRevision:'r1'};}
   return request(path,body);
  };
- const reading=readCockpitCatalog(api,abort.signal,{priority:()=>priority,changed:value=>updates.push(value)});await tick();assert.deepEqual(opened,['0','1','2']);
- priority='4';gates[0].resolve();await tick();assert.deepEqual(opened,['0','1','2','4']);
- const count=updates.length;abort.abort();gates.forEach(g=>g.resolve());await assert.rejects(reading,{name:'AbortError'});assert.equal(updates.length,count);
+ const cache=new CockpitCatalogCache(api),reading=cache.read(abort.signal,value=>updates.push(value));await tick();assert.deepEqual(opened,['0','1','2']);
+ priority='4';cache.priority=priority;gates[0].resolve();await tick();assert.deepEqual(opened,['0','1','2','4']);
+ const count=updates.length;abort.abort();gates.forEach(g=>g.resolve());await assert.rejects(reading,{name:'AbortError'});assert.equal(updates.length,count);assert.equal(cache.peek().scenes[0].opened.sceneId,'0');
 });
