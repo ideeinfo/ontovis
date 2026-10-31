@@ -72,7 +72,7 @@ class WeatherStoreTests(unittest.TestCase):
             if isinstance(self.result,Exception):raise self.result
             return self.result
         self.store=WeatherStore(self.library,'source',clock=lambda:self.now,fetcher=fetch)
-        self.config={**DEFAULT,'enabled':True,'points':[POINT]}
+        self.config={**DEFAULT,'enabled':True}
     def body(self,revision=0):return dict(config=self.config,requestId=str(uuid4()),expectedRevision=revision)
     def test_config_isolated_cas_idempotency_and_actor(self):
         body=self.body();first=self.store.save('P','admin',body,lambda:None)
@@ -87,12 +87,10 @@ class WeatherStoreTests(unittest.TestCase):
             if count[0]>2:raise PreviewError(403,'FORBIDDEN')
         with self.assertRaises(PreviewError):self.store.save('P','admin',self.body(),guard)
         self.assertEqual(self.store.config('P')['revision'],0)
-    def test_validation_rejects_bad_coordinates_contact_endpoint_and_duplicates(self):
-        for bad in [math.nan,math.inf,True,91,'39.9']:
-            with self.assertRaises(PreviewError):validate_config({**self.config,'points':[{**POINT,'latitude':bad}]})
-        for change in [dict(endpoint='http://localhost'),dict(contact='x\r\nInjected:1'),dict(points=[POINT,POINT]),dict(refreshMinutes=1),dict(points=[])]:
+    def test_validation_rejects_bad_contact_endpoint_refresh_and_strips_legacy_points(self):
+        for change in [dict(endpoint='http://localhost'),dict(contact='x\r\nInjected:1'),dict(contact='http://example.com'),dict(refreshMinutes=1)]:
             with self.assertRaises(PreviewError):validate_config({**self.config,**change})
-        self.assertEqual(validate_config({**self.config,'points':[{**POINT,'latitude':-1.234567}]})['points'][0]['latitude'],-1.2345)
+        self.assertEqual(validate_config({**self.config,'points':[POINT]}),self.config)
     def test_same_location_cache_is_shared_and_survives_new_runtime(self):
         first=self.store.current(self.config,POINT,lambda:None)
         self.assertEqual(first['status'],'available')

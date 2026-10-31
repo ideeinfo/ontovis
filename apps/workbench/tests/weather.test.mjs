@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {weatherUsable,weatherProblems,weatherScenes} from '../src/weather.ts';
+import {weatherUsable,weatherProblems} from '../src/weather.ts';
 import {WorkbenchApi} from '../src/api.ts';
 import {weatherEnvironment} from '../src/weatherEnvironment.ts';
 import {environmentPreset} from '../src/sceneEnvironment.ts';
@@ -11,16 +11,12 @@ test('weather effects expire without waiting for the next network poll',()=>{
  assert.equal(weatherUsable({...value,forecast:{...value.forecast,condition:'unknown'}},now),false);
  assert.equal(weatherUsable({...value,forecast:{...value.forecast,updatedAt:'2026-10-30T03:00:00Z'}},now),false);
 });
-test('weather settings reject absent and duplicate points and invalid coordinates',()=>{
- const point={sceneId:'scene',label:'point',latitude:39.9,longitude:116.4},config={enabled:true,contact:'https://github.com/ideeinfo/ontovis',points:[point]};
+test('weather settings validate contact and refresh interval without scene query points',()=>{
+ const config={enabled:true,provider:'met_no',contact:'https://github.com/ideeinfo/ontovis',refreshMinutes:180};
  assert.deepEqual(weatherProblems(config),[]);
- for(const points of [[],[point,point],[{...point,latitude:NaN}],[{...point,longitude:181}],[{...point,label:' '}]])assert.ok(weatherProblems({...config,points}).length);
-});
-test('weather scene selection pages stable authorized catalog and aborts mixed revisions',async()=>{
- let calls=0;const api={request:async()=>({items:[{sceneId:String(++calls)}],snapshotRevision:'r',nextCursor:calls===1?'next':null})};
- assert.equal((await weatherScenes(api,new AbortController().signal)).length,2);
- calls=0;api.request=async()=>({items:[],snapshotRevision:String(++calls),nextCursor:'next'});
- await assert.rejects(weatherScenes(api,new AbortController().signal),{code:'SCENE_CHANGED'});
+ assert.deepEqual(weatherProblems({...config,contact:'ops@ontobase.ai'}),[]);
+ for(const contact of ['','http://example.com','https://user:pass@example.com','bad contact','not-an-email'])assert.ok(weatherProblems({...config,contact}).includes('contact'));
+ assert.ok(weatherProblems({...config,refreshMinutes:60}).includes('refreshMinutes'));
 });
 test('weather write-only denial preserves authorized project but membership denial clears it',async()=>{
  let code='WEATHER_WRITE_FORBIDDEN',denied=0;

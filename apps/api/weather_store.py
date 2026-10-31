@@ -9,11 +9,11 @@ from urllib.parse import urlsplit
 from .assistant_store import require, identifier, encoded, digest
 from . import weather_source as source
 
-DEFAULT = dict(enabled=False, provider='met_no', contact='https://github.com/ideeinfo/ontovis', refreshMinutes=180, points=[])
+DEFAULT = dict(enabled=False, provider='met_no', contact='https://github.com/ideeinfo/ontovis', refreshMinutes=180)
 
 
 def validate_config(value):
-    require(type(value) is dict and set(value) == set(DEFAULT))
+    require(type(value) is dict and set(value) - {'points'} == set(DEFAULT))
     require(type(value['enabled']) is bool and value['provider'] == 'met_no')
     require(type(value['refreshMinutes']) is int and value['refreshMinutes'] in (180, 360, 720))
     contact = value['contact']
@@ -24,22 +24,7 @@ def validate_config(value):
         require(False)
     require(bool(re.fullmatch(r'[^@/]+@[^@/]+\.[^@/]+', contact)) or
             (target.scheme == 'https' and bool(target.hostname) and not target.username and not target.password))
-    points = value['points']; require(type(points) is list and len(points) <= 50)
-    result = []
-    for point in points:
-        require(type(point) is dict and set(point) == {'sceneId', 'label', 'latitude', 'longitude'})
-        identifier(point['sceneId'])
-        require(type(point['label']) is str and 0 < len(point['label'].strip()) <= 80
-                and not any(ord(c) < 32 for c in point['label']))
-        normalized = dict(point, label=point['label'].strip())
-        for key, high in [('latitude', 90), ('longitude', 180)]:
-            number = point[key]
-            require(type(number) in (float, int) and math.isfinite(number) and -high <= number <= high)
-            normalized[key] = math.trunc(number * 10000) / 10000
-        result.append(normalized)
-    require(len({p['sceneId'] for p in result}) == len(result))
-    require(not value['enabled'] or bool(result))
-    return {**value, 'points': sorted(result, key=lambda p: p['sceneId'])}
+    return {k: value[k] for k in DEFAULT}
 
 
 class WeatherStore:
@@ -67,7 +52,9 @@ class WeatherStore:
             with self.library.connect() as current: return self.config(project, current)
         row = db.execute('''select * from weather_config_revisions where connection_id=? and project_code=?
                             order by revision desc limit 1''', (self.connection_id, project)).fetchone()
-        return dict(revision=row['revision'], config=json.loads(row['config']), savedAt=row['saved_at']) if row else dict(revision=0, config={**DEFAULT, 'points': []}, savedAt=None)
+        if not row: return dict(revision=0, config=dict(DEFAULT), savedAt=None)
+        saved = json.loads(row['config'])
+        return dict(revision=row['revision'], config={**DEFAULT, **{k: saved[k] for k in DEFAULT if k in saved}}, savedAt=row['saved_at'])
 
     def save(self, project, actor, body, authorize):
         identifier(body['requestId']); require(type(body['expectedRevision']) is int and 0 <= body['expectedRevision'] < 1000)
