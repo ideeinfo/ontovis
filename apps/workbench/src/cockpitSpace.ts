@@ -34,7 +34,7 @@ export function mayFinishNavigation(current:SpaceNavigation|null,token:number){r
 export function globeDriftRadians(elapsedMs:number,resumedMs:number,enabled:boolean){
  if(!enabled||!Number.isFinite(elapsedMs)||!Number.isFinite(resumedMs))return 0;
  const phase=Math.max(0,Math.min(1,resumedMs/1400)),ease=phase*phase*(3-2*phase);
- return Math.max(0,Math.min(elapsedMs,100))/1000*(Math.PI/300)*ease;
+ return Math.max(0,Math.min(elapsedMs,100))/1000*(Math.PI/100)*ease;
 }
 
 /** New flights start now; only a flight already running when hidden is suspended. */
