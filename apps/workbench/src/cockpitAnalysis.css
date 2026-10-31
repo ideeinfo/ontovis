@@ -27,7 +27,7 @@
 /* All diagram geometry shares one uniformly scaled world. */
 .pa-world{position:absolute;left:0;top:0;transform-origin:0 0;isolation:isolate}
 .pa-world .pa-links{width:100%;height:100%}
-.pa-board{touch-action:none;cursor:grab}
+.pa-board{touch-action:none;cursor:grab;overflow:clip}
 .pa-board:focus-visible{outline:2px solid var(--pc-green);outline-offset:-2px}
 .pa-board[data-panning]{cursor:grabbing;user-select:none}
 .pa-board[data-panning] .pa-world{pointer-events:none}

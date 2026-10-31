@@ -54,4 +54,8 @@ export function cockpitCanvasFocus(view:Viewport,card:CanvasCard,size:CockpitCan
  const fit=Math.min(1,(size.width-48)/card.width,(size.height-48)/card.height),zoom=Math.max(COCKPIT_CANVAS_MIN_ZOOM,Math.min(fit,Math.max(view.zoom,.85)));
  return {x:size.width/2-(card.x+card.width/2)*zoom,y:size.height/2-(card.y+card.height/2)*zoom,zoom};
 }
+export function cockpitCanvasReveal(view:Viewport,card:CanvasCard,size:CockpitCanvasSize):Viewport{
+ const left=view.x+card.x*view.zoom,top=view.y+card.y*view.zoom;
+ return left>=4&&top>=4&&left+card.width*view.zoom<=size.width-4&&top+card.height*view.zoom<=size.height-4?view:cockpitCanvasFocus(view,card,size);
+}
 export function cockpitCanvasWheel(insideMedia:boolean,modified:boolean,hand:boolean){return !insideMedia||modified||hand;}

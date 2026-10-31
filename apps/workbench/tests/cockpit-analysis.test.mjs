@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {cockpitAnalysisIndex,cockpitAnalysisDetail,cockpitAnalysisHistorical,cockpitSavedTurns,cockpitAnalysisTurns,cockpitNoteRecords} from '../src/cockpitAnalysisState.ts';
-import {cockpitAnalysisLayout,cockpitCardMove,cockpitCardPosition,cockpitCanvasFit,cockpitCanvasZoom,cockpitCanvasPan,cockpitCanvasFocus,cockpitCanvasWheel,COCKPIT_CANVAS_MIN_ZOOM,COCKPIT_CANVAS_MAX_ZOOM} from '../src/cockpitAnalysisCanvas.ts';
+import {cockpitAnalysisLayout,cockpitCardMove,cockpitCardPosition,cockpitCanvasFit,cockpitCanvasZoom,cockpitCanvasPan,cockpitCanvasFocus,cockpitCanvasReveal,cockpitCanvasWheel,COCKPIT_CANVAS_MIN_ZOOM,COCKPIT_CANVAS_MAX_ZOOM} from '../src/cockpitAnalysisCanvas.ts';
 import {analysisEntryRequest} from '../src/analysisSources.ts';
 import {cockpitRelationGraph,cockpitRelationLabels,cockpitRelationRoute} from '../src/cockpitRelationGraph.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'project'},signal=()=>new AbortController().signal;
@@ -170,4 +170,10 @@ test('canvas pan preserves scale and card focus centers a readable target withou
 });
 test('plain media gestures stay local, while modified wheel and the pan tool navigate the whole canvas',()=>{
  assert.equal(cockpitCanvasWheel(true,false,false),false);assert.equal(cockpitCanvasWheel(true,true,false),true);assert.equal(cockpitCanvasWheel(true,false,true),true);assert.equal(cockpitCanvasWheel(false,false,false),true);
+});
+
+test('keyboard movement keeps an off-screen card visible without hidden scrolling or needless camera changes',()=>{
+ const size={width:1464,height:712},value={...card('photo','photo'),x:1336,y:32,width:320,height:264},view={x:-324,y:-152,zoom:1};
+ const revealed=cockpitCanvasReveal(view,value,size);assert.notEqual(revealed,view);assert.ok(revealed.x+value.x*revealed.zoom>=4);assert.ok(revealed.y+value.y*revealed.zoom>=4);assert.ok(revealed.x+(value.x+value.width)*revealed.zoom<=size.width-4);assert.ok(revealed.y+(value.y+value.height)*revealed.zoom<=size.height-4);
+ assert.equal(cockpitCanvasReveal(revealed,value,size),revealed);assert.equal(cockpitCanvasReveal(revealed,{...value,x:value.x+8},size),revealed);
 });
