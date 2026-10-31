@@ -6,6 +6,7 @@
 
 - 名称：**ONTOVis**，保持大小写；Logo 中的 AI 为品牌图形的一部分。中文署名沿用“本源数智”，产品描述为“工业资产可视化与 AI 分析”。
 - Logo：[原始 PNG 副本](../../assets/brand/ONTOVis.png)，2170×725、RGBA、透明背景。源文件位于 OntoBase/项目资料/品牌资产/品牌/ONTOVis.png，由用户提供。原文件与副本不做像素编辑、裁切或拉伸。
+- 浏览器标签图标：[原始 SVG 副本](../../assets/brand/favicon.svg)，viewBox 64×64；2026-10-31由用户指定使用 OntoBase/项目资料/品牌资产/favicon.svg，原样复制。
 - 只收到一个 Logo 版本。管理工作台采用浅底，避免自行制作反白版；未来深色运营场景的 Logo 放于浅色品牌区。
 - 交互色继承 OntoBase 已有 tokens：主色 `#0f766e`、正文 `#17212b`、浅底 `#f4f6f7`、边界 `#d7dde2`。主色与 Logo 青绿相协调，但不是从 PNG 推导的正式色标。
 - 正文 13px、说明 11px；MagicPath 管理页标题 22px。生产字体继续采用系统中文字体栈；MagicPath 云端为避免中文缺字，内嵌从 Noto Sans SC 裁出的预览字体，不依赖外部字体请求。字体来源、许可和版本见[设计索引](MagicPath交互设计.md)。
