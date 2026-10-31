@@ -110,6 +110,16 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         for suffix in ('/delete','/purge','/photos','/configurations/purge','/configurations/export'):
             with self.subTest(suffix=suffix),self.assertRaises(AssertionError):location_for('/api/workbench/equipment'+suffix)
 
+    def test_related_drawing_routes_are_exact_and_keep_the_read_limits(self):
+        for path in ('/api/workbench/objects/evidence/related','/api/workbench/objects/evidence/related/content'):
+            body=location_for(path)
+            for directive in ('client_max_body_size 16k;','proxy_buffering off;','proxy_read_timeout 60s;'):
+                self.assertIn(directive,body)
+            for suffix in ('/','/extra','/save'):
+                with self.assertRaises(AssertionError):location_for(path+suffix)
+        for path in ('/api/workbench/objects/photos/related','/api/workbench/objects/evidence/related/delete'):
+            with self.assertRaises(AssertionError):location_for(path)
+
     def test_only_successful_content_named_public_assets_are_cacheable(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
         block = nginx.split('map "$status:$uri" $ontovis_public_asset_cache_control {', 1)[1].split('\n}', 1)[0]
