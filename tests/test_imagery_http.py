@@ -1,0 +1,164 @@
+"""Actual session HTTP -> imagery/GIS -> scene revision retention."""
+import base64
+import copy
+import hashlib
+import json
+import unittest
+from uuid import uuid4
+
+import tests.test_scene_spatial_http as spatial
+from tests.test_imagery_library import image_bytes,metadata
+
+
+class ImageryHttpTests(unittest.TestCase):
+    def start_transfer(self, data=None):
+        data = self.transfer_data if data is None else data
+        return self.request('/api/workbench/imagery/uploads/start', {'metadata':self.transfer_metadata,
+            'expectedSourceSha256':hashlib.sha256(data).hexdigest(), 'bytes':len(data)})
+
+    def transfer_chunk(self, row, data, **headers):
+        payload = {'uploadId':row['uploadId'],'offset':row['receivedBytes'],
+            'expectedUploadRevision':row['uploadRevision'],'expectedChunkSha256':hashlib.sha256(data).hexdigest(),
+            'expectedSessionRevision':self.admin['revision']}
+        return self.request('/api/workbench/imagery/uploads/chunk', raw=data,
+            headers={'Content-Type':'application/octet-stream','X-Imagery-Chunk':base64.b64encode(json.dumps(payload).encode()).decode(),**headers})
+
+    def test_segmented_upload_http_confirms_bytes_and_publishes_only_once(self):
+        self.transfer_data=image_bytes(self.root/'segmented.tif');self.transfer_metadata=metadata()
+        status,row,headers=self.start_transfer();self.assertEqual(status,200,row)
+        self.assertEqual(headers['Cache-Control'],'no-store');self.assertEqual(row['limits']['maxChunkBytes'],131072)
+        self.assertEqual(self.request('/api/workbench/imagery',{})[1]['uploads'][0]['uploadId'],row['uploadId'])
+        status,next_row,_=self.transfer_chunk(row,self.transfer_data[:100]);self.assertEqual((status,next_row['receivedBytes']),(200,100))
+        self.assertEqual(self.transfer_chunk(row,self.transfer_data[:100])[1]['uploadRevision'],next_row['uploadRevision'])
+        status,final,_=self.transfer_chunk(next_row,self.transfer_data[100:]);self.assertEqual(status,200,final)
+        body={'uploadId':final['uploadId'],'expectedUploadRevision':final['uploadRevision']}
+        status,done,_=self.request('/api/workbench/imagery/uploads/complete',body);self.assertEqual((status,done['state']),(200,'completed'))
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/complete',body)[1]['imageryVersionId'],done['imageryVersionId'])
+        self.assertEqual(self.start_transfer()[1]['imageryVersionId'],done['imageryVersionId'])
+        self.assertEqual(self.request('/api/workbench/imagery',{})[1]['uploads'],[])
+        with self.sessions.library.connect() as db:
+            self.assertEqual(db.execute('select count(*) from imagery_versions').fetchone()[0],1)
+
+    def test_segmented_mutations_require_current_write_access_and_owner_scope(self):
+        self.transfer_data=image_bytes(self.root/'owner.tif');self.transfer_metadata=metadata()
+        _,row,_=self.start_transfer();body={'uploadId':row['uploadId']}
+        other=self.login('synthetic-reader')
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',body,client=other)[0],404)
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',body,client=False)[0],401)
+        self.authority(self.admin).role='reader'
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',body)[0],200)
+        self.assertEqual(self.start_transfer()[0],403)
+        self.assertEqual(self.transfer_chunk(row,b'123')[0],403)
+        for action in ('complete','cancel'):
+            self.assertEqual(self.request('/api/workbench/imagery/uploads/'+action,{**body,'expectedUploadRevision':row['uploadRevision']})[0],403)
+        self.authority(self.admin).allowed=False
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',body)[0],403)
+
+    def test_chunk_boundary_headers_limits_and_revision_conflicts_are_closed(self):
+        self.transfer_data=image_bytes(self.root/'header.tif');self.transfer_metadata=metadata()
+        _,row,_=self.start_transfer()
+        self.assertEqual(self.transfer_chunk(row,b'abc',Origin='http://invalid.example')[0],403)
+        self.assertEqual(self.transfer_chunk(row,b'abc',**{'Content-Type':'image/tiff'})[0],415)
+        self.assertEqual(self.transfer_chunk(row,b'x'*262145)[0],413)
+        self.assertEqual(self.transfer_chunk(row,b'abc',**{'X-Imagery-Chunk':'invalid'})[0],422)
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status/extra',{})[0],404)
+        self.assertEqual(self.request('/api/workbench/imagery/uploads/status',{'uploadId':row['uploadId']})[1]['receivedBytes'],0)
+
+    def test_upload_result_accepts_the_same_long_metadata_as_the_upload_header(self):
+        payload = metadata(sourceNote='s' * 1900, licenseNote='l' * 1900, qualityNote='q' * 700)
+        raw = image_bytes(self.root / 'long-metadata.tif')
+        body = {'metadata': payload, 'expectedSourceSha256': hashlib.sha256(raw).hexdigest()}
+        self.assertGreater(len(json.dumps(body).encode()), 4096)
+        status, image, _ = self.upload_image(payload=payload, data=raw)
+        self.assertEqual(status, 200, image)
+        status, result, _ = self.request('/api/workbench/imagery/upload-result', body)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result['imageryVersionId'], image['imageryVersionId'])
+
+    def test_upload_result_is_private_actor_scoped_and_recovers_a_committed_upload(self):
+        payload = metadata()
+        raw = image_bytes(self.root / 'result.tif')
+        body = {'metadata': payload, 'expectedSourceSha256': hashlib.sha256(raw).hexdigest()}
+        path = '/api/workbench/imagery/upload-result'
+        status, unknown, _ = self.request(path, body)
+        self.assertEqual((status, unknown['state']), (200, 'unknown'))
+        status, image, _ = self.upload_image(payload=payload, data=raw)
+        self.assertEqual(status, 200, image)
+        status, recovered, headers = self.request(path, body)
+        self.assertEqual((status, recovered['state']), (200, 'completed'))
+        self.assertEqual(recovered['imageryVersionId'], image['imageryVersionId'])
+        self.assertEqual(headers['Cache-Control'], 'no-store')
+        reader = self.login('synthetic-reader')
+        self.authority(reader).role = 'reader'
+        self.assertEqual(self.request(path, body, client=reader)[1]['state'], 'unknown')
+        self.assertEqual(self.request(path, body, client=False)[0], 401)
+        self.assertEqual(self.request(path, {**body, 'expectedSourceSha256': '0' * 64})[0], 409)
+        self.authority(self.admin).allowed = False
+        self.assertEqual(self.request(path, body)[0], 403)
+
+    def upload_image(self, *, client=None, data=None, payload=None, headers=None):
+        client=self.admin if client is None else client
+        payload={**(payload or metadata()),'expectedSessionRevision':client['revision']}
+        return self.request('/api/workbench/imagery/upload',client=client,
+            raw=data if data is not None else image_bytes(self.root/'imagery.tif'),
+            headers={'Content-Type':'image/tiff','X-Imagery-Metadata':base64.b64encode(json.dumps(payload).encode()).decode(),**(headers or {})})
+
+    def test_upload_content_no_store_reader_and_revocation(self):
+        status,value,headers=self.upload_image();self.assertEqual(status,200,value);self.assertEqual(headers['Cache-Control'],'no-store')
+        body={'imageryVersionId':value['imageryVersionId'],'expectedContentRevision':value['contentRevision'],'expectedSha256':value['texture']['sha256']}
+        status,content,headers=self.request('/api/workbench/imagery/content',body)
+        self.assertEqual(status,200);self.assertEqual(headers['Content-Type'],'image/png');self.assertEqual(headers['X-Content-SHA256'],hashlib.sha256(content).hexdigest())
+        reader=self.login('synthetic-reader');self.authority(reader).role='reader'
+        self.assertEqual(self.request('/api/workbench/imagery',client=reader)[0],200)
+        self.assertEqual(self.request('/api/workbench/imagery/content',body,client=reader)[0],200)
+        status,error,_=self.upload_image(client=reader);self.assertEqual((status,error['code']),(403,'IMAGERY_WRITE_FORBIDDEN'))
+        self.authority(reader).allowed=False
+        self.assertEqual(self.request('/api/workbench/imagery/content',body,client=reader)[0],403)
+        self.assertEqual(self.request('/api/workbench/imagery/content',body,client=False)[0],401)
+
+    def test_scene_history_pins_image_and_retains_references_when_hidden_replaced_or_removed(self):
+        scene=self.anchored();status,image,_=self.upload_image();self.assertEqual(status,200,image)
+        snapshot=copy.deepcopy(scene['snapshot']);snapshot['imagery']={'imageryVersionId':image['imageryVersionId'],
+            'expectedContentRevision':image['contentRevision'],'expectedReportSha256':image['expectedReportSha256'],'visible':True}
+        # A four-pixel fixture covers the NW corner of the 32x32 terrain only.
+        status,checked,_=self.check(self.validate_body(scene,snapshot));self.assertEqual(status,200,checked)
+        self.assertEqual(checked['proposedSnapshot']['instances'],scene['snapshot']['instances'])
+        body=self.save_body(scene,checked['proposedSnapshot']);status,saved,_=self.save(body);self.assertEqual(status,200,saved)
+        self.assertEqual(self.save(body)[1]['sceneRevision'],saved['sceneRevision'])
+        pinned=self.opened(scene);self.assertEqual(pinned['snapshot']['imagery'],snapshot['imagery'])
+        self.assertNotIn('imagery',self.opened(scene,scene['sceneRevision'])['snapshot'])
+        status,second,_=self.upload_image(payload=metadata(displayName='Synthetic replacement',acquiredAt='2026-10-14'));self.assertEqual(status,200,second)
+        replaced=copy.deepcopy(pinned['snapshot']);replaced['imagery']={'imageryVersionId':second['imageryVersionId'],
+            'expectedContentRevision':second['contentRevision'],'expectedReportSha256':second['expectedReportSha256'],'visible':True}
+        status,newer,_=self.save(self.save_body(pinned,replaced));self.assertEqual(status,200,newer)
+        replacement=self.opened(scene);self.assertEqual(replacement['snapshot']['instances'],scene['snapshot']['instances'])
+        hidden=copy.deepcopy(replacement['snapshot']);hidden['imagery']['visible']=False
+        status,newer,_=self.save(self.save_body(replacement,hidden));self.assertEqual(status,200,newer)
+        removed=self.opened(scene);removed_snapshot=copy.deepcopy(removed['snapshot']);removed_snapshot['imagery']=None
+        self.assertEqual(self.save(self.save_body(removed,removed_snapshot))[0],200)
+        self.assertTrue(self.opened(scene,pinned['sceneRevision'])['snapshot']['imagery']['visible'])
+        with self.sessions.library.connect() as db:
+            self.assertEqual(db.execute('select count(*) from scene_imagery_uses').fetchone()[0],3)
+            self.assertEqual(db.execute('select count(distinct imagery_version_id) from scene_imagery_uses').fetchone()[0],2)
+
+    def test_local_reference_unknown_revision_no_overlap_and_bad_header_do_not_advance_head(self):
+        scene=self.anchored();status,image,_=self.upload_image(data=image_bytes(self.root/'outside.tif',x=800000,y=4000000));self.assertEqual(status,200,image)
+        image_ref={'imageryVersionId':image['imageryVersionId'],'expectedContentRevision':image['contentRevision'],
+            'expectedReportSha256':image['expectedReportSha256'],'visible':True}
+        proposed={**scene['snapshot'],'imagery':image_ref}
+        status,error,_=self.check(self.validate_body(scene,proposed));self.assertEqual((status,error['code']),(409,'IMAGERY_OUTSIDE_TERRAIN'))
+        proposed['imagery']={**image_ref,'expectedContentRevision':'old'}
+        self.assertEqual(self.check(self.validate_body(scene,proposed))[1]['code'],'RESOURCE_CHANGED')
+        local=self.local_scene();local_snapshot={**local['snapshot'],'imagery':image_ref}
+        self.assertEqual(self.save(self.save_body(local,local_snapshot))[0],422)
+        self.assertEqual(self.opened(scene)['sceneRevision'],scene['sceneRevision'])
+        self.assertEqual(self.upload_image(headers={'X-Imagery-Metadata':'not-base64'})[0],422)
+        self.assertEqual(self.upload_image(headers={'Origin':'http://invalid.example'})[0],403)
+
+
+for name in ('setUp','request','login','authority','listing','metadata','upload','new_version','calibration','calibrate','expect',
+             'lonlat','terrain','item','save_body','save','opened','local_scene','anchor_body','check','checked','anchored','validate_body'):
+    setattr(ImageryHttpTests,name,getattr(spatial.SceneSpatialHttpTests,name))
+
+
+if __name__=='__main__':unittest.main()

@@ -1,0 +1,48 @@
+import type {Locale} from './messages';
+
+const zh={
+  equipment:'设备树',projectObjects:'项目对象',search:'搜索名称或编号',loading:'正在读取',retry:'重试',more:'加载更多',
+  rootRequired:'选择关联设备后查看设备树',noChildren:'没有下级对象',depthLimit:'层级较深，请选择此对象后继续查看',
+  noObjects:'暂无对象',login:'登录后读取工程对象',deviceLink:'关联设备',unbound:'未关联设备',
+  unavailable:'关联对象暂不可用，请重新读取',chooseDevice:'选择设备',changeDevice:'更换关联设备',clearDevice:'解除设备关联',
+  objectConfirmed:'对象已确认',objectUnreviewed:'对象待核实',demonstration:'演示关系',
+  enterInternal:'关联内部构件',returnToScene:'返回场景',chooseObject:'选择对象',selectedObject:'当前对象',
+  chooseRootTitle:'选择关联设备',chooseRootHint:'选择项目中的设备对象，关联在保存场景后生效。',
+  useDevice:'关联此设备',cancel:'取消',readOnlyObject:'此对象可查看资料，不能作为关联设备。',
+  incomplete:'设备层级尚未完整，暂不能建立关联。',outsideRoot:'此对象不在当前关联设备的层级内。',
+  noSelection:'在对象列表中选择要关联的对象',components:'模型构件',noComponents:'当前模型没有可关联构件',
+  sourceGeometry:'来源候选几何',proxyGeometry:'代理几何',usedElsewhere:'已关联其他对象',
+  applyComponents:'更新构件关联',clearComponents:'清除此对象关联',missingComponents:'部分关联构件不在当前模型中，请重新核实。',
+  noGeometry:'尚未关联几何，仍可查看对象自身资料。',working:'正在处理',sameDevice:'已关联此设备',
+  objects:'对象',locate:'定位对象',locating:'正在定位',saveToLocate:'保存场景后定位对象',host:'空间宿主',ownObject:'分析对象',
+  chooseRepresentation:'选择要查看的模型实例',noRepresentation:'当前场景没有对应模型',chainIncomplete:'设备层级不完整，无法定位',
+  bindingNeedsReview:'关联已变化，请重新核实',resourceNotReady:'对应模型暂不可用',temporaryVisible:'已临时显示定位对象',
+  reviewTitle:'确认设备关联变更',reviewHint:'以下变更只影响本场景，旧的内部构件关联将清除。',removedLinks:'将清除内部关联',
+  confirmSave:'确认并保存',reviewRequired:'设备或层级已变化，请重新选择设备或重新核实构件关联后保存。',
+  pendingLinks:'待重新关联',componentLinks:'构件关联',evidence:'图纸',returnView:'返回场景视角',
+  reviewObject:'核实当前关联',reviewObjectHint:'核对当前对象和设备路径后，确认继续使用本场景中的关联。',confirmReview:'确认当前关联',
+} as const;
+const en:Record<keyof typeof zh,string>={
+  equipment:'Equipment tree',projectObjects:'Project objects',search:'Search name or identifier',loading:'Loading',retry:'Retry',more:'Load more',
+  rootRequired:'Choose linked equipment to view its tree',noChildren:'No child objects',depthLimit:'Select this object to continue through the deeper hierarchy',
+  noObjects:'No objects',login:'Sign in to read engineering objects',deviceLink:'Linked equipment',unbound:'No linked equipment',
+  unavailable:'Linked object is unavailable; read it again',chooseDevice:'Choose equipment',changeDevice:'Change linked equipment',clearDevice:'Unlink equipment',
+  objectConfirmed:'Object confirmed',objectUnreviewed:'Object needs review',demonstration:'Demonstration relation',
+  enterInternal:'Link internal components',returnToScene:'Return to scene',chooseObject:'Choose object',selectedObject:'Selected object',
+  chooseRootTitle:'Choose linked equipment',chooseRootHint:'Choose equipment from the project. Linking takes effect when you save the scene.',
+  useDevice:'Link this equipment',cancel:'Cancel',readOnlyObject:'This object’s evidence can be read, but it cannot be linked as equipment.',
+  incomplete:'The equipment hierarchy is incomplete; a new association is unavailable.',outsideRoot:'This object is outside the linked equipment hierarchy.',
+  noSelection:'Choose an object from the object list',components:'Model components',noComponents:'The current model has no components to link',
+  sourceGeometry:'Source candidate geometry',proxyGeometry:'Proxy geometry',usedElsewhere:'Linked to another object',
+  applyComponents:'Update component links',clearComponents:'Clear this object’s links',missingComponents:'Some linked components are absent from this model. Review the links.',
+  noGeometry:'No geometry is linked. The object’s own evidence remains readable.',working:'Working',sameDevice:'This equipment is already linked',
+  objects:'Objects',locate:'Locate object',locating:'Locating',saveToLocate:'Save the scene before locating objects',host:'Spatial host',ownObject:'Selected object',
+  chooseRepresentation:'Choose the model instance to view',noRepresentation:'No representation in this scene',chainIncomplete:'The equipment hierarchy is incomplete',
+  bindingNeedsReview:'The links have changed. Review them again.',resourceNotReady:'The model is unavailable',temporaryVisible:'Located object shown temporarily',
+  reviewTitle:'Confirm equipment link changes',reviewHint:'These changes affect this scene only. Previous internal component links will be cleared.',removedLinks:'Internal links to clear',
+  confirmSave:'Confirm and save',reviewRequired:'The equipment or hierarchy has changed. Choose the equipment again or review its component links before saving.',
+  pendingLinks:'Links need review',componentLinks:'Component links',evidence:'Drawings',returnView:'Return to scene view',
+  reviewObject:'Review current links',reviewObjectHint:'Check the current object and equipment path, then confirm its links in this scene.',confirmReview:'Confirm current links',
+};
+export type SceneEngineeringMessage=keyof typeof zh;
+export function sceneEngineeringText(locale:Locale,key:SceneEngineeringMessage){return (locale==='zh'?zh:en)[key];}

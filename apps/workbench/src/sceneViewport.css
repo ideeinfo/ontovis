@@ -1,0 +1,14 @@
+.ov-scene-viewport{position:relative;display:flex;flex-direction:column;min-width:0;min-height:260px;height:100%;overflow:hidden;border:1px solid var(--borderSubtle);border-radius:4px;background:var(--surface);font-size:13px}
+.ov-scene-viewport-stage{position:relative;flex:1;min-height:220px;overflow:hidden;background:#d8e0d4}
+.ov-scene-viewport-canvas{position:absolute;inset:0;touch-action:none}.ov-scene-viewport-canvas canvas{display:block;width:100%;height:100%;outline:none}
+.ov-scene-viewport-canvas canvas:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.ov-scene-viewport-tools{position:absolute;top:8px;right:8px;display:flex;gap:4px;padding:4px;border:1px solid var(--borderSubtle);border-radius:4px;background:var(--surface)}
+.ov-scene-viewport-state{position:absolute;left:8px;top:8px;display:flex;align-items:center;gap:8px;max-width:calc(100% - 160px);padding:6px 8px;border:1px solid var(--borderSubtle);border-radius:4px;background:var(--surface);color:var(--textSecondary);font-size:11px}
+.ov-scene-viewport-state[role="alert"]{color:var(--statusCritical)}.ov-scene-viewport-state .ov-btn{min-height:26px;padding:2px 8px}
+.ov-scene-viewport-foot{display:flex;align-items:center;gap:8px;min-height:28px;padding:4px 8px;border-top:1px solid var(--borderSubtle);color:var(--textSecondary);font-size:11px}
+.ov-scene-viewport-foot span:first-child{flex:1;min-width:0;overflow-wrap:anywhere}.ov-scene-viewport .ov-icon-btn{background:var(--surfaceRaised)}
+@media(max-width:700px){.ov-scene-viewport-tools{top:4px;right:4px}.ov-scene-viewport-state{left:4px;top:40px;max-width:calc(100% - 8px)}}
+
+.ov-scene-imagery-attribution{position:absolute;bottom:6px;left:6px;max-width:calc(100% - 12px);display:grid;gap:2px;padding:4px 6px;border-radius:3px;background:var(--surface);color:var(--textSecondary);font-size:11px;line-height:1.4;pointer-events:none;overflow-wrap:anywhere}.sw-imagery-layer{padding:6px 0;border-bottom:1px solid var(--borderSubtle)}.sw-imagery-layer>small{display:block;padding:0 8px}.sw-imagery-layer>.ov-resource-disclosure{margin:6px 8px}.sw-imagery-layer .ov-resource-facts dd{overflow-wrap:anywhere}
+
+.ov-scene-viewport-state:has(.sw-loading){padding:0;border:0;display:block;min-width:min(300px,calc(100% - 16px))}

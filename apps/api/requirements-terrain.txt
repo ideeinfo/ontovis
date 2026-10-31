@@ -1,0 +1,9 @@
+# Optional terrain worker runtime; verified with CPython 3.12 on Linux x86_64.
+# Keep it separate from the ordinary workbench process.
+rasterio==1.5.2
+numpy==2.5.4
+affine==3.0.1
+attrs==26.1.0
+certifi==2026.10.19
+click==8.5.0
+pyparsing==3.3.3

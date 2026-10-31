@@ -1,0 +1,8 @@
+#session-button{font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.session-dialog{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);width:min(360px,calc(100vw - 32px));padding:34px 30px 30px;box-shadow:0 24px 70px #101e2055}
+.session-dialog::backdrop{background:#14241daa;backdrop-filter:blur(3px)}
+.session-dialog>img{display:block;width:142px;height:auto;margin:0 auto 28px;background:transparent}
+.session-dialog .session-close{position:absolute;right:8px;top:6px;border:0;background:transparent;font-size:22px;padding:0 8px}
+.session-dialog form{display:grid;gap:16px}.session-dialog input{width:100%;min-width:0;border:1px solid var(--line);border-radius:5px;padding:11px 12px;background:var(--surface-raised);color:var(--ink);font:inherit}
+.session-dialog input:focus-visible{outline:2px solid var(--teal);outline-offset:2px}.session-dialog [type=submit]{width:100%;height:42px}.session-dialog [role=alert]{font-size:12px;color:#8f4234}
+@media(max-width:650px){.top-end>.status-dot,.top-end>.pill,.top-end>span:not(.status-dot){display:none}.top-end{margin-left:auto}#session-button{max-width:130px}.session-dialog{padding:32px 24px 24px}}
