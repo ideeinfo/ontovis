@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {cockpitAnalysisIndex,cockpitAnalysisDetail,cockpitAnalysisPage,cockpitAnalysisPageFor,cockpitAnalysisHistorical,cockpitSavedTurns,cockpitAnalysisTurns,cockpitNoteRecords} from '../src/cockpitAnalysisState.ts';
+import {cockpitAnalysisIndex,cockpitAnalysisDetail,cockpitAnalysisPage,cockpitAnalysisPageFor,cockpitAnalysisHistorical,cockpitSavedTurns,cockpitAnalysisTurns,cockpitCardMove,cockpitCardPosition,cockpitNoteRecords} from '../src/cockpitAnalysisState.ts';
 import {analysisEntryRequest} from '../src/analysisSources.ts';
 import {cockpitRelationGraph,cockpitRelationLabels,cockpitRelationRoute} from '../src/cockpitRelationGraph.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'project'},signal=()=>new AbortController().signal;
@@ -58,6 +58,42 @@ test('display pagination covers every saved card and leaves all source views, po
 test('empty, single-card and out-of-range page layouts are bounded and readable',()=>{
  assert.deepEqual(cockpitAnalysisPage([],99).cards,[]);assert.equal(cockpitAnalysisPage([card('one')],20).cards.length,1);
  assert.equal(cockpitAnalysisPage([card('one')],-20).page,0);
+});
+test('card movement follows the rendered board scale instead of multiplying interface density twice',()=>{
+ const value=card('drawing','drawing');
+ const position=cockpitCardMove(value,{x:150,y:35},{width:1500,height:700});
+ assert.deepEqual(position,{x:140,y:95});
+ assert.deepEqual(cockpitCardMove(value,{x:300,y:70},{width:3000,height:1400}),position);
+ assert.deepEqual(cockpitCardMove(value,{x:75,y:17.5},{width:750,height:350}),position);
+});
+test('card edges stay inside the board, and a hidden board or invalid pointer cannot corrupt positions',()=>{
+ const value=card('drawing','drawing');
+ assert.deepEqual(cockpitCardMove(value,{x:-9999,y:9999},{width:1000,height:700}),{x:0,y:460});
+ assert.deepEqual(cockpitCardPosition(value,{x:Infinity,y:NaN}),{x:40,y:60});
+ for(const size of [{width:0,height:700},{width:1000,height:0},{width:NaN,height:700}])assert.deepEqual(cockpitCardMove(value,{x:40,y:60},size),{x:40,y:60});
+ assert.deepEqual(cockpitCardMove(value,{x:NaN,y:60},{width:1000,height:700}),{x:40,y:60});
+});
+test('temporary card positions survive pagination and responsive capacities without changing saved views or the fault anchor',()=>{
+ const cards=[card('alarm','alarm'),...Array.from({length:13},(_,i)=>({...card('drawing-'+i,'drawing'),view:{zoom:.7,centerX:.3,centerY:.4}}))],saved=JSON.stringify(cards);
+ const positions={'drawing-0':{x:600,y:500},alarm:{x:0,y:0},'drawing-8':{x:240,y:90}};
+ for(const capacity of [3,5]){
+  const first=cockpitAnalysisPage(cards,0,capacity,positions),moved=first.cards.find(row=>row.id==='drawing-0');
+  assert.equal(moved.x,600);assert.equal(moved.y,700-moved.height);assert.deepEqual(moved.view,cards[1].view);
+  assert.deepEqual(first.cards.find(row=>row.id==='alarm'),cockpitAnalysisPage(cards,0,capacity).cards.find(row=>row.id==='alarm'));
+  const page=cockpitAnalysisPageFor(cards,'drawing-8',capacity),later=cockpitAnalysisPage(cards,page,capacity,positions);
+  assert.deepEqual([later.cards.find(row=>row.id==='drawing-8').x,later.cards.find(row=>row.id==='drawing-8').y],[240,90]);
+  assert.deepEqual(cockpitAnalysisPage(cards,0,capacity,positions).cards,first.cards);
+ }
+ assert.equal(JSON.stringify(cards),saved);assert.deepEqual(cockpitAnalysisPage(cards,0,5,{}),cockpitAnalysisPage(cards));
+});
+test('existing relationship endpoints and labels follow moved display cards while source geometry and relation meaning remain fixed',()=>{
+ const cards=[card('alarm','alarm'),card('drawing','drawing')],saved=JSON.stringify(cards);
+ const original=cockpitAnalysisPage(cards,0,3),moved=cockpitAnalysisPage(cards,0,3,{drawing:{x:600,y:300}});
+ const edge={id:'source',fromRef:cards[0].source.id,toRef:cards[1].source.id,kind:'reference',label:'Drawing source',reason:'Fixed evidence',origin:'source',anchor:null,from:cards[0],to:cards[1]};
+ const graph=cockpitRelationGraph(cards,moved.cards,[edge],[],{[cards[0].source.id]:'available',[cards[1].source.id]:'available'},[]);
+ assert.equal(graph.length,1);assert.equal(graph[0].to.x,600);assert.equal(graph[0].label,'Drawing source');
+ assert.notDeepEqual(cockpitRelationRoute(graph[0].from,graph[0].to),cockpitRelationRoute(original.cards[1],original.cards[0]));
+ assert.equal(JSON.stringify(cards),saved);
 });
 test('independent recurrence and fixed dataset revisions retain historical status even with the same fault code',()=>{
  assert.equal(cockpitAnalysisHistorical(detail(),dataset),false);

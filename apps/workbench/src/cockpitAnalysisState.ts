@@ -9,6 +9,8 @@ const ROOT='/api/workbench/analysis-sessions';
 export type CockpitAnalysisDetail=DraftReceipt&{snapshot:CanvasSnapshot};
 export type CockpitAnalysisCandidate={analysisSessionId:string;analysisRevision:number;title:string;reason:string;eventId?:string};
 export type CockpitFault={datasetId:string;datasetRevision:string;faultCode:string;title:string};
+export type CockpitCardPosition={x:number;y:number};
+export type CockpitCardPositions=Record<string,CockpitCardPosition>;
 type FaultEntry={datasetId:string;datasetRevision:string}|{orderId:string};
 
 export function cockpitFaultEntry(entry:AnalysisEntry|null):FaultEntry|null{
@@ -43,7 +45,7 @@ export async function cockpitAnalysisIndex(api:DraftApi,entry:AnalysisEntry|null
 }
 
 /** Display positions never replace the saved canvas, including its internal media views. */
-export function cockpitAnalysisPage(cards:CanvasCard[],requestedPage=0,capacity:3|5=5){
+export function cockpitAnalysisPage(cards:CanvasCard[],requestedPage=0,capacity:3|5=5,positions:CockpitCardPositions={}){
  const center=cards.find(card=>card.kind==='alarm'&&!card.historical)||cards.find(card=>card.kind==='alarm')||cards[0];
  const priority=['drawing','model3d','document','photo','trend','object','analysis','work_order','alarm'];
  const ranked=cards.filter(card=>card.id!==center?.id).map((card,index)=>({card,index})).sort((a,b)=>priority.indexOf(a.card.kind)-priority.indexOf(b.card.kind)||a.index-b.index).map(item=>item.card);
@@ -52,9 +54,20 @@ export function cockpitAnalysisPage(cards:CanvasCard[],requestedPage=0,capacity:
  const others=[...first,...rest];
  const count=Math.max(1,Math.ceil(others.length/capacity)),page=Math.max(0,Math.min(count-1,requestedPage));
  const slots=capacity===3?[[18,28,304,286],[678,28,304,286],[678,382,304,286]]:[[18,18,292,274],[354,18,292,274],[690,18,292,274],[18,402,292,280],[690,402,292,280]];
- const visible=others.slice(page*capacity,(page+1)*capacity).map((card,i)=>({...card,x:slots[i][0],y:slots[i][1],width:slots[i][2],height:slots[i][3]}));
+ const visible=others.slice(page*capacity,(page+1)*capacity).map((card,i)=>{
+  const placed={...card,x:slots[i][0],y:slots[i][1],width:slots[i][2],height:slots[i][3]};
+  return positions[card.id]?{...placed,...cockpitCardPosition(placed,positions[card.id])}:placed;
+ });
  if(center)visible.push({...center,x:354,y:capacity===3?382:356,width:292,height:capacity===3?286:250});
  return {cards:visible,page,count,total:cards.length,others,center};
+}
+export function cockpitCardPosition(card:Pick<CanvasCard,'x'|'y'|'width'|'height'>,position:CockpitCardPosition=card):CockpitCardPosition{
+ return {x:Math.max(0,Math.min(1000-card.width,Number.isFinite(position.x)?position.x:card.x)),y:Math.max(0,Math.min(700-card.height,Number.isFinite(position.y)?position.y:card.y))};
+}
+/** Pointer distances use the rendered board, including interface/browser scaling. */
+export function cockpitCardMove(card:Pick<CanvasCard,'x'|'y'|'width'|'height'>,delta:CockpitCardPosition,board:{width:number;height:number}):CockpitCardPosition{
+ if(![delta.x,delta.y,board.width,board.height].every(Number.isFinite)||board.width<=0||board.height<=0)return cockpitCardPosition(card);
+ return cockpitCardPosition(card,{x:card.x+delta.x*1000/board.width,y:card.y+delta.y*700/board.height});
 }
 export function cockpitAnalysisPageFor(cards:CanvasCard[],id:string,capacity:3|5=5){
  const layout=cockpitAnalysisPage(cards,0,capacity);if(layout.center?.id===id)return 0;
