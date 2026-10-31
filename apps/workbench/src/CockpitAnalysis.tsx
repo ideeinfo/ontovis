@@ -1,11 +1,11 @@
-import {lazy,Suspense,useCallback,useEffect,useMemo,useRef,useState,type CSSProperties,type PointerEvent as ReactPointerEvent} from 'react';
+import {lazy,Suspense,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,type CSSProperties,type PointerEvent as ReactPointerEvent} from 'react';
 import {ArrowUpRight,BookOpen,Box,CheckCheck,ChevronDown,ChevronLeft,ChevronRight,ChevronUp,FileText,GitBranch,Image,LayoutDashboard,Maximize2,Plus,RefreshCw,Sparkles,StickyNote,TriangleAlert,TrendingUp,X} from 'lucide-react';
 import {cancelled,failureMessage,type WorkbenchApi} from './api';
 import {Btn,IconBtn,Modal} from './Primitives';
 import {AnalysisSourceCard,materialNames} from './AnalysisSourceCard';
 import {AnalysisSources,type AnalysisEntry,type SourceAnchor} from './analysisSources';
 import {useSourceRelations} from './AnalysisSourceRelations';
-import {cockpitRelationGraph,cockpitRelationRoute,type CockpitRelation} from './cockpitRelationGraph';
+import {cockpitRelationGraph,cockpitRelationLabels,cockpitRelationRoute,type CockpitRelation} from './cockpitRelationGraph';
 import type {CanvasCard} from './analysisCanvas';
 import type {AssistantRun} from './assistantApi';
 import {PageDeck} from './CockpitPanels';
@@ -27,6 +27,7 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
  const [page,setPage]=useState(0),[capacity,setCapacity]=useState<3|5>(5),[focused,setFocused]=useState(''),[expanded,setExpanded]=useState<CanvasCard|null>(null),[anchor,setAnchor]=useState<SourceAnchor|null>(null);
  const [availability,setAvailability]=useState<Record<string,string>>({});
  const [relation,setRelation]=useState<CockpitRelation|null>(null);
+ const [boardSize,setBoardSize]=useState({width:0,height:0}),[labelPositions,setLabelPositions]=useState<Record<string,{x:number;y:number}>>({});
  const [turns,setTurns]=useState<AssistantRun[]|null>(null),[turnError,setTurnError]=useState(false),[turnIndex,setTurnIndex]=useState(0),[recordOpen,setRecordOpen]=useState(false);
  const key=JSON.stringify(entry);
  useEffect(()=>{
@@ -55,11 +56,17 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
   return()=>abort.abort();
  },[api,active,detail,recordAttempt]);
  useEffect(()=>{
-  const node=board.current;if(!node)return;const observer=new ResizeObserver(()=>setCapacity(node.clientWidth<780||node.clientHeight<520?3:5));observer.observe(node);return()=>observer.disconnect();
+  const node=board.current;if(!node)return;const observer=new ResizeObserver(()=>{setCapacity(node.clientWidth<780||node.clientHeight<520?3:5);const rect=node.getBoundingClientRect();setBoardSize(current=>current.width===rect.width&&current.height===rect.height?current:{width:rect.width,height:rect.height});});observer.observe(node);return()=>observer.disconnect();
  },[!!detail]);
  const layout=useMemo(()=>cockpitAnalysisPage(detail?.snapshot.cards||[],page,capacity),[detail,page,capacity]);
  const sourceRelations=useSourceRelations(sources,detail?.snapshot.cards||[]);
  const links=cockpitRelationGraph(detail?.snapshot.cards||[],layout.cards,sourceRelations.relations,detail?.snapshot.relations||[],availability,sourceRelations.gaps,en).map(link=>({...link,route:cockpitRelationRoute(link.from,link.to)}));
+ const linkSignature=JSON.stringify(links.map(link=>[link.id,link.label,link.route]));
+ useLayoutEffect(()=>{
+  const sizes:Record<string,{width:number;height:number}>={};board.current?.querySelectorAll<HTMLButtonElement>('.pa-relation-label').forEach(node=>{const rect=node.getBoundingClientRect();sizes[node.dataset.relationId!]={width:rect.width,height:rect.height};});
+  const positions=cockpitRelationLabels(links,layout.cards,sizes,boardSize.width,boardSize.height);
+  setLabelPositions(current=>JSON.stringify(current)===JSON.stringify(positions)?current:positions);
+ },[linkSignature,boardSize.width,boardSize.height]);
  const onAvailability=useCallback((id:string,value:string)=>setAvailability(current=>current[id]===value?current:{...current,[id]:value}),[]);
  function focusCard(card:CanvasCard,nextAnchor?:SourceAnchor|null){setPage(cockpitAnalysisPageFor(detail?.snapshot.cards||[],card.id,capacity));setFocused(card.id);if(nextAnchor){setExpanded(card);setAnchor(nextAnchor);}}
  function openCard(card:CanvasCard){setExpanded(card);setAnchor(null);}
@@ -84,8 +91,8 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
   {loading&&!detail?<div className="pa-empty" role="status"><LayoutDashboard size={42}/><p>{t('正在加载相关画布…','Loading related canvas…')}</p></div>:!detail&&!error?<div className="pa-empty"><GitBranch size={52}/><h2>{index?.entry?t('暂无相关分析画布','No related analysis canvases'):t('选择当前故障','Choose the current fault')}</h2><p>{index?.entry?t('可在后台新建分析画布。','Create an analysis canvas in the workbench.'):t('查看此故障的已保存分析与关联资料。','View saved analysis and evidence for this fault.')}</p></div>:detail&&sources?<div className="pa-content">
    <main className="pa-evidence"><div className="pa-canvas-caption"><div><strong>{detail.snapshot.title}</strong><small>{historical?t('历史参考','Historical reference'):t('固定分析','Fixed analysis')} · r{detail.analysisRevision} · {new Date(detail.snapshot.context.timeFrom).toLocaleString(en?'en-GB':'zh-CN',{timeZone:detail.snapshot.context.timezone})}</small></div><button title={candidate?.reason} onClick={()=>setRecordOpen(true)}><InfoLabel en={en}/></button></div>
     <div className="pa-board" ref={board} aria-label={t('可视化分析画布','Visual analysis canvas')}>
-     <svg className="pa-links" viewBox="0 0 1000 700" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="pa-source-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor"/></marker></defs>{links.map(link=><path key={link.id} data-origin={link.origin} d={link.route.d} markerEnd="url(#pa-source-arrow)"/>)}</svg>
-     <div className="pa-relation-labels" role="group" aria-label={t('已有资料关系','Recorded evidence relationships')}>{links.map(link=><button key={link.id} className="pa-relation-label" data-origin={link.origin} data-via={link.via.length||undefined} style={{left:link.route.x/10+'%',top:link.route.y/7+'%'}} title={link.reason} aria-label={link.label+'：'+[link.from,...link.via,link.to].map(card=>card.title).join(' ↔ ')} onClick={()=>setRelation(link)}>{link.label}{link.origin==='candidate'&&!/候选|candidate/i.test(link.label)&&<span>{t('候选','Candidate')}</span>}</button>)}</div>
+     <svg className="pa-links" viewBox="0 0 1000 700" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="pa-source-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor"/></marker></defs>{links.map(link=><path key={link.id} data-origin={link.origin} d={cockpitRelationRoute(link.from,link.to,labelPositions[link.id]).d} markerEnd="url(#pa-source-arrow)"/>)}</svg>
+     <div className="pa-relation-labels" role="group" aria-label={t('已有资料关系','Recorded evidence relationships')}>{links.map(link=>{const point=labelPositions[link.id]||link.route;return <button key={link.id} className="pa-relation-label" data-relation-id={link.id} data-origin={link.origin} data-via={link.via.length||undefined} style={{left:point.x/10+'%',top:point.y/7+'%'}} title={link.reason} aria-label={link.label+'：'+[link.from,...link.via,link.to].map(card=>card.title).join(' ↔ ')} onClick={()=>setRelation(link)}>{link.label}{link.origin==='candidate'&&!/候选|candidate/i.test(link.label)&&<span>{t('候选','Candidate')}</span>}</button>;})}</div>
      {layout.cards.map(card=>{const Icon=icons[card.kind];return <article className="pa-card" key={detail.analysisSessionId+':'+detail.analysisRevision+':'+card.id} data-kind={card.kind} data-focused={card.id===focused||undefined} data-historical={card.historical||undefined} style={{left:card.x/10+'%',top:card.y/7+'%',width:card.width/10+'%',height:card.height/7+'%'} as CSSProperties}>
       <header><Icon size={18}/><h3 title={card.title}>{card.title}</h3><IconBtn label={t('放大查看：','Expand: ')+card.title} onClick={()=>openCard(card)}><Maximize2 size={14}/></IconBtn></header><div className="pa-card-body">{content(card)}</div><footer><span>{en?card.kind:materialNames[card.kind]}</span>{card.historical&&<small>{t('历史参考','Historical reference')}</small>}</footer>
      </article>;})}

@@ -45,18 +45,34 @@ export function cockpitRelationGraph(cards:CanvasCard[],visible:CanvasCard[],rel
 }
 
 /** Paths use diagram coordinates; labels are positioned in an unscaled HTML layer. */
-export function cockpitRelationRoute(from:CanvasCard,to:CanvasCard){
+export function cockpitRelationRoute(from:CanvasCard,to:CanvasCard,position?:{x:number;y:number}){
  const ax=from.x+from.width/2,ay=from.y+from.height/2,bx=to.x+to.width/2,by=to.y+to.height/2;
  const upper=ay<by?from:to,lower=ay<by?to:from,verticalGap=lower.y-upper.y-upper.height;
  if(verticalGap>=12){
-  const y1=ay<by?from.y+from.height:from.y,y2=ay<by?to.y:to.y+to.height,lane=(y1+y2)/2-4,mid=(ax+bx)/2;
+  const y1=ay<by?from.y+from.height:from.y,y2=ay<by?to.y:to.y+to.height,lane=position?.y??(y1+y2)/2-4,mid=position?.x??(ax+bx)/2;
   return {d:`M${ax},${y1} C${ax},${lane} ${ax},${lane} ${mid},${lane} S${bx},${lane} ${bx},${y2}`,x:mid,y:lane};
  }
  const left=ax<bx?from:to,right=ax<bx?to:from,gap=right.x-left.x-left.width;
  if(gap<85){
-  const lane=Math.max(12,Math.min(from.y,to.y)-12),mid=(ax+bx)/2;
+  const lane=position?.y??Math.max(12,Math.min(from.y,to.y)-12),mid=position?.x??(ax+bx)/2;
   return {d:`M${ax},${from.y} C${ax},${lane} ${ax},${lane} ${mid},${lane} S${bx},${lane} ${bx},${to.y}`,x:mid,y:lane};
  }
- const x1=ax<bx?from.x+from.width:from.x,x2=ax<bx?to.x:to.x+to.width,bend=(x2-x1)/2;
- return {d:`M${x1},${ay} C${x1+bend},${ay} ${x2-bend},${by} ${x2},${by}`,x:(x1+x2)/2,y:(ay+by)/2};
+ const x1=ax<bx?from.x+from.width:from.x,x2=ax<bx?to.x:to.x+to.width,x=position?.x??(x1+x2)/2,y=position?.y??(ay+by)/2;
+ return {d:`M${x1},${ay} C${x},${ay} ${x},${y} ${x},${y} S${x},${by} ${x2},${by}`,x,y};
+}
+
+/** Place natural-sized labels in free diagram space, including compact layouts. */
+export function cockpitRelationLabels(links:{id:string;route:{x:number;y:number}}[],cards:CanvasCard[],sizes:Record<string,{width:number;height:number}>,width:number,height:number){
+ if(!width||!height)return {};
+ const sx=1000/width,sy=700/height,placed:{x:number;y:number;width:number;height:number}[]=[],result:Record<string,{x:number;y:number}>={};
+ const intersects=(a:typeof placed[number],b:typeof placed[number],px:number,py:number)=>a.x<b.x+b.width+px&&a.x+a.width+px>b.x&&a.y<b.y+b.height+py&&a.y+a.height+py>b.y;
+ for(const link of links){
+  const size=sizes[link.id];if(!size)continue;const w=size.width*sx,h=size.height*sy;
+  const xs=[link.route.x,6*sx+w/2,1000-6*sx-w/2,...cards.flatMap(card=>[card.x-w/2-4*sx,card.x+card.width+w/2+4*sx])];
+  const ys=[link.route.y,6*sy+h/2,700-6*sy-h/2,...cards.flatMap(card=>[card.y-h/2-4*sy,card.y+card.height+h/2+4*sy])];
+  const candidates=xs.flatMap(x=>ys.map(y=>({x,y,distance:((x-link.route.x)/sx)**2+((y-link.route.y)/sy)**2}))).sort((a,b)=>a.distance-b.distance);
+  const chosen=candidates.find(point=>{const box={x:point.x-w/2,y:point.y-h/2,width:w,height:h};return box.x>=3*sx&&box.y>=3*sy&&box.x+w<=1000-3*sx&&box.y+h<=700-3*sy&&!cards.some(card=>intersects(box,card,2*sx,2*sy))&&!placed.some(other=>intersects(box,other,4*sx,4*sy));})||link.route;
+  result[link.id]={x:chosen.x,y:chosen.y};placed.push({x:chosen.x-w/2,y:chosen.y-h/2,width:w,height:h});
+ }
+ return result;
 }

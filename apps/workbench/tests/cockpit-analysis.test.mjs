@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {cockpitAnalysisIndex,cockpitAnalysisDetail,cockpitAnalysisPage,cockpitAnalysisPageFor,cockpitAnalysisHistorical,cockpitSavedTurns,cockpitAnalysisTurns,cockpitNoteRecords} from '../src/cockpitAnalysisState.ts';
 import {analysisEntryRequest} from '../src/analysisSources.ts';
-import {cockpitRelationGraph,cockpitRelationRoute} from '../src/cockpitRelationGraph.ts';
+import {cockpitRelationGraph,cockpitRelationLabels,cockpitRelationRoute} from '../src/cockpitRelationGraph.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'project'},signal=()=>new AbortController().signal;
 const dataset={datasetId:'fault-a',datasetRevision:'v1'},item={analysisSessionId:'canvas-a',analysisRevision:3,title:'Related canvas',reason:'Same fault',eventId:'fault-a-event-1'};
 const ref={system:'ontovis',...scope,id:'evidence',revision:'r1'};
@@ -132,6 +132,20 @@ test('relationship label anchors stay in the gaps between the displayed cards at
    const route=cockpitRelationRoute(alarm,target);
    assert.ok(Number.isFinite(route.x)&&Number.isFinite(route.y));assert.ok(route.d.startsWith('M'));
    assert.ok(!layout.cards.some(c=>route.x>c.x&&route.x<c.x+c.width&&route.y>c.y&&route.y<c.y+c.height));
+  }
+ }
+});
+test('natural-sized relation labels avoid cards and each other at actual large and compact board dimensions',()=>{
+ const cards=[card('alarm','alarm'),card('drawing','drawing'),card('model','model3d'),card('manual','document'),card('photo','photo'),card('trend','trend')];
+ for(const [capacity,width,height] of [[5,1464,718],[3,942,375.5]]){
+  const layout=cockpitAnalysisPage(cards,0,capacity),alarm=layout.cards.find(c=>c.kind==='alarm');
+  const links=layout.cards.filter(c=>c!==alarm).map(target=>({id:target.id,route:cockpitRelationRoute(alarm,target)}));
+  const sizes=Object.fromEntries(links.map((link,i)=>[link.id,{width:[105,127,81,105,105][i],height:22}]));
+  const positions=cockpitRelationLabels(links,layout.cards,sizes,width,height),boxes=[];
+  const overlap=(a,b)=>a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y;
+  for(const link of links){const point=positions[link.id],w=sizes[link.id].width/width*1000,h=22/height*700,box={x:point.x-w/2,y:point.y-h/2,width:w,height:h};
+   assert.ok(!layout.cards.some(c=>overlap(box,c)),link.id);assert.ok(!boxes.some(other=>overlap(box,other)),link.id);boxes.push(box);
+   const route=cockpitRelationRoute(alarm,layout.cards.find(c=>c.id===link.id),point);assert.equal(route.x,point.x);assert.equal(route.y,point.y);
   }
  }
 });
