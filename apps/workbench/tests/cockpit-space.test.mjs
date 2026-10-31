@@ -1,8 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {globeVector,globeDriftRadians,sceneGlobePoint,clusterGlobePoints,preparedNavigation,mayFinishNavigation,globeFlightProgress,resumedGlobeFlightStart,globeFramePlan} from '../src/cockpitSpace.ts';
+import {globeVector,globeAngleDegrees,globeClusterDegrees,globeClusterFocusDistance,globeDriftRadians,sceneGlobePoint,clusterGlobePoints,preparedNavigation,mayFinishNavigation,globeFlightProgress,resumedGlobeFlightStart,globeFramePlan} from '../src/cockpitSpace.ts';
 const point=(id,longitude,latitude)=>({sceneId:id,revision:'rev:1',name:id,longitude,latitude});
 const row=(longitude,latitude)=>({summary:{sceneId:'s',displayName:'Scene'},opened:{sceneRevision:'r1',snapshot:{coordinateFrame:{mode:'projected_site',anchor:{geographicAnchor:[longitude,latitude]}}}}});
+const liveScenePoints=[
+ point('Beck Burn',-3.0239366666666667,55.011359666666664),
+ point('Corriemoillie',-4.779967588235294,57.66545270588235),
+ point('Crystal Rig',-2.5433396153846153,55.90670112087911),
+ point('Dogger Bank',2.722959264367816,55.02065526436782),
+ point('Hornsea 2',1.715484207317073,53.98044437804878),
+ point('Teesside Offshore',-1.0941992222222223,54.64518066666666),
+ point('海上风电· MySE',1.715484207317073,53.98044437804878),
+ point('平顶山夏李风电场',113.20083333333336,33.453333333333326),
+ point('鸣沙山',94.62879502700449,39.97207867557596)
+];
 test('globe drift runs at 1.8 degrees per second across frame rates, ramps in, stops when disabled and cannot leap after a stall',()=>{
  const at30=globeDriftRadians(1000/30,2000,true)*30,at60=globeDriftRadians(1000/60,2000,true)*60;
  assert.ok(Math.abs(at30-at60)<1e-12);assert.ok(Math.abs(at60*200-2*Math.PI)<1e-12);assert.ok(Math.abs(at60/(.6*Math.PI/180)-3)<1e-12);
@@ -51,5 +62,31 @@ test('the last flight frame schedules idle drift without an OrbitControls change
   }
   assert.deepEqual(frames,driftAllowed?[false,true,true,true]:[false,false]);
   assert.equal(pending,driftAllowed);
+ }
+});
+
+test('pairwise linkage bounds cluster span, zoom expands UK/North Sea scenes, and co-located anchors stay grouped',()=>{
+ assert.ok(globeAngleDegrees(globeVector(-4.779967588235294,57.66545270588235),globeVector(1.715484207317073,53.98044437804878))>5.1);
+ const overviewDeg=globeClusterDegrees(3.65,900);
+ const overview=clusterGlobePoints(liveScenePoints,overviewDeg);
+ for(const group of overview)assert.ok(group.spanDegrees<=overviewDeg+1e-6);
+ assert.equal(overview.length,4);
+ assert.deepEqual(overview.map(g=>g.points.length),[3,4,1,1]);
+ const ukGroup=overview[0],northSeaGroup=overview[1];
+ assert.equal(ukGroup.coincident,false);assert.equal(northSeaGroup.coincident,false);
+ for(const regional of [ukGroup,northSeaGroup]){
+  const focusDist=globeClusterFocusDistance(regional,900);
+  assert.ok(focusDist>=1.22&&focusDist<1.6);
+  const zoomedDeg=globeClusterDegrees(focusDist,900);
+  assert.ok(zoomedDeg<overviewDeg);
+  const zoomed=clusterGlobePoints(liveScenePoints,zoomedDeg);
+  assert.equal(zoomed.length,8);
+  const singleNames=zoomed.filter(g=>g.points.length===1).map(g=>g.points[0].name);
+  assert.deepEqual(singleNames,['Beck Burn','Corriemoillie','Crystal Rig','Dogger Bank','Teesside Offshore','平顶山夏李风电场','鸣沙山']);
+  const coincident=zoomed.find(g=>g.points.length>1);
+  assert.ok(coincident);assert.equal(coincident.coincident,true);assert.equal(coincident.spanDegrees,0);
+  assert.deepEqual(coincident.points.map(p=>p.name),['Hornsea 2','海上风电· MySE']);
+  assert.equal(globeClusterFocusDistance(coincident,900),1.32);
+  assert.equal(globeClusterFocusDistance(zoomed[0],900),2.1);
  }
 });

@@ -3,22 +3,28 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {Focus,Globe2,Pause,Play,X} from 'lucide-react';
 import earthMap from '../../../assets/maps/bluemarble-2048.png';
-import {clusterGlobePoints,globeDriftRadians,globeVector,globeFlightProgress,resumedGlobeFlightStart,globeFramePlan,type GlobePoint} from './cockpitSpace';
+import {clusterGlobePoints,globeClusterDegrees,globeClusterFocusDistance,globeDriftRadians,globeVector,globeFlightProgress,resumedGlobeFlightStart,globeFramePlan,type GlobePoint} from './cockpitSpace';
 import './cockpitSpace.css';
 
 export type GlobeFlight={token:number;longitude:number;latitude:number;direction:'in'|'out'};
 export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause,onOpen}:{points:GlobePoint[];active:boolean;en:boolean;light:boolean;flight:GlobeFlight|null;paused:boolean;onTogglePause:()=>void;onOpen:(id:string)=>void}){
  const mount=useRef<HTMLDivElement>(null),pins=useRef(new Map<string,HTMLButtonElement>());
- const [fallback,setFallback]=useState(false),[selected,setSelected]=useState('');
- const groups=useMemo(()=>clusterGlobePoints(points),[points]),selectedGroup=groups.find(g=>g.id===selected);
+ const [fallback,setFallback]=useState(false),[selected,setSelected]=useState(''),[clusterDegrees,setClusterDegrees]=useState(()=>globeClusterDegrees(3.65,900));
+ const groups=useMemo(()=>clusterGlobePoints(points,clusterDegrees),[points,clusterDegrees]),selectedGroup=groups.find(g=>g.id===selected);
  const latest=useRef({groups,active,light,flight,paused,inspecting:!!selectedGroup});latest.current={groups,active,light,flight,paused,inspecting:!!selectedGroup};
- const runtime=useRef<{refresh:()=>void;focus:(longitude:number,latitude:number,distance?:number)=>void;home:()=>void}|null>(null);
+ const runtime=useRef<{refresh:()=>void;focus:(longitude:number,latitude:number,distance?:number)=>void;home:()=>void;distance:()=>number;height:()=>number}|null>(null);
  useEffect(()=>{
   if(!mount.current)return;const element=mount.current;let renderer:THREE.WebGLRenderer;
   try{renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});}catch{setFallback(true);return;}
   let disposed=false,failed=false,frame=0,lastFlight=-1,lastDraw=0,resumeAt=performance.now(),interacting=false,drifting=false,texture:THREE.Texture|null=null;
   const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(34,1,.01,100);
   const overview=new THREE.Vector3(...globeVector(108,28)).multiplyScalar(3.65);camera.position.copy(overview);
+  let lastDegrees=globeClusterDegrees(camera.position.length(),Math.max(240,element.clientHeight||900));
+  setClusterDegrees(lastDegrees);
+  const syncDegrees=()=>{
+   const next=globeClusterDegrees(camera.position.length(),Math.max(240,element.clientHeight||900));
+   if(next!==lastDegrees){lastDegrees=next;setClusterDegrees(next);}
+  };
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearAlpha(0);renderer.outputColorSpace=THREE.SRGBColorSpace;
   renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.1;element.append(renderer.domElement);
   const controls=new OrbitControls(camera,renderer.domElement);controls.enablePan=false;controls.enableDamping=false;controls.minDistance=1.12;controls.maxDistance=5.8;controls.rotateSpeed=.5;controls.zoomSpeed=.55;
@@ -57,6 +63,7 @@ export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause
    if(tween){const progress=globeFlightProgress(tween.start,now),e=progress*progress*(3-2*progress);
     const direction=tween.from.clone().normalize(),rotation=new THREE.Quaternion().setFromUnitVectors(direction,tween.to.clone().normalize());
     direction.applyQuaternion(new THREE.Quaternion().slerp(rotation,e));camera.position.copy(direction.multiplyScalar(THREE.MathUtils.lerp(tween.from.length(),tween.to.length(),e)));controls.update();if(progress===1)tween=null;}
+   syncDegrees();
    camera.updateMatrixWorld();const width=element.clientWidth,height=element.clientHeight;
    for(const group of latest.current.groups){const button=pins.current.get(group.id);if(!button)continue;
     const point=new THREE.Vector3(...globeVector(group.longitude,group.latitude)),front=point.dot(camera.position)>1.025;
@@ -64,20 +71,26 @@ export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause
    }
    try{renderer.render(scene,camera);}catch{failed=true;setFallback(true);return;}if(plan.continue)schedule();
   }
-  const resize=new ResizeObserver(()=>{const width=Math.max(1,element.clientWidth),height=Math.max(1,element.clientHeight);renderer.setSize(width,height);camera.aspect=width/height;camera.updateProjectionMatrix();schedule();});resize.observe(element);
+  const resize=new ResizeObserver(()=>{const width=Math.max(1,element.clientWidth),height=Math.max(1,element.clientHeight);renderer.setSize(width,height);camera.aspect=width/height;camera.updateProjectionMatrix();syncDegrees();schedule();});resize.observe(element);
   const change=()=>schedule(),start=()=>{tween=null;interacting=true;drifting=false;},end=()=>{interacting=false;resumeAt=performance.now()+4500;lastDraw=0;schedule();};controls.addEventListener('change',change);controls.addEventListener('start',start);controls.addEventListener('end',end);
   const lost=(event:Event)=>{event.preventDefault();failed=true;setFallback(true);cancelAnimationFrame(frame);frame=0;};renderer.domElement.addEventListener('webglcontextlost',lost);
   document.addEventListener('visibilitychange',refresh);media.addEventListener('change',refresh);
   new THREE.TextureLoader().load(earthMap,value=>{if(disposed){value.dispose();return;}texture=value;value.colorSpace=THREE.SRGBColorSpace;value.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy());material.map=value;material.needsUpdate=true;schedule();},undefined,()=>{if(!disposed){failed=true;cancelAnimationFrame(frame);frame=0;setFallback(true);}});
-  runtime.current={refresh,focus,home:()=>focus(108,28,3.65)};refresh();
+  runtime.current={refresh,focus,home:()=>focus(108,28,3.65),distance:()=>camera.position.length(),height:()=>Math.max(240,element.clientHeight||900)};refresh();
   return()=>{disposed=true;cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',refresh);media.removeEventListener('change',refresh);controls.removeEventListener('change',change);controls.removeEventListener('start',start);controls.removeEventListener('end',end);controls.dispose();geometry.dispose();material.dispose();glowMaterial.dispose();cloudMaterial.dispose();texture?.dispose();renderer.domElement.removeEventListener('webglcontextlost',lost);renderer.dispose();renderer.forceContextLoss();renderer.domElement.remove();runtime.current=null;};
  },[]);
  useEffect(()=>{runtime.current?.refresh();},[active,light,flight,groups,paused,selectedGroup]);
  useEffect(()=>{if(!active)setSelected('');},[active]);
  return <section className={`pc-globe-view${fallback?' is-fallback':''}`} aria-label={en?'Project globe':'项目地球'}>
   <div className="pc-globe-render" ref={mount}/>
-  {fallback?<div className="pc-globe-fallback"><Globe2/><span>{en?'Globe unavailable; use the scene list.':'地球视图暂不可用，请从场景列表进入。'}</span></div>:groups.map(group=><button className={`pc-globe-pin${selected===group.id?' selected':''}`} key={group.id} ref={element=>{if(element)pins.current.set(group.id,element);else pins.current.delete(group.id);}} aria-label={group.points.length>1?`${group.points.length} ${en?'scene reference points':'个场景参考点'}`:`${group.points[0].name} · ${en?'reference point':'参考点'}`} onClick={()=>{setSelected(group.id);runtime.current?.focus(group.longitude,group.latitude);}}><i/>{group.points.length>1?<b>{group.points.length}</b>:<span>{group.points[0].name}</span>}</button>)}
-  {selectedGroup&&<aside className="pc-globe-choice"><header><strong>{en?'Scene reference points':'场景参考点'}</strong><button aria-label={en?'Close reference points':'关闭参考点'} onClick={()=>setSelected('')}><X size={14}/></button></header><small>{en?'Location accuracy unverified':'位置精度未核实'}</small>{selectedGroup.points.map(point=><button key={point.sceneId} onClick={()=>onOpen(point.sceneId)}>{point.name}<span>↗</span></button>)}</aside>}
+  {fallback?<div className="pc-globe-fallback"><Globe2/><span>{en?'Globe unavailable; use the scene list.':'地球视图暂不可用，请从场景列表进入。'}</span></div>:groups.map(group=><button className={`pc-globe-pin${selected===group.id?' selected':''}${group.coincident?' coincident':group.points.length>1?' cluster':''}`} key={group.id} ref={element=>{if(element)pins.current.set(group.id,element);else pins.current.delete(group.id);}} aria-label={group.points.length>1?(group.coincident?`${group.points.length} ${en?'co-located scene reference points':'个同位置场景参考点'} · ${group.points.map(p=>p.name).join(' / ')}`:`${group.points.length} ${en?'scene reference points':'个场景参考点'}`):`${group.points[0].name} · ${en?'reference point':'参考点'}`} onClick={()=>{
+   const currentDistance=runtime.current?.distance()??3.65,height=runtime.current?.height()??900;
+   const targetDistance=globeClusterFocusDistance(group,height),targetDegrees=globeClusterDegrees(targetDistance,height);
+   if(group.points.length>1&&!group.coincident&&targetDegrees<clusterDegrees&&currentDistance>targetDistance+.04){setSelected('');runtime.current?.focus(group.longitude,group.latitude,targetDistance);return;}
+   if(group.points.length===1&&selected===group.id){onOpen(group.points[0].sceneId);return;}
+   setSelected(group.id);runtime.current?.focus(group.longitude,group.latitude,Math.min(currentDistance,targetDistance));
+  }}><i/>{group.points.length>1&&<b>{group.points.length}</b>}{group.points.length===1?<span>{group.points[0].name}</span>:group.coincident?<span>{group.points[0].name} +{group.points.length-1}</span>:null}</button>)}
+  {selectedGroup&&<aside className="pc-globe-choice"><header><strong>{en?'Scene reference points':'场景参考点'}</strong><button aria-label={en?'Close reference points':'关闭参考点'} onClick={()=>setSelected('')}><X size={14}/></button></header><small>{selectedGroup.coincident?(en?'Same reference coordinates · accuracy unverified':'同参考坐标场景 · 位置精度未核实'):(en?'Location accuracy unverified':'位置精度未核实')}</small>{selectedGroup.points.map(point=><button key={point.sceneId} onClick={()=>onOpen(point.sceneId)}>{point.name}<span>↗</span></button>)}</aside>}
   {!fallback&&<button className="pc-globe-pause" aria-label={paused?(en?'Resume globe rotation':'继续地球自转'):(en?'Pause globe rotation':'暂停地球自转')} onClick={onTogglePause}>{paused?<Play size={17}/>:<Pause size={17}/>}</button>}
   <button className="pc-globe-home" aria-label={en?'Reset globe view':'恢复地球视角'} onClick={()=>{setSelected('');runtime.current?.home();}}><Focus size={17}/></button>
  </section>;
