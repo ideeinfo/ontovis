@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {cockpitAnalysisIndex,cockpitAnalysisDetail,cockpitAnalysisPage,cockpitAnalysisPageFor,cockpitAnalysisHistorical,cockpitSavedTurns,cockpitAnalysisTurns,cockpitNoteRecords} from '../src/cockpitAnalysisState.ts';
 import {analysisEntryRequest} from '../src/analysisSources.ts';
+import {cockpitRelationGraph,cockpitRelationRoute} from '../src/cockpitRelationGraph.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'project'},signal=()=>new AbortController().signal;
 const dataset={datasetId:'fault-a',datasetRevision:'v1'},item={analysisSessionId:'canvas-a',analysisRevision:3,title:'Related canvas',reason:'Same fault',eventId:'fault-a-event-1'};
 const ref={system:'ontovis',...scope,id:'evidence',revision:'r1'};
@@ -86,4 +87,51 @@ test('saved structured notes keep their actual sections while ordinary notes kee
  const original=value.note,records=cockpitNoteRecords([value]);
  assert.deepEqual(records.map(row=>row.id),['observations','hypotheses','gaps']);assert.deepEqual(records.map(row=>row.rows[0].text),['已保存观察','仍待验证','尚缺现场证据']);assert.equal(value.note,original);
  assert.equal(cockpitNoteRecords([{...card('plain'),note:'自由格式的原始记录'}])[0].rows[0].text,'自由格式的原始记录');
+});
+
+const sourceLink=(from,to,label='Registered relation',origin='source')=>({id:from.id+'-'+to.id,fromRef:from.source.id,toRef:to.source.id,kind:'reference',label,reason:'Existing fixed source relationship',origin,anchor:{entityUid:'fixed-object'},from,to});
+const ready=cards=>Object.fromEntries(cards.filter(c=>c.source).map(c=>[c.source.id,'available']));
+test('off-page engineering objects retain their existing relationship paths between visible media',()=>{
+ const alarm=card('alarm','alarm'),object=card('sensor','object'),cabinet=card('cabinet','object'),drawing=card('drawing','drawing'),photo=card('photo','photo'),model=card('model','model3d'),manual=card('manual','document');
+ const cards=[alarm,object,cabinet,drawing,photo,model,manual,card('trend','trend')],saved=JSON.stringify(cards),visible=cockpitAnalysisPage(cards).cards;
+ const edges=[sourceLink(alarm,object,'Alarm object'),sourceLink(object,cabinet,'Parent equipment'),sourceLink(object,drawing,'Drawing location'),sourceLink(object,photo,'Photo location'),sourceLink(cabinet,model,'Model candidate','candidate'),sourceLink(alarm,manual,'Fault manual')];
+ const graph=cockpitRelationGraph(cards,visible,edges,[],ready(visible),[]);
+ assert.equal(graph.length,4);assert.equal(graph.filter(edge=>edge.via.length>0).length,3);
+ assert.deepEqual(graph.find(edge=>edge.to.id==='model').via.map(c=>c.id),['sensor','cabinet']);
+ assert.equal(graph.find(edge=>edge.to.id==='model').origin,'candidate');
+ assert.ok(graph.find(edge=>edge.to.id==='photo').label.includes('经对象'));assert.equal(JSON.stringify(cards),saved);
+});
+test('unavailable or changed hidden objects cannot produce a shortcut, while candidate notices remain explicit',()=>{
+ const alarm=card('alarm','alarm'),object=card('object','object'),model=card('model','model3d'),cards=[alarm,object,model],edges=[sourceLink(alarm,object),sourceLink(object,model,'Same-name candidate','candidate')],visible=[alarm,model];
+ assert.equal(cockpitRelationGraph(cards,visible,edges,[],ready(visible),[{evidenceRefId:object.source.id,reason:'ENGINEERING_CHANGED'}]).length,0);
+ assert.equal(cockpitRelationGraph(cards,visible,edges,[],{...ready(visible),[object.source.id]:'restricted'},[]).length,0);
+ assert.equal(cockpitRelationGraph(cards,visible,edges,[],ready(visible),[{evidenceRefId:object.source.id,reason:'MODEL_NAME_CANDIDATE_ONLY'}])[0].origin,'candidate');
+ assert.equal(cockpitRelationGraph(cards,visible,edges,[],{[alarm.source.id]:'available'},[]).length,0);
+});
+test('the projection keeps direct links and avoids an inferred complete graph between all cards sharing an object',()=>{
+ const alarm=card('alarm','alarm'),object=card('object','object'),a=card('a','photo'),b=card('b','drawing'),c=card('c','model3d'),cards=[alarm,object,a,b,c],edges=[sourceLink(alarm,object),sourceLink(object,a),sourceLink(object,b),sourceLink(object,c),sourceLink(a,b,'Direct drawing reference')],visible=[alarm,a,b,c];
+ const graph=cockpitRelationGraph(cards,visible,edges,[],ready(visible),[]);
+ assert.equal(graph.length,3);assert.ok(graph.some(edge=>edge.label==='Direct drawing reference'&&!edge.via.length));
+ assert.equal(graph.filter(edge=>edge.via.length).length,2);
+});
+test('projection never crosses a historical boundary or treats unregistered common context as a relation',()=>{
+ const alarm=card('alarm','alarm'),object=card('object','object'),photo={...card('photo','photo'),historical:true},trend=card('trend','trend'),cards=[alarm,object,photo,trend],edges=[sourceLink(alarm,object),sourceLink(object,photo)];
+ assert.deepEqual(cockpitRelationGraph(cards,[alarm,photo,trend],edges,[],ready(cards),[]),[]);
+ assert.deepEqual(cockpitRelationGraph(cards,[alarm,trend],[],[],ready(cards),[]),[]);
+});
+test('saved manual support and contradiction labels retain their exact meaning without source promotion',()=>{
+ const a=card('a'),b=card('b'),saved=[{id:'manual',from:a.id,to:b.id,kind:'contradicts',origin:'manual',reason:'Saved counter-evidence'}];
+ const graph=cockpitRelationGraph([a,b],[a,b],[],saved,{},[]);
+ assert.equal(graph[0].label,'反证');assert.equal(graph[0].origin,'manual');assert.equal(graph[0].reason,'Saved counter-evidence');assert.equal(graph[0].via.length,0);
+});
+test('relationship label anchors stay in the gaps between the displayed cards at both capacities',()=>{
+ const cards=[card('alarm','alarm'),card('drawing','drawing'),card('model','model3d'),card('manual','document'),card('photo','photo'),card('trend','trend')];
+ for(const capacity of [3,5]){
+  const layout=cockpitAnalysisPage(cards,0,capacity),alarm=layout.cards.find(c=>c.kind==='alarm');
+  for(const target of layout.cards.filter(c=>c!==alarm)){
+   const route=cockpitRelationRoute(alarm,target);
+   assert.ok(Number.isFinite(route.x)&&Number.isFinite(route.y));assert.ok(route.d.startsWith('M'));
+   assert.ok(!layout.cards.some(c=>route.x>c.x&&route.x<c.x+c.width&&route.y>c.y&&route.y<c.y+c.height));
+  }
+ }
 });
