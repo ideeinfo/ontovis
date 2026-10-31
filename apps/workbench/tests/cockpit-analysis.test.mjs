@@ -145,6 +145,7 @@ test('natural-sized relation labels avoid cards and each other at actual large a
   const overlap=(a,b)=>a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y;
   for(const link of links){const point=positions[link.id],w=sizes[link.id].width/width*1000,h=22/height*700,box={x:point.x-w/2,y:point.y-h/2,width:w,height:h};
    assert.ok(!layout.cards.some(c=>overlap(box,c)),link.id);assert.ok(!boxes.some(other=>overlap(box,other)),link.id);boxes.push(box);
+   if(capacity===3)assert.ok(Math.hypot((point.x-link.route.x)*width/1000,(point.y-link.route.y)*height/700)<120,'Labels remain near their relationship paths');
    const route=cockpitRelationRoute(alarm,layout.cards.find(c=>c.id===link.id),point);assert.equal(route.x,point.x);assert.equal(route.y,point.y);
   }
  }

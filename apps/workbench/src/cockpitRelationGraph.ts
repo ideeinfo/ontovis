@@ -68,8 +68,8 @@ export function cockpitRelationLabels(links:{id:string;route:{x:number;y:number}
  const intersects=(a:typeof placed[number],b:typeof placed[number],px:number,py:number)=>a.x<b.x+b.width+px&&a.x+a.width+px>b.x&&a.y<b.y+b.height+py&&a.y+a.height+py>b.y;
  for(const link of links){
   const size=sizes[link.id];if(!size)continue;const w=size.width*sx,h=size.height*sy;
-  const xs=[link.route.x,6*sx+w/2,1000-6*sx-w/2,...cards.flatMap(card=>[card.x-w/2-4*sx,card.x+card.width+w/2+4*sx])];
-  const ys=[link.route.y,6*sy+h/2,700-6*sy-h/2,...cards.flatMap(card=>[card.y-h/2-4*sy,card.y+card.height+h/2+4*sy])];
+  const xs=[link.route.x,6*sx+w/2,1000-6*sx-w/2,...[...cards,...placed].flatMap(card=>[card.x-w/2-4*sx,card.x+card.width+w/2+4*sx])];
+  const ys=[link.route.y,6*sy+h/2,700-6*sy-h/2,...[...cards,...placed].flatMap(card=>[card.y-h/2-4*sy,card.y+card.height+h/2+4*sy])];
   const candidates=xs.flatMap(x=>ys.map(y=>({x,y,distance:((x-link.route.x)/sx)**2+((y-link.route.y)/sy)**2}))).sort((a,b)=>a.distance-b.distance);
   const chosen=candidates.find(point=>{const box={x:point.x-w/2,y:point.y-h/2,width:w,height:h};return box.x>=3*sx&&box.y>=3*sy&&box.x+w<=1000-3*sx&&box.y+h<=700-3*sy&&!cards.some(card=>intersects(box,card,2*sx,2*sy))&&!placed.some(other=>intersects(box,other,4*sx,4*sy));})||link.route;
   result[link.id]={x:chosen.x,y:chosen.y};placed.push({x:chosen.x-w/2,y:chosen.y-h/2,width:w,height:h});
