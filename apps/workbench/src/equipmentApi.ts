@@ -38,7 +38,8 @@ export type MaterialSelection=Omit<PhotoSelection,'photoPurpose'>;
 export interface EquipmentMaterial {documentId:string;contentVersionId:string;title:string;kind:'pdf'|'photo';documentKind:string;versionNumber:number;pageCount:number|null;availability:'available'|'unavailable'|'field_record';scopes:string[];origins:string[]}
 export interface EquipmentMaterialPage {model:EquipmentModel|null;role?:string|null;roles:{value:string;kind:'model'|'root'|'role';name:string|null}[];revision:number;total?:number;items:EquipmentMaterial[];nextCursor:string|null;canManage:boolean}
 export interface FixedDocument {documentId:string;contentVersionId:string;sourceSha256:string;title:string;kind:'pdf'|'photo';pageNumber:number;pageCount:number;versionNumber:number;newerVersionAvailable:boolean}
-export interface EquipmentAttributeForm {available:boolean;reason:string|null;model:EquipmentModel|null;scope?:{source:string;name:string;classificationCode:string};fields:ApplicationBundle['template']['fields'];values:PropertyValue[]}
+export interface EquipmentModelAttributes {available:boolean;reason:string|null;model:EquipmentModel|null;relation:'equipment'|'assembly'|null;equipmentName?:string;fields:ApplicationBundle['template']['fields'];values:PropertyValue[]}
+export interface EquipmentAttributeForm {available:boolean;reason:string|null;model:EquipmentModel|null;scope?:{source:string;name:string;classificationCode:string};fields:ApplicationBundle['template']['fields'];values:PropertyValue[];modelAttributes?:EquipmentModelAttributes}
 export class EquipmentApi {
   private api:WorkbenchApi;
   constructor(api:WorkbenchApi){this.api=api;}
@@ -51,6 +52,7 @@ export class EquipmentApi {
   materialMetadata(documentId:string,contentVersionId:string,signal?:AbortSignal){return this.api.request<FixedDocument>(ROOT+'/materials/metadata',{documentId,contentVersionId},signal);}
   materialContent(value:FixedDocument,pageNumber:number,signal?:AbortSignal,representation:'preview'|'display'='preview'){return this.api.request<Blob>(ROOT+'/materials/content',{documentId:value.documentId,contentVersionId:value.contentVersionId,sourceSha256:value.sourceSha256,pageNumber,representation},signal,'source');}
   attributeForm(entityUid:string,signal?:AbortSignal){return this.api.request<EquipmentAttributeForm>(ROOT+'/attribute-form',{entityUid},signal);}
+  deviceParameters(selection:Pick<MaterialSelection,'entityUid'|'expectedEntityRevision'>,signal?:AbortSignal){return this.api.request<EquipmentAttributeForm>(ROOT+'/attribute-form',{...selection,includeModel:true},signal);}
   children(parentEntityUid:string,cursor:string|null=null,signal?:AbortSignal){return this.api.request<{items:{object:EngineeringObject}[];nextCursor:string|null;total:number}>(ROOT+'/definitions/children',{parentEntityUid,...(cursor?{cursor}:{})},signal);}
   applications(offset=0,signal?:AbortSignal){return this.api.request<{items:ApplicationSummary[];total:number;offset:number;limit:number}>(ROOT+'/applications',{offset,limit:50},signal);}
   application(applicationRevisionId:string,signal?:AbortSignal){return this.api.request<ApplicationBundle>(ROOT+'/applications/detail',{applicationRevisionId},signal);}

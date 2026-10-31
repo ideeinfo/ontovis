@@ -8,10 +8,12 @@ import type {SceneLocation,SceneObjectContext} from './sceneEngineeringTypes';
 import type {AnalysisEntry} from './analysisSources';
 import {EquipmentAttributeDetails} from './EquipmentAttributeDetails';
 import {EquipmentMaterials} from './EquipmentMaterials';
+import {EquipmentDrawings} from './EquipmentDrawings';
 import {Btn,Modal} from './Primitives';
 import {PageDeck,CockpitModelPreview} from './CockpitPanels';
 import type {ModelResourceRef} from './sceneTypes';
 import type {SimulatedAlarm} from './simulatedAlarms';
+import './cockpitDevice.css';
 
 export function CockpitDevice({api,uid,en,alarm,representationUid,onSelect,onAnalyze,onChoose,model,selectionToken,location,locating,previewing,locationError,isolated,onIsolate,onFocus}:{api:WorkbenchApi;uid:string;en:boolean;alarm?:SimulatedAlarm|null;representationUid?:string;onSelect:(uid:string)=>void;onAnalyze:(entry:AnalysisEntry)=>void;onChoose:()=>void;model?:ModelResourceRef|null;selectionToken:number;location:SceneLocation|null;locating:boolean;previewing:boolean;locationError:unknown;isolated:boolean;onIsolate:()=>void;onFocus:()=>void}){
  const t=(zh:string,eng:string)=>en?eng:zh;
@@ -41,12 +43,12 @@ export function CockpitDevice({api,uid,en,alarm,representationUid,onSelect,onAna
  {error?<section className="pc-panel pc-device-card" role="alert">{failureMessage(error,en?'en':'zh')} <Btn onClick={()=>setAttempt(v=>v+1)}>{t('重试','Retry')}</Btn></section>:!record||!context?<section className="pc-panel pc-device-card" role="status">{t('正在读取设备…','Reading equipment…')}</section>:<>
  <section className="pc-panel pc-device-card"><header><div><small>{record.context.purpose==='demonstration'?t('演示安装','Demonstration'):t('安装设备','Installed equipment')}{location?.geometryQuality==='proxy_schematic'?' · '+t('示意','Schematic'):''}</small><h2 title={record.item.displayName}>{record.item.displayName}</h2>{alarm&&<span className="pc-device-alarm-badge" data-state={alarm.state} data-severity={alarm.severity}><Info size={12}/>{alarm.state==='cleared'?t('已恢复','Cleared'):alarm.severity==='critical'?t('严重','Critical'):t('警告','Warning')}</span>}</div><button aria-label={t('设备身份与精度','Identity and accuracy')} onClick={()=>setDetail('info')}><Info size={17}/></button></header>
  <div className="pc-device-emblem">{model?<CockpitModelPreview api={api} reference={model} name={t('所属设备模型','Containing equipment model')}/>:<Box size={64} strokeWidth={.8}/>}<span>{record.model?.name||t('工程对象','Engineering object')}</span></div>
- <button className="pc-material-action" onClick={()=>setDetail('materials')}><FileText size={20}/><span>{t('图纸与资料','Drawings & materials')}</span><ArrowRight size={15}/></button>
+ <button className="pc-material-action" onClick={()=>setDetail('materials')}><FileText size={20}/><span>{t('文档资料','Documents')}</span><ArrowRight size={15}/></button>
  <button className="pc-material-action" onClick={()=>setDetail('attributes')}><SlidersHorizontal size={20}/><span>{t('设备参数','Equipment parameters')}</span><ArrowRight size={15}/></button>
- <button className="pc-material-action" onClick={()=>setDetail('info')}><Info size={20}/><span>{t('对象详情','Object details')}</span><ArrowRight size={15}/></button>
+ <button className="pc-material-action" onClick={()=>setDetail('drawings')}><FileText size={20}/><span>{t('图纸','Drawings')}</span><ArrowRight size={15}/></button>
  <button className="pc-primary-action" onClick={()=>onAnalyze({entityUid:uid,expectedEntityRevision:record.item.entityRevision,timeTo:new Date().toISOString()})}><Network size={18}/>{t('进入设备分析','Analyze equipment')}<ArrowRight size={16}/></button></section>
- {detail&&<Modal className="pc-detail-dialog" title={record.item.displayName} description={t('所选设备详情','Selected equipment details')} onClose={()=>setDetail('')}>
+ {detail&&<Modal className={'pc-detail-dialog'+(detail!=='info'?' pc-device-resource-dialog':'')} title={record.item.displayName} description={t('所选设备详情','Selected equipment details')} onClose={()=>setDetail('')}>
  {detail==='info'&&<div className="pc-detail-copy"><dl><dt>{t('型号','Model')}</dt><dd>{record.model?.name||'—'}</dd><dt>{t('身份','Identity')}</dt><dd>{uid}</dd><dt>{t('几何','Geometry')}</dt><dd>{t('源候选 / 示意表示；精度未核实','Source candidate / schematic; accuracy unverified')}</dd></dl>{uid!==representationUid&&!precise&&<p>{t('空间视图显示所属设备；此部件尚无经核验的独立几何绑定。','The view shows the containing equipment; this child has no verified geometry binding.')}</p>}<p>{t('真实运行数据尚未接入，显示姿态不代表现场运行状态。','Live telemetry is not connected; displayed poses are not field operating states.')}</p></div>}
- {detail==='attributes'&&<EquipmentAttributeDetails api={api} uid={uid} en={en}/>}{detail==='materials'&&<EquipmentMaterials api={api} en={en} selection={selection!}/>}
+ {detail==='attributes'&&<EquipmentAttributeDetails api={api} uid={uid} en={en} modelContext={{expectedEntityRevision:record.item.entityRevision}} onReload={()=>setAttempt(v=>v+1)}/>}{detail==='materials'&&<EquipmentMaterials api={api} en={en} selection={selection!} presentation/>}{detail==='drawings'&&<EquipmentDrawings api={api} object={context.item} context={context.context} en={en} onReload={()=>setAttempt(v=>v+1)}/>}
  </Modal>}</>}</>;
 }

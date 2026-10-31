@@ -3,6 +3,7 @@ from urllib.parse import quote, urlencode
 import re
 from uuid import UUID
 
+from .authority import PreviewError
 from .scene_engineering import _object, _require, _text, _argument, _context_id
 
 
@@ -198,9 +199,54 @@ class EquipmentReader:
         return result
 
     def attribute_form(self, body):
-        _require(type(body) is dict and set(body)=={'entityUid'},'INVALID_REQUEST',422);uid=_argument(body['entityUid'])
+        plain=type(body) is dict and set(body)=={'entityUid'}
+        expanded=type(body) is dict and set(body)=={'entityUid','expectedEntityRevision','includeModel'} and body['includeModel'] is True
+        _require(plain or expanded,'INVALID_REQUEST',422);uid=_argument(body['entityUid'])
+        records={}
+        if expanded:
+            revision=_argument(body['expectedEntityRevision'],200)
+            records=self.resolve([uid]);_require(records[uid]['item']['entityRevision']==revision,'ENGINEERING_CHANGED',409)
         value=self.reader._request('GET',self.reader.prefix+'/equipment/'+quote(uid,safe='')+'/attribute-form')
         _require(type(value.get('device')) is dict and value['device'].get('entityUid')==uid)
         _require(type(value.get('fields')) is list and len(value['fields'])<=1000 and type(value.get('values')) is list
             and type(value.get('available')) is bool)
-        return {key:value.get(key) for key in ('device','rowVersion','canManage','available','reason','fields','values','scope','contextDigest')}|{'model':self.model(value.get('model'))}
+        result={key:value.get(key) for key in ('device','rowVersion','canManage','available','reason','fields','values','scope','contextDigest')}|{'model':self.model(value.get('model'))}
+        if expanded:
+            if result['model'] is not None:
+                own=records[uid]['model'];_require(own is not None and all(own[key]==result['model'][key] for key in ('specificationId','revisionId')),'ENGINEERING_CHANGED',409)
+            try:result['modelAttributes']=self._model_attributes(uid,records)
+            except PreviewError as error:
+                if error.status in (401,403,409):raise
+                result['modelAttributes']={'available':False,'reason':error.code,'model':None,'relation':None,'fields':[],'values':[]}
+            current=self.resolve(list(records))
+            for identity,previous in records.items():
+                _require(all(previous[key]==current[identity][key] for key in ('item','context','model','adoption')),'ENGINEERING_CHANGED',409)
+        return result
+
+    def _model_attributes(self, uid, records):
+        selected=records[uid];model=selected['model'];relation='equipment';owner=selected
+        if model is None and selected['adoption'] and selected['context']['rootEntityUid']!=uid:
+            root_uid=selected['context']['rootEntityUid'];owner=self.resolve([root_uid])[root_uid];records[root_uid]=owner
+            _require(owner['context']['installationContextId']==selected['context']['installationContextId']
+                and owner['context']['hierarchyRevision']==selected['context']['hierarchyRevision'],'ENGINEERING_CHANGED',409)
+            a,b=selected['adoption'],owner['adoption']
+            _require(b is not None and all(a[key]==b[key] for key in ('applicationId','applicationRevisionId','specificationRevisionId')),'ENGINEERING_CHANGED',409)
+            model=owner['model'];relation='assembly'
+            if model is not None:_require(model['revisionId']==a['specificationRevisionId'],'ENGINEERING_CHANGED',409)
+        if model is None:
+            return {'available':False,'reason':'MODEL_NOT_REGISTERED','model':None,'relation':None,'fields':[],'values':[]}
+        specification=self.reader._request('GET','/api/v1/equipment-catalog/specification-revisions/'+model['revisionId'])
+        _require(specification.get('revisionId')==model['revisionId'] and specification.get('specificationId')==model['specificationId'],'ENGINEERING_CHANGED',409)
+        snapshot=specification.get('snapshot');_require(type(snapshot) is dict)
+        _require(snapshot.get('templateRevisionId')==model['templateRevisionId']
+            and snapshot.get('classificationRef',{}).get('code')==model['classificationRef']['code'],'ENGINEERING_CHANGED',409)
+        template=self.reader._request('GET','/api/v1/equipment-catalog/template-revisions/'+model['templateRevisionId']+
+            '/effective?'+urlencode({'code':model['classificationRef']['code']}))
+        fields,values=template.get('fields'),snapshot.get('values')
+        _require(type(fields) is list and len(fields)<=1000 and type(values) is list and len(values)<=1000)
+        _require(all(type(row) is dict and type(row.get('propertyRevisionId')) is str for row in values))
+        keys={row['propertyRevisionId'] for row in values}
+        _require(all(type(field) is dict and type(field.get('definition')) is dict and type(field.get('propertyRevisionId')) is str for field in fields))
+        fields=[field for field in fields if field['propertyRevisionId'] in keys]
+        return {'available':True,'reason':None,'model':model,'relation':relation,'equipmentName':owner['item']['displayName'],
+            'fields':fields,'values':values}
