@@ -49,8 +49,8 @@ export function cockpitRelationRoute(from:CanvasCard,to:CanvasCard){
  const ax=from.x+from.width/2,ay=from.y+from.height/2,bx=to.x+to.width/2,by=to.y+to.height/2;
  const upper=ay<by?from:to,lower=ay<by?to:from,verticalGap=lower.y-upper.y-upper.height;
  if(verticalGap>=12){
-  const y1=ay<by?from.y+from.height:from.y,y2=ay<by?to.y:to.y+to.height,lane=(y1+y2)/2;
-  return {d:`M${ax},${y1} C${ax},${lane} ${bx},${lane} ${bx},${y2}`,x:(ax+bx)/2,y:lane};
+  const y1=ay<by?from.y+from.height:from.y,y2=ay<by?to.y:to.y+to.height,lane=(y1+y2)/2-4,mid=(ax+bx)/2;
+  return {d:`M${ax},${y1} C${ax},${lane} ${ax},${lane} ${mid},${lane} S${bx},${lane} ${bx},${y2}`,x:mid,y:lane};
  }
  const left=ax<bx?from:to,right=ax<bx?to:from,gap=right.x-left.x-left.width;
  if(gap<85){
