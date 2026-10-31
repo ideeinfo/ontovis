@@ -15,7 +15,7 @@ export function cockpitOverviewIds(scene:SceneOpen){
 }
 export function cockpitFleet(catalog:CockpitCatalog,project:ProjectRef){
  const installed=new Set(catalog.equipment.filter(row=>row.objectScope==='installation').map(row=>row.entityUid));
- const units=new Set<string>(),unbound=new Set<string>();let complete=true;
+ const units=new Set<string>(),unbound=new Set<string>();let complete=!catalog.loading&&catalog.equipmentReady!==false;
  for(const row of catalog.scenes){
   if(!row.opened){complete=false;continue;}
   const ids=new Set(cockpitTurbineIds(row.opened));
