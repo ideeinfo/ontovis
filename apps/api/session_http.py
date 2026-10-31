@@ -197,7 +197,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             weather_paths=tuple('/api/workbench/weather/'+action for action in ('config','save','test','current'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
-                                  '/api/workbench/objects/evidence/content', '/api/workbench/objects/photos/resolve',
+                                  '/api/workbench/objects/evidence/related', '/api/workbench/objects/evidence/related/content', '/api/workbench/objects/evidence/content', '/api/workbench/objects/photos/resolve',
                                   '/api/workbench/objects/photos/content')
             equipment_paths=tuple('/api/workbench/equipment'+suffix for suffix in ('','/resolve','/definitions/children','/photo-candidates','/photos/associate',
                 '/configurations','/configurations/detail','/configurations/save','/configurations/assign',
@@ -276,7 +276,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, sessions.legacy_migration_request(sid, parts.path, payload))
             if parts.path in scene_object_paths:
                 value = sessions.scene_object_request(sid, parts.path, payload)
-                if parts.path.endswith('/evidence/content'):
+                if parts.path.endswith(('/evidence/content','/evidence/related/content')):
                     return self.image(value['content'], value['sessionRevision'], 'image/png', value['imageSha256'])
                 if parts.path.endswith('/photos/content'):
                     return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'])

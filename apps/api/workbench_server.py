@@ -304,6 +304,10 @@ class WorkbenchSessions(UserSessions):
                     raise PreviewError(422, 'INVALID_REQUEST')
                 value = reader.children(body['installationContextId'], body['entityUid'], body['expectedHierarchyRevision'],
                                         cursor=body.get('cursor'))
+            elif path in ('/api/workbench/objects/evidence/related','/api/workbench/objects/evidence/related/content'):
+                from .related_drawings import RelatedDrawingsReader
+                related=RelatedDrawingsReader(reader)
+                value=related.content(body) if path.endswith('/content') else related.resolve(body)
             elif path == '/api/workbench/objects/evidence/resolve':
                 value = SceneEvidenceReader(reader).resolve(body)
             elif path == '/api/workbench/objects/evidence/content':
