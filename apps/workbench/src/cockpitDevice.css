@@ -2,3 +2,4 @@
 @media(max-height:800px){.pc-parameter-tabs{margin-bottom:12px}.pc-resource-list{max-height:calc(100vh - 290px)}.pc-resource-row{min-height:102px;max-height:102px}.pc-parameter-model>span{font-size:10px}.pc-parameter-row{gap:12px}}
 
 .pc-parameter-row strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45}
+.pc-resource-list,.pc-parameter-list{display:flex;flex-direction:column}
