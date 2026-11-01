@@ -9,6 +9,7 @@ import { usePreferences } from './Preferences';
 import { bindingNeedsReview, modelLocation, modelNavigation } from './modelLocation';
 import { createSceneControls } from './sceneControls';
 import { prepareSceneRenderer } from './sceneRenderer';
+import { applyNacelleBrandLogo } from './sceneResourceCache';
 import type { ModelView, ObjectView } from './types';
 
 type Controls = {fit:() => void; locate:() => void; zoom:(factor:number) => void};
@@ -55,6 +56,7 @@ export function ModelViewport({api, active, detail, model, modelVersionId, onMod
       if (stale()) return;
       if (sha !== metadata.sha256) throw new ApiError(409, 'MODEL_CHANGED');
       const gltf = await new GLTFLoader().parseAsync(bytes, '');
+      await applyNacelleBrandLogo(gltf.scene);
       if (stale()) {disposeObject(gltf.scene); return;}
       scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(42, 1, .05, 3000);

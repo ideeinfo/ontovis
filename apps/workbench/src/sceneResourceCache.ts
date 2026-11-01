@@ -66,6 +66,57 @@ function embeddedGlb(bytes:ArrayBuffer) {
   }
 }
 
+const ONTOVIS_LOGO_URL=new URL('../../../assets/brand/ONTOVis.png',import.meta.url).href;
+const ONTOVIS_LOGO_WIDTH=2170;
+const ONTOVIS_LOGO_HEIGHT=725;
+const NACELLE_LOGO_NODE='Static:nacelle:10';
+let brandLogoPromise:Promise<HTMLImageElement|null>|null=null;
+function loadBrandLogoImage():Promise<HTMLImageElement|null> {
+  if(typeof Image!=='function')return Promise.resolve(null);
+  if(!brandLogoPromise)brandLogoPromise=new Promise(resolve=>{
+    const image=new Image();image.decoding='async';
+    image.onload=()=>resolve(image);image.onerror=()=>{brandLogoPromise=null;resolve(null);};
+    image.src=ONTOVIS_LOGO_URL;
+  });
+  return brandLogoPromise;
+}
+
+export async function applyNacelleBrandLogo(root:THREE.Object3D) {
+  const targets:THREE.Mesh[]=[];
+  root.traverse(node=>{
+    if(node instanceof THREE.Mesh && (sourceNodes.get(node)?.name===NACELLE_LOGO_NODE || node.name===NACELLE_LOGO_NODE))targets.push(node);
+  });
+  if(!targets.length)return;
+  const image=await loadBrandLogoImage();
+  const height=1.0,width=height*(ONTOVIS_LOGO_WIDTH/ONTOVIS_LOGO_HEIGHT);
+  const yCenter=90.95,zCenter=-0.17;
+  const yMin=yCenter-height/2,yMax=yCenter+height/2,zMin=zCenter-width/2,zMax=zCenter+width/2;
+  for(const mesh of targets) {
+    const position=mesh.geometry.getAttribute('position');
+    if(position && position.count===8) {
+      for(let index=0;index<8;index++) {
+        const x=position.getX(index),y=position.getY(index),z=position.getZ(index);
+        position.setXYZ(index,x,y>=yCenter?yMax:yMin,z>=0.7?zMax:zMin);
+      }
+      position.needsUpdate=true;mesh.geometry.computeBoundingBox();mesh.geometry.computeBoundingSphere();
+    }
+    for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material]) {
+      const standard=material as THREE.MeshStandardMaterial;
+      if(standard.map instanceof THREE.Texture) {
+        const oldImage=standard.map.image as {close?:()=>void}|null;
+        if(oldImage && typeof oldImage.close==='function')oldImage.close();
+        standard.map.dispose();
+      }
+      const texture=new THREE.Texture(image??undefined);
+      texture.name='ontovis-nacelle-logo';texture.colorSpace=THREE.SRGBColorSpace;
+      texture.flipY=true;texture.anisotropy=8;
+      texture.userData={ontoVisLogoUrl:ONTOVIS_LOGO_URL,width:ONTOVIS_LOGO_WIDTH,height:ONTOVIS_LOGO_HEIGHT};
+      if(image)texture.needsUpdate=true;
+      standard.map=texture;standard.transparent=true;standard.depthWrite=false;standard.needsUpdate=true;
+    }
+  }
+}
+
 async function parseModel(bytes:ArrayBuffer) {
   const manager=new THREE.LoadingManager();
   manager.setURLModifier(url=>{requireValue(url.startsWith('blob:'),'UNSUPPORTED_MODEL',422);return url;});
@@ -84,6 +135,7 @@ async function parseModel(bytes:ArrayBuffer) {
     });
   }}));
   const gltf=await loader.parseAsync(bytes,'');
+  await applyNacelleBrandLogo(gltf.scene);
   parsedScenes.set(gltf.scene,gltf.scenes);return gltf.scene;
 }
 

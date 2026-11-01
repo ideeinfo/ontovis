@@ -367,3 +367,43 @@ test('legacy display cannot smuggle a transform or geographic permission through
     assert.throws(()=>cloneModel(resource,'forged-legacy'),error=>error.code==='INVALID_CALIBRATION');cache.dispose();
   }
 });
+
+test('TU-3000 nacelle decal node Static:nacelle:10 replaces source logo with ONTOVis brand texture at exact 2170:725 aspect ratio',async()=>{
+  const positions=new Float32Array([
+    2.315,91.56,3.15, 2.315,91.56,-1.75, 2.315,90.34,3.15, 2.315,90.34,-1.75,
+    -2.315,91.56,-1.75, -2.315,91.56,3.15, -2.315,90.34,-1.75, -2.315,90.34,3.15,
+  ]);
+  const bytes=glb(document=>{
+    document.scenes=[{nodes:[0]}];
+    document.nodes=[{name:'Static:nacelle:10',mesh:0}];
+    document.bufferViews=[{buffer:0,byteLength:positions.byteLength}];
+    document.buffers=[{byteLength:positions.byteLength}];
+    document.accessors=[{bufferView:0,componentType:5126,type:'VEC3',count:8,min:[-2.315,90.34,-1.75],max:[2.315,91.56,3.15]}];
+  });
+  // Write the 8-vertex positions into the binary chunk
+  const jsonLength=new DataView(bytes).getUint32(12,true);
+  const full=new ArrayBuffer(28+jsonLength+positions.byteLength),view=new DataView(full);
+  new Uint8Array(full,0,20+jsonLength).set(new Uint8Array(bytes,0,20+jsonLength));
+  view.setUint32(8,full.byteLength,true);
+  view.setUint32(20+jsonLength,positions.byteLength,true);
+  view.setUint32(24+jsonLength,0x004e4942,true);
+  new Uint8Array(full,28+jsonLength).set(new Uint8Array(positions.buffer));
+  const f=modelFixture(full),cache=new SceneResourceCache(f.api,{source:f.source});
+  const resource=await cache.model(f.ref),mesh=meshList(resource.scene)[0];
+  assert.equal(mesh.material.map?.name,'ontovis-nacelle-logo');
+  assert.equal(mesh.material.map?.colorSpace,THREE.SRGBColorSpace);
+  assert.equal(mesh.material.map?.flipY,true);
+  assert.equal(mesh.material.map?.userData?.width,2170);
+  assert.equal(mesh.material.map?.userData?.height,725);
+  assert.ok(String(mesh.material.map?.userData?.ontoVisLogoUrl).endsWith('ONTOVis.png'));
+  assert.equal(mesh.material.transparent,true);
+  assert.equal(mesh.material.depthWrite,false);
+  mesh.geometry.computeBoundingBox();
+  const box=mesh.geometry.boundingBox;
+  const height=box.max.y-box.min.y,width=box.max.z-box.min.z;
+  assert.ok(Math.abs(height-1.0)<1e-5);
+  assert.ok(Math.abs(width/height-2170/725)<1e-5);
+  assert.ok(Math.abs(box.min.x - -2.315)<1e-5 && Math.abs(box.max.x - 2.315)<1e-5);
+  let disposed=0;mesh.material.map.addEventListener('dispose',()=>disposed++);
+  cache.dispose();assert.equal(disposed,1);
+});
