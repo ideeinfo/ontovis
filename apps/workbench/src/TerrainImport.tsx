@@ -30,10 +30,10 @@ export function TerrainImport({api,writeBlocked,canUse,activeTerrainVersion,onTe
   const versionGate=useMemo(()=>new ResourceRequestGate(),[]),cancelGate=useMemo(()=>new ResourceRequestGate(),[]);
   const catalogGate=useMemo(()=>new ResourceRequestGate(),[]);
   const uploadId=useRef(new ResourceRequestId()),cancelId=useRef(new ResourceRequestId());
-  const maximum=catalog?.limits.maxUploadBytes??job?.limits.maxUploadBytes??version?.limits.maxUploadBytes;
+  const maximum=catalog?.limits?.maxUploadBytes??job?.limits?.maxUploadBytes??version?.limits?.maxUploadBytes;
   const hasUploadLimit=maximum!==undefined&&Number.isSafeInteger(maximum)&&maximum>=8;
   const uploadLimitText=hasUploadLimit?resourceText(locale,'tiffLimit',{maximum:resourceUploadBytes(maximum)}):t('loading');
-  const canImport=!writeBlocked&&hasUploadLimit&&!!(catalog?.capabilities.canUpload??job?.capabilities.canUpload??version?.capabilities.canUpload);
+  const canImport=!writeBlocked&&hasUploadLimit&&!!(catalog?.capabilities?.canUpload??job?.capabilities?.canUpload??version?.capabilities?.canUpload);
   const field=<K extends keyof TerrainFields>(name:K,value:TerrainFields[K])=>setFields(previous=>({...previous,[name]:value}));
   function failed(value:unknown,upload=false) {
     if(cancelled(value))return;

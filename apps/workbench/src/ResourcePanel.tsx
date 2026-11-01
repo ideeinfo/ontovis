@@ -146,14 +146,14 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     const ticket=++cardIntent.current;
     const value=await selectVersion(targetRef.modelAssetId||'',targetRef.modelVersionId);
     if(!value||ticket!==cardIntent.current)return;
-    if(action==='preview')callbacks.onPreview(value);
+    if(action==='preview')callbacks.onPreview?.(value);
     else if(callbacks.canPlace){
       const issue=modelPlacementIssue(value,geographic);
       if(issue){
         setNotice(t(issue==='MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED'?'geographicCalibrationRequired':'calibrationRequired'));
         return;
       }
-      callbacks.onPreview(null);callbacks.onPlace(value);
+      callbacks.onPreview?.(null);callbacks.onPlace?.(value);
     }
   }
   function changeFilters(q:string,nextPurpose:ModelPurpose|'',state:'active'|'deleted'=latestFilters.current.state) {
@@ -194,14 +194,14 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     const ticket=++cardIntent.current;setAssetId(asset.modelAssetId);
     const value=version?.modelVersionId===choice.modelVersionId?version:await selectVersion(asset.modelAssetId,choice.modelVersionId);
     if(!value||ticket!==cardIntent.current)return;
-    if(action==='preview')callbacks.onPreview(value);
+    if(action==='preview')callbacks.onPreview?.(value);
     else if(callbacks.canPlace){
       const issue=modelPlacementIssue(value,geographic);
       if(issue){
         setNotice(t(issue==='MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED'?'geographicCalibrationRequired':'calibrationRequired'));
         return;
       }
-      callbacks.onPreview(null);callbacks.onPlace(value);
+      callbacks.onPreview?.(null);callbacks.onPlace?.(value);
     }
   }
   function openUpload(asset?:ProjectModelAsset) {
