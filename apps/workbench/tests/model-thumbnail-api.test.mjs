@@ -33,3 +33,23 @@ test('losing permission to generate a thumbnail preserves the valid project read
  await assert.rejects(new SceneApi(transport).ensureModelThumbnail(version,null,'request:one'),error=>error.code==='MODEL_WRITE_FORBIDDEN');
  assert.equal(denied,0);assert.equal(transport.epoch,epoch);
 });
+
+test('scene thumbnail upload and content verify scene identity, revision, and sha256',async()=>{
+ const png=new Uint8Array(16).fill(7),sha=createHash('sha256').update(png).digest('hex'),calls=[];
+ const transport=new WorkbenchApi(async(path,options)=>{
+  calls.push({path,options});
+  if(path.endsWith('/upload'))return json({sceneId:'scene-1',thumbnail:{thumbnailRevision:'sthumb:1',sha256:sha,mediaType:'image/png',width:640,height:400,bytes:png.byteLength,updatedAt:'2026-11-01T00:00:00Z'},sessionRevision:'session:one'});
+  return new Response(png,{headers:{'Content-Type':'image/png','X-Session-Revision':'session:one','X-Content-SHA256':sha}});
+ });
+ transport.session('session:one');const api=new SceneApi(transport);
+ const file=new File([png],'thumb.png',{type:'image/png'});
+ const uploaded=await api.uploadSceneThumbnail(file,{sceneId:'scene-1',expectedThumbnailRevision:null,clientRequestId:'req-1'});
+ assert.equal(uploaded.thumbnail.thumbnailRevision,'sthumb:1');
+ assert.equal(calls[0].path,'/api/workbench/scenes/thumbnail/upload');
+ assert.equal(calls[0].options.headers['Content-Type'],'image/png');
+ assert.deepEqual(JSON.parse(Buffer.from(calls[0].options.headers['X-Scene-Thumbnail-Metadata'],'base64').toString('utf8')),{sceneId:'scene-1',expectedThumbnailRevision:null,clientRequestId:'req-1',expectedSessionRevision:'session:one'});
+ const blob=await api.sceneThumbnailContent('scene-1',uploaded.thumbnail);
+ assert.equal(blob.type,'image/png');
+ assert.equal(calls[1].path,'/api/workbench/scenes/thumbnail/content');
+ assert.deepEqual(JSON.parse(calls[1].options.body),{expectedSessionRevision:'session:one',sceneId:'scene-1',expectedThumbnailRevision:'sthumb:1',expectedSha256:sha});
+});

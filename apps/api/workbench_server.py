@@ -26,7 +26,7 @@ from apps.api.model_resource_metadata import ModelResourceMetadata, MAX_METADATA
 from apps.api.model_thumbnails import ModelThumbnails, ThumbnailRenderer, MAX_PNG_BYTES
 from apps.api.model_validation import MAX_BYTES
 from apps.api.model_inspection import ModelInspection
-from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_INSTANCES, MAX_COORDINATE_M, MAX_COMPONENT_BINDINGS
+from apps.api.scene_library import SceneLibrary, MAX_SCENE_BYTES, MAX_SCENE_THUMBNAIL_UPLOAD_BYTES, MAX_INSTANCES, MAX_COORDINATE_M, MAX_COMPONENT_BINDINGS
 from apps.api.terrain_library import TerrainLibrary, MAX_VERSIONS as MAX_TERRAIN_VERSIONS, MAX_TOTAL_BYTES as MAX_TERRAIN_TOTAL_BYTES
 from apps.api.terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES, MAX_PIXELS as MAX_TERRAIN_PIXELS, MAX_TRIANGLES as MAX_TERRAIN_TRIANGLES
 from apps.api.scene_geometry_process import SceneGeometryProcess
@@ -755,6 +755,10 @@ class WorkbenchSessions(UserSessions):
                     preview_geometry if self.geometry is not None else None,
                     terrain_replacement if self.geometry is not None else None,
                     model_details, access_revision=baseline['accessRevision'], engineering_check=engineering_check)
+            elif path == '/api/workbench/scenes/thumbnail/content':
+                value = self.scenes.thumbnail_content(body, authority.username, authorize)
+                self.guard(sid, row)
+                return {**value, 'sessionRevision': row.revision}
             else:
                 raise PreviewError(422, 'INVALID_REQUEST')
             self.guard(sid, row)
@@ -774,6 +778,36 @@ class WorkbenchSessions(UserSessions):
             if error.status == 401:
                 self.invalidate(sid, row)
             raise
+
+    def scene_thumbnail_upload(self, sid, payload, stream, length):
+        row, authorize, access, actor = self.project_authorization(sid, payload, writing=True, write_code='SCENE_WRITE_FORBIDDEN')
+        if self.scenes is None or self.library is None:
+            raise PreviewError(503, 'MODEL_UNAVAILABLE')
+        if type(length) is not int or not 16 <= length <= MAX_SCENE_THUMBNAIL_UPLOAD_BYTES:
+            raise PreviewError(413, 'THUMBNAIL_LIMIT_EXCEEDED')
+        raw = bytearray()
+        remaining = length
+        while remaining:
+            chunk = stream.read(min(65536, remaining))
+            if not chunk:
+                raise PreviewError(422, 'THUMBNAIL_INVALID_IMAGE')
+            raw.extend(chunk)
+            remaining -= len(chunk)
+        body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        value = self.scenes.save_thumbnail(body, bytes(raw), actor, authorize)
+        authorize()
+        value['sessionRevision'] = row.revision
+        value['projectName'] = access.get('projectName', self.project_code)
+        value['capabilities'] = {**self.scenes.capabilities(geographic=self.geometry is not None, engineering=True),
+            'scope': 'project_scenes',
+            'localPlaneUnbound': True, 'canRead': True, 'canWrite': access.get('role') == 'admin',
+            'existingUploadedModelVersionsOnly': True, 'projectModelResources': True,
+            'canPreflightGeographic': self.geometry is not None}
+        value['limits'] = {'maxSaveJsonBytes': MAX_SCENE_BYTES, 'maxReadJsonBytes': 16384,
+            'maxCheckJsonBytes': MAX_SCENE_BYTES,
+            'maxInstances': MAX_INSTANCES, 'maxComponentBindings': MAX_COMPONENT_BINDINGS, 'maxNameCharacters': 200,
+            'maxLocalCoordinateM': MAX_COORDINATE_M}
+        return value
 
     def writer(self, sid, payload):
         with self.lock:

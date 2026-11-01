@@ -7,7 +7,7 @@ import json
 from urllib.parse import parse_qs, urlsplit
 from .authority import PreviewError
 from .user_sessions import COOKIE, UserSessions
-from .scene_library import decode_scene_request, MAX_SCENE_BYTES
+from .scene_library import decode_scene_request, MAX_SCENE_BYTES, MAX_SCENE_THUMBNAIL_UPLOAD_BYTES
 from .terrain_validation import MAX_BYTES as MAX_TERRAIN_BYTES
 from .imagery_validation import MAX_BYTES as MAX_IMAGERY_BYTES
 from .imagery_uploads import CHUNK_BYTES
@@ -160,6 +160,27 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                     raise PreviewError(413, 'IMAGERY_LIMIT_EXCEEDED' if imagery else 'TERRAIN_LIMIT_EXCEEDED')
                 method = sessions.imagery_upload if imagery else sessions.terrain_upload
                 return self.reply(200 if imagery else 202, method(sid, payload, self.rfile, length))
+            if self.command == 'POST' and parts.path == '/api/workbench/scenes/thumbnail/upload' and not query:
+                if (self.headers.get_all('Transfer-Encoding')
+                        or self.headers.get_all('Content-Type') not in (['image/png'], ['image/jpeg'], ['image/webp'])
+                        or len(self.headers.get_all('Content-Length', [])) != 1
+                        or len(self.headers.get_all('X-Scene-Thumbnail-Metadata', [])) != 1):
+                    raise PreviewError(415, 'INVALID_REQUEST')
+                try:
+                    header = self.headers['X-Scene-Thumbnail-Metadata']
+                    if len(header) > 8192: raise ValueError()
+                    data = base64.b64decode(header, validate=True)
+                    if len(data) > 6144: raise ValueError()
+                    payload = strict_json(data)
+                    text_length = self.headers['Content-Length']
+                    if not text_length.isascii() or not text_length.isdecimal(): raise ValueError()
+                    length = int(text_length)
+                    if not isinstance(payload, dict): raise ValueError()
+                except (ValueError, UnicodeError, ProbeError):
+                    raise PreviewError(422, 'INVALID_REQUEST') from None
+                if not 16 <= length <= MAX_SCENE_THUMBNAIL_UPLOAD_BYTES:
+                    raise PreviewError(413, 'THUMBNAIL_LIMIT_EXCEEDED')
+                return self.reply(200, sessions.scene_thumbnail_upload(sid, payload, self.rfile, length))
             if self.command == 'POST' and parts.path in ('/api/workbench/models/upload', '/api/workbench/resources/model/upload') and not query:
                 if (self.headers.get_all('Transfer-Encoding') or self.headers.get_all('Content-Type')!=['model/gltf-binary']
                         or len(self.headers.get_all('Content-Length',[]))!=1
@@ -183,7 +204,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             scene_paths = ('/api/workbench/scenes','/api/workbench/scenes/create','/api/workbench/scenes/open',
                            '/api/workbench/scenes/head','/api/workbench/scenes/save','/api/workbench/scenes/check',
                            '/api/workbench/scenes/replacement-check','/api/workbench/scenes/locate',
-                           '/api/workbench/scenes/delete','/api/workbench/scenes/restore')
+                           '/api/workbench/scenes/delete','/api/workbench/scenes/restore',
+                           '/api/workbench/scenes/thumbnail/content')
             project_paths = ('/api/workbench/projects', '/api/workbench/projects/access')
             work_order_paths = tuple('/api/workbench/work-orders' + suffix
                                      for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history', '/snapshot'))
@@ -271,7 +293,11 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 if parts.path.endswith(('/shared-photos/content','/materials/content')):
                     return self.image(value['content'],value['sessionRevision'],value['mediaType'],value['sha256'])
                 return self.reply(200,value)
-            if parts.path in scene_paths: return self.reply(200,sessions.scene_request(sid,parts.path,payload))
+            if parts.path in scene_paths:
+                value = sessions.scene_request(sid, parts.path, payload)
+                if parts.path == '/api/workbench/scenes/thumbnail/content':
+                    return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'])
+                return self.reply(200, value)
             if parts.path in legacy_migration_paths:
                 return self.reply(200, sessions.legacy_migration_request(sid, parts.path, payload))
             if parts.path in scene_object_paths:

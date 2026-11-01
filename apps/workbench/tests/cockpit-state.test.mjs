@@ -70,10 +70,14 @@ test('scene cards arrive before slow equipment and snapshots, with honest incomp
  equipmentGate.resolve();const result=await reading;assert.equal(result.loading,false);assert.equal(catalogIdentity(result,project).complete,true);
 });
 test('same-session cache shows immediately and revalidates directories without reopening unchanged scenes',async()=>{
- const api=fake(),request=api.request,calls=[];api.request=async(...args)=>{calls.push(args[0]);return request(...args);};
+ const api=fake(),request=api.request,calls=[];let thumb={state:'ready',thumbnailRevision:'t1',imageSha256:'a'.repeat(64),width:320,height:200,byteLength:120,updatedAt:'2026-11-01T00:00:00Z'};
+ api.request=async(path,body)=>{calls.push(path);if(path.endsWith('/scenes'))return {items:[{sceneId:'a',headRevision:'r1',thumbnail:thumb}],snapshotRevision:'list1',nextCursor:null};return request(path,body);};
  const cache=new CockpitCatalogCache(api),signal=new AbortController().signal;
  await cache.read(signal,()=>{});calls.length=0;let immediate;
- const reading=cache.read(signal,value=>{immediate??=value;});assert.equal(immediate.scenes[0].opened.sceneRevision,'r1');await reading;
+ thumb={...thumb,thumbnailRevision:'t2'};
+ const reading=cache.read(signal,value=>{immediate??=value;});assert.equal(immediate.scenes[0].opened.sceneRevision,'r1');
+ const refreshed=await reading;
+ assert.equal(refreshed.scenes[0].opened.thumbnail.thumbnailRevision,'t2');
  assert.deepEqual(calls.sort(),['/api/workbench/equipment','/api/workbench/scenes']);
 });
 test('fresh heads and deletions replace cached snapshots, while failed scene reads retry',async()=>{

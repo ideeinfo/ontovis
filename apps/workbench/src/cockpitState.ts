@@ -93,7 +93,7 @@ export async function readCockpitCatalog(api:WorkbenchApi,signal:AbortSignal,opt
   }while(cursor);
   scenes=summaries.map(summary=>{
     const prior=options.cached?.scenes.find(row=>row.summary.sceneId===summary.sceneId&&row.opened?.sceneRevision===summary.headRevision);
-    return {summary,opened:prior?.opened??null,error:null};
+    return {summary,opened:prior?.opened?{...prior.opened,thumbnail:summary.thumbnail??prior.opened.thumbnail}:null,error:null};
   });publish();
   const waiting=scenes.filter(row=>!row.opened);
   const sceneTask=Promise.all(Array.from({length:Math.min(3,scenes.length)},async()=>{

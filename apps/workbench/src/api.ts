@@ -12,7 +12,7 @@ export class ApiError extends Error {
 export interface BinaryDescriptor {
   mime: 'model/gltf-binary' | 'application/octet-stream' | 'image/png' | readonly ('image/png'|'image/jpeg'|'image/webp')[]; maxBytes: number; sha256: string;
 }
-type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk';
+type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk' | 'sceneThumbnail';
 const MIB = 1024 * 1024;
 const writeOnlyDenials: Record<string, readonly string[]> = {
   WEATHER_WRITE_FORBIDDEN: ['/api/workbench/weather/save','/api/workbench/weather/test'],
@@ -28,6 +28,7 @@ const writeOnlyDenials: Record<string, readonly string[]> = {
     '/api/workbench/resources/model/import-existing', '/api/workbench/resources/model/info/save', '/api/workbench/resources/model/thumbnail/ensure', '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/preserve-legacy-display'],
   SCENE_WRITE_FORBIDDEN: ['/api/workbench/scenes/create', '/api/workbench/scenes/save',
     '/api/workbench/scenes/delete', '/api/workbench/scenes/restore',
+    '/api/workbench/scenes/thumbnail/upload',
     '/api/workbench/terrains/upload', '/api/workbench/terrains/job/cancel',
     '/api/workbench/public-geodata/start', '/api/workbench/public-geodata/cancel'],
 };
@@ -115,6 +116,10 @@ export class WorkbenchApi {
     return this.send<T>('/api/workbench/imagery/upload',metadata,signal,false,{file,kind:'imagery'});
   }
 
+  uploadSceneThumbnail<T>(file:Blob,metadata:object,signal?:AbortSignal) {
+    return this.send<T>('/api/workbench/scenes/thumbnail/upload',metadata,signal,false,{file,kind:'sceneThumbnail'});
+  }
+
   content(path: string, body: object, descriptor: BinaryDescriptor, signal?: AbortSignal): Promise<Blob> {
     const photoSet = Array.isArray(descriptor.mime) && descriptor.mime.length > 0 && descriptor.mime.length <= 3
       && descriptor.mime.every(mime => ['image/png','image/jpeg','image/webp'].includes(mime));
@@ -183,16 +188,27 @@ export class WorkbenchApi {
     const json = body ? JSON.stringify({...body,...(scoped&&project?{projectRef:project}:{}), expectedSessionRevision: revision}) : undefined;
     const headers:Record<string,string> = body ? {'Content-Type':'application/json'} : {};
     if (upload) {
-      const chunk = upload.kind === 'imageryChunk';
-      const imagery = upload.kind === 'imagery'||chunk,terrain = upload.kind === 'terrain'||imagery;
-      if (upload.kind !== 'legacyModel' && (!Number.isSafeInteger(upload.file.size)
-          || upload.file.size < (chunk ? 1 : terrain ? 8 : 24) || upload.file.size > (chunk ? MIB/4 : (imagery ? 64 : terrain ? 256 : 20) * MIB))) {
-        throw new ApiError(413, imagery ? 'IMAGERY_LIMIT_EXCEEDED' : terrain ? 'TERRAIN_LIMIT_EXCEEDED' : 'MODEL_LIMIT_EXCEEDED');
+      if (upload.kind === 'sceneThumbnail') {
+        if (!Number.isSafeInteger(upload.file.size) || upload.file.size < 16 || upload.file.size > 5 * MIB) {
+          throw new ApiError(413, 'THUMBNAIL_LIMIT_EXCEEDED');
+        }
+        const mime = ['image/png', 'image/jpeg', 'image/webp'].includes(upload.file.type) ? upload.file.type : 'image/png';
+        const metadata = new TextEncoder().encode(json!);
+        if (metadata.length > 6144) throw new ApiError(413, 'INVALID_REQUEST');
+        headers['Content-Type'] = mime;
+        headers['X-Scene-Thumbnail-Metadata'] = btoa(String.fromCharCode(...metadata));
+      } else {
+        const chunk = upload.kind === 'imageryChunk';
+        const imagery = upload.kind === 'imagery'||chunk,terrain = upload.kind === 'terrain'||imagery;
+        if (upload.kind !== 'legacyModel' && (!Number.isSafeInteger(upload.file.size)
+            || upload.file.size < (chunk ? 1 : terrain ? 8 : 24) || upload.file.size > (chunk ? MIB/4 : (imagery ? 64 : terrain ? 256 : 20) * MIB))) {
+          throw new ApiError(413, imagery ? 'IMAGERY_LIMIT_EXCEEDED' : terrain ? 'TERRAIN_LIMIT_EXCEEDED' : 'MODEL_LIMIT_EXCEEDED');
+        }
+        const metadata = new TextEncoder().encode(json!);
+        if (metadata.length > (chunk ? 3072 : 6144)) throw new ApiError(413, 'INVALID_REQUEST');
+        headers['Content-Type'] = chunk ? 'application/octet-stream' : terrain ? 'image/tiff' : 'model/gltf-binary';
+        headers[chunk ? 'X-Imagery-Chunk' : imagery ? 'X-Imagery-Metadata' : terrain ? 'X-Terrain-Metadata' : 'X-Model-Metadata'] = btoa(String.fromCharCode(...metadata));
       }
-      const metadata = new TextEncoder().encode(json!);
-      if (metadata.length > (chunk ? 3072 : 6144)) throw new ApiError(413, 'INVALID_REQUEST');
-      headers['Content-Type'] = chunk ? 'application/octet-stream' : terrain ? 'image/tiff' : 'model/gltf-binary';
-      headers[chunk ? 'X-Imagery-Chunk' : imagery ? 'X-Imagery-Metadata' : terrain ? 'X-Terrain-Metadata' : 'X-Model-Metadata'] = btoa(String.fromCharCode(...metadata));
     }
     const response = await this.transport(path, {method: body ? 'POST' : 'GET', credentials: 'same-origin',
       cache: 'no-store', signal, headers, body:upload?.file || json});
@@ -273,6 +289,8 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     SCENE_WRITE_FORBIDDEN:['当前仅可查看，未保存的修改仍保留。','You can currently view this scene. Unsaved edits are retained.'],
     COCKPIT_CATALOG_LIMIT:['项目资源目录过大或分页异常，当前汇总不可用。','The project catalog is too large or its pagination is inconsistent; totals are unavailable.'],
     SCENE_CHANGED:['场景已有新版本，保留当前修改后重新读取。','A newer scene exists. Keep your edits and reload before retrying.'],
+    THUMBNAIL_INVALID_IMAGE:['缩略图格式无效，请上传 PNG、JPEG 或 WebP 图片。','Invalid thumbnail image. Upload a PNG, JPEG or WebP file.'],
+    THUMBNAIL_LIMIT_EXCEEDED:['缩略图文件超出 5 MB 大小限制，请压缩后重试。','The thumbnail exceeds the 5 MB limit. Choose a smaller image.'],
     SCENE_DELETED:['场景已移到回收站，恢复后可继续查看和编辑。','This scene is in the recycle bin. Restore it to view or edit.'],
     INVALID_SCENE_ENVIRONMENT:['环境参数不符合范围，请检查后重试。','Check the environment parameter ranges and retry.'],
     UNSUPPORTED_SCENE_ENVIRONMENT:['当前版本不支持此环境配置，请更新工作台。','This environment configuration requires a newer workbench.'],

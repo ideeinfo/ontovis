@@ -143,10 +143,22 @@ export interface SceneLimits {
   maxSaveJsonBytes: number; maxReadJsonBytes: number; maxCheckJsonBytes: number;
   maxInstances: number; maxComponentBindings: number; maxNameCharacters: number; maxLocalCoordinateM: number;
 }
+export interface SceneThumbnailInfo {
+  thumbnailRevision: string; sha256: string; mediaType: 'image/png';
+  width: number; height: number; bytes: number; updatedAt: string;
+}
+export interface UploadSceneThumbnailMetadata {
+  sceneId: string; expectedThumbnailRevision?: string | null; clientRequestId: string;
+}
+export interface SceneThumbnailWrite extends SceneResponse {
+  sceneId: string; sceneRevision: string; headRevision: string; savedAt: string;
+  thumbnail: SceneThumbnailInfo;
+}
 export interface SceneResponse {sessionRevision: string; projectName?: string; capabilities: SceneCapabilities; limits: SceneLimits}
 export interface SceneSummary {
   sceneId: string; displayName: string; headRevision: string; updatedAt: string; instanceCount: number;
   state?:'active'|'deleted';lifecycleRevision?:number;deletedAt?:string|null;
+  thumbnail?: SceneThumbnailInfo | null;
 }
 export interface SceneList extends SceneResponse {items: SceneSummary[]; snapshotRevision: string; nextCursor: string | null}
 export interface SceneListRequest {q?: string; cursor?: string | null; limit?: number;state?:'active'|'deleted'}
@@ -165,6 +177,7 @@ export interface SceneCreateRequest {displayName: string; description?:string; c
 export interface SceneOpen extends SceneResponse {
   lifecycleRevision?:number;
   createdAt?:string;
+  thumbnail?: SceneThumbnailInfo | null;
   sceneId: string; projectCode: string; sceneRevision: string; headRevision: string; savedAt: string;
   snapshot: EditableSceneSnapshot; resourceRefs: ModelResourceRef[]; validation: GeometryValidation;
   heightProvenance?: HeightProvenance[]; terrainRefs?: TerrainResourceRef[];

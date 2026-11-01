@@ -483,6 +483,42 @@ class SceneHttpTests(unittest.TestCase):
         self.account().allowed = False
         self.assert_response(self.request('/api/workbench/scenes', {'state':'deleted'}), 403, 'FORBIDDEN')
 
+    def test_scene_thumbnail_upload_and_binary_read_http_boundaries(self):
+        import base64
+        from io import BytesIO
+        from PIL import Image
+        buf = BytesIO()
+        Image.new('RGB', (160, 100), (38, 128, 102)).save(buf, format='PNG')
+        image_bytes = buf.getvalue()
+        scene = self.create()
+        meta = {'expectedSessionRevision': self.admin['revision'], 'sceneId': scene['sceneId'],
+                'expectedThumbnailRevision': None, 'clientRequestId': str(uuid4())}
+        b64 = lambda m: base64.b64encode(json.dumps(m).encode()).decode()
+        status, uploaded, _ = self.request('/api/workbench/scenes/thumbnail/upload', raw=image_bytes,
+            headers={'Content-Type': 'image/png', 'X-Scene-Thumbnail-Metadata': b64(meta)})
+        self.assertEqual(status, 200, uploaded)
+        thumb = uploaded['thumbnail']
+        self.assertEqual(thumb['mediaType'], 'image/png')
+        self.assertEqual(self.open(scene)[1]['thumbnail'], thumb)
+        self.assertEqual(self.request('/api/workbench/scenes')[1]['items'][0]['thumbnail'], thumb)
+        connection = HTTPConnection(*self.server.server_address, timeout=5)
+        try:
+            body = json.dumps({'expectedSessionRevision': self.admin['revision'], 'sceneId': scene['sceneId'],
+                               'expectedThumbnailRevision': thumb['thumbnailRevision'], 'expectedSha256': thumb['sha256']}).encode()
+            connection.request('POST', '/api/workbench/scenes/thumbnail/content', body,
+                {'Host': '127.0.0.1:4180', 'Origin': ORIGIN, 'Cookie': self.admin['cookie'], 'Content-Type': 'application/json'})
+            res = connection.getresponse()
+            self.assertEqual(res.status, 200)
+            self.assertEqual(res.getheader('Content-Type'), 'image/png')
+            self.assertGreater(len(res.read()), 50)
+        finally:
+            connection.close()
+        member = self.login('fixture-reader'); self.account(member).role = 'reader'
+        denied_meta = {**meta, 'expectedSessionRevision': member['revision'],
+                       'expectedThumbnailRevision': thumb['thumbnailRevision'], 'clientRequestId': str(uuid4())}
+        self.assert_response(self.request('/api/workbench/scenes/thumbnail/upload', client=member, raw=image_bytes,
+            headers={'Content-Type': 'image/png', 'X-Scene-Thumbnail-Metadata': b64(denied_meta)}), 403, 'SCENE_WRITE_FORBIDDEN')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -24,7 +24,7 @@ from .scene_photos import ScenePhotoReader
 from .simulation_stream import SimulationStreams
 
 
-METHODS = ('scene_request', 'scene_object_request', 'equipment_request', 'resource_request', 'resource_upload',
+METHODS = ('scene_request', 'scene_thumbnail_upload', 'scene_object_request', 'equipment_request', 'resource_request', 'resource_upload',
            'terrain_request', 'terrain_upload', 'imagery_request', 'imagery_upload', 'imagery_chunk',
            'public_geodata_request', 'legacy_migration_request', 'read', 'upload', 'save_binding')
 

@@ -272,6 +272,15 @@ class WorkbenchDeploymentTests(unittest.TestCase):
             self.assertIn('location /' + path + '/ { return 404; }', nginx)
         self.assertIn('location /api/ { return 404; }', nginx)
 
+    def test_scene_thumbnail_routes_are_bounded(self):
+        upload = location_for('/api/workbench/scenes/thumbnail/upload')
+        self.assertIn('client_max_body_size 5m;', upload)
+        self.assertIn('proxy_request_buffering off;', upload)
+        self.assertIn('proxy_buffering off;', upload)
+        content = location_for('/api/workbench/scenes/thumbnail/content')
+        self.assertIn('client_max_body_size 16k;', content)
+        self.assertIn('proxy_buffering off;', content)
+
 
 if __name__ == '__main__':
     unittest.main()

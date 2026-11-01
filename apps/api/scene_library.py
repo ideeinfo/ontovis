@@ -24,6 +24,9 @@ from .scene_environment import validate_environment, environment_write, preserve
 from .scene_organization import OrganizationError, validate_organization
 
 MAX_SCENE_BYTES = 1024 * 1024
+MAX_SCENE_THUMBNAIL_UPLOAD_BYTES = 5 * 1024 * 1024
+MAX_SCENE_THUMBNAIL_BYTES = 512 * 1024
+MAX_SCENE_THUMBNAIL_SIDE = 640
 MAX_INSTANCES = 100
 MAX_COORDINATE_M = 1_000_000
 Authorize = Callable[[], object]
@@ -31,6 +34,47 @@ ValidateResources = Callable[[dict], object]
 ValidateEngineering = Callable[[dict, list, list], object]
 EngineeringCheck = Callable[..., dict]
 ValidateGeometry = Callable[..., dict]
+
+
+def _normalize_scene_thumbnail(raw: bytes) -> dict:
+    _require(isinstance(raw, (bytes, bytearray)) and 16 <= len(raw) <= MAX_SCENE_THUMBNAIL_UPLOAD_BYTES,
+             'THUMBNAIL_INVALID_IMAGE', 422)
+    from io import BytesIO
+    from PIL import Image, ImageOps
+    try:
+        with Image.open(BytesIO(raw)) as image:
+            _require((image.format or '').upper() in ('PNG', 'JPEG', 'WEBP')
+                     and not getattr(image, 'is_animated', False), 'THUMBNAIL_INVALID_IMAGE', 422)
+            _require(16 <= image.width <= 4096 and 16 <= image.height <= 4096,
+                     'THUMBNAIL_INVALID_IMAGE', 422)
+            oriented = ImageOps.exif_transpose(image)
+            mode = 'RGBA' if 'A' in oriented.getbands() else 'RGB'
+            converted = oriented.convert(mode)
+            if converted.width > MAX_SCENE_THUMBNAIL_SIDE or converted.height > MAX_SCENE_THUMBNAIL_SIDE:
+                converted.thumbnail((MAX_SCENE_THUMBNAIL_SIDE, MAX_SCENE_THUMBNAIL_SIDE), Image.Resampling.LANCZOS)
+            output = BytesIO()
+            converted.save(output, format='PNG', optimize=True)
+            content = output.getvalue()
+            if len(content) > MAX_SCENE_THUMBNAIL_BYTES:
+                smaller = converted.copy()
+                smaller.thumbnail((480, 480), Image.Resampling.LANCZOS)
+                output = BytesIO()
+                smaller.save(output, format='PNG', optimize=True)
+                content = output.getvalue()
+                converted = smaller
+            _require(len(content) <= MAX_SCENE_THUMBNAIL_BYTES, 'THUMBNAIL_LIMIT_EXCEEDED', 413)
+            return {
+                'content': content,
+                'sha256': hashlib.sha256(content).hexdigest(),
+                'mediaType': 'image/png',
+                'width': converted.width,
+                'height': converted.height,
+                'bytes': len(content),
+            }
+    except PreviewError:
+        raise
+    except Exception:
+        raise PreviewError(422, 'THUMBNAIL_INVALID_IMAGE') from None
 
 
 def _require(condition, code='INVALID_REQUEST', status=422):
@@ -367,6 +411,17 @@ class SceneLibrary:
                 create table if not exists scene_instance_ids (
                     scene_id text not null references scenes(id), instance_id text not null,
                     primary key(scene_id, instance_id));
+                create table if not exists scene_thumbnails (
+                    scene_id text primary key references scenes(id),
+                    revision text not null,
+                    image_sha256 text not null,
+                    media_type text not null,
+                    width integer not null,
+                    height integer not null,
+                    bytes integer not null,
+                    content blob not null,
+                    actor text not null,
+                    updated_at text not null);
                 create table if not exists scene_requests (
                     project_code text not null, actor text not null, action text not null,
                     request_id text not null, payload_sha256 text not null, result text not null,
@@ -639,6 +694,7 @@ class SceneLibrary:
             self._insert_snapshot(db, identifier, revision, snapshot, now)
             result = {'sceneId': identifier, 'projectCode': self.project_code, 'sceneRevision': revision,
                       'headRevision': revision, 'lifecycleRevision': 0, 'savedAt': now, 'snapshot': snapshot, 'resourceRefs': [],
+                      'thumbnail': None,
                       'validation': {'scope': 'local_plane_unbound', 'bindingIssues': []}}
             self._finish(db, actor, 'create', request_id, digest, result)
             validate_resources(json.loads(_json(snapshot)))
@@ -1371,11 +1427,14 @@ class SceneLibrary:
             terrains = [{'terrainVersionId': item['terrain_version_id'], 'contentRevision': item['content_revision'],
                          'sha256': item['source_sha256'], 'reportSha256': item['report_sha256']}
                         for item in db.execute('select * from scene_terrain_uses where revision=? order by terrain_version_id', (row['revision'],))]
+            thumb = db.execute('select revision,image_sha256,media_type,width,height,bytes,updated_at from scene_thumbnails where scene_id=?',
+                               (scene['id'],)).fetchone()
             result = {'sceneId': scene['id'], 'projectCode': self.project_code,
                       'sceneRevision': row['revision'], 'headRevision': scene['head_revision'],
                       'lifecycleRevision': scene['lifecycle_revision'],
                       'savedAt': row['saved_at'], 'snapshot': snapshot,
                       'resourceRefs': json.loads(row['resource_refs']),
+                      'thumbnail': self._thumbnail_public(thumb),
                       'validation': spatial, 'heightProvenance': provenance, 'terrainRefs': terrains}
         if callable(engineering_check):
             facts = self._engineering(engineering_check, snapshot, [], [], snapshot, row['revision'], spatial, 'open')
@@ -1383,6 +1442,79 @@ class SceneLibrary:
             self._engineering_preview(result, facts)
         authorize()
         return result
+
+    @staticmethod
+    def _thumbnail_public(row):
+        if row is None:
+            return None
+        return {
+            'thumbnailRevision': row['revision'],
+            'sha256': row['image_sha256'],
+            'mediaType': row['media_type'],
+            'width': row['width'],
+            'height': row['height'],
+            'bytes': row['bytes'],
+            'updatedAt': row['updated_at'],
+        }
+
+    def save_thumbnail(self, body, raw_bytes, actor, authorize: Authorize):
+        actor = _text(actor)
+        _require(callable(authorize)); authorize()
+        _json(body)
+        _require(type(body) is dict and {'sceneId', 'clientRequestId'} <= set(body) <= {'sceneId', 'expectedThumbnailRevision', 'clientRequestId'})
+        scene_id, request_id = _uuid(body['sceneId']), _uuid(body['clientRequestId'])
+        expected_rev = body.get('expectedThumbnailRevision')
+        if expected_rev is not None:
+            expected_rev = _text(expected_rev)
+        normalized = _normalize_scene_thumbnail(raw_bytes)
+        digest = _digest({'sceneId': scene_id, 'expectedThumbnailRevision': expected_rev, 'imageSha256': normalized['sha256']})
+        with self.library.connect() as db:
+            db.execute('begin immediate')
+            scene = self._scope(db, scene_id)
+            prior = self._prior(db, actor, 'thumbnail', request_id, digest)
+            if prior is not None:
+                authorize()
+                return prior
+            existing = db.execute('select revision from scene_thumbnails where scene_id=?', (scene_id,)).fetchone()
+            current_rev = existing['revision'] if existing is not None else None
+            if 'expectedThumbnailRevision' in body:
+                _require(current_rev == expected_rev, 'SCENE_CHANGED', 409)
+            revision = 'scene-thumbnail:' + uuid4().hex
+            now = datetime.now(timezone.utc).isoformat()
+            db.execute('''insert into scene_thumbnails(scene_id,revision,image_sha256,media_type,width,height,bytes,content,actor,updated_at)
+                       values (?,?,?,?,?,?,?,?,?,?)
+                       on conflict(scene_id) do update set
+                       revision=excluded.revision,image_sha256=excluded.image_sha256,media_type=excluded.media_type,
+                       width=excluded.width,height=excluded.height,bytes=excluded.bytes,content=excluded.content,
+                       actor=excluded.actor,updated_at=excluded.updated_at''',
+                       (scene_id, revision, normalized['sha256'], normalized['mediaType'], normalized['width'],
+                        normalized['height'], normalized['bytes'], normalized['content'], actor, now))
+            thumbnail = {'thumbnailRevision': revision, 'sha256': normalized['sha256'], 'mediaType': normalized['mediaType'],
+                         'width': normalized['width'], 'height': normalized['height'], 'bytes': normalized['bytes'], 'updatedAt': now}
+            result = {'sceneId': scene_id, 'sceneRevision': scene['head_revision'], 'headRevision': scene['head_revision'],
+                      'savedAt': now, 'thumbnail': thumbnail}
+            self._finish(db, actor, 'thumbnail', request_id, digest, result)
+            authorize()
+            return result
+
+    def thumbnail_content(self, body, actor, authorize: Authorize):
+        _text(actor); _require(callable(authorize)); authorize()
+        _json(body)
+        _fields(body, ('sceneId', 'expectedThumbnailRevision', 'expectedSha256'))
+        scene_id = _uuid(body['sceneId'])
+        expected_rev = _text(body['expectedThumbnailRevision'])
+        expected_sha = _sha(body['expectedSha256'])
+        with self.library.connect() as db:
+            db.execute('begin')
+            self._scope(db, scene_id)
+            row = db.execute('select revision,image_sha256,media_type,content from scene_thumbnails where scene_id=?',
+                             (scene_id,)).fetchone()
+            if row is None:
+                raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
+            _require(row['revision'] == expected_rev and row['image_sha256'] == expected_sha, 'RESOURCE_CHANGED', 409)
+            content = bytes(row['content'])
+            authorize()
+            return {'content': content, 'mediaType': row['media_type'], 'sha256': row['image_sha256']}
 
     def head(self, scene_id, viewing_revision, actor, authorize: Authorize):
         _text(actor); _require(callable(authorize)); authorize()
@@ -1441,8 +1573,12 @@ class SceneLibrary:
                 where += ' and (updated_at<? or (updated_at=? and id>?))'
                 params.extend([last[0], last[0], last[1]])
             rows = db.execute('''select * from (select s.*,coalesce(l.state,'active') scene_state,
-                              coalesce(l.revision,0) lifecycle_revision,l.changed_at from scenes s
-                              left join scene_lifecycle l on l.scene_id=s.id) where '''
+                              coalesce(l.revision,0) lifecycle_revision,l.changed_at,
+                              t.revision thumb_revision,t.image_sha256 thumb_sha256,t.media_type thumb_media_type,
+                              t.width thumb_width,t.height thumb_height,t.bytes thumb_bytes,t.updated_at thumb_updated_at
+                              from scenes s
+                              left join scene_lifecycle l on l.scene_id=s.id
+                              left join scene_thumbnails t on t.scene_id=s.id) where '''
                               + where + ' order by updated_at desc,id asc limit ?',
                               (*params, limit + 1)).fetchall()
             visible = rows[:limit]
@@ -1452,7 +1588,11 @@ class SceneLibrary:
                                  'headRevision': row['head_revision'], 'updatedAt': row['updated_at'],
                                  'state': row['scene_state'], 'lifecycleRevision': row['lifecycle_revision'],
                                  'deletedAt': row['changed_at'] if state == 'deleted' else None,
-                                 'instanceCount': row['instance_count']} for row in visible],
+                                 'instanceCount': row['instance_count'],
+                                 'thumbnail': ({'thumbnailRevision': row['thumb_revision'], 'sha256': row['thumb_sha256'],
+                                                'mediaType': row['thumb_media_type'], 'width': row['thumb_width'],
+                                                'height': row['thumb_height'], 'bytes': row['thumb_bytes'],
+                                                'updatedAt': row['thumb_updated_at']} if row['thumb_revision'] else None)} for row in visible],
                       'snapshotRevision': revision, 'nextCursor': next_cursor, 'capabilities': self.capabilities()}
             authorize()
             return result

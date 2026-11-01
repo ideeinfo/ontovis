@@ -66,3 +66,10 @@
 .sw-model-selection{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--borderSubtle);margin-bottom:8px}
 .sw-workspace .sw-model-selection>label{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:13px;cursor:pointer}.sw-model-selection>.ov-btn{font-size:11px;padding:4px 8px;white-space:nowrap}
 .sw-resource-group>summary>.so-select{display:inline-block;vertical-align:middle;margin-right:7px}.sw-resource-group>summary>span{overflow-wrap:anywhere}
+.sw-thumb-field{display:grid;gap:6px;font-size:12px}
+.sw-thumb-row{display:flex;align-items:center;gap:12px}
+.sw-thumb-preview{width:112px;height:76px;flex:none;border:1px solid var(--borderControl);border-radius:8px;overflow:hidden;display:grid;place-items:center;background:var(--surfaceRaised)}
+.sw-thumb-preview img{width:100%;height:100%;object-fit:cover;display:block}
+.sw-thumb-empty{font-size:11px;color:var(--textSecondary)}
+.sw-thumb-actions{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}
+.sw-thumb-actions small{color:var(--textSecondary);font-size:11px}

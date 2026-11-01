@@ -505,6 +505,45 @@ class SceneLibraryTests(unittest.TestCase):
         self.assertEqual(len(latest['items']), 2)
         self.assertNotEqual(page['snapshotRevision'], latest['snapshotRevision'])
 
+    def test_scene_thumbnail_save_read_and_optimistic_lock(self):
+        from io import BytesIO
+        from PIL import Image
+        created = self.create('夏李风电场')
+        self.assertIsNone(created['thumbnail'])
+        buf = BytesIO()
+        Image.new('RGB', (800, 600), (36, 94, 76)).save(buf, format='JPEG', quality=90)
+        raw_jpeg = buf.getvalue()
+        request_id = str(uuid4())
+        saved = self.scenes.save_thumbnail(
+            {'sceneId': created['sceneId'], 'expectedThumbnailRevision': None, 'clientRequestId': request_id},
+            raw_jpeg, 'admin', self.authorize)
+        thumb = saved['thumbnail']
+        self.assertEqual(thumb['mediaType'], 'image/png')
+        self.assertEqual((thumb['width'], thumb['height']), (640, 480))
+        # Idempotent replay returns exact same result
+        replayed = self.scenes.save_thumbnail(
+            {'sceneId': created['sceneId'], 'expectedThumbnailRevision': None, 'clientRequestId': request_id},
+            raw_jpeg, 'admin', self.authorize)
+        self.assertEqual(replayed, saved)
+        # Optimistic lock conflict on stale expectedThumbnailRevision
+        with self.assertRaises(PreviewError) as ctx:
+            self.scenes.save_thumbnail(
+                {'sceneId': created['sceneId'], 'expectedThumbnailRevision': None, 'clientRequestId': str(uuid4())},
+                raw_jpeg, 'admin', self.authorize)
+        self.assertEqual((ctx.exception.status, ctx.exception.code), (409, 'SCENE_CHANGED'))
+        # Attached to listing and open
+        listed = self.scenes.listing('admin', self.authorize, access_revision='grant:1')
+        self.assertEqual(listed['items'][0]['thumbnail'], thumb)
+        opened = self.scenes.open(created['sceneId'], 'admin', self.authorize)
+        self.assertEqual(opened['thumbnail'], thumb)
+        # Protected content read
+        content = self.scenes.thumbnail_content(
+            {'sceneId': created['sceneId'], 'expectedThumbnailRevision': thumb['thumbnailRevision'], 'expectedSha256': thumb['sha256']},
+            'admin', self.authorize)
+        self.assertEqual(content['mediaType'], 'image/png')
+        self.assertEqual(content['sha256'], thumb['sha256'])
+        self.assertTrue(content['content'].startswith(b'\x89PNG\r\n\x1a\n'))
+
 
 if __name__ == '__main__':
     unittest.main()

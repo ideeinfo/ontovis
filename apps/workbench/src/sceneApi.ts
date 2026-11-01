@@ -3,7 +3,8 @@ import type {ModelLifecycleRequest,ModelLifecycleResult} from './resourceTypes';
 import {ApiError, type WorkbenchApi} from './api.ts';
 import {checkedModelInspection} from './modelInspection.ts';
 import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
-  SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest, SceneLifecycle, SceneLifecycleRequest, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
+  SceneOpen, SceneReplacementCheckRequest, SceneSave, SceneSaveRequest, SceneLifecycle, SceneLifecycleRequest,
+  SceneThumbnailInfo, SceneThumbnailWrite, UploadSceneThumbnailMetadata, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
 import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelRequest, LegacyModelCatalog, ModelInfoRequest, ModelThumbnailInfo, ModelThumbnailReference, ModelUses, ModelUsesRequest,
   ProjectModel, ProjectModelCatalog, ProjectModelsRequest, ProjectModelVersion, ProjectModelWrite,
   TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
@@ -72,6 +73,14 @@ export class SceneApi {
   }
   save(body: SceneSaveRequest, signal?: AbortSignal) {
     return this.api.request<SceneSave>(ROOT + 'scenes/save', {...body,environmentWriteVersion:1,sceneInfoWriteVersion:1}, signal);
+  }
+  uploadSceneThumbnail(file: Blob, metadata: UploadSceneThumbnailMetadata, signal?: AbortSignal) {
+    return this.api.uploadSceneThumbnail<SceneThumbnailWrite>(file, metadata, signal);
+  }
+  sceneThumbnailContent(sceneId: string, thumbnail: Pick<SceneThumbnailInfo, 'thumbnailRevision' | 'sha256' | 'bytes'>, signal?: AbortSignal) {
+    return this.api.content(ROOT + 'scenes/thumbnail/content',
+      {sceneId, expectedThumbnailRevision: thumbnail.thumbnailRevision, expectedSha256: thumbnail.sha256},
+      {mime: 'image/png', maxBytes: Math.max(thumbnail.bytes || 0, 512 * 1024), sha256: thumbnail.sha256}, signal);
   }
   locate(body:SceneLocationRequest, signal?:AbortSignal) {
     return this.api.request<SceneLocation&{sessionRevision:string}>(ROOT+'scenes/locate',body,signal);
