@@ -57,6 +57,7 @@ export interface SceneViewportProps {
   viewCommand?:{token:number;view:SceneView};focusRequest?:{token:number;instanceId:string|null;instanceIds?:string[]};
   componentFocus?:ComponentFocusRequest;
   componentPickingInstanceId?:string|null;onComponentPick?:(pick:SceneComponentPick)=>void;
+  hotSwapRef?:{instanceId:string;modelRef:ModelResourceRef}|null;
   previewSelection?:PreviewSelection;onPreviewStructure?:(value:PreviewStructure|null)=>void;
   onPreviewPick?:(identity:string,nodeId:string|null)=>void;
   onSelect:(id:string|null,additive?:boolean)=>void;onPoint:(point:Vector3)=>void;
@@ -424,7 +425,8 @@ export function SceneViewport(props:SceneViewportProps) {
       const wanted=new Set(state.snapshot.instances.map(item=>item.sceneModelInstanceId));
       for(const [id,entry] of entries)if(!wanted.has(id)){entry.appearance.dispose();models.remove(entry.root);entries.delete(id);}
       const modelTasks=state.snapshot.instances.map(async item=>{
-        const ref=state.modelRefs.find(value=>value.modelVersionId===item.modelVersionId);
+        const isHotSwap=state.hotSwapRef&&state.hotSwapRef.instanceId===item.sceneModelInstanceId;
+        const ref=isHotSwap?(state.modelRefs.find(v=>v.modelVersionId===state.hotSwapRef!.modelRef.modelVersionId)||state.hotSwapRef!.modelRef):state.modelRefs.find(value=>value.modelVersionId===item.modelVersionId);
         if(!ref){
           const prior=entries.get(item.sceneModelInstanceId);if(prior){prior.appearance.dispose();models.remove(prior.root);entries.delete(item.sceneModelInstanceId);}
           throw new ApiError(409,'RESOURCE_CHANGED');
@@ -440,9 +442,14 @@ export function SceneViewport(props:SceneViewportProps) {
         try {transform(item,entry.root);}
         catch(value){entry.appearance.dispose();models.remove(entry.root);entries.delete(item.sceneModelInstanceId);throw value;}
       });
-      const tasks=[...new Set(state.snapshot.instances.map(item=>item.modelVersionId))].map(async id=>{
-        await Promise.all(modelTasks.filter((_,index)=>state.snapshot.instances[index].modelVersionId===id));
-        const ref=state.modelRefs.find(value=>value.modelVersionId===id);if(valid()&&ref)progress.done(modelLoadingKey(ref));
+      const effectiveIds=state.snapshot.instances.map(item=>{
+        const isHotSwap=state.hotSwapRef&&state.hotSwapRef.instanceId===item.sceneModelInstanceId;
+        return isHotSwap?state.hotSwapRef!.modelRef.modelVersionId:item.modelVersionId;
+      });
+      const tasks=[...new Set(effectiveIds)].map(async id=>{
+        await Promise.all(modelTasks.filter((_,index)=>effectiveIds[index]===id));
+        const ref=state.modelRefs.find(value=>value.modelVersionId===id)||(state.hotSwapRef?.modelRef.modelVersionId===id?state.hotSwapRef.modelRef:null);
+        if(valid()&&ref)progress.done(modelLoadingKey(ref));
       });
       const terrainTask=(async()=>{
         const version=state.terrainVersion,reference=state.snapshot.terrain;

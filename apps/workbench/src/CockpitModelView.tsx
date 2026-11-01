@@ -2,13 +2,13 @@ import {useEffect,useState} from 'react';
 import {Box,Layers,Network} from 'lucide-react';
 import {MOTION_MERGED_SHA} from './simulatedMotion';
 import type {ModelViewRequest,ModelViewStatus} from './sceneModelView';
-export function CockpitModelView({instanceId,modelVersionId,contentRevision,sha256,en,onChange,status}:{
+export function CockpitModelView({instanceId,modelVersionId,contentRevision,sha256,en,onChange,status,canInspect}:{
  instanceId:string;modelVersionId:string;contentRevision:string;sha256:string;en:boolean;
- onChange:(value:ModelViewRequest|null)=>void;status:ModelViewStatus;
+ onChange:(value:ModelViewRequest|null)=>void;status:ModelViewStatus;canInspect?:boolean;
 }){
  const [mode,setMode]=useState<'solid'|'xray'|'exploded'>('solid'),t=(zh:string,eng:string)=>en?eng:zh;
  useEffect(()=>()=>onChange(null),[onChange]);
- const supported=sha256===MOTION_MERGED_SHA;
+ const supported=canInspect??(sha256===MOTION_MERGED_SHA);
  function choose(next:typeof mode){setMode(next);onChange(next==='solid'?null:{instanceId,modelVersionId,contentRevision,sha256,mode:next});}
  return <section className="pc-model-view" aria-label={t('模型查看','Model inspection')}><div role="group" aria-label={t('模型查看模式','Model view mode')}>{([
   ['solid',Box,t('实体','Solid')],['xray',Layers,t('透视','X-ray')],['exploded',Network,t('爆炸示意','Exploded')],

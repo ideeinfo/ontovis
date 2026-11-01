@@ -55,13 +55,16 @@ export function calibrationInput(base: readonly string[], forward: readonly stri
   if (direction[1] !== 0 || direction[0] === 0 && direction[2] === 0) throw new ResourceFormError('invalidForward');
   return {unit:'m', axes:'Y_UP_RIGHT_HANDED', basePoint, forward:direction};
 }
-export function modelMetadata(fields: {name:string;purpose:ModelPurpose;source:string}, revision:string,
+export function modelMetadata(fields: {name:string;purpose:ModelPurpose;source:string;definitionEntityUid?:string;modelCode?:string;representationType?:'appearance'|'detailed'}, revision:string,
     requestId:string, asset?:ProjectModelAsset): UploadModelMetadata {
   if (!fields.name.trim() || !fields.source.trim()) throw new ResourceFormError('sourceRequired');
   // Keep the existing upload protocol flag; it no longer represents a separate checkbox action.
   return {expectedLibraryRevision:revision,clientRequestId:requestId,
     displayName:asset?.displayName ?? fields.name.trim(),purpose:asset?.purpose ?? fields.purpose,
-    sourceNote:fields.source.trim(),rightsDeclared:true,...(asset?{modelAssetId:asset.modelAssetId}:{})};
+    sourceNote:fields.source.trim(),rightsDeclared:true,...(asset?{modelAssetId:asset.modelAssetId}:{}),
+    ...(fields.definitionEntityUid?{definitionEntityUid:fields.definitionEntityUid}:{}),
+    ...(fields.modelCode?{modelCode:fields.modelCode}:{}),
+    ...(fields.representationType?{representationType:fields.representationType}:{})};
 }
 export interface TerrainFields {
   name:string;source:string;license:string;rights:boolean;datum:VerticalDatum|'';relativeReference:string;

@@ -20,7 +20,7 @@ import type {ImageryVersion} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
   validateResourceFile, writeDenial, modelPlacementIssue, placementModelVersion, resourceCalibrationKey, type ModelResourceSelection} from './resourceForms';
 import {resourceText} from './resourceMessages';
-import type {LegacyModelCandidate, LegacyModelCatalog, ModelPurpose, ModelThumbnailInfo, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion} from './resourceTypes';
+import type {LegacyModelCandidate, LegacyModelCatalog, ModelPurpose, ModelThumbnailInfo, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion, ProjectTurbineCatalog, ProjectTurbineDefinition} from './resourceTypes';
 import './resourcePanel.css';
 
 export interface Props {
@@ -32,13 +32,18 @@ export interface Props {
   detailsTarget?:HTMLElement|null;
   canAcquire?:boolean;modelsOnly?:boolean;onOpenScene?:(sceneId:string,projectRef?:ProjectRef)=>void;
   modelSelection?:ModelResourceSelection|null;onModelSelected?:(value:ModelResourceSelection|null)=>void;
+  projectCode?:string;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
 
-export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,publicGeoCenter,onImageryReady,geographic=false,modelSelection,onModelSelected}:Props) {
+export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,publicGeoCenter,onImageryReady,geographic=false,modelSelection,onModelSelected,projectCode}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
+  const [turbines,setTurbines]=useState<ProjectTurbineDefinition[]>([]);
+  const [turbineMode,setTurbineMode]=useState<'turbines'|'all'>('turbines');
+  const [selectedTurbineUid,setSelectedTurbineUid]=useState<string>('');
+  const [representationType,setRepresentationType]=useState<'appearance'|'detailed'>('appearance');
   const [publicAcquisition,setPublicAcquisition]=useState(false),[resourceRefresh,setResourceRefresh]=useState(0);
   const [query,setQuery]=useState(''),[purpose,setPurpose]=useState<ModelPurpose|''>('');
   const [filters,setFilters]=useState<{q:string;purpose:ModelPurpose|'';state:'active'|'deleted'}>({q:'',purpose:'',state:'active'});
@@ -108,6 +113,24 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   });return()=>{
     cardIntent.current++;lifecycleGate.cancel();catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();previewCallback.current(null);
   };},[client,catalogGate,detailGate,uploadGate,legacyGate,importGate]);
+
+  useEffect(()=>{
+    const code=projectCode||'Demo-PDS';
+    api.request<ProjectTurbineCatalog>(`/api/workbench/project-turbine-definitions?projectCode=${encodeURIComponent(code)}`)
+      .then(res=>{if(res&&res.items)setTurbines(res.items);})
+      .catch(()=>{});
+  },[api,projectCode]);
+
+  async function activateTurbine(turbine:ProjectTurbineDefinition,action:'preview'|'place'){
+    const targetRef=turbine.appearanceModel||turbine.detailedModel;
+    if(!targetRef){setNotice(text(`机型 ${turbine.modelCode} 尚未关联三维模型`,'No 3D model bound for this turbine type'));return;}
+    const ticket=++cardIntent.current;
+    const value=await selectVersion(targetRef.modelAssetId||'',targetRef.modelVersionId);
+    if(!value||ticket!==cardIntent.current)return;
+    const callbacks=cardCallbacks.current;
+    if(action==='preview')callbacks.onPreview(value);
+    else if(callbacks.canPlace&&!modelPlacementIssue(value,geographic)){callbacks.onPreview(null);callbacks.onPlace(value);}
+  }
   function changeFilters(q:string,nextPurpose:ModelPurpose|'',state:'active'|'deleted'=latestFilters.current.state) {
     cardIntent.current++;
     const next={q:q.trim(),purpose:nextPurpose,state};latestFilters.current=next;setFilters(next);setLifecycleNotice('');setCatalog(null);setVersion(null);setVersionId('');setAssetId(null);
@@ -143,6 +166,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   function openUpload(asset?:ProjectModelAsset) {
     if(!catalog||!canUpload||asset?.assetState==='deleted'||lifecycleBusy)return;
     setUpload({asset,revision:catalog.libraryRevision});setName(asset?.displayName||'');setUse(asset?.purpose||'equipment');
+    setSelectedTurbineUid(asset?.definitionEntityUid||'');setRepresentationType(asset?.representationType||'appearance');
     setSource('');setFile(null);setUploadError(null);setNotice('');requestId.current.reset();
   }
   async function uploadModel() {
@@ -150,12 +174,18 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     try {
       if(!file)throw new ResourceFormError('modelFileInvalid');
       validateResourceFile(file,'model',catalog?.limits.maxUploadBytes);
-      const draft=modelMetadata({name,purpose:use,source},upload.revision,'',upload.asset);
+      const chosenTurbine=turbines.find(item=>item.definitionEntityUid===selectedTurbineUid);
+      const draft=modelMetadata({
+        name,purpose:use,source,
+        definitionEntityUid:selectedTurbineUid||undefined,
+        modelCode:chosenTurbine?.modelCode,
+        representationType:selectedTurbineUid?representationType:undefined,
+      },upload.revision,'',upload.asset);
       const clientRequestId=requestId.current.forPayload(draft,`${file.name}:${file.size}:${file.lastModified}`);
       const request=uploadGate.start();setUploading(true);setUploadError(null);setNotice('');
       try {
         const value=await client.uploadModel(file,{...draft,clientRequestId},request.signal);
-        if(request.isCurrent()){setUpload(null);setFile(null);setName('');setSource('');updated(value);}
+        if(request.isCurrent()){setUpload(null);setFile(null);setName('');setSource('');setSelectedTurbineUid('');setRepresentationType('appearance');updated(value);}
       }catch(value){if(request.isCurrent())failed(value,true);}
       finally{if(request.isCurrent())setUploading(false);}
     }catch(value){failed(value,true);}
@@ -233,6 +263,10 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         <IconBtn label={t('refresh')} disabled={loading||lifecycleBusy} onClick={()=>void readCatalog()}><RefreshCw size={14}/></IconBtn>
         {!recycled&&(modelsOnly?<Btn primary disabled={!canUpload||lifecycleBusy} onClick={()=>openUpload()}><FileUp size={15}/>{t('uploadModel')}</Btn>:<IconBtn label={t('uploadModel')} disabled={!canUpload} onClick={()=>openUpload()}><Plus size={16}/></IconBtn>)}
       </div></div>
+      {!modelsOnly&&turbines.length>0&&<div className="pm-library-filter-bar"><div className="pm-category-filter" role="group" aria-label={text('模型展示模式','Model view mode')}>
+        <button type="button" aria-pressed={turbineMode==='turbines'} onClick={()=>setTurbineMode('turbines')}>{text('风机型号','Turbine models')} ({turbines.length})</button>
+        <button type="button" aria-pressed={turbineMode==='all'} onClick={()=>setTurbineMode('all')}>{text('全部模型','All models')}</button>
+      </div></div>}
       {modelsOnly&&<div className="pm-library-filter-bar"><div className="pm-category-filter" role="group" aria-label={text('模型分类','Model category')}>
         <span>{text('用途分类','Purpose')}</span>{(['',...purposes] as const).map(value=><button type="button" key={value} aria-pressed={purpose===value} onClick={()=>{setPurpose(value);changeFilters(query,value);}}>{value?t(value):text('全部','All')}</button>)}
       </div><span className="ov-resource-caption" role="status">{loading?t('loading'):text(`已显示 ${catalog?.items.length||0} 个模型资源`,`${catalog?.items.length||0} model resources shown`)}</span></div>}
@@ -243,6 +277,30 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
       {loading&&!catalog&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
       {catalog?.items.length===0&&!loading&&<p className="ov-resource-empty">{recycled?text('回收站为空','The recycle bin is empty'):t('noModels')}</p>}
       {modelsOnly&&catalogView==='list'&&<div className="pm-catalog-columns" aria-hidden="true"><span>{t('models')}</span><span>{text('用途分类','Purpose')}</span><span>{t('versions')}</span><span className="pm-meta-size">{t('size')}</span><span className="pm-meta-created">{text('版本创建时间','Version created')}</span></div>}
+      {!modelsOnly&&turbineMode==='turbines'?<ul className="ov-resource-model-list" aria-label={text('风机型号列表','Turbine definitions')}>{turbines.filter(item=>!query||(item.displayName||item.modelCode).toLowerCase().includes(query.toLowerCase())||item.modelCode.toLowerCase().includes(query.toLowerCase())).map(turbine=>{
+        const targetRef=turbine.appearanceModel||turbine.detailedModel;
+        const usable=!!targetRef;
+        const title=turbine.displayName||turbine.modelCode;
+        return <li className="ov-resource-card" key={turbine.definitionEntityUid} aria-label={title}>
+          <div className="ov-resource-card-heading">
+            <span className="ov-resource-card-label">
+              <strong>{title}</strong>
+              <small style={{display:'block',color:'var(--ov-text-subtle,#8c9ba5)',fontSize:11,margin:'2px 0 4px'}}>
+                {turbine.ratedPowerKw?`${turbine.ratedPowerKw/1000} MW · `:''}{turbine.rotorDiameterM?`叶轮 ⌀${turbine.rotorDiameterM}m · `:''}{turbine.hubHeightM?`轮毂 ${turbine.hubHeightM}m`:''}
+              </small>
+              <span style={{display:'flex',gap:6}}>
+                <span className={`ov-resource-card-state ${turbine.appearanceModel?'verified':'pending'}`}>{turbine.appearanceModel?text('外观版就绪','Appearance ready'):text('无外观版','No appearance')}</span>
+                <span className={`ov-resource-card-state ${turbine.detailedModel?'verified':'pending'}`}>{turbine.detailedModel?text('完整版就绪','Detailed ready'):text('无完整版','No detailed')}</span>
+              </span>
+            </span>
+          </div>
+          <div className="ov-resource-card-actions">
+            <Btn disabled={!canPlace||!usable} title={!usable?text('该机型尚未关联模型文件','No 3D model bound'):!canPlace?t('sceneEditRequired'):text('布置风机','Place turbine')} onClick={()=>void activateTurbine(turbine,'place')}>
+              <MapPin size={14}/>{text('布置风机','Place')}
+            </Btn>
+          </div>
+        </li>;
+      })}</ul>:
       <ul className="ov-resource-model-list" aria-label={modelsOnly?text('模型资源目录','Model resource catalog'):undefined}>{catalog?.items.map(asset=>{
         const active=assetId===asset.modelAssetId,choice=placementModelVersion(asset,geographic,active?versionId:
           modelSelection?.modelAssetId===asset.modelAssetId?modelSelection.modelVersionId:undefined);
@@ -277,7 +335,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
             canGenerateThumbnail={catalog?.capabilities.canGenerateThumbnails===true&&!denied} onThumbnailUpdated={thumbnailUpdated}
             onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate} onRefreshLibrary={async()=>await readCatalog()}/></ResourceDetailHost>}
         </li></RowContext>;
-      })}</ul>
+      })}</ul>}
       {catalog?.nextCursor&&<Btn disabled={loading} onClick={()=>void readCatalog(catalog.nextCursor!)}>{t(loading?'loading':'more')}</Btn>}
       {!version&&!detailLoading&&selectedAsset&&<p className="ov-resource-caption">{t('chooseModel')}</p>}
       {!recycled&&<details className="ov-resource-disclosure" open={legacyOpen} onToggle={event=>{const value=event.currentTarget.open;setLegacyOpen(value);if(value&&!legacy&&!legacyLoading)void readLegacy();}}><summary>{t('existingModels')}</summary>
@@ -309,6 +367,28 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     {upload&&<Modal title={t(upload.asset?'appendVersion':'uploadModel')} description={t('glbLimit')} onClose={()=>{if(!uploading)setUpload(null);}}><div className="ov-resource-form">
       <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);setUploadError(null);requestId.current.reset();}}/></label>
       <p className="ov-resource-caption">{t('glbLimit')}</p>
+      {turbines.length>0&&<label>{text('关联风机型号（可选）','Turbine type (optional)')}
+        <select value={selectedTurbineUid} disabled={uploading||!!upload.asset} onChange={event=>{
+          const uid=event.target.value;
+          setSelectedTurbineUid(uid);
+          const chosen=turbines.find(t=>t.definitionEntityUid===uid);
+          if(chosen&&!name)setName(`${chosen.modelCode} - ${representationType==='appearance'?text('外观版','Appearance'):text('完整版','Detailed')}`);
+        }}>
+          <option value="">{text('不关联（通用模型）','None (generic model)')}</option>
+          {turbines.map(t=><option key={t.definitionEntityUid} value={t.definitionEntityUid}>{t.displayName||t.modelCode} ({t.modelCode})</option>)}
+        </select>
+      </label>}
+      {selectedTurbineUid&&<label>{text('模型形态分类','Representation type')}
+        <select value={representationType} disabled={uploading} onChange={event=>{
+          const rep=event.target.value as 'appearance'|'detailed';
+          setRepresentationType(rep);
+          const chosen=turbines.find(t=>t.definitionEntityUid===selectedTurbineUid);
+          if(chosen)setName(`${chosen.modelCode} - ${rep==='appearance'?text('外观版','Appearance'):text('完整版','Detailed')}`);
+        }}>
+          <option value="appearance">{text('外观版（轻量全景）','Appearance (lightweight overview)')}</option>
+          <option value="detailed">{text('完整版（含内部构件与爆炸）','Detailed (internal components & explosion)')}</option>
+        </select>
+      </label>}
       <label>{t('displayName')}<input value={name} maxLength={120} disabled={uploading||!!upload.asset} onChange={event=>setName(event.target.value)}/></label>
       <label>{t('purpose')}<select value={use} disabled={uploading||!!upload.asset} onChange={event=>setUse(event.target.value as ModelPurpose)}>{purposes.map(value=><option key={value} value={value}>{t(value)}</option>)}</select></label>
       <label>{t('sourceNote')}<textarea value={source} rows={3} maxLength={2000} disabled={uploading} onChange={event=>setSource(event.target.value)}/></label>

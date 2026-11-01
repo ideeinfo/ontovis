@@ -32,7 +32,7 @@ export function ProjectModelCenter({api,onOpenScene,onConfigure,suspended=false}
       <p>{text('模型可供多个项目使用；同一固定版本在各场景中放置为独立实例。','Models are shared across projects. Place independent instances of the same fixed version in each scene.')}</p></div>
       </div>
       <Btn onClick={()=>onOpenScene()}><Layers size={15}/>{text('进入场景布置','Open scene placement')}</Btn></header>
-    <div className="pm-catalog pm-library" hidden={!!preview}><ResourcePanel api={api} modelsOnly detailsTarget={detailsTarget} canPlace={false} canAcquire={false}
+    <div className="pm-catalog pm-library" hidden={!!preview}><ResourcePanel api={api} projectCode="Demo-PDS" modelsOnly detailsTarget={detailsTarget} canPlace={false} canAcquire={false}
       onPlace={ignore} onPreview={show} onTerrainReady={ignore} onOpenScene={onOpenScene}/></div>
     {preview&&<div className="pm-grid"><div className="pm-tree"><ModelComponentTree version={preview} inspection={inspection} onClose={()=>show(null)}/></div>
       <div className="pm-preview">

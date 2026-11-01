@@ -378,6 +378,8 @@ class WorkbenchSessions(UserSessions):
                 access_revision=access['accessRevision'], **options)
         elif path == '/api/workbench/resources/models/legacy' and not body:
             value = self.project_models.legacy_candidates(authorize)
+        elif path == '/api/workbench/project-turbine-definitions':
+            value = self.project_models.turbine_definitions(authorize)
         elif path == '/api/workbench/resources/model' and set(body) == {'modelAssetId', 'modelVersionId'}:
             value = self.project_models.model(body['modelAssetId'], body['modelVersionId'], authorize)
         elif path == '/api/workbench/resources/model/metadata':

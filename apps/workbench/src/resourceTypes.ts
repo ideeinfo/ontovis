@@ -45,7 +45,40 @@ export interface ProjectModelAsset {
   modelAssetId: string; displayName: string; purpose: ModelPurpose; assetRevision: string;
   versions: ProjectModelVersionSummary[];
   description?:string;
+  definitionEntityUid?: string;
+  modelCode?: string;
+  representationType?: 'appearance' | 'detailed';
   assetState?:'active'|'deleted';lifecycleRevision?:number;deletedAt?:string|null;
+}
+export interface ProjectTurbineModelRef {
+  modelAssetId: string;
+  modelVersionId: string;
+  contentRevision: string;
+  sha256: string;
+  displayName: string;
+}
+export interface ProjectTurbineDefinition {
+  definitionEntityUid: string;
+  modelCode: string;
+  displayName: string;
+  modelName?: string;
+  ratedPowerKw?: number;
+  rotorDiameterM?: number;
+  hubHeightM?: number;
+  appearanceModel: ProjectTurbineModelRef | null;
+  detailedModel: ProjectTurbineModelRef | null;
+}
+export interface ProjectTurbineCatalog {
+  projectCode: string;
+  items: ProjectTurbineDefinition[];
+  pairMap: Record<string, {
+    pairedVersionId: string;
+    pairedRef: ProjectTurbineModelRef;
+    targetType: 'appearance' | 'detailed';
+    representationType?: 'appearance' | 'detailed';
+    definitionEntityUid: string;
+    modelCode: string;
+  }>;
 }
 export interface ResourceCapabilities {
   scope: 'project_static_glb_resources'|'shared_static_glb_resources'; canRead: true; canUpload: boolean; canCalibrate: boolean;
@@ -92,6 +125,7 @@ export interface ModelInfoRequest {
 export interface UploadModelMetadata {
   expectedLibraryRevision: string; clientRequestId: string; displayName: string; purpose: ModelPurpose;
   sourceNote: string; rightsDeclared: true; modelAssetId?: string;
+  definitionEntityUid?: string; modelCode?: string; representationType?: 'appearance' | 'detailed';
 }
 export interface CalibrateModelRequest {
   modelVersionId: string; expectedContentRevision: string; expectedLibraryRevision: string;

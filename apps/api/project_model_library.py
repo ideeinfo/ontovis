@@ -116,7 +116,8 @@ class ProjectModelLibrary:
             db.executescript('''
                 create table if not exists project_model_assets (
                     id text primary key, project_code text not null, name text not null,
-                    purpose text not null, revision integer not null, created_at text not null);
+                    purpose text not null, revision integer not null, created_at text not null,
+                    definition_entity_uid text, model_code text, representation_type text);
                 create table if not exists project_model_versions (
                     version_id text primary key references versions(id),
                     asset_id text not null references project_model_assets(id),
@@ -160,6 +161,13 @@ class ProjectModelLibrary:
                     when exists (select 1 from project_model_versions where version_id=old.id)
                     begin select raise(abort, 'immutable project model content'); end;
             ''')
+            cols = [r[1] for r in db.execute('pragma table_info(project_model_assets)').fetchall()]
+            if 'definition_entity_uid' not in cols:
+                db.execute('alter table project_model_assets add column definition_entity_uid text')
+            if 'model_code' not in cols:
+                db.execute('alter table project_model_assets add column model_code text')
+            if 'representation_type' not in cols:
+                db.execute('alter table project_model_assets add column representation_type text')
             db.execute('insert or ignore into project_model_catalog values (1,?)', (secrets.token_hex(32),))
 
     @staticmethod
@@ -194,8 +202,12 @@ class ProjectModelLibrary:
     def _info(db, asset):
         latest = db.execute('''select description from project_model_info_revisions
             where asset_id=? order by asset_revision desc limit 1''', (asset['id'],)).fetchone()
+        keys = asset.keys() if hasattr(asset, 'keys') else ()
         return {'displayName': asset['name'], 'purpose': asset['purpose'],
                 'description': latest['description'] if latest else '',
+                'definitionEntityUid': asset['definition_entity_uid'] if 'definition_entity_uid' in keys else None,
+                'modelCode': asset['model_code'] if 'model_code' in keys else None,
+                'representationType': asset['representation_type'] if 'representation_type' in keys else None,
                 'assetState': asset['asset_state'], 'lifecycleRevision': asset['lifecycle_revision'],
                 'deletedAt': asset['changed_at'] if asset['asset_state'] == 'deleted' else None,
                 'assetRevision': 'asset:' + asset['id'] + ':' + str(asset['revision'])}
@@ -481,13 +493,15 @@ class ProjectModelLibrary:
     @staticmethod
     def upload_metadata(value):
         required = ('expectedLibraryRevision', 'clientRequestId', 'displayName', 'purpose', 'sourceNote', 'rightsDeclared')
-        _fields(value, required, ('modelAssetId', 'expectedSessionRevision'))
+        _fields(value, required, ('modelAssetId', 'expectedSessionRevision', 'definitionEntityUid', 'modelCode', 'representationType'))
         result = {key: item for key, item in value.items() if key != 'expectedSessionRevision'}
         _uuid(result['clientRequestId']); _text(result['expectedLibraryRevision'])
         for key, maximum in (('displayName', 200), ('sourceNote', 2000)): result[key] = _text(result[key], maximum)
         _require(isinstance(result['purpose'], str) and result['purpose'] in PURPOSES)
         _require(result['rightsDeclared'] is True, 'MODEL_RIGHTS_REQUIRED')
         if 'modelAssetId' in result: _uuid(result['modelAssetId'])
+        if result.get('representationType'):
+            _require(result['representationType'] in ('appearance', 'detailed'), 'INVALID_REPRESENTATION_TYPE')
         return result
 
     def _prior(self, db, actor, action, request_id, digest):
@@ -549,8 +563,11 @@ class ProjectModelLibrary:
                 os.chmod(target, 0o600)
                 _sync_directory(target.parent); _sync_directory(path.parent)
                 if 'modelAssetId' not in metadata:
-                    db.execute('insert into project_model_assets values (?,?,?,?,?,?)',
-                        (asset_id, self.project_code, metadata['displayName'], metadata['purpose'], 0, now))
+                    db.execute('''insert into project_model_assets
+                        (id, project_code, name, purpose, revision, created_at, definition_entity_uid, model_code, representation_type)
+                        values (?,?,?,?,?,?,?,?,?)''',
+                        (asset_id, self.project_code, metadata['displayName'], metadata['purpose'], 0, now,
+                         metadata.get('definitionEntityUid'), metadata.get('modelCode'), metadata.get('representationType')))
                 db.execute('''insert into versions values (?,?,?,?,?,?,?,?,?,?,?)''',
                     (identifier, str(uuid4()), actor, metadata['displayName'], metadata['sourceNote'], result['sha256'],
                      target.stat().st_size, now, 1, _canonical(result['components']), _canonical(result['report'])))
@@ -723,3 +740,70 @@ class ProjectModelLibrary:
                 raise PreviewError(503, 'MODEL_STORAGE_UNAVAILABLE') from None
             finally:
                 self.library.slots.release()
+
+    def turbine_definitions(self, authorize=None):
+        if authorize is not None:
+            _require(callable(authorize)); authorize()
+        with self.library.connect() as db:
+            rows = db.execute('''
+                select a.id as asset_id, a.name as asset_name, a.definition_entity_uid, a.model_code,
+                       a.representation_type, v.id as version_id, v.sha256, v.name as version_name,
+                       p.content_revision
+                from project_model_assets a
+                join project_model_versions p on p.asset_id = a.id
+                join versions v on v.id = p.version_id
+                left join project_model_lifecycle l on l.asset_id = a.id
+                where a.project_code = ? and coalesce(l.state, 'active') = 'active'
+                  and a.definition_entity_uid is not null
+                order by a.model_code, a.representation_type
+            ''', (self.project_code,)).fetchall()
+            
+            groups = {}
+            for r in rows:
+                uid = r['definition_entity_uid']
+                if uid not in groups:
+                    groups[uid] = {
+                        'definitionEntityUid': uid,
+                        'modelCode': r['model_code'],
+                        'displayName': r['asset_name'].replace(' · 外观版', '').replace(' · 完整版', ''),
+                        'appearanceModel': None,
+                        'detailedModel': None,
+                    }
+                model_ref = {
+                    'modelAssetId': r['asset_id'],
+                    'modelVersionId': r['version_id'],
+                    'contentRevision': r['content_revision'],
+                    'sha256': r['sha256'],
+                    'displayName': r['version_name'] or r['asset_name'],
+                }
+                rep = r['representation_type']
+                if rep == 'appearance':
+                    groups[uid]['appearanceModel'] = model_ref
+                elif rep == 'detailed':
+                    groups[uid]['detailedModel'] = model_ref
+
+            pair_map = {}
+            for g in groups.values():
+                app = g['appearanceModel']
+                det = g['detailedModel']
+                if app and det:
+                    pair_map[app['modelVersionId']] = {
+                        'pairedVersionId': det['modelVersionId'],
+                        'pairedRef': det,
+                        'targetType': 'detailed',
+                        'definitionEntityUid': g['definitionEntityUid'],
+                        'modelCode': g['modelCode'],
+                    }
+                    pair_map[det['modelVersionId']] = {
+                        'pairedVersionId': app['modelVersionId'],
+                        'pairedRef': app,
+                        'targetType': 'appearance',
+                        'definitionEntityUid': g['definitionEntityUid'],
+                        'modelCode': g['modelCode'],
+                    }
+
+            return {
+                'projectCode': self.project_code,
+                'items': list(groups.values()),
+                'pairMap': pair_map,
+            }
