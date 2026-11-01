@@ -108,15 +108,15 @@ export async function sanitizeModelLogos(root:THREE.Object3D) {
   });
   if(!tu3000Targets.length)return;
   const image=await loadBrandLogoImage();
-  const height=1.0,width=height*(ONTOVIS_LOGO_WIDTH/ONTOVIS_LOGO_HEIGHT);
-  const yCenter=90.95,zCenter=-0.17;
+  const height=1.60,width=height*(ONTOVIS_LOGO_WIDTH/ONTOVIS_LOGO_HEIGHT);
+  const yCenter=90.95,zCenter=0.70;
   const yMin=yCenter-height/2,yMax=yCenter+height/2,zMin=zCenter-width/2,zMax=zCenter+width/2;
   for(const mesh of tu3000Targets) {
     const position=mesh.geometry.getAttribute('position');
     if(position && position.count===8) {
       for(let index=0;index<8;index++) {
         const x=position.getX(index),y=position.getY(index),z=position.getZ(index);
-        position.setXYZ(index,x,y>=yCenter?yMax:yMin,z>=0.7?zMax:zMin);
+        position.setXYZ(index,x,y>=yCenter?yMax:yMin,z>=zCenter?zMax:zMin);
       }
       position.needsUpdate=true;mesh.geometry.computeBoundingBox();mesh.geometry.computeBoundingSphere();
     }

@@ -401,7 +401,7 @@ test('TU-3000 nacelle decal node Static:nacelle:10 replaces source logo with ONT
   mesh.geometry.computeBoundingBox();
   const box=mesh.geometry.boundingBox;
   const height=box.max.y-box.min.y,width=box.max.z-box.min.z;
-  assert.ok(Math.abs(height-1.0)<1e-5);
+  assert.ok(Math.abs(height-1.6)<1e-5);
   assert.ok(Math.abs(width/height-2170/725)<1e-5);
   assert.ok(Math.abs(box.min.x - -2.315)<1e-5 && Math.abs(box.max.x - 2.315)<1e-5);
   let disposed=0;mesh.material.map.addEventListener('dispose',()=>disposed++);

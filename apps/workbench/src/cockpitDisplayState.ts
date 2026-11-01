@@ -20,7 +20,12 @@ export function presentationEnvironment(base:SceneEnvironmentV1|null|undefined,f
   value.atmosphere.clouds={...(value.atmosphere.clouds||cloudDefaults()),enabled:weather!=='clear',coverage:weather==='clear'?0:weather==='cloud'?.55:.88};
   value.atmosphere.fog=weather==='fog'?{mode:'linear',nearM:80,farM:1600}:{mode:'off',nearM:150,farM:6000};
   value.atmosphere.topColor=weather==='clear'?'#8daec0':'#6d818b';value.atmosphere.horizonColor=weather==='clear'?'#d7e0dd':'#abb9ba';
-  value.lighting.sun.enabled=weather==='clear'||weather==='cloud';
+  if(weather==='rain'||weather==='snow'||weather==='fog'){
+   value.lighting.sun.enabled=weather!=='fog';value.lighting.sun.intensity=1.15;value.lighting.sun.color='#dce6f2';
+   value.lighting.hemisphereIntensity=1.65;value.lighting.environment.intensity=1.0;
+  }else{
+   value.lighting.sun.enabled=weather==='clear'||weather==='cloud';
+  }
  }
  const night=light==='night'||light==='scene'&&weather==='forecast'&&!!forecast?.forecast?.symbol?.endsWith('_night');
  if(light!=='scene'&&light!=='night'){

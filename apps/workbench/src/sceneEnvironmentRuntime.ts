@@ -65,8 +65,11 @@ export class SceneEnvironmentRuntime {
   }
   configure(value:SceneEnvironmentV1|null,frame:CoordinateFrame,terrain:THREE.Mesh|null,roots:THREE.Group[],selected:THREE.Group|null,visible:boolean,night=false){
     if(this.disposed)return false;this.config=value;this.frame=frame;this.roots=roots;this.selected=selected;this.dirtyShadow=true;
-    this.fill.intensity=value&&night?1.4:0;
-    this.hemisphere.color.set(night?0xe7efff:0xf1f5ec);this.hemisphere.groundColor.set(night?0x737e93:0x58694d);
+    const overcastDay=Boolean(value&&!night&&(value.atmosphere.topColor==='#6d818b'||value.lighting.hemisphereIntensity>1.2));
+    this.fill.intensity=value&&night?1.4:(overcastDay?0.85:0);
+    this.fill.color.set(night?0xe7efff:0xdce6f2);
+    this.hemisphere.color.set(night?0xe7efff:(overcastDay?0xe8eef5:0xf1f5ec));
+    this.hemisphere.groundColor.set(night?0x737e93:(overcastDay?0x6e7882:0x58694d));
     if(!value){
       this.clouds.dispose();this.surroundings.dispose();this.releaseSky();this.releaseWater();this.releaseShadow();this.fallback=false;this.sun.target.position.set(0,0,0);this.scene.fog=null;this.scene.environmentIntensity=1;
       this.renderer.toneMapping=THREE.NoToneMapping;this.renderer.toneMappingExposure=1;this.ground.roughness=1;this.grass.repeat.set(1,1);
