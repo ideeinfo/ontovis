@@ -80,9 +80,10 @@
 .wx-marker{position:absolute;top:-2px;width:2px;height:10px;background:rgba(255,255,255,0.3);border-radius:1px;transform:translateX(-50%)}
 .wx-meter-labels{display:flex;justify-content:space-between;font-size:9px;color:var(--textSecondary);margin-top:2px;font-variant-numeric:tabular-nums}
 
-/* 四维指标矩阵网格 */
-.wx-metrics-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.wx-metric-card{background:rgba(255,255,255,0.03);border:1px solid var(--borderSubtle);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+/* 环境指标列表 (垂直紧凑 3 项，与左侧 Deck 高度精准对齐) */
+.wx-metrics-list{display:flex;flex-direction:column;gap:8px;justify-content:space-between;flex:1}
+.wx-metric-row-card{background:rgba(255,255,255,0.03);border:1px solid var(--borderSubtle);border-radius:8px;padding:9px 12px;display:flex;flex-direction:column;gap:5px}
+.wx-metric-row-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .wx-metric-icon-title{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--textSecondary)}
 .wx-metric-icon{flex-shrink:0}
 .text-cyan{color:#5cc8db}
@@ -92,19 +93,28 @@
 .text-amber{color:#f7ca68}
 .text-red{color:#eb5e55}
 
-.wx-metric-number{display:flex;align-items:baseline;gap:4px;margin:2px 0}
-.wx-metric-number strong{font-size:20px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums;color:var(--text)}
+.wx-metric-row-body{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.wx-metric-number{display:flex;align-items:baseline;gap:3px}
+.wx-metric-number strong{font-size:18px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums;color:var(--text)}
 .wx-metric-number small{font-size:11px;color:var(--textSecondary)}
-.wx-metric-desc{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--textSecondary)}
-.wx-metric-pill{font-weight:500;color:var(--text)}
+.wx-metric-pill{font-size:11px;font-weight:500;color:var(--text);background:rgba(255,255,255,0.05);padding:1px 6px;border-radius:3px;border:1px solid var(--borderSubtle)}
+.wx-metric-sub{font-size:11px;color:var(--textSecondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%}
 
-.wx-advice-card{grid-column:1 / -1;background:rgba(255,255,255,0.025)}
-.wx-advice-card.good{border-color:rgba(84,212,154,0.3);background:rgba(84,212,154,0.04)}
-.wx-advice-card.warning{border-color:rgba(247,202,104,0.3);background:rgba(247,202,104,0.05)}
-.wx-advice-card.caution{border-color:rgba(247,202,104,0.25);background:rgba(247,202,104,0.03)}
-.wx-advice-card.danger{border-color:rgba(235,94,85,0.35);background:rgba(235,94,85,0.06)}
-.wx-advice-title{font-size:12px;font-weight:600;margin-top:3px;color:var(--text)}
-.wx-advice-text{font-size:11px;color:var(--textSecondary);line-height:1.4}
+/* 横跨两栏：现场作业适宜度通栏横幅 Banner */
+.wx-advice-banner{grid-column:1 / -1;display:flex;align-items:center;gap:16px;padding:12px 18px;border-radius:10px;border:1px solid var(--borderSubtle);background:rgba(255,255,255,0.025);box-shadow:inset 0 1px 0 rgba(255,255,255,0.04)}
+.wx-advice-badge{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.wx-advice-icon{flex-shrink:0}
+.wx-advice-badge-text{display:flex;flex-direction:column;gap:1px}
+.wx-advice-tag{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--textSecondary);font-weight:500}
+.wx-advice-title{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap}
+.wx-advice-divider{width:1px;height:28px;background:var(--borderSubtle);flex-shrink:0}
+.wx-advice-content{flex:1;min-width:0;font-size:12px;color:var(--textSecondary);line-height:1.5}
+.wx-advice-content p{margin:0}
+
+.wx-advice-banner.good{border-color:rgba(84,212,154,0.35);background:linear-gradient(90deg,rgba(84,212,154,0.08) 0%,rgba(20,40,48,0.35) 100%)}
+.wx-advice-banner.caution{border-color:rgba(247,202,104,0.35);background:linear-gradient(90deg,rgba(247,202,104,0.08) 0%,rgba(48,38,20,0.35) 100%)}
+.wx-advice-banner.warning{border-color:rgba(247,202,104,0.42);background:linear-gradient(90deg,rgba(247,202,104,0.12) 0%,rgba(48,38,20,0.4) 100%)}
+.wx-advice-banner.danger{border-color:rgba(235,94,85,0.45);background:linear-gradient(90deg,rgba(235,94,85,0.14) 0%,rgba(48,20,20,0.45) 100%)}
 
 /* 空状态与引导卡片 */
 .wx-empty-state{padding:32px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px;background:rgba(255,255,255,0.02);border:1px dashed var(--borderSubtle);border-radius:10px}
@@ -123,9 +133,10 @@
   .wx-hero-banner{grid-template-columns:1fr;gap:12px}
   .wx-hero-right{align-items:flex-start;text-align:left}
   .wx-body-grid{grid-template-columns:1fr}
+  .wx-advice-banner{flex-direction:column;align-items:flex-start;gap:8px}
+  .wx-advice-divider{display:none}
 }
 @media(max-width:540px){
-  .wx-metrics-grid{grid-template-columns:1fr}
   .wx-wind-visual{flex-direction:column;align-items:flex-start}
 }
 
@@ -133,6 +144,7 @@
 .wx-settings-grid>aside .wx-hero-banner{grid-template-columns:1fr;gap:12px}
 .wx-settings-grid>aside .wx-hero-right{align-items:flex-start;text-align:left}
 .wx-settings-grid>aside .wx-body-grid{grid-template-columns:1fr}
-.wx-settings-grid>aside .wx-metrics-grid{grid-template-columns:1fr}
+.wx-settings-grid>aside .wx-advice-banner{flex-direction:column;align-items:flex-start;gap:8px}
+.wx-settings-grid>aside .wx-advice-divider{display:none}
 .wx-settings-grid>aside .wx-wind-visual{flex-direction:column;align-items:center;text-align:center}
 .wx-settings-grid>aside .wx-wind-stat-row{justify-content:center}

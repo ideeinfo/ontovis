@@ -286,73 +286,85 @@ export function WeatherCard({
             <div className="wx-deck wx-metrics-deck">
               <div className="wx-deck-head">
                 <Gauge size={16} />
-                <h4>{t('环境气象与场区作业指标', 'Atmospheric & Operations Metrics')}</h4>
+                <h4>{t('环境气象多维指标', 'Atmospheric Metrics')}</h4>
+                <small>{t('场区微气象', 'Site weather')}</small>
               </div>
 
-              <div className="wx-metrics-grid">
+              <div className="wx-metrics-list">
                 {/* 降水指标 */}
-                <div className="wx-metric-card">
-                  <div className="wx-metric-icon-title">
-                    <Droplets size={16} className="wx-metric-icon text-cyan" />
-                    <span>{f.intervalHours}h {t('降水量', 'Precipitation')}</span>
-                  </div>
-                  <div className="wx-metric-number">
-                    <strong>{n(f.precipitationMm)}</strong>
-                    <small>mm</small>
-                  </div>
-                  <div className="wx-metric-desc">
+                <div className="wx-metric-row-card">
+                  <div className="wx-metric-row-head">
+                    <div className="wx-metric-icon-title">
+                      <Droplets size={15} className="wx-metric-icon text-cyan" />
+                      <span>{f.intervalHours}h {t('降水量', 'Precipitation')}</span>
+                    </div>
                     <span className="wx-metric-pill">{precip.label}</span>
-                    <small>{precip.desc}</small>
+                  </div>
+                  <div className="wx-metric-row-body">
+                    <div className="wx-metric-number">
+                      <strong>{n(f.precipitationMm)}</strong>
+                      <small>mm</small>
+                    </div>
+                    <span className="wx-metric-sub">{precip.desc}</span>
                   </div>
                 </div>
 
                 {/* 云量覆盖率 */}
-                <div className="wx-metric-card">
-                  <div className="wx-metric-icon-title">
-                    <Cloud size={16} className="wx-metric-icon text-indigo" />
-                    <span>{t('云量覆盖率', 'Cloud Cover')}</span>
-                  </div>
-                  <div className="wx-metric-number">
-                    <strong>{f.cloudPercent !== null && f.cloudPercent !== undefined ? f.cloudPercent : '—'}</strong>
-                    <small>%</small>
-                  </div>
-                  <div className="wx-metric-desc">
+                <div className="wx-metric-row-card">
+                  <div className="wx-metric-row-head">
+                    <div className="wx-metric-icon-title">
+                      <Cloud size={15} className="wx-metric-icon text-indigo" />
+                      <span>{t('云量覆盖率', 'Cloud Cover')}</span>
+                    </div>
                     <span className="wx-metric-pill">{cloud.label}</span>
-                    <small>{cloud.lighting}</small>
+                  </div>
+                  <div className="wx-metric-row-body">
+                    <div className="wx-metric-number">
+                      <strong>{f.cloudPercent !== null && f.cloudPercent !== undefined ? f.cloudPercent : '—'}</strong>
+                      <small>%</small>
+                    </div>
+                    <span className="wx-metric-sub">{cloud.lighting}</span>
                   </div>
                 </div>
 
                 {/* 高空风切变参考 */}
-                <div className="wx-metric-card">
-                  <div className="wx-metric-icon-title">
-                    <Compass size={16} className="wx-metric-icon text-teal" />
-                    <span>{t('轮毂高度风切变', 'Hub Wind Shear')}</span>
-                  </div>
-                  <div className="wx-metric-number">
-                    <strong>{hubHeightSpeed ?? '—'}</strong>
-                    <small>m/s</small>
-                  </div>
-                  <div className="wx-metric-desc">
+                <div className="wx-metric-row-card">
+                  <div className="wx-metric-row-head">
+                    <div className="wx-metric-icon-title">
+                      <Compass size={15} className="wx-metric-icon text-teal" />
+                      <span>{t('轮毂高度风切变', 'Hub Wind Shear')}</span>
+                    </div>
                     <span className="wx-metric-pill">{t('~100m 轮毂高度', '~100m Hub')}</span>
-                    <small>{t('基于切变指数α=0.14推算', 'Est. by wind shear α=0.14')}</small>
+                  </div>
+                  <div className="wx-metric-row-body">
+                    <div className="wx-metric-number">
+                      <strong>{hubHeightSpeed ?? '—'}</strong>
+                      <small>m/s</small>
+                    </div>
+                    <span className="wx-metric-sub">{t('基于切变指数α=0.14推算', 'Est. by wind shear α=0.14')}</span>
                   </div>
                 </div>
+              </div>
+            </div>
 
-                {/* 现场运维作业窗口建议 */}
-                <div className={`wx-metric-card wx-advice-card ${advice.status}`}>
-                  <div className="wx-metric-icon-title">
-                    {advice.status === 'good' ? (
-                      <CheckCircle2 size={16} className="wx-metric-icon text-green" />
-                    ) : advice.status === 'danger' ? (
-                      <ShieldAlert size={16} className="wx-metric-icon text-red" />
-                    ) : (
-                      <AlertTriangle size={16} className="wx-metric-icon text-amber" />
-                    )}
-                    <span>{t('现场作业适宜度', 'Operations Window')}</span>
-                  </div>
-                  <div className="wx-advice-title">{advice.title}</div>
-                  <div className="wx-advice-text">{advice.desc}</div>
+            {/* 横跨两栏：现场运维作业适宜度通栏横幅 Banner */}
+            <div className={`wx-advice-banner ${advice.status}`}>
+              <div className="wx-advice-badge">
+                {advice.status === 'good' ? (
+                  <CheckCircle2 size={18} className="wx-advice-icon text-green" />
+                ) : advice.status === 'danger' ? (
+                  <ShieldAlert size={18} className="wx-advice-icon text-red" />
+                ) : (
+                  <AlertTriangle size={18} className="wx-advice-icon text-amber" />
+                )}
+                <div className="wx-advice-badge-text">
+                  <span className="wx-advice-tag">{t('现场作业适宜度', 'Operations Window')}</span>
+                  <strong className="wx-advice-title">{advice.title}</strong>
                 </div>
+              </div>
+              <div className="wx-advice-divider" />
+              <div className="wx-advice-content">
+                <p>{advice.desc}</p>
               </div>
             </div>
           </div>
