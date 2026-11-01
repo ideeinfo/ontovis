@@ -73,3 +73,45 @@
 .sw-thumb-empty{font-size:11px;color:var(--textSecondary)}
 .sw-thumb-actions{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}
 .sw-thumb-actions small{color:var(--textSecondary);font-size:11px}
+
+/* Ground placement cursor floating badge in viewport */
+.sw-ground-cursor-badge{display:flex;flex-direction:column;gap:3px;padding:6px 12px;background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(8px);border:1px solid var(--borderControl);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.24);color:var(--text);font-size:11px;line-height:1.4;pointer-events:none;user-select:none;transition:opacity .12s ease}
+.sw-ground-cursor-badge-title{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--primary)}
+.sw-ground-cursor-dot{width:7px;height:7px;border-radius:50%;background:var(--primary);box-shadow:0 0 6px var(--primary);animation:sw-cursor-pulse 1.6s infinite ease-in-out}
+.sw-ground-cursor-badge-coords{display:flex;gap:8px;color:var(--textSecondary);font-feature-settings:"tnum";font-variant-numeric:tabular-nums;font-size:10.5px}
+@keyframes sw-cursor-pulse{0%,100%{opacity:.6;transform:scale(.9)}50%{opacity:1;transform:scale(1.25)}}
+
+/* Turbine Placement Representation Choice Modal */
+.sw-placement-loc-banner{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;background:var(--surfaceRaised);border:1px solid var(--borderSubtle);border-radius:var(--radius);margin-bottom:12px;font-size:12px;color:var(--textSecondary)}
+.sw-placement-loc-coords{display:flex;align-items:center;gap:6px;font-feature-settings:"tnum";font-variant-numeric:tabular-nums}
+.sw-placement-loc-coords strong{color:var(--text);font-weight:600}
+.sw-placement-spec-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.sw-placement-spec-tag{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:var(--surfaceRaised);border:1px solid var(--borderSubtle);font-size:11px;color:var(--textSecondary)}
+.sw-placement-spec-tag strong{color:var(--text);font-weight:600}
+
+.sw-rep-choice-list{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+.sw-rep-choice-card{display:flex;align-items:center;gap:14px;padding:12px 14px;border:1.5px solid var(--borderSubtle);border-radius:8px;background:var(--surface);cursor:pointer;transition:border-color .15s ease,background-color .15s ease,box-shadow .15s ease;text-align:left;position:relative}
+.sw-rep-choice-card:hover:not(.disabled){border-color:var(--borderControl);background:var(--surfaceRaised)}
+.sw-rep-choice-card.selected{border-color:var(--primary);background:var(--selected);box-shadow:0 0 0 1px var(--primary)}
+.sw-rep-choice-card.disabled{opacity:.55;cursor:not-allowed}
+
+.sw-rep-card-thumb{width:88px;height:72px;flex:none;border:1px solid var(--borderSubtle);border-radius:6px;overflow:hidden;background:var(--surfaceRaised);display:grid;place-items:center;position:relative}
+.sw-rep-card-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.sw-rep-card-thumb svg{color:var(--textSecondary);opacity:.75}
+.sw-rep-card-thumb .ov-model-thumbnail{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:transparent;border:0}
+.sw-rep-card-thumb .ov-model-thumbnail img{width:100%;height:100%;object-fit:cover}
+.sw-rep-card-thumb .ov-model-thumbnail svg{color:var(--textSecondary);opacity:.75}
+.sw-rep-card-thumb .ov-model-thumbnail span{font-size:10px;color:var(--textSecondary);margin-top:2px}
+.sw-turbine-placement-dialog{display:flex;flex-direction:column;min-width:min(520px,calc(100vw - 48px))}
+
+.sw-rep-card-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.sw-rep-card-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sw-rep-card-title{font-size:13px;font-weight:600;color:var(--text)}
+.sw-rep-card-desc{font-size:12px;line-height:1.5;color:var(--textSecondary);margin:0}
+.sw-rep-card-tags{display:flex;align-items:center;gap:6px;margin-top:2px}
+.sw-rep-card-tag{font-size:10px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb,var(--textSecondary) 12%,transparent);color:var(--textSecondary)}
+
+.sw-rep-card-radio{width:18px;height:18px;border-radius:50%;border:2px solid var(--borderControl);margin:auto 0;flex:none;display:grid;place-items:center;transition:border-color .15s ease,background-color .15s ease}
+.sw-rep-choice-card.selected .sw-rep-card-radio{border-color:var(--primary);background:var(--primary)}
+.sw-rep-card-radio-dot{width:6px;height:6px;border-radius:50%;background:var(--surface);display:none}
+.sw-rep-choice-card.selected .sw-rep-card-radio-dot{display:block}

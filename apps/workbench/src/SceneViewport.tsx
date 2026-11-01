@@ -82,6 +82,108 @@ function disposeMaterial(material:THREE.Material|THREE.Material[]) {
   for(const item of Array.isArray(material)?material:[material])item.dispose();
 }
 
+function createGroundPlacementCursor() {
+  const group = new THREE.Group();
+  group.name = 'ov-ground-placement-cursor';
+  group.visible = false;
+  group.renderOrder = 999;
+
+  // 1. 外光环 (直径 18m, 模拟风机基础承台与外围法兰)
+  const outerRingGeo = new THREE.RingGeometry(8, 9, 36);
+  outerRingGeo.rotateX(-Math.PI / 2);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0x00c49f,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.85,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const outerRing = new THREE.Mesh(outerRingGeo, ringMat);
+  outerRing.renderOrder = 999;
+  group.add(outerRing);
+
+  // 2. 内光环 (直径 8m, 模拟风机塔基底盘)
+  const innerRingGeo = new THREE.RingGeometry(3.5, 4.2, 36);
+  innerRingGeo.rotateX(-Math.PI / 2);
+  const innerMat = new THREE.MeshBasicMaterial({
+    color: 0x2fa572,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.9,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const innerRing = new THREE.Mesh(innerRingGeo, innerMat);
+  innerRing.renderOrder = 999;
+  group.add(innerRing);
+
+  // 3. 内部微发光半透明圆盘底色
+  const diskGeo = new THREE.CircleGeometry(3.5, 36);
+  diskGeo.rotateX(-Math.PI / 2);
+  const diskMat = new THREE.MeshBasicMaterial({
+    color: 0x00c49f,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.22,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const disk = new THREE.Mesh(diskGeo, diskMat);
+  disk.renderOrder = 999;
+  group.add(disk);
+
+  // 4. 正交中心十字瞄准标线 (Crosshair, 长度 24m)
+  const crossPoints = [
+    new THREE.Vector3(-12, 0, 0), new THREE.Vector3(12, 0, 0),
+    new THREE.Vector3(0, 0, -12), new THREE.Vector3(0, 0, 12),
+  ];
+  const crossGeo = new THREE.BufferGeometry().setFromPoints(crossPoints);
+  const crossMat = new THREE.LineBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.85,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const cross = new THREE.LineSegments(crossGeo, crossMat);
+  cross.renderOrder = 999;
+  group.add(cross);
+
+  // 5. 垂直导引光柱标线 (Vertical Axis Line, 模拟塔筒中心基线, 高度 35m)
+  const axisPoints = [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 35, 0),
+  ];
+  const axisGeo = new THREE.BufferGeometry().setFromPoints(axisPoints);
+  const axisMat = new THREE.LineBasicMaterial({
+    color: 0x00c49f,
+    transparent: true,
+    opacity: 0.85,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const axisLine = new THREE.Line(axisGeo, axisMat);
+  axisLine.renderOrder = 999;
+  group.add(axisLine);
+
+  return {
+    group,
+    dispose() {
+      outerRingGeo.dispose();
+      innerRingGeo.dispose();
+      diskGeo.dispose();
+      crossGeo.dispose();
+      axisGeo.dispose();
+      ringMat.dispose();
+      innerMat.dispose();
+      diskMat.dispose();
+      crossMat.dispose();
+      axisMat.dispose();
+    }
+  };
+}
+
 /** One persistent canvas; snapshot and selection updates never recreate its camera or GLB cache. */
 export function SceneViewport(props:SceneViewportProps) {
   const {locale,resolved}=usePreferences();
@@ -109,6 +211,7 @@ export function SceneViewport(props:SceneViewportProps) {
   },[props.snapshot.environment,props.environmentPreview]);
   useEffect(()=>{const media=matchMedia('(prefers-reduced-motion: reduce)'),change=()=>{setReduced(media.matches);setWaterOverride(null);setCloudOverride(null);};media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
   const [imageryPartial,setImageryPartial]=useState(false);
+  const [placementCursorInfo,setPlacementCursorInfo]=useState<{visible:boolean;x:number;y:number;worldPoint:[number,number,number]}|null>(null);
   const latestError=useRef(error);latestError.current=error;
   const [attempt,setAttempt]=useState(0),[rendererAttempt,setRendererAttempt]=useState(0);
   const webglFailure=useRef(false);
@@ -138,6 +241,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const light=new THREE.HemisphereLight(0xf1f5ec,0x58694d,2.2);scene.add(light);
     const sun=new THREE.DirectionalLight(0xffe4bd,2.5);sun.position.set(-100,140,80);scene.add(sun);
     const grid=new THREE.GridHelper(2000,40,0x718174,0xa5b29f);grid.position.y=-.02;scene.add(grid);
+    const cursor=createGroundPlacementCursor();scene.add(cursor.group);
     const selectedBox=new THREE.Box3Helper(new THREE.Box3(),0x007e6d);selectedBox.visible=false;scene.add(selectedBox);
     const componentBox=new THREE.Box3Helper(new THREE.Box3(),0x007e6d);componentBox.visible=false;scene.add(componentBox);
     (componentBox.material as THREE.LineBasicMaterial).depthTest=false;
@@ -386,6 +490,10 @@ export function SceneViewport(props:SceneViewportProps) {
       const status=environment.status();setEnvironmentStatus(previous=>previous.water===status.water&&previous.clouds===status.clouds&&previous.surroundings===status.surroundings&&previous.casters===status.casters&&previous.fallback===status.fallback?previous:status);
       const groundMap=state.snapshot.defaults.terrainMaterial==='grass'?grass:null;if(terrainMaterial.map!==groundMap){terrainMaterial.map=groundMap;terrainMaterial.needsUpdate=true;}
       orbit.enabled=!state.disabled&&!drag;highlight();
+      if(!state.pendingPlacement||!state.editing||state.disabled||preview){
+        cursor.group.visible=false;
+        setPlacementCursorInfo(null);
+      }
     };
     const transform=(item:SceneModelInstance,root:THREE.Group)=>{
       root.position.fromArray(toDisplay(current.current.snapshot.coordinateFrame,item.placement.position,item.placement.height));
@@ -565,9 +673,38 @@ export function SceneViewport(props:SceneViewportProps) {
       orbit.enabled=false;renderer.domElement.setPointerCapture(event.pointerId);
     };
     const motion=(event:PointerEvent)=>{
-      if(!drag||event.pointerId!==drag.pointerId)return;
-      const point=groundPoint(event.clientX,event.clientY);if(!point)return;
-      drag.root.position.fromArray(snapPoint([point.x+drag.offset.x,drag.original.y,point.z+drag.offset.z],current.current.gridSnap??0));drag.root.updateMatrixWorld(true);highlight();
+      if(drag&&event.pointerId===drag.pointerId){
+        const point=groundPoint(event.clientX,event.clientY);if(!point)return;
+        drag.root.position.fromArray(snapPoint([point.x+drag.offset.x,drag.original.y,point.z+drag.offset.z],current.current.gridSnap??0));drag.root.updateMatrixWorld(true);highlight();
+        return;
+      }
+      const state=current.current;
+      if(state.editing&&state.pendingPlacement&&!state.disabled&&!preview){
+        const point=groundPoint(event.clientX,event.clientY);
+        if(point){
+          cursor.group.position.set(point.x,point.y+0.12,point.z);
+          cursor.group.visible=true;
+          request();
+          const rect=renderer.domElement.getBoundingClientRect();
+          setPlacementCursorInfo({
+            visible:true,
+            x:event.clientX-rect.left,
+            y:event.clientY-rect.top,
+            worldPoint:[point.x,point.y,point.z]
+          });
+        }else{
+          cursor.group.visible=false;
+          request();
+          setPlacementCursorInfo(null);
+        }
+      }
+    };
+    const leaveCanvas=()=>{
+      if(current.current.pendingPlacement){
+        cursor.group.visible=false;
+        request();
+        setPlacementCursorInfo(null);
+      }
     };
     const up=(event:PointerEvent)=>{
       const clicked=pointer&&pointer.id===event.pointerId&&Math.hypot(pointer.x-event.clientX,pointer.y-event.clientY)<=4;
@@ -635,6 +772,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const canvas=renderer.domElement;
     canvas.addEventListener('wheel',wheel,{capture:true,passive:false});
     canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',motion);canvas.addEventListener('pointerup',up);
+    canvas.addEventListener('pointerleave',leaveCanvas);
     canvas.addEventListener('pointercancel',cancelDrag);canvas.addEventListener('keydown',escape);canvas.addEventListener('drop',drop);canvas.addEventListener('dragover',dragover);
     document.addEventListener('visibilitychange',visible);
     runtime.current={sync:()=>void sync(),preload,appearance,motion:()=>{syncMotion();request();},visibility:visible,componentFocus:highlight,previewSelection:highlight,
@@ -653,9 +791,11 @@ export function SceneViewport(props:SceneViewportProps) {
       disposed=true;++generation;loading?.cancel();loadingAbort?.abort();cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',visible);
       wheelPending=null;canvas.removeEventListener('wheel',wheel,true);
       canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',motion);canvas.removeEventListener('pointerup',up);
+      canvas.removeEventListener('pointerleave',leaveCanvas);
       canvas.removeEventListener('pointercancel',cancelDrag);canvas.removeEventListener('keydown',escape);canvas.removeEventListener('drop',drop);canvas.removeEventListener('dragover',dragover);
       orbit.removeEventListener('change',request);orbit.removeEventListener('start',orbitStart);orbit.removeEventListener('end',emit);
       clearMotion();clearModelView();sceneControls.dispose();environment.dispose();imageryLayer.dispose();previewInspection?.dispose();previewInspection=null;
+      cursor.dispose();
       current.current.onPreviewStructure?.(null);
       selectionBoxes.dispose();for(const entry of entries.values())entry.appearance.dispose();entries.clear();cache.dispose();selectedBox.geometry.dispose();disposeMaterial(selectedBox.material);
       componentBox.geometry.dispose();disposeMaterial(componentBox.material);
@@ -674,6 +814,28 @@ export function SceneViewport(props:SceneViewportProps) {
   useEffect(()=>{runtime.current?.previewSelection();},[props.previewSelection]);
   return <section className="ov-scene-viewport" aria-label={message('view')}>
     <div className="ov-scene-viewport-stage"><div ref={mount} className="ov-scene-viewport-canvas"/>
+      {props.pendingPlacement&&placementCursorInfo?.visible&&(
+        <div
+          className="sw-ground-cursor-badge"
+          style={{
+            position:'absolute',
+            left:Math.min(window.innerWidth-240,Math.max(16,placementCursorInfo.x+18)),
+            top:Math.max(16,placementCursorInfo.y-46),
+            pointerEvents:'none',
+            zIndex:30
+          }}
+        >
+          <div className="sw-ground-cursor-badge-title">
+            <span className="sw-ground-cursor-dot"/>
+            <span>{locale==='en'?'Click to place turbine':'点击放置机位'}</span>
+          </div>
+          <div className="sw-ground-cursor-badge-coords">
+            <span>X: {placementCursorInfo.worldPoint[0].toFixed(1)}m</span>
+            <span>Y: {placementCursorInfo.worldPoint[1].toFixed(1)}m</span>
+            <span>高程: {placementCursorInfo.worldPoint[2].toFixed(1)}m</span>
+          </div>
+        </div>
+      )}
       {props.alarm&&!props.presentation&&<button ref={alarmMarker} style={{display:'none'}} type="button" className={`ov-scene-alarm-marker ${props.alarm.state}`} aria-label={`${props.alarm.label} · ${props.alarm.target}`} onClick={props.onAlarmFocus}>{props.alarm.label}</button>}
       {props.alarmLabels?.map(label=><button key={label.id} ref={node=>{if(node)alarmLabels.current.set(label.id,node);else alarmLabels.current.delete(label.id);}} type="button" style={{display:'none'}} className="ov-scene-alarm-label" data-level={label.level} data-severity={label.severity} aria-label={`${label.label} · ${label.detail}`} title={`${label.label} · ${label.detail}`} onClick={()=>props.onAlarmLabelFocus?.(label.id)}><TriangleAlert size={18}/><span><b>{label.label}</b><small>{label.detail}</small></span><ArrowRight size={13}/><i className="ov-alarm-label-link" aria-hidden="true"/></button>)}
       {(reading||!!displayError) && <div className="ov-scene-viewport-state" role={displayError?'alert':undefined}>{displayError?<>{displayError instanceof ApiError&&/IMAGERY/.test(displayError.code)?imageryFailure(displayError,locale):errorMessage}

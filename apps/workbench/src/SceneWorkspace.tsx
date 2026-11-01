@@ -10,7 +10,7 @@ import {waterSurfaceSupported} from './sceneEnvironment';
 import {sceneResourceGroups} from './sceneResourceGroups';
 import './projectModelCenter.css';
 import {forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useMemo, useRef, useState} from 'react';
-import {ArrowLeft, Check, Copy, Eye, EyeOff, Focus, Layers, LockKeyhole, PanelLeft, PanelRight, Pencil, Plus, Redo2, RotateCcw, Save, Search, Trash2, Undo2, UnlockKeyhole, X} from 'lucide-react';
+import {ArrowLeft, Check, Copy, Eye, EyeOff, Focus, Layers, LockKeyhole, MapPin, PanelLeft, PanelRight, Pencil, Plus, Redo2, RotateCcw, Save, Search, Trash2, Undo2, UnlockKeyhole, X, Zap} from 'lucide-react';
 import {RowActions,RowContext,type ListAction} from './ListMenus';
 import {ApiError, cancelled, failureMessage, WorkbenchApi} from './api';
 import {SceneApi} from './sceneApi';
@@ -46,6 +46,7 @@ import {Image as ImageIcon} from 'lucide-react';
 import {ImageryFacts} from './ImageryPanel';
 import {imageryText,imageryFailure} from './imageryMessages';
 import type {ImageryVersion} from './resourceTypes';
+import {ModelThumbnail} from './ModelThumbnail';
 import './scenes.css';
 
 const SceneAlarmPanel=lazy(()=>import('./SceneAlarmPanel').then(module=>({default:module.SceneAlarmPanel})));
@@ -442,6 +443,9 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
         setSelected(id);
         setSelection([id]);
         setTurbinePlacementModal(null);
+        if(!continuous){
+          setPendingTurbine(null);
+        }
       }
     }catch(value){failed(value);}
     finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
@@ -660,35 +664,129 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     {modal==='engineeringReview'&&reviewCandidate&&<Modal title={et('reviewObject')} description={et('reviewObjectHint')} onClose={()=>{if(!busy){setModal(null);setReviewCandidate(null);}}}><div className="se-root-review"><strong>{reviewCandidate.item.displayName}</strong><p>{[...reviewCandidate.ancestors.path].reverse().map(row=>row.object.displayName).concat(reviewCandidate.item.displayName).join(' › ')}</p>{reviewCandidate.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setModal(null);setReviewCandidate(null);}}>{et('cancel')}</Btn><Btn primary disabled={busy} onClick={()=>{acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,reviewCandidate);if(object&&refKey(object.objectRef)===refKey(reviewCandidate.objectRef))setObject(reviewCandidate);if(rootObject&&refKey(rootObject.objectRef)===refKey(reviewCandidate.objectRef))setRootRead({identity:currentIdentity,value:reviewCandidate,reading:false});setReviewDirty(true);saveRequest.current=null;setModal(null);setReviewCandidate(null);setError(null);}}>{et('confirmReview')}</Btn></div></Modal>}
     {modal==='replaceTerrain'&&candidate&&<Modal title={t('replaceTerrain')} description={t('replacementHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><label>{t('terrainStrategy')}<select value={terrainStrategy} onChange={event=>setTerrainStrategy(event.target.value as 'keep_height'|'resample_ground')}><option value="resample_ground">{t('resampleGround')}</option><option value="keep_height">{t('keepHeight')}</option></select></label><Btn primary onClick={()=>void previewReplacement({kind:'terrain',candidateTerrainVersionId:candidate.terrainVersionId,strategy:terrainStrategy})}>{t('previewReplacement')}</Btn></fieldset></Modal>}
     {modal==='anchor'&&candidate&&<Modal title={t('anchor')} description={t('anchorHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><div className="sw-field-pair">{(['x','z','longitude','latitude','heading','offset'] as const).map(key=><label key={key}>{t(key==='heading'?'anchorHeading':key==='offset'?'offset':key)}<input type="number" step="any" value={anchor[key]} onChange={event=>setAnchor(value=>({...value,[key]:event.target.value}))}/></label>)}</div><label>{t('height')}<select value={anchor.strategy} onChange={event=>setAnchor(value=>({...value,strategy:event.target.value as GeographicAnchor['heightStrategy']}))}><option value="resample_each_ground">{t('resample')}</option><option value="keep_relative_to_anchor">{t('keepRelative')}</option></select></label><Btn primary onClick={()=>void previewAnchor()}>{t('anchorPreview')}</Btn></fieldset></Modal>}
-    {turbinePlacementModal&&<Modal title={locale==='zh'?`布置风机 · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`:`Place turbine · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`} description={locale==='zh'?'已在场景地表选定机位坐标，请选择落位的模型版本与形态':'Ground location selected. Choose representation model to place.'} onClose={()=>setTurbinePlacementModal(null)}>
-      <div className="ov-resource-form">
-        <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:12}}>
+    {turbinePlacementModal&&<Modal title={locale==='zh'?`布置风机 · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`:`Place Turbine · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`} description={locale==='zh'?'已在三维地表选定机位落点，请选择要装配的模型形态版本':'Ground position selected. Choose representation model to place.'} onClose={()=>setTurbinePlacementModal(null)}>
+      <div className="sw-turbine-placement-dialog">
+        <div className="sw-placement-loc-banner">
+          <div className="sw-placement-loc-coords">
+            <MapPin size={15} style={{color:'var(--primary)'}}/>
+            <span>{locale==='zh'?'机位坐标':'Coordinates'}:</span>
+            <strong>X: {turbinePlacementModal.point[0].toFixed(2)}m · Y: {turbinePlacementModal.point[1].toFixed(2)}m</strong>
+          </div>
+          <div className="sw-placement-spec-tag">
+            <span>{locale==='zh'?'地表高程':'Ground Alt'}:</span>
+            <strong>{turbinePlacementModal.point[2].toFixed(2)}m</strong>
+          </div>
+        </div>
+
+        {(turbinePlacementModal.turbine.ratedPowerKw||turbinePlacementModal.turbine.hubHeightM||turbinePlacementModal.turbine.rotorDiameterM||turbinePlacementModal.turbine.manufacturer)&&(
+          <div className="sw-placement-spec-row">
+            {turbinePlacementModal.turbine.ratedPowerKw&&(
+              <div className="sw-placement-spec-tag">
+                <Zap size={13} style={{color:'var(--statusWarning)'}}/>
+                <span>{locale==='zh'?'额定功率':'Power'}:</span>
+                <strong>{turbinePlacementModal.turbine.ratedPowerKw>=1000?`${(turbinePlacementModal.turbine.ratedPowerKw/1000).toFixed(1)} MW`:`${turbinePlacementModal.turbine.ratedPowerKw} kW`}</strong>
+              </div>
+            )}
+            {turbinePlacementModal.turbine.hubHeightM&&(
+              <div className="sw-placement-spec-tag">
+                <span>{locale==='zh'?'轮毂高':'Hub Height'}:</span>
+                <strong>{turbinePlacementModal.turbine.hubHeightM} m</strong>
+              </div>
+            )}
+            {turbinePlacementModal.turbine.rotorDiameterM&&(
+              <div className="sw-placement-spec-tag">
+                <span>{locale==='zh'?'叶轮直径':'Rotor Dia'}:</span>
+                <strong>{turbinePlacementModal.turbine.rotorDiameterM} m</strong>
+              </div>
+            )}
+            {turbinePlacementModal.turbine.manufacturer&&(
+              <div className="sw-placement-spec-tag">
+                <span>{locale==='zh'?'厂商':'Vendor'}:</span>
+                <strong>{turbinePlacementModal.turbine.manufacturer}</strong>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="sw-rep-choice-list" role="radiogroup" aria-label={locale==='zh'?'选择风机形态':'Select representation'}>
           {turbinePlacementModal.turbine.appearanceModel&&(
-            <label style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',border:`1.5px solid ${turbinePlacementModal.selectedType==='appearance'?'var(--ov-accent,#2fa572)':'var(--ov-border,#2c3b42)'}`,borderRadius:6,cursor:'pointer',background:turbinePlacementModal.selectedType==='appearance'?'rgba(47,165,114,0.08)':'transparent'}}>
-              <input type="radio" name="turbine_rep" checked={turbinePlacementModal.selectedType==='appearance'} onChange={()=>setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v)}/>
-              <div>
-                <strong style={{display:'block',fontSize:13,color:'var(--ov-text,#e5ecec)'}}>{locale==='zh'?'外观版（推荐 · 轻量外壳）':'Appearance (Recommended · Lightweight exterior)'}</strong>
-                <small style={{display:'block',color:'var(--ov-text-subtle,#8c9ba5)',marginTop:3,fontSize:11}}>
-                  {locale==='zh'?'适用于全景风场批量高效渲染与大范围巡检展示':'Optimized for wide overview and large fleet rendering'}
-                </small>
+            <div
+              role="radio"
+              tabIndex={0}
+              aria-checked={turbinePlacementModal.selectedType==='appearance'}
+              className={`sw-rep-choice-card ${turbinePlacementModal.selectedType==='appearance'?'selected':''}`}
+              onClick={()=>setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v)}
+              onKeyDown={e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v);}}}
+            >
+              <div className="sw-rep-card-thumb">
+                <ModelThumbnail
+                  api={client}
+                  version={turbinePlacementModal.turbine.appearanceModel}
+                  name={`${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode} · 外观版`}
+                  onStatus={()=>{}}
+                />
               </div>
-            </label>
+              <div className="sw-rep-card-body">
+                <div className="sw-rep-card-header">
+                  <span className="sw-rep-card-title">{locale==='zh'?'外观版':'Appearance'}</span>
+                  <Badge tone="success">{locale==='zh'?'推荐 · 轻量外壳':'Recommended · Exterior'}</Badge>
+                </div>
+                <p className="sw-rep-card-desc">
+                  {locale==='zh'?'包含外部气动轮廓与塔筒外壳，专为全景风场批量高效渲染与大范围巡检设计':'Exterior aerodynamic shell for lightweight overview and fleet rendering'}
+                </p>
+                <div className="sw-rep-card-tags">
+                  <span className="sw-rep-card-tag">{locale==='zh'?'轻量低负载':'Low Memory'}</span>
+                  <span className="sw-rep-card-tag">{locale==='zh'?'高帧率漫游':'Smooth FPS'}</span>
+                  <span className="sw-rep-card-tag">{locale==='zh'?'批量排布':'Fleet Scale'}</span>
+                </div>
+              </div>
+              <div className="sw-rep-card-radio">
+                <div className="sw-rep-card-radio-dot"/>
+              </div>
+            </div>
           )}
+
           {turbinePlacementModal.turbine.detailedModel&&(
-            <label style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',border:`1.5px solid ${turbinePlacementModal.selectedType==='detailed'?'var(--ov-accent,#2fa572)':'var(--ov-border,#2c3b42)'}`,borderRadius:6,cursor:'pointer',background:turbinePlacementModal.selectedType==='detailed'?'rgba(47,165,114,0.08)':'transparent'}}>
-              <input type="radio" name="turbine_rep" checked={turbinePlacementModal.selectedType==='detailed'} onChange={()=>setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v)}/>
-              <div>
-                <strong style={{display:'block',fontSize:13,color:'var(--ov-text,#e5ecec)'}}>{locale==='zh'?'完整版（含内部机械构件）':'Detailed (With internal mechanical components)'}</strong>
-                <small style={{display:'block',color:'var(--ov-text-subtle,#8c9ba5)',marginTop:3,fontSize:11}}>
-                  {locale==='zh'?'包含内部机械构件，支持近景特写、透视与包围盒爆炸分析':'Includes interior parts; supports close-up X-ray and explosion analysis'}
-                </small>
+            <div
+              role="radio"
+              tabIndex={0}
+              aria-checked={turbinePlacementModal.selectedType==='detailed'}
+              className={`sw-rep-choice-card ${turbinePlacementModal.selectedType==='detailed'?'selected':''}`}
+              onClick={()=>setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v)}
+              onKeyDown={e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v);}}}
+            >
+              <div className="sw-rep-card-thumb">
+                <ModelThumbnail
+                  api={client}
+                  version={turbinePlacementModal.turbine.detailedModel}
+                  name={`${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode} · 完整版`}
+                  onStatus={()=>{}}
+                />
               </div>
-            </label>
+              <div className="sw-rep-card-body">
+                <div className="sw-rep-card-header">
+                  <span className="sw-rep-card-title">{locale==='zh'?'完整版':'Detailed'}</span>
+                  <Badge tone="info">{locale==='zh'?'内部精细构件':'Internal Assemblies'}</Badge>
+                </div>
+                <p className="sw-rep-card-desc">
+                  {locale==='zh'?'包含发电机、齿轮箱、主轴与偏航驱动等内部部件，支持近景特写、透视与包围盒爆炸分析':'Includes generator, gearbox, drive shafts; supports close-up X-ray and exploded view'}
+                </p>
+                <div className="sw-rep-card-tags">
+                  <span className="sw-rep-card-tag">{locale==='zh'?'BIM/机械构件':'Internal BIM'}</span>
+                  <span className="sw-rep-card-tag">{locale==='zh'?'X-Ray透视':'X-Ray'}</span>
+                  <span className="sw-rep-card-tag">{locale==='zh'?'爆炸分解':'Explosion'}</span>
+                </div>
+              </div>
+              <div className="sw-rep-card-radio">
+                <div className="sw-rep-card-radio-dot"/>
+              </div>
+            </div>
           )}
         </div>
-        <div className="ov-resource-actions end">
+
+        <div className="sw-actions" style={{justifyContent:'flex-end',marginTop:14}}>
           <Btn disabled={busy} onClick={()=>setTurbinePlacementModal(null)}>{t('cancel')}</Btn>
-          <Btn primary disabled={busy} onClick={()=>void confirmTurbinePlacement()}><Check size={14}/>{locale==='zh'?'确认布置':'Confirm placement'}</Btn>
+          <Btn primary disabled={busy} onClick={()=>void confirmTurbinePlacement()}><Check size={14}/>{locale==='zh'?'确认落位布置':'Confirm Placement'}</Btn>
         </div>
       </div>
     </Modal>}
