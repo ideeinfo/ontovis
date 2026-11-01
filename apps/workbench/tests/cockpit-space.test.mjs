@@ -90,3 +90,22 @@ test('pairwise linkage bounds cluster span, zoom expands UK/North Sea scenes, an
   assert.equal(globeClusterFocusDistance(zoomed[0],900),2.1);
  }
 });
+
+test('portfolio scene focus target resolves its cluster group and focus parameters accurately',()=>{
+ const overview=clusterGlobePoints(liveScenePoints,globeClusterDegrees(3.65,900));
+ const findGroup=sceneId=>overview.find(g=>g.points.some(p=>p.sceneId===sceneId));
+ const xiali=findGroup('平顶山夏李风电场');
+ assert.ok(xiali);
+ assert.equal(xiali.points.length,1);
+ assert.equal(xiali.points[0].sceneId,'平顶山夏李风电场');
+ assert.ok(Math.abs(xiali.longitude-113.20083333333336)<1e-9);
+ assert.ok(Math.abs(xiali.latitude-33.453333333333326)<1e-9);
+ const myse=findGroup('海上风电· MySE');
+ assert.ok(myse);
+ assert.ok(myse.points.some(p=>p.sceneId==='Hornsea 2'));
+ const mingshashan=findGroup('鸣沙山');
+ assert.ok(mingshashan);
+ assert.equal(mingshashan.points[0].sceneId,'鸣沙山');
+ const missing=findGroup('不存在的场景');
+ assert.equal(missing,undefined);
+});
