@@ -33,10 +33,12 @@ export interface Props {
   canAcquire?:boolean;modelsOnly?:boolean;onOpenScene?:(sceneId:string,projectRef?:ProjectRef)=>void;
   modelSelection?:ModelResourceSelection|null;onModelSelected?:(value:ModelResourceSelection|null)=>void;
   projectCode?:string;
+  onEnterEdit?:()=>void;
+  onPlaceTurbine?:(turbine:ProjectTurbineDefinition)=>void;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
 
-export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,publicGeoCenter,onImageryReady,geographic=false,modelSelection,onModelSelected,projectCode}:Props) {
+export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,publicGeoCenter,onImageryReady,geographic=false,modelSelection,onModelSelected,projectCode,onEnterEdit,onPlaceTurbine}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
@@ -68,7 +70,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const legacyGate=useMemo(()=>new ResourceRequestGate(),[]),importGate=useMemo(()=>new ResourceRequestGate(),[]),importId=useRef(new ResourceRequestId());
   const requestId=useRef(new ResourceRequestId()),previewCallback=useRef(onPreview);previewCallback.current=onPreview;
   const initialSelection=useRef(modelSelection),cardIntent=useRef(0);
-  const cardCallbacks=useRef({canPlace,onPreview,onPlace});cardCallbacks.current={canPlace,onPreview,onPlace};
+  const cardCallbacks=useRef({canPlace,onPreview,onPlace,onEnterEdit,onPlaceTurbine});cardCallbacks.current={canPlace,onPreview,onPlace,onEnterEdit,onPlaceTurbine};
   const canUpload=!!catalog?.capabilities.canUpload&&!denied;
   const canCalibrate=!!catalog?.capabilities.canCalibrate&&!!version?.capabilities.canCalibrate&&version.assetState!=='deleted'&&!denied;
   const canManageLifecycle=catalog?.capabilities.modelLifecycleWriteVersion===1&&catalog.capabilities.canDeleteModels===true&&!denied;
@@ -124,12 +126,35 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   async function activateTurbine(turbine:ProjectTurbineDefinition,action:'preview'|'place'){
     const targetRef=turbine.appearanceModel||turbine.detailedModel;
     if(!targetRef){setNotice(text(`机型 ${turbine.modelCode} 尚未关联三维模型`,'No 3D model bound for this turbine type'));return;}
+    const callbacks=cardCallbacks.current;
+    if(action==='place'){
+      if(!callbacks.canPlace){
+        if(callbacks.onEnterEdit){
+          callbacks.onEnterEdit();
+          setNotice(text('已为您切换至编辑模式，请点击地表确定机位','Switched to edit mode, please click ground to place'));
+        }else{
+          setNotice(t('sceneEditRequired'));
+          return;
+        }
+      }
+      if(callbacks.onPlaceTurbine){
+        callbacks.onPreview(null);
+        callbacks.onPlaceTurbine(turbine);
+        return;
+      }
+    }
     const ticket=++cardIntent.current;
     const value=await selectVersion(targetRef.modelAssetId||'',targetRef.modelVersionId);
     if(!value||ticket!==cardIntent.current)return;
-    const callbacks=cardCallbacks.current;
     if(action==='preview')callbacks.onPreview(value);
-    else if(callbacks.canPlace&&!modelPlacementIssue(value,geographic)){callbacks.onPreview(null);callbacks.onPlace(value);}
+    else if(callbacks.canPlace){
+      const issue=modelPlacementIssue(value,geographic);
+      if(issue){
+        setNotice(t(issue==='MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED'?'geographicCalibrationRequired':'calibrationRequired'));
+        return;
+      }
+      callbacks.onPreview(null);callbacks.onPlace(value);
+    }
   }
   function changeFilters(q:string,nextPurpose:ModelPurpose|'',state:'active'|'deleted'=latestFilters.current.state) {
     cardIntent.current++;
@@ -156,12 +181,28 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     const choice=placementModelVersion(asset,geographic,fixedVersionId??(assetId===asset.modelAssetId?versionId:
       modelSelection?.modelAssetId===asset.modelAssetId?modelSelection.modelVersionId:undefined));
     if(!choice)return;
+    const callbacks=cardCallbacks.current;
+    if(action==='place'&&!callbacks.canPlace){
+      if(callbacks.onEnterEdit){
+        callbacks.onEnterEdit();
+        setNotice(text('已为您切换至编辑模式，请点击地表确定机位','Switched to edit mode, please click ground to place'));
+      }else{
+        setNotice(t('sceneEditRequired'));
+        return;
+      }
+    }
     const ticket=++cardIntent.current;setAssetId(asset.modelAssetId);
     const value=version?.modelVersionId===choice.modelVersionId?version:await selectVersion(asset.modelAssetId,choice.modelVersionId);
     if(!value||ticket!==cardIntent.current)return;
-    const callbacks=cardCallbacks.current;
     if(action==='preview')callbacks.onPreview(value);
-    else if(callbacks.canPlace&&!modelPlacementIssue(value,geographic)){callbacks.onPreview(null);callbacks.onPlace(value);}
+    else if(callbacks.canPlace){
+      const issue=modelPlacementIssue(value,geographic);
+      if(issue){
+        setNotice(t(issue==='MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED'?'geographicCalibrationRequired':'calibrationRequired'));
+        return;
+      }
+      callbacks.onPreview(null);callbacks.onPlace(value);
+    }
   }
   function openUpload(asset?:ProjectModelAsset) {
     if(!catalog||!canUpload||asset?.assetState==='deleted'||lifecycleBusy)return;
@@ -279,6 +320,10 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
       </div><span className="ov-resource-caption" role="status">{loading?t('loading'):text(`已显示 ${catalog?.items.length||0} 个模型资源`,`${catalog?.items.length||0} model resources shown`)}</span></div>}
       {catalog&&!canUpload&&<div className="ov-resource-readonly"><Badge>{t('readonly')}</Badge><span>{t('readOnlyDescription')}</span></div>}
       {lifecycleNotice&&<p className="ov-resource-caption" role="status">{lifecycleNotice}</p>}
+      {notice&&<p className="ov-resource-caption" role="status" style={{color:'var(--ov-accent,#2fa572)'}}>{notice}</p>}
+      {!canPlace&&!modelsOnly&&<p className="ov-resource-caption" style={{color:'var(--ov-text-subtle,#8c9ba5)',background:'rgba(255,255,255,0.03)',padding:'4px 8px',borderRadius:4,margin:'6px 0'}}>
+        {text('当前处于只读查看模式 · 点击【布置风机】可直接进入编辑并落位','View-only mode · Clicking "Place" will switch to edit mode')}
+      </p>}
       {recycled&&<p className="ov-resource-caption">{text('模型文件和已用场景保留，恢复后可再次选用。','Files and existing scenes are retained. Restore a model to use it again.')}</p>}
       {!!error&&<p className="ov-resource-error" role="alert">{resourceFailure(error,locale)}</p>}
       {loading&&!catalog&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
@@ -288,21 +333,22 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         const targetRef=turbine.appearanceModel||turbine.detailedModel;
         const usable=!!targetRef;
         const title=turbine.displayName||turbine.modelCode;
+        const preferredRef=turbine.appearanceModel||turbine.detailedModel;
+        const assetItem=catalog?.items.find(item=>item.modelAssetId===preferredRef?.modelAssetId);
+        const verItem=assetItem?.versions.find(item=>item.modelVersionId===preferredRef?.modelVersionId);
+        const thumbnailRef=preferredRef?{...preferredRef,thumbnail:verItem?.thumbnail||preferredRef.thumbnail}:null;
         return <li className="ov-resource-card" key={turbine.definitionEntityUid} aria-label={title}>
           <div className="ov-resource-card-heading">
+            <ModelThumbnail api={client} version={thumbnailRef} name={title} onStatus={thumbnailUpdated}/>
             <span className="ov-resource-card-label">
               <strong>{title}</strong>
               <small style={{display:'block',color:'var(--ov-text-subtle,#8c9ba5)',fontSize:11,margin:'2px 0 4px'}}>
                 {turbine.ratedPowerKw?`${turbine.ratedPowerKw/1000} MW · `:''}{turbine.rotorDiameterM?`叶轮 ⌀${turbine.rotorDiameterM}m · `:''}{turbine.hubHeightM?`轮毂 ${turbine.hubHeightM}m`:''}
               </small>
-              <span style={{display:'flex',gap:6}}>
-                <span className={`ov-resource-card-state ${turbine.appearanceModel?'verified':'pending'}`}>{turbine.appearanceModel?text('外观版就绪','Appearance ready'):text('无外观版','No appearance')}</span>
-                <span className={`ov-resource-card-state ${turbine.detailedModel?'verified':'pending'}`}>{turbine.detailedModel?text('完整版就绪','Detailed ready'):text('无完整版','No detailed')}</span>
-              </span>
             </span>
           </div>
           <div className="ov-resource-card-actions">
-            <Btn disabled={!canPlace||!usable} title={!usable?text('该机型尚未关联模型文件','No 3D model bound'):!canPlace?t('sceneEditRequired'):text('布置风机','Place turbine')} onClick={()=>void activateTurbine(turbine,'place')}>
+            <Btn disabled={!usable} title={!usable?text('该机型尚未关联模型文件','No 3D model bound'):!canPlace?text('点击将自动切换到编辑模式并开始布置','Click to switch to edit mode and place'):text('布置风机','Place turbine')} onClick={()=>void activateTurbine(turbine,'place')}>
               <MapPin size={14}/>{text('布置风机','Place')}
             </Btn>
           </div>
@@ -314,7 +360,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         const usable=asset.assetState!=='deleted'&&!!choice&&choice.canPlace&&(!geographic||choice.canPlaceGeographic);
         const waiting=active&&detailLoading;
         const actions:ListAction[]=[{id:'preview',label:t('preview'),icon:<Eye/>,disabled:waiting||lifecycleBusy,onSelect:()=>void activateCard(asset,'preview')},
-          ...(!modelsOnly&&!recycled?[{id:'place',label:t('place'),icon:<MapPin/>,disabled:!canPlace||!usable||waiting,onSelect:()=>void activateCard(asset,'place')}]:[]),
+          ...(!modelsOnly&&!recycled?[{id:'place',label:t('place'),icon:<MapPin/>,disabled:!usable||waiting,onSelect:()=>void activateCard(asset,'place')}]:[]),
           ...(!recycled?[{id:'update-file',opensDialog:true,label:t('appendVersion'),icon:<FileUp/>,disabled:!canUpload||lifecycleBusy,onSelect:()=>openUpload(asset)}]:[]),
           ...(catalog.capabilities.modelLifecycleWriteVersion===1?[recycled?{id:'restore',label:text('恢复','Restore'),icon:<RotateCcw/>,disabled:!canManageLifecycle||lifecycleBusy,onSelect:()=>void changeLifecycle('restore',asset)}:{id:'delete',opensDialog:true,label:text('移至回收站','Move to recycle bin'),icon:<Trash2/>,danger:true,disabled:!canManageLifecycle||lifecycleBusy,onSelect:()=>{lifecycleId.current.reset();setLifecycleError(null);setDeleteTarget(asset);}}]:[])];
         return <RowContext key={asset.modelAssetId} name={asset.displayName} actions={actions}><li className={`ov-resource-card ${active?'selected':''}`} aria-label={asset.displayName}>
@@ -326,7 +372,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
             {modelsOnly&&<><span className="pm-meta-purpose">{t(asset.purpose)}</span><span className="pm-meta-versions">{asset.versions.length}</span><span className="pm-meta-size">{choice?`${(choice.bytes/1048576).toFixed(2)} MiB`:'—'}</span><span className="pm-meta-created">{choice?new Date(choice.createdAt).toLocaleDateString(locale):'—'}</span></>}
           </button>
           {!modelsOnly&&<div className="ov-resource-card-actions">
-            {!modelsOnly&&<Btn disabled={!canPlace||!usable||waiting} title={!usable?t(geographic?'geographicCalibrationRequired':'calibrationRequired'):!canPlace?t('sceneEditRequired'):t('dragPlace')}
+            {!modelsOnly&&<Btn disabled={!usable||waiting} title={!usable?t(geographic?'geographicCalibrationRequired':'calibrationRequired'):!canPlace?text('点击将自动切换到编辑模式并开始放置','Click to switch to edit mode and place'):t('dragPlace')}
               draggable={canPlace&&usable&&!waiting} onDragStart={event=>{
                 if(!canPlace||!usable||!choice||waiting){event.preventDefault();return;}
                 event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-model-version',JSON.stringify({modelAssetId:asset.modelAssetId,modelVersionId:choice.modelVersionId}));

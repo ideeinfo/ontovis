@@ -39,7 +39,7 @@ import {cloneSnapshot, commitScene, duplicateAt, hasSceneChanges, isLocalInstanc
 import {sceneSnapshotWithView,sceneViewChanged} from './sceneSaveView';
 import {scenePublicGeoCenter} from './publicGeoForm';
 import {fromDisplay, toDisplay} from './sceneTransforms';
-import type {ProjectModelVersion, TerrainVersion} from './resourceTypes';
+import type {ProjectModelVersion, TerrainVersion, ProjectTurbineDefinition} from './resourceTypes';
 import type {ModelResourceSelection} from './resourceForms';
 import type {EditableSceneSnapshot, GeographicAnchor, LegacySceneEntryTarget, ModelResourceRef, RootBindingChange, SceneCheck, SceneList, SceneSummary, SceneLifecycleRequest, SceneModelInstance, SceneOpen, SceneReplacementCheckRequest, SceneSaveRequest, SceneView, Vector3} from './sceneTypes';
 import {Image as ImageIcon} from 'lucide-react';
@@ -111,6 +111,8 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
   const [viewDirty,setViewDirty]=useState(false);
   const [terrainStrategy,setTerrainStrategy]=useState<'keep_height'|'resample_ground'>('resample_ground');
   const [pending,setPending]=useState<{kind:'model',model:ProjectModelVersion}|{kind:'copy',sourceId:string}|null>(null);
+  const [pendingTurbine,setPendingTurbine]=useState<ProjectTurbineDefinition|null>(null);
+  const [turbinePlacementModal,setTurbinePlacementModal]=useState<{turbine:ProjectTurbineDefinition;point:Vector3;selectedType:'appearance'|'detailed'}|null>(null);
   const [hints,setHints]=useState<Record<string,ModelResourceRef>>({});
   const [resourceSelection,setResourceSelection]=useState<ModelResourceSelection|null>(null);
   const [alarmOpen,setAlarmOpen]=useState(false),[sceneAlarm,setSceneAlarm]=useState<SceneAlarm|null>(null);
@@ -179,6 +181,8 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
   function cancelPlacement(){
     if(editRequest.current){sequence.current++;editRequest.current.abort();editRequest.current=null;setBusy(false);}
     setPending(null);
+    setPendingTurbine(null);
+    setTurbinePlacementModal(null);
   }
   function failed(value:unknown){
     if(cancelled(value)||!mounted.current)return;
@@ -401,16 +405,51 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     catch(value){if(project&&chosen.projectRef.projectCode!==project.projectRef.projectCode)setError(value);else failed(value);}finally{done(abort);if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   async function place(point:Vector3){
+    if(pendingTurbine){
+      setTurbinePlacementModal({
+        turbine:pendingTurbine,
+        point,
+        selectedType:pendingTurbine.appearanceModel?'appearance':'detailed',
+      });
+      return;
+    }
     if(!draft||!base||!pending||!editable||placementInFlight.current)return;
     placementInFlight.current=true;
     try{point=snapPoint(point,snap.grid);const id=crypto.randomUUID(),next=pending.kind==='model'?placeModel(draft,pending.model,point,terrain,id,base.limits.maxInstances):duplicateAt(draft,pending.sourceId,point,id,base.limits.maxInstances);
-      if(await commit(next)){setSelected(id);setSelection([id]);if(!continuous){setPending(null);setLeft('content');}}}
+      if(await commit(next)){setSelected(id);setSelection([id]);if(!continuous){setPending(null);}}}
     catch(value){failed(value);}finally{placementInFlight.current=false;}
+  }
+  async function confirmTurbinePlacement(){
+    if(!turbinePlacementModal||!draft||!base||!editable)return;
+    const {turbine,point,selectedType}=turbinePlacementModal;
+    const targetRef=selectedType==='appearance'?(turbine.appearanceModel||turbine.detailedModel):(turbine.detailedModel||turbine.appearanceModel);
+    if(!targetRef){setError(new Error(locale==='zh'?'所选形态未关联模型文件':'No model bound for selected representation'));return;}
+    const abort=controller(),token=++sequence.current;editRequest.current=abort;setBusy(true);setError(null);
+    try{
+      const model=await client.model(targetRef.modelAssetId,targetRef.modelVersionId,abort.signal);
+      if(!mounted.current||token!==sequence.current)return;
+      modelCatalog.set(model.modelVersionId,model);
+      setHints(prior=>({...prior,[model.modelVersionId]:modelRef(model)}));
+      const id=crypto.randomUUID();
+      const snapped=snapPoint(point,snap.grid);
+      const next=placeModel(draft,model,snapped,terrain,id,base.limits.maxInstances);
+      const inst=next.instances.find(item=>item.sceneModelInstanceId===id);
+      if(inst){
+        const count=draft.instances.filter(it=>it.modelVersionId===model.modelVersionId).length+1;
+        inst.displayName=`${turbine.displayName||turbine.modelCode} #${count}`;
+      }
+      if(await commit(next)){
+        setSelected(id);
+        setSelection([id]);
+        setTurbinePlacementModal(null);
+      }
+    }catch(value){failed(value);}
+    finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   async function resourceDrop(reference:{modelAssetId:string,modelVersionId:string},point:Vector3){
     if(!editable||!draft||!base)return;const abort=controller(),token=++sequence.current;editRequest.current=abort;setBusy(true);
     try{const value=await client.model(reference.modelAssetId,reference.modelVersionId,abort.signal);if(!mounted.current||token!==sequence.current)return;setHints(prior=>({...prior,[value.modelVersionId]:modelRef(value)}));
-      const id=crypto.randomUUID(),next=placeModel(draft,value,snapPoint(point,snap.grid),terrain,id,base.limits.maxInstances);if(await commit(next)){setSelected(id);setSelection([id]);if(continuous)setPending({kind:'model',model:value});else setLeft('content');}}
+      const id=crypto.randomUUID(),next=placeModel(draft,value,snapPoint(point,snap.grid),terrain,id,base.limits.maxInstances);if(await commit(next)){setSelected(id);setSelection([id]);if(continuous)setPending({kind:'model',model:value});}}
     catch(value){failed(value);}finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   async function equipmentDrop(uid:string,point:Vector3){
@@ -558,7 +597,14 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
       {snapshot&&<><div className="sw-mobile-tools"><IconBtn label={t('content')} onClick={()=>setSide(side==='left'?null:'left')}><PanelLeft size={16}/></IconBtn><span className="sw-grow"/><IconBtn label={t('position')} onClick={()=>setSide(side==='right'?null:'right')}><PanelRight size={16}/></IconBtn></div>
       <div className="sw-editor" data-side={side||undefined}><aside className="sw-left"><div className="sw-tabs" role="tablist">{(['content','resources','objects'] as const).map(value=><button type="button" role="tab" disabled={busy||!!anchorResult} aria-selected={left===value} key={value} onClick={()=>{setLeft(value);if(value!=='resources')setPreview(null);}}>{t(value==='objects'?'projectObjects':value==='resources'?'modelResources':'sceneContents')}</button>)}</div>
         {left==='objects'?<SceneObjectsPanel key={internal?'equipment':'project'} api={api} root={internal?rootObject:null} rootReading={internal&&rootReading} selectedUid={object?.item.entityUid||''} ancestorUids={object?.ancestors.path.map(row=>row.object.entityUid)||[]} onSelect={(uid,scope)=>void chooseObject(uid,scope)}/>:left==='resources'?<>{preview&&<ModelComponentTree version={preview} inspection={inspection} onClose={()=>setPreview(null)} onSelect={()=>{if(matchMedia('(max-width:999px)').matches)setSide('right');}}/>}<div className="mp-catalog" hidden={!!preview}><Suspense fallback={<p role="status">{t('loading')}</p>}><ResourcePanel key={base.sceneId} projectCode={base.projectCode} api={api} publicGeoCenter={scenePublicGeoCenter(draft!.coordinateFrame)} canPlace={editable} canAcquire={canWrite&&!busy} geographic={!isLocalScene(draft!)} modelSelection={resourceSelection} onModelSelected={setResourceSelection} canReplace={editable&&!dirty&&!!current&&!current.positionLocked} replaceTargetVersion={current?.modelVersionId}
-          onReplace={value=>{if(current)void previewReplacement({kind:'model',sceneModelInstanceId:current.sceneModelInstanceId,candidateModelVersionId:value.modelVersionId});}} onPlace={value=>{if(!editable)return;modelCatalog.set(value.modelVersionId,value);setHints(prior=>({...prior,[value.modelVersionId]:modelRef(value)}));setPending({kind:'model',model:value});setPreview(null);setSide(null);}}
+          onEnterEdit={()=>{if(!editing&&canWrite)setEditing(true);}}
+          onPlaceTurbine={turbine=>{
+            if(!editing&&canWrite)setEditing(true);
+            setPendingTurbine(turbine);
+            setPending(null);
+            setPreview(null);
+          }}
+          onReplace={value=>{if(current)void previewReplacement({kind:'model',sceneModelInstanceId:current.sceneModelInstanceId,candidateModelVersionId:value.modelVersionId});}} onPlace={value=>{if(!editing&&canWrite)setEditing(true);modelCatalog.set(value.modelVersionId,value);setHints(prior=>({...prior,[value.modelVersionId]:modelRef(value)}));setPending({kind:'model',model:value});setPendingTurbine(null);setPreview(null);}}
           onImageryReady={value=>{if(editable&&draft&&!isLocalScene(draft)){void commit({...draft,imagery:{imageryVersionId:value.imageryVersionId,expectedContentRevision:value.contentRevision,expectedReportSha256:value.expectedReportSha256,visible:true}}).then(ok=>{if(ok)setLeft('content');});}}}
           onPreview={value=>{if(value)modelCatalog.set(value.modelVersionId,value);routeControl.current?.cancel(false);cancelPlacement();setPreview(value);if(value)setSide(null);}} onTerrainReady={adoptTerrain} activeTerrainVersion={terrain}/></Suspense></div></>:<div className="sw-content-list"><div className="sw-model-selection"><label><ScopeCheckbox ids={draft?.instances.map(item=>item.sceneModelInstanceId)||[]} selectedIds={selectedIds} label={t('selectAllModels')} disabled={busy||routePlaying||!!anchorResult} onToggle={checked=>selectMany(selectSceneScope(selectedIds,draft?.instances.map(item=>item.sceneModelInstanceId)||[],checked))}/><span>{t('selectAllModels')}</span></label><Btn disabled={!selectedIds.length||busy||routePlaying||!!anchorResult} onClick={loadSelected}><Eye size={14}/>{t('loadSelected')}</Btn></div><div className="sw-content-row"><Layers size={15}/><span>{terrain?.displayName||t('noTerrain')}</span>{terrain&&<IconBtn label={terrainVisible?t('hide'):t('show')} onClick={()=>setTerrainVisible(value=>!value)}>{terrainVisible?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn>}</div>
           {draft?.imagery&&<section className="sw-imagery-layer"><div className="sw-content-row"><ImageIcon size={15}/><span>{imageryVersion?.displayName||it('loading')}</span><IconBtn label={(editing?draft.imagery.visible:imageryVisible)?it('hide'):it('show')} disabled={busy} onClick={()=>{if(editing&&draft.imagery)void commit({...draft,imagery:{...draft.imagery,visible:!draft.imagery.visible}});else setImageryVisible(v=>!v);}}>{(editing?draft.imagery.visible:imageryVisible)?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn>{editing&&<IconBtn label={it('remove')} disabled={!editable} onClick={()=>void commit({...draft,imagery:null})}><Trash2 size={14}/></IconBtn>}</div><small className="ov-resource-caption">{it('precision')}</small>{imageryVersion&&<ImageryFacts value={imageryVersion}/>}</section>}
@@ -570,11 +616,12 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
               return <RowContext key={item.sceneModelInstanceId} name={item.displayName} actions={actions}><div className={`sw-content-row ${selectedIds.includes(item.sceneModelInstanceId)?'selected':''}`}><input className="so-select" type="checkbox" aria-label={`${ot('selectInstance')} ${item.displayName}`} checked={selectedIds.includes(item.sceneModelInstanceId)} disabled={routePlaying||busy||!!anchorResult} onChange={()=>selectInstance(item.sceneModelInstanceId,false,true)}/><button type="button" className="sw-content-name" disabled={routePlaying} onClick={event=>selectInstance(item.sceneModelInstanceId,true,event.shiftKey)}>{item.displayName}</button>{item.positionLocked&&<LockKeyhole size={12} aria-label={t('locked')}/>}<IconBtn label={visible?t('hide'):t('show')} disabled={busy||!!anchorResult} onClick={toggleVisibility}>{visible?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn></div></RowContext>;
             })}</section>)}</details>;})}
           {Object.keys(personal).length>0&&<Btn onClick={()=>setPersonal({})}>{t('resetVisibility')}</Btn>}</div>}
-      </aside><div className="sw-viewport"><div className="so-bar"><span>{ot('selected')} {selectedIds.length}</span><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('batch')}>{ot('batch')}</button><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('routesTab')}>{ot('routesTab')}</button></div>{preview&&<div className="sw-preview-tools"><ModelPreviewTools inspection={inspection}/></div>}<Suspense fallback={<SceneLoadingProgress locale={locale} phase="viewer"/>}><SceneViewport active={!suspended} alarm={sceneAlarm} onAlarmFocus={()=>sceneAlarm&&selectInstance(sceneAlarm.instanceId,true)} api={api} snapshot={snapshot} preparationKey={JSON.stringify([base.sceneId,base.sceneRevision,metadataAttempt])} preparationError={metadataErrors.terrain||metadataErrors.imagery} onRetryPreparation={()=>{setError(null);setMetadataAttempt(value=>value+1);}} modelRefs={refs} terrainVersion={viewTerrain} selectedId={selected} selectedIds={selectedIds} gridSnap={snap.grid} cameraControl={cameraControl} onCameraInteraction={()=>routeControl.current?.manual()} editing={editable&&!internal} disabled={busy} personalVisibility={componentFocus?{...personal,[componentFocus.instanceId]:true}:personal} terrainVisible={terrainVisible} imageryVersion={imageryVersion} imageryVisible={editing?!!snapshot?.imagery?.visible:imageryVisible} pendingPlacement={!!pending} placementModel={pending?.kind==='model'?pending.model:null} previewModel={preview} previewSelection={inspection.selection} onPreviewStructure={inspection.ready} onPreviewPick={(identity,id)=>{inspection.pick(identity,id);if(id)setSide('right');}} viewCommand={viewCommand} focusRequest={focus} componentFocus={componentFocus} componentPickingInstanceId={internal&&editable?current?.sceneModelInstanceId:null} onComponentPick={pickComponent}
+      </aside><div className="sw-viewport"><div className="so-bar"><span>{ot('selected')} {selectedIds.length}</span><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('batch')}>{ot('batch')}</button><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('routesTab')}>{ot('routesTab')}</button></div>{preview&&<div className="sw-preview-tools"><ModelPreviewTools inspection={inspection}/></div>}<Suspense fallback={<SceneLoadingProgress locale={locale} phase="viewer"/>}><SceneViewport active={!suspended} alarm={sceneAlarm} onAlarmFocus={()=>sceneAlarm&&selectInstance(sceneAlarm.instanceId,true)} api={api} snapshot={snapshot} preparationKey={JSON.stringify([base.sceneId,base.sceneRevision,metadataAttempt])} preparationError={metadataErrors.terrain||metadataErrors.imagery} onRetryPreparation={()=>{setError(null);setMetadataAttempt(value=>value+1);}} modelRefs={refs} terrainVersion={viewTerrain} selectedId={selected} selectedIds={selectedIds} gridSnap={snap.grid} cameraControl={cameraControl} onCameraInteraction={()=>routeControl.current?.manual()} editing={editable&&!internal} disabled={busy} personalVisibility={componentFocus?{...personal,[componentFocus.instanceId]:true}:personal} terrainVisible={terrainVisible} imageryVersion={imageryVersion} imageryVisible={editing?!!snapshot?.imagery?.visible:imageryVisible} pendingPlacement={!!pending||!!pendingTurbine} placementModel={pending?.kind==='model'?pending.model:null} previewModel={preview} previewSelection={inspection.selection} onPreviewStructure={inspection.ready} onPreviewPick={(identity,id)=>{inspection.pick(identity,id);if(id)setSide('right');}} viewCommand={viewCommand} focusRequest={focus} componentFocus={componentFocus} componentPickingInstanceId={internal&&editable?current?.sceneModelInstanceId:null} onComponentPick={pickComponent}
         onSelect={(id,additive)=>{if(!internal)selectInstance(id,false,additive);}} onPoint={point=>void place(point)} onMove={async(id,point)=>{try{return !!draft&&await commit(moveInstance(draft,id,snapPoint(point,snap.grid)));}catch(error){failed(error);return false;}}} onViewChange={value=>{if(preview)return;liveView.current=value;if(draft&&!anchorResult&&!routePlaying&&!busy)setViewDirty(previous=>(editing||previous)&&sceneViewChanged(draft.initialView,value));}} onResourceDrop={(reference,point)=>void resourceDrop(reference,point)} onEquipmentDrop={(uid,point)=>void equipmentDrop(uid,point)} onError={failed}/></Suspense>
         {alarmOpen&&!suspended&&!editing&&!unsaved&&!preview&&!routePlaying&&!anchorResult&&<Suspense fallback={<span role="status">{en?'Loading alarm exercise…':'正在读取告警演练…'}</span>}><SceneAlarmPanel key={base.sceneId+':'+base.sceneRevision} api={api} snapshot={snapshot} en={en} onAlarm={setSceneAlarm} onFocus={id=>selectInstance(id,true)} onClose={()=>setAlarmOpen(false)}/></Suspense>}
         {preview&&<div className="sw-floating"><span>{t('preview')} · {preview.displayName}</span><Btn onClick={()=>setPreview(null)}>{t('closePreview')}</Btn></div>}
         {pending&&<div className="sw-floating"><span>{t(pending.kind==='copy'?'copyHint':'placementHint')}</span><IconBtn label={t('cancel')} onClick={cancelPlacement}><X size={15}/></IconBtn></div>}
+        {pendingTurbine&&<div className="sw-floating"><span>{locale==='zh'?`正在布置机型：${pendingTurbine.displayName||pendingTurbine.modelCode} —— 请在三维地表点击确定机位`:`Placing turbine: ${pendingTurbine.displayName||pendingTurbine.modelCode} — Click ground to place`}</span><IconBtn label={t('cancel')} onClick={cancelPlacement}><X size={15}/></IconBtn></div>}
         {anchorResult&&<div className="sw-floating sw-anchor-result"><strong>{t(isAnchor?'anchorPending':'replacementPreview')}</strong><span>{t(isAnchor?'anchorImpact':'replacementHint')}</span><Btn disabled={busy||saveUnknown} onClick={cancelAnchor}>{t('cancel')}</Btn><Btn primary disabled={busy||!canWrite||saveUnknown} onClick={()=>void save(anchorResult)}>{t(isAnchor?'anchorSave':'confirmReplacement')}</Btn></div>}
       </div><aside className="sw-inspector">{preview?<ModelComponentProperties version={preview} inspection={inspection}/>:<><div className="sw-inspector-title"><strong>{object?.item.displayName||current?.displayName||t('position')}</strong><button type="button" className="ov-icon-btn so-close" aria-label={ot('closePanel')} disabled={routePlaying} onClick={()=>setSide(null)}><X size={14}/></button>{current&&<IconBtn label={t('locate')} disabled={routePlaying} onClick={()=>selectInstance(current.sceneModelInstanceId,true)}><Focus size={15}/></IconBtn>}</div><div className="so-tabs" role="tablist" aria-label={ot('properties')}>{(['properties','batch','routesTab'] as const).map(value=><button type="button" role="tab" key={value} disabled={!!anchorResult} aria-selected={inspectorTab===value} onClick={()=>showTools(value)}>{ot(value)}</button>)}</div>
         {anchorResult?<ReplacementImpact result={anchorResult} snapshot={draft!}/>:inspectorTab==='batch'?<SceneBatchPanel snapshot={draft!} editable={editable} selectedIds={selectedIds} onSelect={selectMany} onCommit={commit} onMove={moveBatch} onError={failed} continuous={continuous} onContinuous={value=>{setContinuous(value);if(!value)cancelPlacement();}} snap={snap} onSnap={setSnap}/>:inspectorTab==='routesTab'?<SceneRoutePanel snapshot={draft!} identity={JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,draft])} editable={editable} canPreview={!busy&&!preview&&!pending&&!anchorResult&&!saveUnknown} captureKind={internal&&location?.status==='located'&&location.componentKeys.length>0?'component':'overview'} captureInstanceId={internal&&location?.status==='located'?location.sceneModelInstanceId:null} analysisObjectName={object?.item.displayName||null} camera={cameraControl} control={routeControl} onCommit={commit} onError={failed} onPlaying={value=>{setRoutePlaying(value);if(value)setSide('right');}} beforePreview={async signal=>{if(!base)throw new ApiError(404,'NOT_FOUND_OR_FORBIDDEN');const value=await client.open(base.sceneId,base.sceneRevision,signal);if(signal.aborted)return;syncWrite(value);setUpdate(value.headRevision!==base.sceneRevision);}} onView={value=>{setComponentFocus(undefined);setViewCommand({token:Date.now(),view:value});}}/>:objectLoading?<p role="status">{et('loading')}</p>:object?<>
@@ -613,5 +660,37 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     {modal==='engineeringReview'&&reviewCandidate&&<Modal title={et('reviewObject')} description={et('reviewObjectHint')} onClose={()=>{if(!busy){setModal(null);setReviewCandidate(null);}}}><div className="se-root-review"><strong>{reviewCandidate.item.displayName}</strong><p>{[...reviewCandidate.ancestors.path].reverse().map(row=>row.object.displayName).concat(reviewCandidate.item.displayName).join(' › ')}</p>{reviewCandidate.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setModal(null);setReviewCandidate(null);}}>{et('cancel')}</Btn><Btn primary disabled={busy} onClick={()=>{acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,reviewCandidate);if(object&&refKey(object.objectRef)===refKey(reviewCandidate.objectRef))setObject(reviewCandidate);if(rootObject&&refKey(rootObject.objectRef)===refKey(reviewCandidate.objectRef))setRootRead({identity:currentIdentity,value:reviewCandidate,reading:false});setReviewDirty(true);saveRequest.current=null;setModal(null);setReviewCandidate(null);setError(null);}}>{et('confirmReview')}</Btn></div></Modal>}
     {modal==='replaceTerrain'&&candidate&&<Modal title={t('replaceTerrain')} description={t('replacementHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><label>{t('terrainStrategy')}<select value={terrainStrategy} onChange={event=>setTerrainStrategy(event.target.value as 'keep_height'|'resample_ground')}><option value="resample_ground">{t('resampleGround')}</option><option value="keep_height">{t('keepHeight')}</option></select></label><Btn primary onClick={()=>void previewReplacement({kind:'terrain',candidateTerrainVersionId:candidate.terrainVersionId,strategy:terrainStrategy})}>{t('previewReplacement')}</Btn></fieldset></Modal>}
     {modal==='anchor'&&candidate&&<Modal title={t('anchor')} description={t('anchorHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><div className="sw-field-pair">{(['x','z','longitude','latitude','heading','offset'] as const).map(key=><label key={key}>{t(key==='heading'?'anchorHeading':key==='offset'?'offset':key)}<input type="number" step="any" value={anchor[key]} onChange={event=>setAnchor(value=>({...value,[key]:event.target.value}))}/></label>)}</div><label>{t('height')}<select value={anchor.strategy} onChange={event=>setAnchor(value=>({...value,strategy:event.target.value as GeographicAnchor['heightStrategy']}))}><option value="resample_each_ground">{t('resample')}</option><option value="keep_relative_to_anchor">{t('keepRelative')}</option></select></label><Btn primary onClick={()=>void previewAnchor()}>{t('anchorPreview')}</Btn></fieldset></Modal>}
+    {turbinePlacementModal&&<Modal title={locale==='zh'?`布置风机 · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`:`Place turbine · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`} description={locale==='zh'?'已在场景地表选定机位坐标，请选择落位的模型版本与形态':'Ground location selected. Choose representation model to place.'} onClose={()=>setTurbinePlacementModal(null)}>
+      <div className="ov-resource-form">
+        <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:12}}>
+          {turbinePlacementModal.turbine.appearanceModel&&(
+            <label style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',border:`1.5px solid ${turbinePlacementModal.selectedType==='appearance'?'var(--ov-accent,#2fa572)':'var(--ov-border,#2c3b42)'}`,borderRadius:6,cursor:'pointer',background:turbinePlacementModal.selectedType==='appearance'?'rgba(47,165,114,0.08)':'transparent'}}>
+              <input type="radio" name="turbine_rep" checked={turbinePlacementModal.selectedType==='appearance'} onChange={()=>setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v)}/>
+              <div>
+                <strong style={{display:'block',fontSize:13,color:'var(--ov-text,#e5ecec)'}}>{locale==='zh'?'外观版（推荐 · 轻量外壳）':'Appearance (Recommended · Lightweight exterior)'}</strong>
+                <small style={{display:'block',color:'var(--ov-text-subtle,#8c9ba5)',marginTop:3,fontSize:11}}>
+                  {locale==='zh'?'适用于全景风场批量高效渲染与大范围巡检展示':'Optimized for wide overview and large fleet rendering'}
+                </small>
+              </div>
+            </label>
+          )}
+          {turbinePlacementModal.turbine.detailedModel&&(
+            <label style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',border:`1.5px solid ${turbinePlacementModal.selectedType==='detailed'?'var(--ov-accent,#2fa572)':'var(--ov-border,#2c3b42)'}`,borderRadius:6,cursor:'pointer',background:turbinePlacementModal.selectedType==='detailed'?'rgba(47,165,114,0.08)':'transparent'}}>
+              <input type="radio" name="turbine_rep" checked={turbinePlacementModal.selectedType==='detailed'} onChange={()=>setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v)}/>
+              <div>
+                <strong style={{display:'block',fontSize:13,color:'var(--ov-text,#e5ecec)'}}>{locale==='zh'?'完整版（含内部机械构件）':'Detailed (With internal mechanical components)'}</strong>
+                <small style={{display:'block',color:'var(--ov-text-subtle,#8c9ba5)',marginTop:3,fontSize:11}}>
+                  {locale==='zh'?'包含内部机械构件，支持近景特写、透视与包围盒爆炸分析':'Includes interior parts; supports close-up X-ray and explosion analysis'}
+                </small>
+              </div>
+            </label>
+          )}
+        </div>
+        <div className="ov-resource-actions end">
+          <Btn disabled={busy} onClick={()=>setTurbinePlacementModal(null)}>{t('cancel')}</Btn>
+          <Btn primary disabled={busy} onClick={()=>void confirmTurbinePlacement()}><Check size={14}/>{locale==='zh'?'确认布置':'Confirm placement'}</Btn>
+        </div>
+      </div>
+    </Modal>}
   </section>;
 });

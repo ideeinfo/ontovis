@@ -780,14 +780,16 @@ class ProjectModelLibrary:
             rows = db.execute('''
                 select a.id as asset_id, a.name as asset_name, a.definition_entity_uid, a.model_code,
                        a.representation_type, v.id as version_id, v.sha256, v.name as version_name,
-                       p.content_revision
+                       p.content_revision, p.calibration
                 from project_model_assets a
                 join project_model_versions p on p.asset_id = a.id
                 join versions v on v.id = p.version_id
                 left join project_model_lifecycle l on l.asset_id = a.id
                 where a.project_code = ? and coalesce(l.state, 'active') = 'active'
                   and a.definition_entity_uid is not null
-                order by a.model_code, a.representation_type
+                order by a.model_code, a.representation_type,
+                         case when p.calibration is not null and p.calibration != '' and p.calibration != 'null' then 1 else 0 end asc,
+                         v.created_at asc
             ''', (self.project_code,)).fetchall()
             
             groups = {}
@@ -801,18 +803,21 @@ class ProjectModelLibrary:
                         'appearanceModel': None,
                         'detailedModel': None,
                     }
+                is_calibrated = bool(r['calibration'] and r['calibration'] not in ('', 'null', '{}'))
                 model_ref = {
                     'modelAssetId': r['asset_id'],
                     'modelVersionId': r['version_id'],
                     'contentRevision': r['content_revision'],
                     'sha256': r['sha256'],
                     'displayName': r['version_name'] or r['asset_name'],
+                    'calibrationState': 'verified' if is_calibrated else 'unverified',
                 }
                 rep = r['representation_type']
-                if rep == 'appearance':
-                    groups[uid]['appearanceModel'] = model_ref
-                elif rep == 'detailed':
-                    groups[uid]['detailedModel'] = model_ref
+                target_key = 'appearanceModel' if rep == 'appearance' else 'detailedModel' if rep == 'detailed' else None
+                if target_key:
+                    existing = groups[uid][target_key]
+                    if not existing or (is_calibrated and existing.get('calibrationState') != 'verified'):
+                        groups[uid][target_key] = model_ref
 
             pair_map = {}
             for g in groups.values():

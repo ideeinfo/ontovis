@@ -59,6 +59,8 @@ export interface ProjectTurbineModelRef {
   contentRevision: string;
   sha256: string;
   displayName: string;
+  thumbnail?: ModelThumbnailInfo;
+  calibrationState?: string;
 }
 export interface ProjectTurbineDefinition {
   definitionEntityUid: string;
