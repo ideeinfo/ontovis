@@ -2,12 +2,27 @@ import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {prepareSceneRenderer} from './sceneRenderer';
 
+function hideTerraUrsaLogos(root:THREE.Object3D) {
+  root.traverse(node=>{
+    const norm=(node.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    if(norm==='staticnacelle20'||norm==='staticnacelle10') {
+      node.visible=false;
+      if(node instanceof THREE.Mesh) {
+        for(const mat of Array.isArray(node.material)?node.material:[node.material]) {
+          mat.visible=false;
+        }
+      }
+    }
+  });
+}
+
 /** A fixed resource view, independent of scene placement or installed identity. */
 export async function renderModelThumbnail(bytes:ArrayBuffer) {
   const manager=new THREE.LoadingManager();let textureFailed=false;
   manager.setURLModifier(url=>{if(!url.startsWith('blob:'))throw new Error('THUMBNAIL_EXTERNAL_RESOURCE');return url;});
   manager.onError=()=>{textureFailed=true;};
   const model=(await new GLTFLoader(manager).parseAsync(bytes,'')).scene;
+  hideTerraUrsaLogos(model);
   let renderer:THREE.WebGLRenderer|null=null;
   try {
     if(textureFailed)throw new Error('THUMBNAIL_TEXTURE_FAILED');

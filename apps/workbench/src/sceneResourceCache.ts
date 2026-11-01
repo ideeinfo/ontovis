@@ -69,7 +69,9 @@ function embeddedGlb(bytes:ArrayBuffer) {
 const ONTOVIS_LOGO_URL=new URL('../../../assets/brand/ONTOVis.png',import.meta.url).href;
 const ONTOVIS_LOGO_WIDTH=2170;
 const ONTOVIS_LOGO_HEIGHT=725;
-const NACELLE_LOGO_NODE='Static:nacelle:10';
+const normalizeNodeKey=(name:string)=>name.toLowerCase().replace(/[^a-z0-9]/g,'');
+export const isTu22kLogoNode=(name:string)=>normalizeNodeKey(name)==='staticnacelle20';
+export const isTu3000LogoNode=(name:string)=>normalizeNodeKey(name)==='staticnacelle10';
 let brandLogoPromise:Promise<HTMLImageElement|null>|null=null;
 function loadBrandLogoImage():Promise<HTMLImageElement|null> {
   if(typeof Image!=='function')return Promise.resolve(null);
@@ -81,17 +83,35 @@ function loadBrandLogoImage():Promise<HTMLImageElement|null> {
   return brandLogoPromise;
 }
 
-export async function applyNacelleBrandLogo(root:THREE.Object3D) {
-  const targets:THREE.Mesh[]=[];
+export async function sanitizeModelLogos(root:THREE.Object3D) {
+  const tu3000Targets:THREE.Mesh[]=[];
   root.traverse(node=>{
-    if(node instanceof THREE.Mesh && (sourceNodes.get(node)?.name===NACELLE_LOGO_NODE || node.name===NACELLE_LOGO_NODE))targets.push(node);
+    const rawNodeName=sourceNodes.get(node)?.name||'';
+    const directName=node.name||'';
+    if(isTu22kLogoNode(rawNodeName)||isTu22kLogoNode(directName)) {
+      node.visible=false;
+      if(node instanceof THREE.Mesh) {
+        for(const material of Array.isArray(node.material)?node.material:[node.material]) {
+          material.visible=false;material.transparent=true;material.opacity=0;
+        }
+      }
+    } else if(node instanceof THREE.Mesh && (isTu3000LogoNode(rawNodeName)||isTu3000LogoNode(directName))) {
+      tu3000Targets.push(node);
+    } else if(node instanceof THREE.Mesh) {
+      for(const material of Array.isArray(node.material)?node.material:[node.material]) {
+        const map=(material as THREE.MeshStandardMaterial)?.map;
+        if(map && typeof map.name==='string' && map.name.toLowerCase().includes('terraursa')) {
+          node.visible=false;material.visible=false;
+        }
+      }
+    }
   });
-  if(!targets.length)return;
+  if(!tu3000Targets.length)return;
   const image=await loadBrandLogoImage();
   const height=1.0,width=height*(ONTOVIS_LOGO_WIDTH/ONTOVIS_LOGO_HEIGHT);
   const yCenter=90.95,zCenter=-0.17;
   const yMin=yCenter-height/2,yMax=yCenter+height/2,zMin=zCenter-width/2,zMax=zCenter+width/2;
-  for(const mesh of targets) {
+  for(const mesh of tu3000Targets) {
     const position=mesh.geometry.getAttribute('position');
     if(position && position.count===8) {
       for(let index=0;index<8;index++) {
@@ -116,6 +136,8 @@ export async function applyNacelleBrandLogo(root:THREE.Object3D) {
     }
   }
 }
+
+export const applyNacelleBrandLogo = sanitizeModelLogos;
 
 async function parseModel(bytes:ArrayBuffer) {
   const manager=new THREE.LoadingManager();
