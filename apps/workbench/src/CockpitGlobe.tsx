@@ -1,10 +1,20 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {Focus,Globe2,Pause,Play,X} from 'lucide-react';
+import {ArrowRight,Focus,Globe2,Pause,Play,X} from 'lucide-react';
 import earthMap from '../../../assets/maps/bluemarble-2048.png';
 import {clusterGlobePoints,globeClusterDegrees,globeClusterFocusDistance,globeDriftRadians,globeVector,globeFlightProgress,resumedGlobeFlightStart,globeFramePlan,type GlobePoint} from './cockpitSpace';
 import './cockpitSpace.css';
+
+export function WindTurbineIcon({size=16,className=''}:{size?:number;className?:string}){
+ return <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" className={className} aria-hidden="true">
+  <path d="M11.3 11.5L10.5 21.5H13.5L12.7 11.5Z" opacity="0.85"/>
+  <circle cx="12" cy="11" r="1.6"/>
+  <path d="M12 11C12.6 7.5 13.6 3.8 12 1.5C10.8 3.8 11.4 7.5 12 11Z"/>
+  <path d="M12 11C14.8 12.8 18.5 15.2 20.2 13.8C18.2 11.8 14.6 11.5 12 11Z"/>
+  <path d="M12 11C9.5 13 5.8 15.2 4.8 13C7 11.5 9.4 11.5 12 11Z"/>
+ </svg>;
+}
 
 export type GlobeFlight={token:number;longitude:number;latitude:number;direction:'in'|'out'};
 export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause,onOpen}:{points:GlobePoint[];active:boolean;en:boolean;light:boolean;flight:GlobeFlight|null;paused:boolean;onTogglePause:()=>void;onOpen:(id:string)=>void}){
@@ -89,8 +99,35 @@ export function CockpitGlobe({points,active,en,light,flight,paused,onTogglePause
    if(group.points.length>1&&!group.coincident&&targetDegrees<clusterDegrees&&currentDistance>targetDistance+.04){setSelected('');runtime.current?.focus(group.longitude,group.latitude,targetDistance);return;}
    if(group.points.length===1&&selected===group.id){onOpen(group.points[0].sceneId);return;}
    setSelected(group.id);runtime.current?.focus(group.longitude,group.latitude,Math.min(currentDistance,targetDistance));
-  }}><i/>{group.points.length>1&&<b>{group.points.length}</b>}{group.points.length===1?<span>{group.points[0].name}</span>:group.coincident?<span>{group.points[0].name} +{group.points.length-1}</span>:null}</button>)}
-  {selectedGroup&&<aside className="pc-globe-choice"><header><strong>{en?'Scene reference points':'场景参考点'}</strong><button aria-label={en?'Close reference points':'关闭参考点'} onClick={()=>setSelected('')}><X size={14}/></button></header><small>{selectedGroup.coincident?(en?'Same reference coordinates · accuracy unverified':'同参考坐标场景 · 位置精度未核实'):(en?'Location accuracy unverified':'位置精度未核实')}</small>{selectedGroup.points.map(point=><button key={point.sceneId} onClick={()=>onOpen(point.sceneId)}>{point.name}<span>↗</span></button>)}</aside>}
+  }}>
+   <span className="pc-globe-pin-icon">
+    <i/>
+    <WindTurbineIcon size={16}/>
+    {group.points.length>1&&<b>{group.points.length}</b>}
+   </span>
+   {group.points.length===1?<span>{group.points[0].name}</span>:group.coincident?<span>{group.points[0].name} +{group.points.length-1}</span>:null}
+  </button>)}
+  {selectedGroup&&<aside className="pc-globe-choice" aria-label={en?'Scene reference points':'场景参考点'}>
+   <header>
+    <div className="pc-globe-choice-head">
+     <strong>{en?'Scene reference points':'场景参考点'}</strong>
+     <small>{selectedGroup.coincident?(en?'Same reference coordinates · accuracy unverified':'同参考坐标场景 · 位置精度未核实'):(en?'Location accuracy unverified':'位置精度未核实')}</small>
+    </div>
+    <button className="pc-globe-choice-close" aria-label={en?'Close reference points':'关闭参考点'} onClick={()=>setSelected('')}><X size={15}/></button>
+   </header>
+   <div className="pc-globe-choice-list">
+    {selectedGroup.points.map(point=><button key={point.sceneId} className="pc-globe-choice-item" onClick={()=>onOpen(point.sceneId)} aria-label={`${en?'Enter':'进入场景'} ${point.name}`}>
+     <span className="pc-globe-choice-info">
+      <WindTurbineIcon size={15}/>
+      <span className="pc-globe-choice-name" title={point.name}>{point.name}</span>
+     </span>
+     <span className="pc-globe-choice-btn">
+      <span>{en?'Enter scene':'进入场景'}</span>
+      <ArrowRight size={13}/>
+     </span>
+    </button>)}
+   </div>
+  </aside>}
   {!fallback&&<button className="pc-globe-pause" aria-label={paused?(en?'Resume globe rotation':'继续地球自转'):(en?'Pause globe rotation':'暂停地球自转')} onClick={onTogglePause}>{paused?<Play size={17}/>:<Pause size={17}/>}</button>}
   <button className="pc-globe-home" aria-label={en?'Reset globe view':'恢复地球视角'} onClick={()=>{setSelected('');runtime.current?.home();}}><Focus size={17}/></button>
  </section>;
