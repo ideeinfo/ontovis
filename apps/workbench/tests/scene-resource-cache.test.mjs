@@ -368,7 +368,7 @@ test('legacy display cannot smuggle a transform or geographic permission through
   }
 });
 
-test('TU-3000 nacelle decal node Static:nacelle:10 replaces source logo with ONTOVis brand texture at exact 2170:725 aspect ratio',async()=>{
+test('matching node names in unknown GLB content do not authorize logo or geometry replacement',async()=>{
   const positions=new Float32Array([
     2.315,91.56,3.15, 2.315,91.56,-1.75, 2.315,90.34,3.15, 2.315,90.34,-1.75,
     -2.315,91.56,-1.75, -2.315,91.56,3.15, -2.315,90.34,-1.75, -2.315,90.34,3.15,
@@ -390,20 +390,10 @@ test('TU-3000 nacelle decal node Static:nacelle:10 replaces source logo with ONT
   new Uint8Array(full,28+jsonLength).set(new Uint8Array(positions.buffer));
   const f=modelFixture(full),cache=new SceneResourceCache(f.api,{source:f.source});
   const resource=await cache.model(f.ref),mesh=meshList(resource.scene)[0];
-  assert.equal(mesh.material.map?.name,'ontovis-nacelle-logo');
-  assert.equal(mesh.material.map?.colorSpace,THREE.SRGBColorSpace);
-  assert.equal(mesh.material.map?.flipY,true);
-  assert.equal(mesh.material.map?.userData?.width,2170);
-  assert.equal(mesh.material.map?.userData?.height,725);
-  assert.ok(String(mesh.material.map?.userData?.ontoVisLogoUrl).endsWith('ONTOVis.png'));
-  assert.equal(mesh.material.transparent,true);
-  assert.equal(mesh.material.depthWrite,false);
-  mesh.geometry.computeBoundingBox();
-  const box=mesh.geometry.boundingBox;
-  const height=box.max.y-box.min.y,width=box.max.z-box.min.z;
-  assert.ok(Math.abs(height-1.6)<1e-5);
-  assert.ok(Math.abs(width/height-2170/725)<1e-5);
-  assert.ok(Math.abs(box.min.x - -2.315)<1e-5 && Math.abs(box.max.x - 2.315)<1e-5);
-  let disposed=0;mesh.material.map.addEventListener('dispose',()=>disposed++);
+  assert.equal(mesh.material.map,null);
+  assert.equal(mesh.material.transparent,false);
+  assert.equal(mesh.material.depthWrite,true);
+  assert.deepEqual(Array.from(mesh.geometry.getAttribute('position').array),Array.from(positions));
+  let disposed=0;mesh.geometry.addEventListener('dispose',()=>disposed++);
   cache.dispose();assert.equal(disposed,1);
 });

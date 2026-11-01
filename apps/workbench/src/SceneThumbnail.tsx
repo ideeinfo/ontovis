@@ -5,20 +5,8 @@ import {Btn} from './Primitives.tsx';
 import type {SceneApi} from './sceneApi.ts';
 import type {SceneThumbnailInfo} from './sceneTypes.ts';
 
-const blobCache = new Map<string, Blob>();
-
 function cacheKey(sceneId: string, thumbnail: SceneThumbnailInfo) {
   return `${sceneId}:${thumbnail.thumbnailRevision}:${thumbnail.sha256}`;
-}
-
-function rememberBlob(key: string, blob: Blob) {
-  blobCache.delete(key);
-  blobCache.set(key, blob);
-  while (blobCache.size > 36) {
-    const oldest = blobCache.keys().next().value;
-    if (!oldest) break;
-    blobCache.delete(oldest);
-  }
 }
 
 export function SceneThumbnail({
@@ -34,43 +22,42 @@ export function SceneThumbnail({
   thumbnail?: SceneThumbnailInfo | null;
   fallback: ReactNode;
 }) {
-  const [loaded, setLoaded] = useState<{key: string; url: string} | null>(null);
+  const [loaded, setLoaded] = useState<{client: SceneApi; scope: string; key: string; url: string} | null>(null);
   const [failed, setFailed] = useState(false);
+  const denied = useRef<{client:SceneApi; scope:string} | null>(null);
   const key = thumbnail ? cacheKey(sceneId, thumbnail) : '';
-  const url = loaded?.key === key ? loaded.url : null;
+  const scope = client.sessionScope;
+  const url = loaded?.client === client && loaded.scope === scope && loaded.key === key ? loaded.url : null;
 
   useEffect(() => {
     setLoaded(null);
     setFailed(false);
     if (!thumbnail || !key) return;
+    if (denied.current?.client === client && denied.current.scope === client.authorizationScope) return;
     let owned: string | null = null;
-    const cached = blobCache.get(key);
-    if (cached && typeof URL.createObjectURL === 'function') {
-      owned = URL.createObjectURL(cached);
-      setLoaded({key, url: owned});
-      return () => {
-        if (owned) URL.revokeObjectURL(owned);
-      };
-    }
     const abort = new AbortController();
     void client
       .sceneThumbnailContent(sceneId, thumbnail, abort.signal)
       .then(blob => {
         if (abort.signal.aborted) return;
-        rememberBlob(key, blob);
         if (typeof URL.createObjectURL === 'function') {
           owned = URL.createObjectURL(blob);
-          setLoaded({key, url: owned});
+          setLoaded({client, scope, key, url: owned});
         }
       })
       .catch(error => {
-        if (!abort.signal.aborted && !cancelled(error)) setFailed(true);
+        if (!abort.signal.aborted && !cancelled(error)) {
+          if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+            denied.current = {client, scope:client.authorizationScope};
+          }
+          setFailed(true);
+        }
       });
     return () => {
       abort.abort();
       if (owned && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(owned);
     };
-  }, [client, sceneId, key]);
+  }, [client, scope, sceneId, key]);
 
   if (url && !failed) {
     return (

@@ -9,7 +9,7 @@ import { usePreferences } from './Preferences';
 import { bindingNeedsReview, modelLocation, modelNavigation } from './modelLocation';
 import { createSceneControls } from './sceneControls';
 import { prepareSceneRenderer } from './sceneRenderer';
-import { applyNacelleBrandLogo } from './sceneResourceCache';
+import { applyNacelleBrandLogo, modelLogoRetiredResources } from './sceneResourceCache';
 import type { ModelView, ObjectView } from './types';
 
 type Controls = {fit:() => void; locate:() => void; zoom:(factor:number) => void};
@@ -37,16 +37,23 @@ export function ModelViewport({api, active, detail, model, modelVersionId, onMod
     let disposed = false;
     const stale=()=>disposed || abort.signal.aborted || api.epoch!==epoch || api.revision!==revision;
     onModel(null); setReading(true); setError(null);
-    const disposeObject = (object:THREE.Object3D) => object.traverse(node => {
-      if (node instanceof THREE.Mesh || node instanceof THREE.LineSegments) {
-        node.geometry.dispose();
-        const materials = Array.isArray(node.material) ? node.material : [node.material];
-        for (const material of materials) {
-          for (const value of Object.values(material)) if (value instanceof THREE.Texture) value.dispose();
-          material.dispose();
+    const released=new Set<object>();
+    const release=(value:{dispose:()=>void})=>{if(!released.has(value)){released.add(value);value.dispose();}};
+    const releaseMaterial=(material:THREE.Material)=>{
+      for(const value of Object.values(material))if(value instanceof THREE.Texture)release(value);
+      release(material);
+    };
+    const disposeObject = (object:THREE.Object3D) => {
+      object.traverse(node => {
+        if (node instanceof THREE.Mesh || node instanceof THREE.LineSegments) {
+          release(node.geometry);
+          for(const material of Array.isArray(node.material)?node.material:[node.material])releaseMaterial(material);
         }
+      });
+      for(const resource of modelLogoRetiredResources(object)){
+        if(resource instanceof THREE.Material)releaseMaterial(resource);else release(resource);
       }
-    });
+    };
     async function start() {
       const metadata = await api.request<ModelView>('/api/workbench/model', modelVersionId ? {modelVersionId} : {}, abort.signal);
       const reference = modelVersionId ? {modelVersionId,expectedModelRevision:metadata.modelRevision,expectedViewRevision:metadata.viewRevision} : {};
@@ -56,7 +63,7 @@ export function ModelViewport({api, active, detail, model, modelVersionId, onMod
       if (stale()) return;
       if (sha !== metadata.sha256) throw new ApiError(409, 'MODEL_CHANGED');
       const gltf = await new GLTFLoader().parseAsync(bytes, '');
-      await applyNacelleBrandLogo(gltf.scene);
+      await applyNacelleBrandLogo(gltf.scene,sha);
       if (stale()) {disposeObject(gltf.scene); return;}
       scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(42, 1, .05, 3000);

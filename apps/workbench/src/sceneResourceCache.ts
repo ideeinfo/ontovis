@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {ApiError, type WorkbenchApi} from './api.ts';
 import {SceneApi} from './sceneApi.ts';
+import {MOTION_MODEL_SHA,MOTION_MERGED_SHA} from './motionProfiles.ts';
 import type {ModelResourceRef} from './sceneTypes';
 import type {ProjectModelVersion,TerrainArtifact,TerrainVersion} from './resourceTypes';
 
@@ -15,7 +16,7 @@ export interface SceneResourceSource {
 }
 export interface SceneResourceCacheOptions {
   source?:SceneResourceSource;
-  parseModel?:(bytes:ArrayBuffer)=>Promise<THREE.Group>;
+  parseModel?:(bytes:ArrayBuffer,sha256:string)=>Promise<THREE.Group>;
 }
 const MAX_MODEL_BYTES=20*1024*1024;
 const MAX_VERTICES=501*501;
@@ -83,35 +84,34 @@ function loadBrandLogoImage():Promise<HTMLImageElement|null> {
   return brandLogoPromise;
 }
 
-export async function sanitizeModelLogos(root:THREE.Object3D) {
+const retiredLogoResources=new WeakMap<THREE.Object3D,Set<THREE.Material|THREE.BufferGeometry>>();
+export const modelLogoRetiredResources=(root:THREE.Object3D):ReadonlySet<THREE.Material|THREE.BufferGeometry>=>retiredLogoResources.get(root)||new Set();
+const TU22K_MODEL_SHAS=new Set(['91b36e5bf0c5829cd77b1917a3e69a7f8c52fe8c39bbc7b42874e24ba98b6634',
+  '7e33f1ec55e4a1d314db77a35244263df43ea58fef95e8438a4b3ffd2ab629ea']);
+export async function sanitizeModelLogos(root:THREE.Object3D,contentSha:string) {
+  const tu3000=contentSha===MOTION_MODEL_SHA||contentSha===MOTION_MERGED_SHA;
+  const tu22k=TU22K_MODEL_SHAS.has(contentSha);
+  if(!tu3000&&!tu22k)return;
+  const retired=new Set<THREE.Material|THREE.BufferGeometry>();
   const tu3000Targets:THREE.Mesh[]=[];
   root.traverse(node=>{
     const rawNodeName=sourceNodes.get(node)?.name||'';
     const directName=node.name||'';
-    if(isTu22kLogoNode(rawNodeName)||isTu22kLogoNode(directName)) {
+    if(tu22k&&(isTu22kLogoNode(rawNodeName)||isTu22kLogoNode(directName))) {
       node.visible=false;
-      if(node instanceof THREE.Mesh) {
-        for(const material of Array.isArray(node.material)?node.material:[node.material]) {
-          material.visible=false;material.transparent=true;material.opacity=0;
-        }
-      }
-    } else if(node instanceof THREE.Mesh && (isTu3000LogoNode(rawNodeName)||isTu3000LogoNode(directName))) {
+    } else if(tu3000&&node instanceof THREE.Mesh && (isTu3000LogoNode(rawNodeName)||isTu3000LogoNode(directName))) {
       tu3000Targets.push(node);
-    } else if(node instanceof THREE.Mesh) {
-      for(const material of Array.isArray(node.material)?node.material:[node.material]) {
-        const map=(material as THREE.MeshStandardMaterial)?.map;
-        if(map && typeof map.name==='string' && map.name.toLowerCase().includes('terraursa')) {
-          node.visible=false;material.visible=false;
-        }
-      }
+
     }
   });
   if(!tu3000Targets.length)return;
   const image=await loadBrandLogoImage();
+  if(!image)return;
   const height=1.60,width=height*(ONTOVIS_LOGO_WIDTH/ONTOVIS_LOGO_HEIGHT);
   const yCenter=90.95,zCenter=0.70;
   const yMin=yCenter-height/2,yMax=yCenter+height/2,zMin=zCenter-width/2,zMax=zCenter+width/2;
   for(const mesh of tu3000Targets) {
+    retired.add(mesh.geometry);mesh.geometry=mesh.geometry.clone();
     const position=mesh.geometry.getAttribute('position');
     if(position && position.count===8) {
       for(let index=0;index<8;index++) {
@@ -120,26 +120,25 @@ export async function sanitizeModelLogos(root:THREE.Object3D) {
       }
       position.needsUpdate=true;mesh.geometry.computeBoundingBox();mesh.geometry.computeBoundingSphere();
     }
-    for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material]) {
-      const standard=material as THREE.MeshStandardMaterial;
-      if(standard.map instanceof THREE.Texture) {
-        const oldImage=standard.map.image as {close?:()=>void}|null;
-        if(oldImage && typeof oldImage.close==='function')oldImage.close();
-        standard.map.dispose();
-      }
-      const texture=new THREE.Texture(image??undefined);
+    const replace=(material:THREE.Material)=>{
+      retired.add(material);
+      const standard=material.clone() as THREE.MeshStandardMaterial;
+      const texture=new THREE.Texture(image);
       texture.name='ontovis-nacelle-logo';texture.colorSpace=THREE.SRGBColorSpace;
       texture.flipY=true;texture.anisotropy=8;
       texture.userData={ontoVisLogoUrl:ONTOVIS_LOGO_URL,width:ONTOVIS_LOGO_WIDTH,height:ONTOVIS_LOGO_HEIGHT};
-      if(image)texture.needsUpdate=true;
+      texture.needsUpdate=true;
       standard.map=texture;standard.transparent=true;standard.depthWrite=false;standard.needsUpdate=true;
-    }
+      return standard;
+    };
+    mesh.material=Array.isArray(mesh.material)?mesh.material.map(replace):replace(mesh.material);
   }
+  retiredLogoResources.set(root,retired);
 }
 
 export const applyNacelleBrandLogo = sanitizeModelLogos;
 
-async function parseModel(bytes:ArrayBuffer) {
+async function parseModel(bytes:ArrayBuffer,contentSha:string) {
   const manager=new THREE.LoadingManager();
   manager.setURLModifier(url=>{requireValue(url.startsWith('blob:'),'UNSUPPORTED_MODEL',422);return url;});
   const loader=new GLTFLoader(manager);
@@ -157,7 +156,7 @@ async function parseModel(bytes:ArrayBuffer) {
     });
   }}));
   const gltf=await loader.parseAsync(bytes,'');
-  await applyNacelleBrandLogo(gltf.scene);
+  await applyNacelleBrandLogo(gltf.scene,contentSha);
   parsedScenes.set(gltf.scene,gltf.scenes);return gltf.scene;
 }
 
@@ -313,7 +312,7 @@ export async function decodeTerrain(version:TerrainVersion,positionsBytes:ArrayB
 export class SceneResourceCache {
   private readonly api:WorkbenchApi;
   private readonly source:SceneResourceSource;
-  private readonly parse:(bytes:ArrayBuffer)=>Promise<THREE.Group>;
+  private readonly parse:(bytes:ArrayBuffer,sha256:string)=>Promise<THREE.Group>;
   private readonly epoch:number;
   private readonly revision:string;
   private readonly abort=new AbortController();
@@ -356,7 +355,7 @@ export class SceneResourceCache {
     const blob=await this.source.modelContent(version,this.abort.signal);this.guard();
     const bytes=await blob.arrayBuffer();this.guard();
     requireValue(bytes.byteLength===version.bytes && await sha256(bytes)===ref.sha256);this.guard();embeddedGlb(bytes);
-    const scene=await this.parse(bytes);
+    const scene=await this.parse(bytes,ref.sha256);
     try {this.guard();addSchematicProxies(scene,version);} catch(error) {this.releaseObject(scene);throw error;}
     this.roots.add(scene);return {version,scene};
   }
@@ -382,19 +381,24 @@ export class SceneResourceCache {
     this.geometries.add(geometry);return geometry;
   }
   private release(value:{dispose:()=>void}) {if(!this.released.has(value)) {this.released.add(value);value.dispose();}}
+  private releaseMaterial(material:THREE.Material) {
+    for(const value of Object.values(material))if(value instanceof THREE.Texture) {
+      const image=value.image as {close?:()=>void}|null;
+      if(image && typeof image.close==='function' && !this.released.has(image)) {this.released.add(image);image.close();}
+      this.release(value);
+    }
+    this.release(material);
+  }
   private releaseObject(root:THREE.Object3D) {
     for(const source of parsedScenes.get(root) || [root])source.traverse(node=>{
       if(!(node instanceof THREE.Mesh || node instanceof THREE.Line || node instanceof THREE.Points))return;
       this.release(node.geometry);
-      for(const material of Array.isArray(node.material)?node.material:[node.material]) {
-        for(const value of Object.values(material))if(value instanceof THREE.Texture) {
-          const image=value.image as {close?:()=>void}|null;
-          if(image && typeof image.close==='function' && !this.released.has(image)) {this.released.add(image);image.close();}
-          this.release(value);
-        }
-        this.release(material);
-      }
+      for(const material of Array.isArray(node.material)?node.material:[node.material])this.releaseMaterial(material);
     });
+    for(const resource of retiredLogoResources.get(root)||[]){
+      if(resource instanceof THREE.Material)this.releaseMaterial(resource);else this.release(resource);
+    }
+    retiredLogoResources.delete(root);
   }
   dispose() {
     this.abort.abort();

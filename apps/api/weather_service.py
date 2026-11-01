@@ -46,32 +46,38 @@ def request(sessions, sid, path, payload):
         if sessions.weather is None: sessions.weather = WeatherStore(sessions.shared.library, sessions.connection_id)
     store = sessions.weather
 
+    scene_states = {}
+
     def check_scene(scene_id):
         identifier(scene_id)
         workspace = sessions.registry.lookup(project)
         require(workspace is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
         library = sessions._workspace(workspace).library
         with library.connect() as db:
-            found = db.execute('''select s.id, r.snapshot from scenes s
+            found = db.execute('''select s.id, s.head_revision, r.snapshot from scenes s
                 join scene_revisions r on r.revision=s.head_revision
                 left join scene_lifecycle l on l.scene_id=s.id
                 where s.id=? and s.project_code=? and coalesce(l.state,'active')='active' ''', (scene_id, project)).fetchone()
         require(found is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
+        scene_states[scene_id] = found['head_revision']
         return _point_from_snapshot(found['id'], found['snapshot'])
 
-    def first_project_point():
+    def first_project_point(allowed=None):
         workspace = sessions.registry.lookup(project)
         if workspace is None: return None
         library = sessions._workspace(workspace).library
         with library.connect() as db:
-            rows = db.execute('''select s.id, r.snapshot from scenes s
+            rows = db.execute('''select s.id, s.head_revision, r.snapshot from scenes s
                 join scene_revisions r on r.revision=s.head_revision
                 left join scene_lifecycle l on l.scene_id=s.id
                 where s.project_code=? and coalesce(l.state,'active')='active'
                 order by s.updated_at desc, s.id''', (project,)).fetchall()
         for item in rows:
+            if allowed is not None and item['id'] not in allowed: continue
             point = _point_from_snapshot(item['id'], item['snapshot'])
-            if point: return point
+            if point:
+                scene_states[item['id']] = item['head_revision']
+                return point
         return None
 
     if action == 'config': value = store.config(project)
@@ -79,19 +85,28 @@ def request(sessions, sid, path, payload):
         value = store.save(project, row.authority.username, body, authorize)
     else:
         saved = store.config(project)
+        allowed = saved.get('legacySceneIds')
         if action == 'test':
             config = validate_config(body['config'])
-            point = (check_scene(body['sceneId']) if 'sceneId' in body else first_project_point()) or dict(latitude=39.9, longitude=116.4)
+            if 'points' in config: allowed = [point['sceneId'] for point in config['points']]
+            point = check_scene(body['sceneId']) if 'sceneId' in body else first_project_point(allowed)
+            if point and allowed is not None and point['sceneId'] not in allowed: point = None
+            require(point is not None, 'WEATHER_POINT_REQUIRED', 422)
             value = store.current(config, point, authorize)
         else:
             point = check_scene(body['sceneId'])
             config = saved['config']
             if saved['revision'] == 0: value = dict(status='unconfigured', source=SOURCE)
             elif not config['enabled']: value = dict(status='disabled', source=SOURCE)
+            elif allowed is not None and body['sceneId'] not in allowed:
+                value = dict(status='unconfigured', error='WEATHER_SCENE_NOT_ENABLED', source=SOURCE)
             elif not point: value = dict(status='unconfigured', source=SOURCE)
             else: value = store.current(config, point, authorize)
             require(store.config(project)['revision'] == saved['revision'], 'WEATHER_CONFIG_CHANGED', 409)
         value.update(revision=saved['revision'], preview=action == 'test')
+    for scene_id, revision in list(scene_states.items()):
+        check_scene(scene_id)
+        require(scene_states[scene_id] == revision, 'SCENE_CHANGED', 409)
     authorize()
     return {**value, 'endpoint': ENDPOINT, 'canManage': access.get('role') == 'admin',
             'accessRevision': access['accessRevision'], 'projectRef': payload['projectRef'], 'sessionRevision': row.revision}

@@ -2,13 +2,13 @@ export interface BeaufortInfo {
   scale: number | null;
   name: string;
   speedMs: number | null;
-  stage: 'idle' | 'generating' | 'rated' | 'cutout' | 'unknown';
+  stage: 'forecast' | 'unknown';
   stageLabel: string;
   description: string;
 }
 
 export function getBeaufortInfo(speed: number | null | undefined, en = false): BeaufortInfo {
-  if (speed === null || speed === undefined || !Number.isFinite(speed)) {
+  if (speed === null || speed === undefined || !Number.isFinite(speed) || speed < 0) {
     return {
       scale: null,
       name: '—',
@@ -37,27 +37,9 @@ export function getBeaufortInfo(speed: number | null | undefined, en = false): B
   else if (s < 32.7) { scale = 11; zhName = '11级 暴风'; enName = '11 Violent storm'; }
   else { scale = 12; zhName = '12级 飓风'; enName = '12 Hurricane'; }
 
-  let stage: BeaufortInfo['stage'] = 'generating';
-  let stageLabel = '';
-  let description = '';
-
-  if (s < 3.0) {
-    stage = 'idle';
-    stageLabel = en ? 'Below cut-in · Standby' : '低于切入风速 · 待机';
-    description = en ? 'Below turbine cut-in (~3 m/s). Generators idle.' : '低于典型切入风速(~3 m/s)，风机微风空转待机。';
-  } else if (s < 11.5) {
-    stage = 'generating';
-    stageLabel = en ? 'Cut-in reach · Ramp-up' : '达切入风速 · 发电爬坡';
-    description = en ? 'Within power ramp-up curve. Normal generation.' : '处于典型功率爬升段，发电机组稳定并网发电。';
-  } else if (s < 25.0) {
-    stage = 'rated';
-    stageLabel = en ? 'Rated zone · Full power' : '额定风速区 · 满发恒功';
-    description = en ? 'Optimal rated output. Pitch control active.' : '进入额定风速满发段，智能变桨保持额定功率。';
-  } else {
-    stage = 'cutout';
-    stageLabel = en ? 'Cut-out threshold · Defense' : '切出保护区 · 防御顺桨';
-    description = en ? 'Exceeds cut-out (~25 m/s). Pitch to feather for safety.' : '达到或超出风机切出风速(~25 m/s)，机组执行顺桨停机保护。';
-  }
+  const stage: BeaufortInfo['stage'] = 'forecast';
+  const stageLabel = en ? '10 m forecast reference' : '10 m 预报参考';
+  const description = en ? 'Forecast wind does not determine turbine operating state.' : '预报风速不代表设备运行状态。';
 
   return {
     scale,
@@ -114,59 +96,42 @@ export function getPrecipitationInfo(mm: number | null | undefined, hours = 1, e
   if (mm === null || mm === undefined || !Number.isFinite(mm)) {
     return { mm: null, label: en ? 'No data' : '暂无数据', desc: en ? 'No precipitation record' : '无降水统计' };
   }
-  const v = Math.max(0, mm);
-  if (v === 0) return { mm: v, label: en ? 'No rain' : '无雨干爽', desc: en ? 'Dry condition' : '无降水，环境干燥' };
-  if (v <= 2.5) return { mm: v, label: en ? 'Light rain' : '小雨淅沥', desc: en ? 'Slight surface dampness' : '轻微降雨，机舱表面微湿' };
-  if (v <= 8.0) return { mm: v, label: en ? 'Moderate rain' : '中雨', desc: en ? 'Noticeable rain showers' : '持续降雨，注意防滑与排水' };
-  if (v <= 15.0) return { mm: v, label: en ? 'Heavy rain' : '大雨', desc: en ? 'Heavy rain showers' : '强降水，高空绝缘与接地防护' };
-  return { mm: v, label: en ? 'Torrential rain' : '暴雨预警', desc: en ? 'Severe precipitation' : '极端暴雨，关注场区防汛' };
+  if (mm < 0 || !Number.isFinite(hours) || hours <= 0) {
+    return {mm:null,label:en?'No data':'暂无数据',desc:en?'Invalid forecast interval':'预报时段无效'};
+  }
+  return {mm,label:en?'Forecast accumulation':'预报累计',
+    desc:en?`${hours} h forecast; not a surface observation`:`${hours} h 时段累计，非现场表面观测`};
 }
 
 export function getCloudCoverageInfo(percent: number | null | undefined, en = false) {
   if (percent === null || percent === undefined || !Number.isFinite(percent)) {
-    return { percent: null, label: en ? 'Unknown' : '云量未知', lighting: en ? 'Standard ambient' : '环境采光正常' };
+    return { percent: null, label: en ? 'Unknown' : '云量未知', lighting: en ? 'Cloud forecast unavailable' : '暂无云量预报' };
   }
   const p = Math.min(100, Math.max(0, Math.round(percent)));
-  if (p < 20) return { percent: p, label: en ? 'Clear sky' : '晴朗透亮', lighting: en ? 'Direct sunlight' : '直射光照充足，阴影清晰' };
-  if (p < 60) return { percent: p, label: en ? 'Partly cloudy' : '晴间多云', lighting: en ? 'Intermittent sunlight' : '日照云影交错，局部漫射' };
-  if (p < 85) return { percent: p, label: en ? 'Mostly cloudy' : '多云遮蔽', lighting: en ? 'Soft diffused skylight' : '柔和漫射天光，阴影浅淡' };
-  return { percent: p, label: en ? 'Overcast' : '浓云密布', lighting: en ? 'Soft sky scattering' : '天空高散射漫射光，立体补光' };
+  if (p < 20) return { percent: p, label: en ? 'Clear sky' : '晴朗透亮', lighting: en ? 'Low cloud fraction forecast' : '预报云量较少' };
+  if (p < 60) return { percent: p, label: en ? 'Partly cloudy' : '晴间多云', lighting: en ? 'Partial cloud fraction forecast' : '预报局部有云' };
+  if (p < 85) return { percent: p, label: en ? 'Mostly cloudy' : '多云遮蔽', lighting: en ? 'High cloud fraction forecast' : '预报云量较多' };
+  return { percent: p, label: en ? 'Overcast' : '浓云密布', lighting: en ? 'Overcast forecast' : '预报云层覆盖' };
 }
 
-export function getOperationAdvice(condition: string, windSpeed: number | null | undefined, precipitation: number | null | undefined, en = false) {
-  const s = windSpeed ?? 0;
-  const p = precipitation ?? 0;
-  if (s >= 18) {
-    return {
-      status: 'danger',
-      title: en ? 'High wind warning' : '大风高危预警',
-      desc: en ? 'Wind exceeds 18 m/s. Prohibit climbing and nacelle roof works.' : '风速超过 18 m/s，严禁登塔、机舱顶部及叶片高空作业。'
-    };
+export function getOperationAdvice(condition: string, windSpeed: number | null | undefined, precipitation: number | null | undefined, en = false, usable = true) {
+  if (!usable || windSpeed == null || precipitation == null || !Number.isFinite(windSpeed) || windSpeed < 0
+      || !Number.isFinite(precipitation) || precipitation < 0 || !['clear','cloud','rain','snow','sleet','fog'].includes(condition)) {
+    return {status:'unknown',title:en?'Current forecast unavailable':'当前预报不可用',
+      desc:en?'No operations assessment is available.':'不提供作业适宜度判断。'};
   }
-  if (['rain', 'snow', 'sleet'].includes(condition) || p > 3) {
-    return {
-      status: 'warning',
-      title: en ? 'Slippery rain/snow' : '阴雨湿滑警告',
-      desc: en ? 'Rainy/snowy condition. Suspend external blade rope access.' : '雨雪天气导致风机表面湿滑，暂缓高空吊篮与叶片绳索巡检。'
-    };
-  }
-  if (condition === 'fog') {
-    return {
-      status: 'warning',
-      title: en ? 'Low visibility fog' : '浓雾能见度受限',
-      desc: en ? 'Foggy condition. Not recommended for drone optical inspections.' : '大雾导致能见度受限，不建议进行无人机叶片外观航拍。'
-    };
-  }
-  if (s >= 12) {
-    return {
-      status: 'caution',
-      title: en ? 'Strong breeze caution' : '强风巡检提示',
-      desc: en ? 'Wind 12~18 m/s. Drone inspection must counter wind gusts.' : '风速达 6 级强风，无人机巡检需注意阵风扰动及电池能耗。'
-    };
-  }
-  return {
-    status: 'good',
-    title: en ? 'Favorable inspection window' : '气象窗口良好',
-    desc: en ? 'Conditions ideal for routine patrols, drone inspections, and maintenance.' : '风向风速稳定，适宜开展无人机全自动航线巡检与例行维护。'
-  };
+  if (windSpeed >= 12) return {status:'caution',title:en?'Higher wind forecast':'预报风速较高',
+    desc:en?'10 m forecast reference; confirm conditions on site.':'10 m 预报参考，请核查现场风况。'};
+  if (['rain','snow','sleet'].includes(condition) || precipitation > 3) return {status:'warning',
+    title:en?'Precipitation forecast':'降水预报提示',
+    desc:en?'Precipitation is forecast for this interval; confirm conditions on site.':'当前时段预报有降水，请核查现场天气。'};
+  if (condition === 'fog') return {status:'warning',title:en?'Fog forecast':'雾预报提示',
+    desc:en?'Visibility requires on-site verification.':'现场能见度需要核查。'};
+  return {status:'neutral',title:en?'Weather reference':'天气参考',
+    desc:en?'Forecast only. Operations require on-site checks and applicable procedures.':'仅供预报参考，作业条件以现场核查与适用规程为准。'};
+}
+
+export function formatWeatherCoordinates(latitude:number,longitude:number) {
+  if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180)return '—';
+  return `${Math.abs(latitude).toFixed(4)}°${latitude<0?'S':'N'}, ${Math.abs(longitude).toFixed(4)}°${longitude<0?'W':'E'}`;
 }

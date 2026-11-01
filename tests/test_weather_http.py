@@ -76,5 +76,44 @@ class WeatherHttpTests(unittest.TestCase):
         self.assertEqual(self.request('config',project='B')[1]['revision'],0)
         self.assertEqual(self.request('current',dict(sceneId=self.point['sceneId'],endpoint='https://other'))[0],422)
 
+    def test_scene_anchor_changed_during_provider_fetch_discards_old_forecast(self):
+        self.assertEqual(self.save()[0], 200)
+        def fetch(*args):
+            library = self.sessions._workspace(self.sessions.registry.lookup('A')).library
+            with library.connect() as db:
+                snap = json.loads(db.execute('select snapshot from scene_revisions where revision=?', ('r-geo',)).fetchone()[0])
+                snap['coordinateFrame']['anchor']['geographicAnchor'] = [-2.5, 55.9]
+                db.execute('insert into scene_revisions values (?,?,?,?,?)', ('r-moved', self.scene['sceneId'], json.dumps(snap), '[]', '2026-10-30T01:00:00Z'))
+                db.execute('update scenes set head_revision=? where id=?', ('r-moved', self.scene['sceneId']))
+            return 200, document(), {}
+        self.sessions.weather.fetcher = fetch
+        status, value = self.request('current', dict(sceneId=self.scene['sceneId']))
+        self.assertEqual((status, value['code']), (409, 'SCENE_CHANGED'))
+
+    def test_api_test_requires_a_real_project_scene_anchor(self):
+        self.fixture.call('scenes/delete', 'A', sceneId=self.scene['sceneId'], expectedSceneRevision='r-geo',
+                          expectedLifecycleRevision=0, clientRequestId=str(uuid4()))
+        status, value = self.request('test', dict(config=self.config, expectedAccessRevision='A:admin'))
+        self.assertEqual((status, value['code']), (422, 'WEATHER_POINT_REQUIRED'))
+        self.assertEqual(self.calls, [])
+
+    def test_legacy_scope_does_not_expand_external_coordinate_disclosure_without_explicit_save(self):
+        legacy = {**self.config, 'points':[{'sceneId':self.local_scene['sceneId'], 'label':'Legacy scene',
+                                          'latitude':39.9, 'longitude':116.4}]}
+        self.assertEqual(self.save(legacy)[0], 200)
+        config = self.request('config')[1]
+        self.assertEqual(config['legacySceneIds'], [self.local_scene['sceneId']])
+        self.assertNotIn('points', config['config'])
+        status, value = self.request('current', dict(sceneId=self.scene['sceneId']))
+        self.assertEqual((status, value['status']), (200, 'unconfigured'))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.request('test', dict(config=self.config, expectedAccessRevision='A:admin'))[0], 422)
+        self.assertEqual(self.calls, [])
+        # A new administrator save explicitly adopts the project-wide anchor scope.
+        self.assertEqual(self.save(self.config, revision=1)[0], 200)
+        self.assertNotIn('legacySceneIds', self.request('config')[1])
+        self.assertEqual(self.request('current', dict(sceneId=self.scene['sceneId']))[1]['status'], 'available')
+        self.assertEqual(len(self.calls), 1)
+
 
 if __name__=='__main__':unittest.main()

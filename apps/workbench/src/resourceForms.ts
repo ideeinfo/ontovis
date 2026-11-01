@@ -1,7 +1,7 @@
 import {ApiError, failureMessage} from './api.ts';
 import {resourceText, type ResourceMessageKey} from './resourceMessages.ts';
 import type {Locale} from './messages';
-import type {ModelCalibrationInput, ModelPurpose, ProjectModelAsset, ProjectModelVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
+import type {ModelCalibrationInput, ModelPurpose, ProjectModelAsset, ProjectModelVersion, ProjectTurbineDefinition, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
 import type {VerticalDatum, Vector3} from './sceneTypes';
 
 export class ResourceFormError extends Error {
@@ -65,6 +65,15 @@ export function modelMetadata(fields: {name:string;purpose:ModelPurpose;source:s
     ...(fields.definitionEntityUid?{definitionEntityUid:fields.definitionEntityUid}:{}),
     ...(fields.modelCode?{modelCode:fields.modelCode}:{}),
     ...(fields.representationType?{representationType:fields.representationType}:{})};
+}
+/** Retain existing association metadata when a catalogue is unavailable during a rename. */
+export function modelRepresentationFields(original:Pick<ProjectModelVersion,'definitionEntityUid'|'modelCode'|'representationType'>,
+    uid:string,representationType:'appearance'|'detailed'|'',turbines:ProjectTurbineDefinition[]) {
+  const definitionEntityUid=uid||null;
+  if(definitionEntityUid===(original.definitionEntityUid||null))return {representationType:representationType||null};
+  const chosen=turbines.find(item=>item.definitionEntityUid===definitionEntityUid);
+  if(definitionEntityUid&&!chosen)throw new ApiError(409,'ENGINEERING_CHANGED');
+  return {definitionEntityUid,modelCode:chosen?.modelCode||null,representationType:representationType||null};
 }
 export interface TerrainFields {
   name:string;source:string;license:string;rights:boolean;datum:VerticalDatum|'';relativeReference:string;

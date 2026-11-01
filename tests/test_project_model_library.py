@@ -80,7 +80,7 @@ class ProjectModelLibraryTests(unittest.TestCase):
                 db.execute('insert into versions select ?,?,actor,name,source_note,sha256,bytes,created_at,revision,components,report from versions where id=?',
                            (identifier, str(uuid4()), source['modelVersionId']))
                 if index < legacy_versions: continue
-                db.execute('insert into project_model_assets select ?,project_code,name,purpose,revision,created_at from project_model_assets where id=?',
+                db.execute('insert into project_model_assets(id,project_code,name,purpose,revision,created_at) select ?,project_code,name,purpose,revision,created_at from project_model_assets where id=?',
                            (asset_id, source['modelAssetId']))
                 db.execute('insert into project_model_versions select ?,?,content_revision,calibration,null from project_model_versions where version_id=?',
                            (identifier, asset_id, source['modelVersionId']))
@@ -530,5 +530,35 @@ class ProjectModelLibraryTests(unittest.TestCase):
         body['clientRequestId'] = str(uuid4()); body['expectedSceneRevision'] = saved['sceneRevision']
         self.expect('MODEL_CALIBRATION_REQUIRED', lambda: scenes.save(body, 'fixture-admin', self.guard, resources, lambda *_: None))
 
+
+    def test_representation_metadata_rejects_invalid_json_shapes_and_identifiers(self):
+        before = self.counts()
+        for change in ({'definitionEntityUid': {}}, {'definitionEntityUid': 'entity:missing'},
+                       {'modelCode': ['bad']}, {'modelCode': 'bad\ncode'},
+                       {'representationType': 0}, {'representationType': ''}):
+            with self.subTest(change=change), self.assertRaises(PreviewError) as caught:
+                self.upload(self.metadata(**change))
+            self.assertEqual(caught.exception.status, 422)
+        self.assertEqual(self.counts(), before)
+
+    def test_turbine_catalogue_uses_latest_verified_version_and_does_not_invent_pairing(self):
+        uid = 'entity:' + str(uuid4())
+        source = self.upload(self.metadata(definitionEntityUid=uid, modelCode='synthetic', representationType='detailed'))
+        first = self.calibrate(source)
+        latest = self.calibrate(source)
+        self.assertNotEqual(first['modelVersionId'], latest['modelVersionId'])
+        calls = []
+        result = self.models.turbine_definitions(lambda: calls.append('authorize'))
+        self.assertGreaterEqual(len(calls), 2)
+        detailed = result['items'][0]['detailedModel']
+        self.assertEqual(detailed['modelVersionId'], latest['modelVersionId'])
+        self.assertEqual(detailed['calibrationState'], 'verified')
+        self.assertEqual(result['pairMap'], {})
+        self.assertEqual(result['pairingStatus'], 'unverified')
+        def revoke_after_read():
+            calls.append('read')
+            if len(calls) > 1: raise PreviewError(403, 'FORBIDDEN')
+        calls.clear()
+        with self.assertRaises(PreviewError): self.models.turbine_definitions(revoke_after_read)
 
 if __name__ == '__main__': unittest.main()

@@ -54,7 +54,8 @@ function createSyntheticTurbineModel() {
     modelVersionId: 'detailed-v1',
     contentRevision: 'rev-det-1',
     sha256: 'sha-synthetic-detailed-model',
-    calibration: {state: 'verified'}
+    calibration: {state: 'verified'},
+    representationType:'detailed'
   };
 
   return {root, version, towerMesh, shellMesh, rotorMesh, genMesh, gearMesh};
@@ -146,7 +147,8 @@ test('Appearance-only models without internal components reject explosion and xr
     modelVersionId: 'appearance-v1',
     contentRevision: 'rev-app-1',
     sha256: 'sha-synthetic-appearance-model',
-    calibration: {state: 'verified'}
+    calibration: {state: 'verified'},
+    representationType:'detailed'
   };
 
   const req = {

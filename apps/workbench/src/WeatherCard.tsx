@@ -1,7 +1,7 @@
 import {
   CloudSun, CloudRain, CloudSnow, CloudFog, Cloud, Sun,
-  Compass, Wind, Droplets, Gauge, AlertTriangle, CheckCircle2,
-  Clock, MapPin, ShieldAlert, Activity
+  Compass, Wind, Droplets, Gauge, AlertTriangle, Info, Moon,
+  Clock, MapPin, Activity
 } from 'lucide-react';
 import { weatherMessage, weatherUsable, type WeatherView } from './weather';
 import {
@@ -10,6 +10,7 @@ import {
   getPrecipitationInfo,
   getCloudCoverageInfo,
   getOperationAdvice,
+  formatWeatherCoordinates,
   type BeaufortInfo,
   type WindDirectionInfo
 } from './weatherCardLogic';
@@ -112,7 +113,7 @@ export function WeatherCard({
       : kind === 'fog'
       ? CloudFog
       : kind === 'clear'
-      ? Sun
+      ? f?.symbol?.endsWith('_night') ? Moon : Sun
       : kind === 'cloud'
       ? Cloud
       : CloudSun;
@@ -132,24 +133,24 @@ export function WeatherCard({
     disabled: t('项目天气已停用', 'Project weather disabled'),
     unavailable: t('暂无可用预报', 'Forecast unavailable'),
     stale: t('预报暂不可用', 'Forecast not current'),
-    available: t('微气象监测看板', 'Microclimate Dashboard')
+    available: t('场景天气预报', 'Scene Weather Forecast')
   };
 
   // 辅助参数计算
-  const beaufort = getBeaufortInfo(f?.windSpeedMs, en);
+  const beaufort = getBeaufortInfo(usable?f?.windSpeedMs:null, en);
   const direction = getWindDirectionInfo(f?.windFromDeg, en);
   const precip = getPrecipitationInfo(f?.precipitationMm, f?.intervalHours ?? 1, en);
   const cloud = getCloudCoverageInfo(f?.cloudPercent, en);
-  const advice = getOperationAdvice(f?.condition || '', f?.windSpeedMs, f?.precipitationMm, en);
+  const advice = getOperationAdvice(f?.condition || '', f?.windSpeedMs, f?.precipitationMm, en, usable);
 
   // 轮毂高度(约100m)风速推算：基于风切变指数 alpha=0.14
   const hubHeightSpeed =
-    f?.windSpeedMs !== null && f?.windSpeedMs !== undefined
+    usable && f?.windSpeedMs !== null && f?.windSpeedMs !== undefined
       ? (f.windSpeedMs * Math.pow(100 / 10, 0.14)).toFixed(1)
       : null;
 
   return (
-    <section className="wx-weather-card wx-dashboard" aria-label={t('微气象监测看板', 'Microclimate Dashboard')}>
+    <section className="wx-weather-card wx-dashboard" aria-label={t('场景天气预报', 'Scene Weather Forecast')}>
       {/* 头部标题与状态栏 */}
       <header className="wx-dashboard-header">
         <div className="wx-title-group">
@@ -161,7 +162,7 @@ export function WeatherCard({
           <div className="wx-location-badge" title={t('当前场景地理定位参考点', 'Current scene geographic anchor')}>
             <MapPin size={13} />
             <span>
-              {value.point.latitude.toFixed(4)}°N, {value.point.longitude.toFixed(4)}°E
+              {formatWeatherCoordinates(value.point.latitude,value.point.longitude)}
             </span>
           </div>
         )}
@@ -183,7 +184,7 @@ export function WeatherCard({
       {value?.status === 'available' && !usable && (
         <div className="wx-alert-box stale" role="status">
           <Clock size={15} />
-          <span>{t('当前预报时段已结束，三维环境特效已切换为保底光照。', 'Forecast period ended; 3D effects fallback active.')}</span>
+          <span>{t('当前预报数据不完整或不在有效时段。', 'Forecast data is incomplete or outside its valid period.')}</span>
         </div>
       )}
 
@@ -211,7 +212,7 @@ export function WeatherCard({
             <div className="wx-hero-right">
               <div className="wx-valid-pill">
                 <span className={`wx-status-dot ${usable ? 'active' : 'inactive'}`} />
-                <span>{usable ? t('预报实时生效中', 'Forecast Active') : t('时效已过期', 'Period Expired')}</span>
+                <span>{usable ? t('当前有效预报', 'Current forecast') : t('预报不可用', 'Forecast unavailable')}</span>
               </div>
               <div className="wx-timing-meta">
                 <p>
@@ -231,7 +232,7 @@ export function WeatherCard({
             <div className="wx-deck wx-wind-deck">
               <div className="wx-deck-head">
                 <Wind size={16} />
-                <h4>{t('风况与机组运行工况', 'Wind Dynamics & Turbine States')}</h4>
+                <h4>{t('风况预报', 'Wind Forecast')}</h4>
                 <small>{t('10m 气象基准', '10m ref')}</small>
               </div>
 
@@ -267,16 +268,13 @@ export function WeatherCard({
                     data-stage={beaufort.stage}
                     style={{ width: `${Math.min(100, ((f.windSpeedMs ?? 0) / 30) * 100)}%` }}
                   />
-                  {/* 标记关键风速点 */}
-                  <span className="wx-marker" style={{ left: '10%' }} title={t('切入风速约 3m/s', 'Cut-in ~3m/s')} />
-                  <span className="wx-marker" style={{ left: '38.3%' }} title={t('额定风速约 11.5m/s', 'Rated ~11.5m/s')} />
-                  <span className="wx-marker" style={{ left: '83.3%' }} title={t('切出风速约 25m/s', 'Cut-out ~25m/s')} />
+                  <span className="wx-marker" style={{ left: '33.3%' }} title="10 m/s" />
+                  <span className="wx-marker" style={{ left: '66.7%' }} title="20 m/s" />
                 </div>
                 <div className="wx-meter-labels">
                   <span>0</span>
-                  <span>{t('切入 3', 'Cut-in 3')}</span>
-                  <span>{t('额定 11.5', 'Rated 11.5')}</span>
-                  <span>{t('切出 25', 'Cut-out 25')}</span>
+                  <span>10</span>
+                  <span>20</span>
                   <span>30+ m/s</span>
                 </div>
               </div>
@@ -287,7 +285,7 @@ export function WeatherCard({
               <div className="wx-deck-head">
                 <Gauge size={16} />
                 <h4>{t('环境气象多维指标', 'Atmospheric Metrics')}</h4>
-                <small>{t('场区微气象', 'Site weather')}</small>
+                <small>{t('预报参考', 'Forecast reference')}</small>
               </div>
 
               <div className="wx-metrics-list">
@@ -332,16 +330,16 @@ export function WeatherCard({
                   <div className="wx-metric-row-head">
                     <div className="wx-metric-icon-title">
                       <Compass size={15} className="wx-metric-icon text-teal" />
-                      <span>{t('轮毂高度风切变', 'Hub Wind Shear')}</span>
+                      <span>{t('假设高度风速估算', 'Assumed-height estimate')}</span>
                     </div>
-                    <span className="wx-metric-pill">{t('~100m 轮毂高度', '~100m Hub')}</span>
+                    <span className="wx-metric-pill">{t('100 m 假设', '100 m assumption')}</span>
                   </div>
                   <div className="wx-metric-row-body">
                     <div className="wx-metric-number">
                       <strong>{hubHeightSpeed ?? '—'}</strong>
                       <small>m/s</small>
                     </div>
-                    <span className="wx-metric-sub">{t('基于切变指数α=0.14推算', 'Est. by wind shear α=0.14')}</span>
+                    <span className="wx-metric-sub">{t('α=0.14 假设，非实测', 'Assumed α=0.14; not observed')}</span>
                   </div>
                 </div>
               </div>
@@ -350,15 +348,11 @@ export function WeatherCard({
             {/* 横跨两栏：现场运维作业适宜度通栏横幅 Banner */}
             <div className={`wx-advice-banner ${advice.status}`}>
               <div className="wx-advice-badge">
-                {advice.status === 'good' ? (
-                  <CheckCircle2 size={18} className="wx-advice-icon text-green" />
-                ) : advice.status === 'danger' ? (
-                  <ShieldAlert size={18} className="wx-advice-icon text-red" />
-                ) : (
-                  <AlertTriangle size={18} className="wx-advice-icon text-amber" />
-                )}
+                {advice.status === 'warning' || advice.status === 'caution'
+                  ? <AlertTriangle size={18} className="wx-advice-icon text-amber" />
+                  : <Info size={18} className="wx-advice-icon" />}
                 <div className="wx-advice-badge-text">
-                  <span className="wx-advice-tag">{t('现场作业适宜度', 'Operations Window')}</span>
+                  <span className="wx-advice-tag">{t('天气提示', 'Weather reference')}</span>
                   <strong className="wx-advice-title">{advice.title}</strong>
                 </div>
               </div>
@@ -406,8 +400,8 @@ export function WeatherCard({
         </div>
         <p className="wx-disclaimer">
           {t(
-            '全球数值气象模式预报按时段归一化驱动；不替代风电场现场测风塔或机舱激光雷达实测遥测数据。',
-            'Normalized global numerical forecast; does not substitute on-site met mast or turbine lidar telemetry.'
+            '全球数值预报，仅供气象参考，不替代现场观测或设备遥测。',
+            'Numerical forecast reference; not on-site observations or equipment telemetry.'
           )}
         </p>
       </footer>

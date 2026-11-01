@@ -18,6 +18,9 @@ const ROOT = '/api/workbench/';
 export class SceneApi {
   private readonly api: WorkbenchApi;
   constructor(api: WorkbenchApi) {this.api = api;}
+  get sessionScope() {return `${this.api.epoch}:${this.api.revision}`;}
+  get authorizationScope() {return JSON.stringify([this.api.revision,this.api.project]);}
+  get currentProjectCode() {return this.api.project?.projectCode;}
 
   imagery(q='',signal?:AbortSignal) {return this.api.request<ImageryCatalog>(ROOT+'imagery',{q},signal);}
   imageryVersion(imageryVersionId:string,signal?:AbortSignal) {return this.api.request<ImageryVersion>(ROOT+'imagery/version',{imageryVersionId},signal);}
@@ -130,7 +133,8 @@ export class SceneApi {
   saveModelInfo(body:ModelInfoRequest,signal?:AbortSignal) {
     return this.api.request<ProjectModelWrite>(ROOT+'resources/model/info/save',body,signal);
   }
-  turbineDefinitions(projectCode = 'Demo-PDS', signal?: AbortSignal) {
+  turbineDefinitions(projectCode = this.currentProjectCode, signal?: AbortSignal):Promise<ProjectTurbineCatalog> {
+    if(!projectCode)return Promise.resolve({projectCode:'',items:[],pairMap:{},associationBasis:'user_declared',pairingStatus:'unverified'});
     return this.api.request<ProjectTurbineCatalog>('/api/workbench/project-turbine-definitions', {projectCode}, signal);
   }
   modelMetadata(modelAssetId:string,modelVersionId:string,signal?:AbortSignal) {

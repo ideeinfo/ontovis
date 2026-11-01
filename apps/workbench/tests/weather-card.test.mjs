@@ -1,51 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  getBeaufortInfo,
-  getWindDirectionInfo,
-  getPrecipitationInfo,
-  getCloudCoverageInfo,
-  getOperationAdvice
-} from '../src/weatherCardLogic.ts';
+import {getBeaufortInfo,getWindDirectionInfo,getPrecipitationInfo,getCloudCoverageInfo,getOperationAdvice,formatWeatherCoordinates} from '../src/weatherCardLogic.ts';
 
-test('getBeaufortInfo correctly calculates Beaufort wind scale and turbine operational stages', () => {
-  // 空值或无效值
-  const nullResult = getBeaufortInfo(null);
-  assert.equal(nullResult.scale, null);
-  assert.equal(nullResult.stage, 'unknown');
-
-  // 0 级 Calm (0.1 m/s)
-  const calm = getBeaufortInfo(0.1);
-  assert.equal(calm.scale, 0);
-  assert.equal(calm.stage, 'idle');
-
-  // 2 级 Light breeze (2.0 m/s) - 低于切入风速 3m/s 处于待机状态
-  const breeze = getBeaufortInfo(2.0);
-  assert.equal(breeze.scale, 2);
-  assert.equal(breeze.stage, 'idle');
-
-  // 4 级 Moderate breeze (6.5 m/s) - 切入发电爬坡段
-  const mod = getBeaufortInfo(6.5);
-  assert.equal(mod.scale, 4);
-  assert.equal(mod.stage, 'generating');
-  assert.match(mod.name, /4级 和风/);
-
-  // 6 级 Strong breeze (12.0 m/s) - 额定满发恒功段 (11.5~25)
-  const strong = getBeaufortInfo(12.0);
-  assert.equal(strong.scale, 6);
-  assert.equal(strong.stage, 'rated');
-
-  // 10 级 Storm (26.0 m/s) - 达到或超出切出风速 (>=25)
-  const storm = getBeaufortInfo(26.0);
-  assert.equal(storm.scale, 10);
-  assert.equal(storm.stage, 'cutout');
-
-  // 英文自适应
-  const enMod = getBeaufortInfo(6.5, true);
-  assert.equal(enMod.name, '4 Moderate breeze');
-  assert.match(enMod.stageLabel, /Cut-in/);
+test('wind scale uses forecast wind without asserting an equipment operating state',()=>{
+  for(const value of [null,undefined,NaN,Infinity,-1])assert.equal(getBeaufortInfo(value).stage,'unknown');
+  for(const [speed,scale] of [[.1,0],[2,2],[6.5,4],[12,6],[26,10]]){
+    const result=getBeaufortInfo(speed);assert.equal(result.scale,scale);assert.equal(result.stage,'forecast');
+    assert.doesNotMatch(result.description,/并网|满发|顺桨|正常发电/);
+  }
 });
-
 test('getWindDirectionInfo correctly maps 360-degree angles to 16 cardinal points', () => {
   // 无效值
   const nullDir = getWindDirectionInfo(null);
@@ -92,72 +55,32 @@ test('getWindDirectionInfo correctly maps 360-degree angles to 16 cardinal point
   assert.equal(seEn.name, 'Southeast');
 });
 
-test('getPrecipitationInfo evaluates rain levels accurately', () => {
-  // 无雨
-  const dry = getPrecipitationInfo(0);
-  assert.equal(dry.label, '无雨干爽');
 
-  // 小雨 (1.5mm)
-  const light = getPrecipitationInfo(1.5);
-  assert.equal(light.label, '小雨淅沥');
-
-  // 中雨 (5.0mm)
-  const mod = getPrecipitationInfo(5.0);
-  assert.equal(mod.label, '中雨');
-
-  // 大雨 (10.0mm)
-  const heavy = getPrecipitationInfo(10.0);
-  assert.equal(heavy.label, '大雨');
-
-  // 暴雨 (20.0mm)
-  const storm = getPrecipitationInfo(20.0);
-  assert.equal(storm.label, '暴雨预警');
+test('precipitation preserves the accumulation interval and does not invent an official warning or surface observation',()=>{
+  for(const hours of [1,6,12]){
+    const result=getPrecipitationInfo(20,hours);assert.match(result.desc,new RegExp(`${hours} h`));
+    assert.equal(result.label,'预报累计');assert.doesNotMatch(result.label,/预警|湿|干爽/);
+  }
+  assert.equal(getPrecipitationInfo(null).mm,null);
+  assert.equal(getPrecipitationInfo(-1).mm,null);
 });
-
-test('getCloudCoverageInfo describes cloud fractions and lighting types', () => {
-  // 晴空少云 (10%)
-  const clear = getCloudCoverageInfo(10);
-  assert.equal(clear.label, '晴朗透亮');
-  assert.match(clear.lighting, /直射光照/);
-
-  // 晴间多云 (40%)
-  const partly = getCloudCoverageInfo(40);
-  assert.equal(partly.label, '晴间多云');
-
-  // 多云遮蔽 (75%)
-  const cloudy = getCloudCoverageInfo(75);
-  assert.equal(cloudy.label, '多云遮蔽');
-  assert.match(cloudy.lighting, /漫射天光/);
-
-  // 阴天浓云 (95%)
-  const overcast = getCloudCoverageInfo(95);
-  assert.equal(overcast.label, '浓云密布');
-  assert.match(overcast.lighting, /天空高散射漫射光/);
+test('cloud cover labels do not assert on-site sunlight or nighttime lighting',()=>{
+  for(const cloud of [10,40,75,95])assert.match(getCloudCoverageInfo(cloud).lighting,/预报/);
+  assert.equal(getCloudCoverageInfo(null).percent,null);
 });
-
-test('getOperationAdvice gives accurate safety recommendations for wind farm tasks', () => {
-  // 极端大风 (20 m/s)
-  const danger = getOperationAdvice('clear', 20.0, 0);
-  assert.equal(danger.status, 'danger');
-  assert.match(danger.title, /大风高危预警/);
-
-  // 阴雨天气 (rain, 4.0 m/s)
-  const rain = getOperationAdvice('rain', 4.0, 2.0);
-  assert.equal(rain.status, 'warning');
-  assert.match(rain.title, /阴雨湿滑警告/);
-
-  // 浓雾天气 (fog)
-  const fog = getOperationAdvice('fog', 3.0, 0);
-  assert.equal(fog.status, 'warning');
-  assert.match(fog.title, /浓雾能见度受限/);
-
-  // 强风警惕 (14.0 m/s)
-  const strong = getOperationAdvice('clear', 14.0, 0);
-  assert.equal(strong.status, 'caution');
-  assert.match(strong.title, /强风巡检提示/);
-
-  // 良好气象 (6.0 m/s, clear)
-  const good = getOperationAdvice('clear', 6.0, 0);
-  assert.equal(good.status, 'good');
-  assert.match(good.title, /气象窗口良好/);
+test('missing, stale, unknown or invalid data never produces favorable operations advice',()=>{
+  for(const args of [['clear',null,null],['unknown',6,0],['clear',NaN,0],['clear',-1,0]]){
+    assert.equal(getOperationAdvice(...args).status,'unknown');
+  }
+  assert.equal(getOperationAdvice('clear',6,0,false,false).status,'unknown');
+  assert.equal(getOperationAdvice('clear',6,0).status,'neutral');
+  assert.equal(getOperationAdvice('rain',6,4).status,'warning');
+  assert.equal(getOperationAdvice('clear',20,0).status,'caution');
+  assert.doesNotMatch(getOperationAdvice('clear',6,0).desc,/适宜|自动航线|理想/);
+});
+test('coordinates retain hemispheres, including UK and southern-hemisphere scenes',()=>{
+  assert.equal(formatWeatherCoordinates(55.897659,-2.507093),'55.8977°N, 2.5071°W');
+  assert.equal(formatWeatherCoordinates(-33,-70),'33.0000°S, 70.0000°W');
+  assert.equal(formatWeatherCoordinates(0,0),'0.0000°N, 0.0000°E');
+  for(const [lat,lon] of [[91,0],[0,-181],[NaN,0]])assert.equal(formatWeatherCoordinates(lat,lon),'—');
 });

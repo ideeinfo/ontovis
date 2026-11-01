@@ -1,91 +1,50 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import {sanitizeModelLogos} from '../src/sceneResourceCache.ts';
-
-test('sanitizeModelLogos hides TU-22K TerraUrsa logo node and textures',()=>{
-  const root = new THREE.Group();
-  
-  // TU-22K nacelle logo node (supports both raw Static:nacelle:20 and sanitized Staticnacelle20)
-  const tu22kLogo = new THREE.Mesh(
-    new THREE.BufferGeometry(),
-    new THREE.MeshStandardMaterial({name: 'tu22k-mat'})
-  );
-  tu22kLogo.name = 'Staticnacelle20';
-  tu22kLogo.visible = true;
-  root.add(tu22kLogo);
-
-  // Mesh with terraursa texture name
-  const dummyTex = new THREE.Texture();
-  dummyTex.name = 'terraursa-logo-decal';
-  const customMesh = new THREE.Mesh(
-    new THREE.BufferGeometry(),
-    new THREE.MeshStandardMaterial({map: dummyTex})
-  );
-  customMesh.name = 'Static:custom:1';
-  customMesh.visible = true;
-  root.add(customMesh);
-
-  // Other real vendor nodes: Vestas, Siemens, MingYang
-  const vestasMesh = new THREE.Mesh(
-    new THREE.BufferGeometry(),
-    new THREE.MeshStandardMaterial({name: 'vestas-nacelle-mat'})
-  );
-  vestasMesh.name = 'Static:nacelle:00';
-  vestasMesh.visible = true;
-  root.add(vestasMesh);
-
-  const mingyangMesh = new THREE.Mesh(
-    new THREE.BufferGeometry(),
-    new THREE.MeshStandardMaterial({name: 'mingyang-blade-mat'})
-  );
-  mingyangMesh.name = 'Static:blades:01';
-  mingyangMesh.visible = true;
-  root.add(mingyangMesh);
-
-  // Execute sanitization
-  return sanitizeModelLogos(root).then(()=>{
-    // 1. TU-22K logo must be hidden
-    assert.equal(tu22kLogo.visible, false, 'TU-22K Static:nacelle:20 must be hidden');
-    assert.equal(tu22kLogo.material.visible, false, 'TU-22K material must be hidden');
-    assert.equal(tu22kLogo.material.opacity, 0, 'TU-22K opacity must be 0');
-
-    // 2. Custom mesh with terraursa texture must be hidden
-    assert.equal(customMesh.visible, false, 'Mesh with terraursa texture must be hidden');
-    assert.equal(customMesh.material.visible, false, 'Material with terraursa texture must be hidden');
-
-    // 3. Real brand and vendor meshes must be strictly preserved
-    assert.equal(vestasMesh.visible, true, 'Vestas mesh must remain visible');
-    assert.equal(vestasMesh.material.visible, true, 'Vestas material must remain visible');
-    assert.equal(mingyangMesh.visible, true, 'MingYang mesh must remain visible');
-    assert.equal(mingyangMesh.material.visible, true, 'MingYang material must remain visible');
-  });
+import {sanitizeModelLogos,modelLogoRetiredResources} from '../src/sceneResourceCache.ts';
+import {MOTION_MODEL_SHA} from '../src/motionProfiles.ts';
+const tu22kSha='91b36e5bf0c5829cd77b1917a3e69a7f8c52fe8c39bbc7b42874e24ba98b6634';
+function installImage(t,Image){
+  const prior=Object.getOwnPropertyDescriptor(globalThis,'Image');
+  Object.defineProperty(globalThis,'Image',{configurable:true,writable:true,value:Image});
+  t.after(()=>{if(prior)Object.defineProperty(globalThis,'Image',prior);else delete globalThis.Image;});
+}
+function fixture(name){
+  const root=new THREE.Group(),texture=new THREE.Texture({close(){throw Error('live texture must not be closed');}});
+  const material=new THREE.MeshStandardMaterial({map:texture}),geometry=new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.Float32BufferAttribute([
+    2,91.56,3.15,2,91.56,-1.75,2,90.34,3.15,2,90.34,-1.75,
+    -2,91.56,-1.75,-2,91.56,3.15,-2,90.34,-1.75,-2,90.34,3.15],3));
+  const logo=new THREE.Mesh(geometry,material),body=new THREE.Mesh(geometry,material);
+  logo.name=name;body.name='shell';root.add(logo,body);return {root,logo,body,material,geometry,texture};
+}
+test('unknown files with matching node names or texture labels are preserved',async()=>{
+  const f=fixture('Static:nacelle:20');f.texture.name='terraursa';
+  await sanitizeModelLogos(f.root,'a'.repeat(64));
+  assert.equal(f.logo.visible,true);assert.equal(f.body.material,f.material);assert.equal(f.material.visible,true);
 });
-
-test('sanitizeModelLogos safely handles TU-3000 node and leaves non-logo nacelle structures untouched',()=>{
-  const root = new THREE.Group();
-  
-  // Nacelle main shell
-  const nacelleShell = new THREE.Mesh(
-    new THREE.BufferGeometry(),
-    new THREE.MeshStandardMaterial({color: 0xffffff})
-  );
-  nacelleShell.name = 'Static:nacelle:0';
-  nacelleShell.visible = true;
-  root.add(nacelleShell);
-
-  // TU-3000 logo decal
-  const tu3000Logo = new THREE.Mesh(
-    new THREE.BufferGeometry(),
-    new THREE.MeshStandardMaterial({name: 'tu3000-decal'})
-  );
-  tu3000Logo.name = 'Static:nacelle:10';
-  tu3000Logo.visible = true;
-  root.add(tu3000Logo);
-
-  return sanitizeModelLogos(root).then(()=>{
-    // Nacelle main body remains visible
-    assert.equal(nacelleShell.visible, true, 'Nacelle shell must remain visible');
-    assert.equal(nacelleShell.material.visible, true, 'Nacelle shell material must remain visible');
-  });
+test('hiding a known TU-22K decal never hides the shared shell material',async()=>{
+  const f=fixture('Static:nacelle:20');f.texture.name='terraursa-structure';
+  await sanitizeModelLogos(f.root,tu22kSha);
+  assert.equal(f.logo.visible,false);assert.equal(f.body.visible,true);
+  assert.equal(f.material.visible,true);assert.equal(f.material.opacity,1);assert.equal(f.material.map,f.texture);
+});
+test('a failed logo image load preserves the existing texture, geometry and materials',async t=>{
+  const f=fixture('Static:nacelle:10');
+  installImage(t,class {set src(_){queueMicrotask(()=>this.onerror());}});
+  await sanitizeModelLogos(f.root,MOTION_MODEL_SHA);
+  assert.equal(f.logo.material,f.material);assert.equal(f.logo.geometry,f.geometry);assert.equal(f.material.map,f.texture);
+});
+test('successful replacement owns cloned decal resources and leaves shared resources alive',async t=>{
+  const f=fixture('Static:nacelle:10');let disposed=0;
+  f.texture.addEventListener('dispose',()=>disposed++);
+  installImage(t,class {set src(_){queueMicrotask(()=>this.onload());}});
+  await sanitizeModelLogos(f.root,MOTION_MODEL_SHA);
+  assert.notEqual(f.logo.material,f.material);assert.notEqual(f.logo.geometry,f.geometry);
+  assert.equal(f.body.material,f.material);assert.equal(f.body.geometry,f.geometry);
+  assert.equal(f.material.map,f.texture);assert.equal(disposed,0);
+  assert.ok(modelLogoRetiredResources(f.root).has(f.material));
+  f.logo.geometry.computeBoundingBox();const box=f.logo.geometry.boundingBox;
+  assert.ok(Math.abs((box.max.z-box.min.z)/(box.max.y-box.min.y)-2170/725)<1e-5);
+  assert.ok(Math.abs(box.max.y-box.min.y-1.6)<1e-5);
 });

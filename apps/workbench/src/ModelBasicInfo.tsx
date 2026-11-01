@@ -3,8 +3,8 @@ import {ApiError,cancelled} from './api';
 import {Btn,Modal} from './Primitives';
 import {usePreferences} from './Preferences';
 import type {SceneApi} from './sceneApi';
-import type {ModelPurpose,ProjectModel,ProjectModelWrite,ProjectTurbineDefinition,ProjectTurbineCatalog} from './resourceTypes';
-import {privateDenial,ResourceRequestGate,ResourceRequestId,resourceFailure,writeDenial} from './resourceForms';
+import type {ModelPurpose,ProjectModel,ProjectModelWrite,ProjectTurbineDefinition} from './resourceTypes';
+import {modelRepresentationFields,privateDenial,ResourceRequestGate,ResourceRequestId,resourceFailure,writeDenial} from './resourceForms';
 import {resourceText} from './resourceMessages';
 
 export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPrivateDenied,turbines:initialTurbines}:{
@@ -15,7 +15,7 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
   const [editing,setEditing]=useState(false),[name,setName]=useState(''),[purpose,setPurpose]=useState<ModelPurpose>('equipment');
   const [description,setDescription]=useState(''),[expected,setExpected]=useState('');
   const [selectedTurbineUid,setSelectedTurbineUid]=useState<string>('');
-  const [representationType,setRepresentationType]=useState<'appearance'|'detailed'>('appearance');
+  const [representationType,setRepresentationType]=useState<'appearance'|'detailed'|''>('');
   const [turbines,setTurbines]=useState<ProjectTurbineDefinition[]>(initialTurbines||[]);
   const [busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null);
   const gate=useMemo(()=>new ResourceRequestGate(),[]),requestId=useRef(new ResourceRequestId());
@@ -23,14 +23,13 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
   useEffect(()=>()=>gate.cancel(),[gate]);
 
   useEffect(()=>{
-    if(initialTurbines&&initialTurbines.length>0){
-      setTurbines(initialTurbines);
-      return;
-    }
-    // Fetch turbine catalog if not provided
-    api.turbineDefinitions('Demo-PDS')
-      .then(res=>{if(res&&res.items)setTurbines(res.items);})
-      .catch(()=>{});
+    setTurbines(initialTurbines||[]);
+    if(initialTurbines)return;
+    const abort=new AbortController();
+    api.turbineDefinitions(undefined,abort.signal)
+      .then(res=>{if(!abort.signal.aborted)setTurbines(res.items);})
+      .catch(value=>{if(!abort.signal.aborted&&!cancelled(value))failed(value);});
+    return()=>abort.abort();
   },[api,initialTurbines]);
 
   function fill(value:ProjectModel){
@@ -39,7 +38,7 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
     setDescription(value.description||'');
     setExpected(value.assetRevision||'');
     setSelectedTurbineUid(value.definitionEntityUid||'');
-    setRepresentationType(value.representationType==='detailed'?'detailed':'appearance');
+    setRepresentationType(value.representationType||'');
     setError(null);
     requestId.current.reset();
   }
@@ -53,7 +52,9 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
 
   async function save(){
     if(!canEdit||busy||!name.trim()||!expected)return;
-    const chosen=turbines.find(t=>t.definitionEntityUid===selectedTurbineUid);
+    let association;
+    try{association=modelRepresentationFields(version,selectedTurbineUid,representationType,turbines);}
+    catch(value){failed(value);return;}
     const body={
       modelAssetId:version.modelAssetId,
       modelVersionId:version.modelVersionId,
@@ -61,9 +62,7 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
       displayName:name.trim(),
       purpose,
       description,
-      definitionEntityUid:selectedTurbineUid||null,
-      modelCode:chosen?chosen.modelCode:null,
-      representationType
+      ...association
     };
     const clientRequestId=requestId.current.forPayload(body),request=gate.start();
     setBusy(true);setError(null);
@@ -98,12 +97,12 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
       <dt>{text('名称','Name')}</dt>
       <dd>{version.displayName}</dd>
       <dt>{text('关联风机型号','Turbine type')}</dt>
-      <dd>{boundTurbine?(boundTurbine.displayName||boundTurbine.modelCode):text('未关联（通用独立模型）','Not bound (generic model)')}</dd>
+      <dd>{boundTurbine?(boundTurbine.displayName||boundTurbine.modelCode):version.definitionEntityUid?(version.modelCode||text('关联待核对','Association requires review')):text('未关联（通用独立模型）','Not bound (generic model)')}</dd>
       <dt>{text('模型形态','Representation')}</dt>
       <dd>
         {version.representationType==='detailed'
-          ?text('完整版（含机舱构件 · 支持透视与爆炸）','Detailed (internals & explosion ready)')
-          :text('外观版（轻量外壳 · 适用场景全景）','Appearance (lightweight overview)')}
+          ?text('完整版（用户声明）','Detailed (declared)')
+          :version.representationType==='appearance'?text('外观版（用户声明）','Appearance (declared)'):text('未声明','Unspecified')}
       </dd>
       {version.purpose&&<><dt>{text('用途','Purpose')}</dt><dd>{resourceText(locale,version.purpose)}</dd></>}
       <dt>{text('说明','Description')}</dt>
@@ -123,13 +122,14 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
             }
           }}>
             <option value="">{text('不关联（通用独立模型）','None (generic independent model)')}</option>
+            {selectedTurbineUid&&!turbines.some(item=>item.definitionEntityUid===selectedTurbineUid)&&<option value={selectedTurbineUid}>{version.modelCode||text('当前关联（待核对）','Current association (review required)')}</option>}
             {turbines.map(t=><option key={t.definitionEntityUid} value={t.definitionEntityUid}>{t.manufacturer?`${t.manufacturer} · `:''}{t.displayName||t.modelCode} ({t.modelCode})</option>)}
           </select>
         </label>
         <label>
           {text('模型形态设置','Model representation')}
           <select value={representationType} disabled={busy} onChange={event=>{
-            const rep=event.target.value as 'appearance'|'detailed';
+            const rep=event.target.value as 'appearance'|'detailed'|'';
             setRepresentationType(rep);
             const chosen=turbines.find(t=>t.definitionEntityUid===selectedTurbineUid);
             if(chosen){
@@ -137,8 +137,9 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
               setName(`${chosen.displayName||chosen.modelCode} · ${repLabel}`);
             }
           }}>
-            <option value="appearance">{text('外观版（轻量外壳 · 适用于风场全景批量渲染）','Appearance (lightweight exterior for wide overview)')}</option>
-            <option value="detailed">{text('完整版（含内部机械构件 · 支持特写透视与包围盒爆炸）','Detailed (internal components & explosion)')}</option>
+            <option value="">{text('未声明','Unspecified')}</option>
+            <option value="appearance">{text('外观版','Appearance')}</option>
+            <option value="detailed">{text('完整版（查看能力以实际模型为准）','Detailed (inspection depends on actual content)')}</option>
           </select>
         </label>
         <label>

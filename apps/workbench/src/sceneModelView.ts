@@ -15,6 +15,12 @@ const tu3000ExplodedGroups:{nodes:number[];offset:[number,number,number]}[]=[
   {nodes:tu3000Shell,offset:[0,10,0]},
 ];
 
+function localMeshBounds(root:THREE.Object3D,mesh:THREE.Mesh) {
+  mesh.geometry.computeBoundingBox();
+  return (mesh.geometry.boundingBox||new THREE.Box3()).clone().applyMatrix4(
+    new THREE.Matrix4().copy(root.matrixWorld).invert().multiply(mesh.matrixWorld));
+}
+
 /** Generic reversible model inspection (Forge-like bounding box dispersion). */
 export class SceneModelView {
   private positions:{node:THREE.Object3D;position:THREE.Vector3}[]=[];
@@ -38,8 +44,12 @@ export class SceneModelView {
       return new SceneModelView(root,version,request,nodes);
     }
 
-    // Generic Bounding-Box Heuristic Dispersion for all other models
-    const totalBox=new THREE.Box3().setFromObject(root);
+    // A declared detailed representation permits a visual schematic, not an engineering mapping.
+    if(version.representationType!=='detailed')return null;
+    root.updateWorldMatrix(true,true);
+    const totalBox=new THREE.Box3();
+    root.traverse(node=>{if(node instanceof THREE.Mesh)totalBox.union(localMeshBounds(root,node));});
+    if(totalBox.isEmpty())return null;
     const totalSize=totalBox.getSize(new THREE.Vector3());
     const hubThresholdY=totalBox.min.y+totalSize.y*0.62;
 
@@ -50,10 +60,10 @@ export class SceneModelView {
 
     root.traverse(node=>{
       if(!(node instanceof THREE.Mesh))return;
-      const b=new THREE.Box3().setFromObject(node);
+      const b=localMeshBounds(root,node);
       const c=b.getCenter(new THREE.Vector3());
       const s=b.getSize(new THREE.Vector3());
-      const name=(node.name+' '+(node.parent?.name||'')).toLowerCase();
+      const name=node.name.toLowerCase();
 
       // Tower / Base check: lower 62% of wind turbine
       if(c.y<hubThresholdY&&/tower|pole|base|ground|foundation/i.test(name)){
@@ -67,7 +77,7 @@ export class SceneModelView {
         shellMeshes.push(node);
       } else if(/blade|rotor|hub|spinner|impeller/i.test(name)){
         rotorMeshes.push(node);
-      } else if(c.y>=hubThresholdY*0.9){
+      } else if(c.y>=totalBox.min.y+totalSize.y*0.558){
         internalMeshes.push(node);
       }
     });
@@ -81,8 +91,10 @@ export class SceneModelView {
   private constructor(root:THREE.Group,version:ProjectModelVersion,request:ModelViewRequest,nodesMap?:Map<number,THREE.Object3D>,genericData?:{shellMeshes:THREE.Mesh[];rotorMeshes:THREE.Mesh[];internalMeshes:THREE.Mesh[];focusList:THREE.Object3D[];totalBox:THREE.Box3}){
     this.request={...request};
 
+    const faded=new Set<THREE.Mesh>();
     const fade=(node:THREE.Object3D)=>node.traverse(mesh=>{
-      if(!(mesh instanceof THREE.Mesh))return;
+      if(!(mesh instanceof THREE.Mesh)||faded.has(mesh))return;
+      faded.add(mesh);
       this.materials.push({mesh,original:mesh.material});
       const copy=(source:THREE.Material)=>{
         let value=this.owned.get(source);
@@ -130,27 +142,28 @@ export class SceneModelView {
       if(request.mode==='xray'){
         for(const mesh of shellMeshes)fade(mesh);
       } else {
+        const offsets=new Map<THREE.Mesh,THREE.Vector3>();
         const liftY=Math.max(6,Math.min(12,totalSize.y*0.12));
-        for(const mesh of shellMeshes){
-          this.positions.push({node:mesh,position:mesh.position.clone()});
-          mesh.position.y+=liftY;
-        }
+        for(const mesh of shellMeshes)offsets.set(mesh,new THREE.Vector3(0,liftY,0));
         const pushZ=Math.max(8,Math.min(16,totalSize.z*0.15));
-        for(const mesh of rotorMeshes){
-          this.positions.push({node:mesh,position:mesh.position.clone()});
-          mesh.position.z+=pushZ;
-        }
+        for(const mesh of rotorMeshes)offsets.set(mesh,new THREE.Vector3(0,0,pushZ));
         const nacelleCenter=new THREE.Vector3(totalCenter.x,totalBox.max.y-totalSize.y*0.15,totalCenter.z);
-        for(const mesh of internalMeshes){
-          const b=new THREE.Box3().setFromObject(mesh);
-          const c=b.getCenter(new THREE.Vector3());
+        internalMeshes.forEach((mesh,index)=>{
+          const c=localMeshBounds(root,mesh).getCenter(new THREE.Vector3());
           const dir=new THREE.Vector3(c.x-nacelleCenter.x,0,c.z-nacelleCenter.z);
-          if(dir.lengthSq()<0.01)dir.set(Math.sin(mesh.id),0,Math.cos(mesh.id));
-          dir.normalize();
+          if(dir.lengthSq()<0.01)dir.set(Math.sin(index+1),0,Math.cos(index+1));
+          offsets.set(mesh,dir.normalize().multiplyScalar(4.5).setY(((index%3)-1)*1.5));
+        });
+        // Capture world destinations before moving parents; then convert each into its parent's frame.
+        const moves=[...offsets].map(([mesh,offset])=>({mesh,
+          destination:root.localToWorld(root.worldToLocal(mesh.getWorldPosition(new THREE.Vector3())).add(offset)),
+          depth:(()=>{let n:THREE.Object3D|null=mesh,d=0;while(n){d++;n=n.parent;}return d;})()}));
+        moves.sort((a,b)=>a.depth-b.depth);
+        for(const {mesh,destination} of moves){
           this.positions.push({node:mesh,position:mesh.position.clone()});
-          mesh.position.x+=dir.x*4.5;
-          mesh.position.z+=dir.z*4.5;
-          mesh.position.y+=((mesh.id%3)-1)*1.5;
+          mesh.parent?.updateWorldMatrix(true,false);
+          mesh.position.copy(mesh.parent?mesh.parent.worldToLocal(destination):destination);
+          mesh.updateWorldMatrix(false,true);
         }
       }
       root.updateMatrixWorld(true);
@@ -178,5 +191,6 @@ export class SceneModelView {
     for(const {mesh,original} of this.materials)mesh.material=original;
     for(const material of this.owned.values())material.dispose();
     this.owned.clear();
+    for(const {node} of this.positions)node.updateWorldMatrix(true,true);
   }
 }

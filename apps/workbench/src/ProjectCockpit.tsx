@@ -96,6 +96,7 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  const [motionStatus,setMotionStatus]=useState<Record<string,MotionStatus>>({});
  const [turbineCatalog,setTurbineCatalog]=useState<ProjectTurbineCatalog|null>(null);
  useEffect(()=>{
+  setTurbineCatalog(null);
   if(!active)return;
   const abort=new AbortController();
   api.request<ProjectTurbineCatalog>('/api/workbench/project-turbine-definitions',{projectCode:project.projectRef.projectCode},abort.signal)
@@ -107,11 +108,12 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  const motionRef=selected?opened?.resourceRefs.find(x=>x.modelVersionId===selected.modelVersionId):null;
  const pairedInfo=selected&&turbineCatalog?.pairMap?turbineCatalog.pairMap[selected.modelVersionId]:null;
  const hotSwapRef=useMemo(()=>{
-  if(view!=='device'||!selected||!pairedInfo||pairedInfo.targetType!=='detailed'||!pairedInfo.pairedRef)return null;
+  if(view!=='device'||!selected||!pairedInfo||turbineCatalog?.pairingStatus!=='verified'||uid||alarmFocus||pairedInfo.targetType!=='detailed'||!pairedInfo.pairedRef)return null;
   return {instanceId:selected.sceneModelInstanceId,modelRef:pairedInfo.pairedRef};
- },[view,selected,pairedInfo]);
+ },[view,selected,pairedInfo,turbineCatalog,uid,alarmFocus]);
  const effectiveMotionRef=hotSwapRef?hotSwapRef.modelRef:motionRef;
- const canInspectModel=!!effectiveMotionRef&&(pairedInfo?.targetType==='detailed'||pairedInfo?.representationType==='detailed'||effectiveMotionRef.sha256===MOTION_MERGED_SHA);
+ const detailedRepresentation=!!effectiveMotionRef&&!!turbineCatalog?.items.some(item=>item.detailedModel?.modelAssetId===effectiveMotionRef.modelAssetId);
+ const canInspectModel=!!effectiveMotionRef&&(detailedRepresentation||effectiveMotionRef.sha256===MOTION_MERGED_SHA);
  const effectiveModelRefs=useMemo(()=>{
   if(!opened)return [];
   if(!hotSwapRef)return opened.resourceRefs;

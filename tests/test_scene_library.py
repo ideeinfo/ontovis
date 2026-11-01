@@ -531,6 +531,12 @@ class SceneLibraryTests(unittest.TestCase):
                 {'sceneId': created['sceneId'], 'expectedThumbnailRevision': None, 'clientRequestId': str(uuid4())},
                 raw_jpeg, 'admin', self.authorize)
         self.assertEqual((ctx.exception.status, ctx.exception.code), (409, 'SCENE_CHANGED'))
+        # Missing CAS must not silently overwrite another editor's thumbnail.
+        with self.assertRaises(PreviewError) as ctx:
+            self.scenes.save_thumbnail(
+                {'sceneId': created['sceneId'], 'clientRequestId': str(uuid4())},
+                raw_jpeg, 'admin', self.authorize)
+        self.assertEqual(ctx.exception.status, 422)
         # Attached to listing and open
         listed = self.scenes.listing('admin', self.authorize, access_revision='grant:1')
         self.assertEqual(listed['items'][0]['thumbnail'], thumb)
@@ -543,6 +549,22 @@ class SceneLibraryTests(unittest.TestCase):
         self.assertEqual(content['mediaType'], 'image/png')
         self.assertEqual(content['sha256'], thumb['sha256'])
         self.assertTrue(content['content'].startswith(b'\x89PNG\r\n\x1a\n'))
+
+    def test_thumbnail_permission_revocation_rolls_back_image_and_receipt(self):
+        from io import BytesIO
+        from PIL import Image
+        scene = self.create()
+        output = BytesIO(); Image.new('RGB', (64, 40), (30, 80, 60)).save(output, format='PNG')
+        body = {'sceneId': scene['sceneId'], 'expectedThumbnailRevision': None, 'clientRequestId': str(uuid4())}
+        calls = []
+        def revoked():
+            calls.append(True)
+            if len(calls) > 1: raise PreviewError(403, 'SCENE_WRITE_FORBIDDEN')
+        with self.assertRaises(PreviewError):
+            self.scenes.save_thumbnail(body, output.getvalue(), 'admin', revoked)
+        self.assertIsNone(self.opened(scene)['thumbnail'])
+        # A rolled-back receipt must not obstruct a later authorized retry.
+        self.assertIsNotNone(self.scenes.save_thumbnail(body, output.getvalue(), 'admin', self.authorize)['thumbnail'])
 
 
 if __name__ == '__main__':

@@ -1461,7 +1461,7 @@ class SceneLibrary:
         actor = _text(actor)
         _require(callable(authorize)); authorize()
         _json(body)
-        _require(type(body) is dict and {'sceneId', 'clientRequestId'} <= set(body) <= {'sceneId', 'expectedThumbnailRevision', 'clientRequestId'})
+        _fields(body, ('sceneId', 'expectedThumbnailRevision', 'clientRequestId'))
         scene_id, request_id = _uuid(body['sceneId']), _uuid(body['clientRequestId'])
         expected_rev = body.get('expectedThumbnailRevision')
         if expected_rev is not None:
@@ -1477,8 +1477,7 @@ class SceneLibrary:
                 return prior
             existing = db.execute('select revision from scene_thumbnails where scene_id=?', (scene_id,)).fetchone()
             current_rev = existing['revision'] if existing is not None else None
-            if 'expectedThumbnailRevision' in body:
-                _require(current_rev == expected_rev, 'SCENE_CHANGED', 409)
+            _require(current_rev == expected_rev, 'SCENE_CHANGED', 409)
             revision = 'scene-thumbnail:' + uuid4().hex
             now = datetime.now(timezone.utc).isoformat()
             db.execute('''insert into scene_thumbnails(scene_id,revision,image_sha256,media_type,width,height,bytes,content,actor,updated_at)

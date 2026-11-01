@@ -542,10 +542,12 @@ export function SceneViewport(props:SceneViewportProps) {
         const key=JSON.stringify([ref.modelVersionId,ref.contentRevision,ref.sha256]);
         let entry=entries.get(item.sceneModelInstanceId);
         if(entry?.key!==key){
-          if(entry){entry.appearance.dispose();models.remove(entry.root);entries.delete(item.sceneModelInstanceId);}
           const resource=await cache.model(ref,signal);if(stale()||ticket!==generation)return;
           const root=cloneModel(resource,item.sceneModelInstanceId);
-          entry={root,key,version:resource.version,appearance:new SceneCabinetAppearance(root,resource.version)};entries.set(item.sceneModelInstanceId,entry);models.add(entry.root);
+          transform(item,root);
+          const replacement={root,key,version:resource.version,appearance:new SceneCabinetAppearance(root,resource.version)};
+          if(entry){entry.appearance.dispose();models.remove(entry.root);}
+          entry=replacement;entries.set(item.sceneModelInstanceId,entry);models.add(entry.root);
         }
         try {transform(item,entry.root);}
         catch(value){entry.appearance.dispose();models.remove(entry.root);entries.delete(item.sceneModelInstanceId);throw value;}
@@ -805,7 +807,7 @@ export function SceneViewport(props:SceneViewportProps) {
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
   useEffect(()=>{runtime.current?.preload();},[props.placementModel]);
   useEffect(()=>{runtime.current?.visibility();},[props.active]);
-  useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
+  useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.hotSwapRef,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
   useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,props.alarm,props.alarmLabels,props.modelView,waterOverride,cloudOverride,reduced,props.visualPaused,locale,resolved]);
   useEffect(()=>{runtime.current?.motion();},[props.simulatedMotions,props.componentFocus]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);

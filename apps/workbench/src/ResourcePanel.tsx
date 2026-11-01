@@ -20,7 +20,7 @@ import type {ImageryVersion} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
   validateResourceFile, writeDenial, modelPlacementIssue, placementModelVersion, resourceCalibrationKey, type ModelResourceSelection} from './resourceForms';
 import {resourceText} from './resourceMessages';
-import type {LegacyModelCandidate, LegacyModelCatalog, ModelPurpose, ModelThumbnailInfo, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion, ProjectTurbineCatalog, ProjectTurbineDefinition} from './resourceTypes';
+import type {LegacyModelCandidate, LegacyModelCatalog, ModelPurpose, ModelThumbnailInfo, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion,  ProjectTurbineDefinition} from './resourceTypes';
 import './resourcePanel.css';
 
 export interface Props {
@@ -43,6 +43,8 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
   const [turbines,setTurbines]=useState<ProjectTurbineDefinition[]>([]);
+  const [turbineRefresh,setTurbineRefresh]=useState(0);
+  const turbineGate=useMemo(()=>new ResourceRequestGate(),[]);
   const [turbineMode,setTurbineMode]=useState<'turbines'|'all'>('turbines');
   const [selectedTurbineUid,setSelectedTurbineUid]=useState<string>('');
   const [representationType,setRepresentationType]=useState<'appearance'|'detailed'>('appearance');
@@ -84,6 +86,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   },[]);
   function clearPrivate() {
     cardIntent.current++;lifecycleGate.cancel();setDeleteTarget(null);setLifecycleBusy(false);setLifecycleError(null);setLifecycleNotice('');
+    turbineGate.cancel();setTurbines([]);setSelectedTurbineUid('');
     setPublicAcquisition(false);setResourceRefresh(0);
     catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();setCatalog(null);setVersion(null);setAssetId(null);setVersionId('');
     previewCallback.current(null);setUpload(null);setFile(null);setName('');setSource('');setError(null);setUploadError(null);
@@ -117,11 +120,14 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   };},[client,catalogGate,detailGate,uploadGate,legacyGate,importGate]);
 
   useEffect(()=>{
-    const code=projectCode||'Demo-PDS';
-    api.request<ProjectTurbineCatalog>('/api/workbench/project-turbine-definitions',{projectCode:code})
-      .then(res=>{if(res&&res.items)setTurbines(res.items);})
-      .catch(()=>{});
-  },[api,projectCode]);
+    setTurbines([]);
+    if(privateUnavailable)return;
+    const request=turbineGate.start();
+    void client.turbineDefinitions(projectCode,request.signal)
+      .then(res=>{if(request.isCurrent())setTurbines(res.items);})
+      .catch(value=>{if(request.isCurrent())failed(value);});
+    return()=>turbineGate.cancel();
+  },[client,projectCode,turbineGate,turbineRefresh,privateUnavailable]);
 
   async function activateTurbine(turbine:ProjectTurbineDefinition,action:'preview'|'place'){
     const targetRef=turbine.appearanceModel||turbine.detailedModel;
@@ -260,10 +266,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         representationType:value.representationType||undefined,
         assetRevision:value.assetRevision,versions:asset.versions.map(item=>({...item,displayName:value.displayName}))}:asset)}:previous);
     if(modelsOnly)onPreview(value);
-    const code=projectCode||'Demo-PDS';
-    api.request<ProjectTurbineCatalog>('/api/workbench/project-turbine-definitions',{projectCode:code})
-      .then(res=>{if(res&&res.items)setTurbines(res.items);})
-      .catch(()=>{});
+    setTurbineRefresh(value=>value+1);
   }
   async function updateFormLibrary() {
     const revision=await readCatalog();
@@ -329,7 +332,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
       {loading&&!catalog&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
       {catalog?.items.length===0&&!loading&&<p className="ov-resource-empty">{recycled?text('回收站为空','The recycle bin is empty'):t('noModels')}</p>}
       {modelsOnly&&catalogView==='list'&&<div className="pm-catalog-columns" aria-hidden="true"><span>{t('models')}</span><span>{text('用途分类','Purpose')}</span><span>{t('versions')}</span><span className="pm-meta-size">{t('size')}</span><span className="pm-meta-created">{text('版本创建时间','Version created')}</span></div>}
-      {!modelsOnly&&turbineMode==='turbines'?<ul className="ov-resource-model-list" aria-label={text('风机型号列表','Turbine definitions')}>{turbines.filter(item=>!query||(item.displayName||item.modelCode).toLowerCase().includes(query.toLowerCase())||item.modelCode.toLowerCase().includes(query.toLowerCase())).map(turbine=>{
+      {!modelsOnly&&turbines.length>0&&turbineMode==='turbines'?<ul className="ov-resource-model-list" aria-label={text('风机型号列表','Turbine definitions')}>{turbines.filter(item=>!query||(item.displayName||item.modelCode).toLowerCase().includes(query.toLowerCase())||item.modelCode.toLowerCase().includes(query.toLowerCase())).map(turbine=>{
         const targetRef=turbine.appearanceModel||turbine.detailedModel;
         const usable=!!targetRef;
         const title=turbine.displayName||turbine.modelCode;

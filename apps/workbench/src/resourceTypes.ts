@@ -76,6 +76,8 @@ export interface ProjectTurbineDefinition {
 }
 export interface ProjectTurbineCatalog {
   projectCode: string;
+  associationBasis?: 'user_declared';
+  pairingStatus?: 'unverified'|'verified';
   items: ProjectTurbineDefinition[];
   pairMap: Record<string, {
     pairedVersionId: string;

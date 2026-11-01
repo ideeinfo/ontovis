@@ -133,6 +133,10 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
   const createRequest=useRef<{name:string,id:string}|null>(null);
   const [imageryVersion,setImageryVersion]=useState<ImageryVersion|null>(null),[imageryVisible,setImageryVisible]=useState(true);
   const draft=history?.present||null,current=draft?.instances.find(item=>item.sceneModelInstanceId===selected)||null;
+  const turbinePoint=useMemo(()=>{
+    if(!turbinePlacementModal||!draft)return null;
+    try{return fromDisplay(draft.coordinateFrame,turbinePlacementModal.point);}catch{return null;}
+  },[turbinePlacementModal,draft?.coordinateFrame]);
   const selectedIds=selection.filter(id=>draft?.instances.some(item=>item.sceneModelInstanceId===id));
   const sceneIdentity=JSON.stringify([base?.sceneId,base?.sceneRevision,draft]);
   const latestSceneIdentity=useRef(sceneIdentity);latestSceneIdentity.current=sceneIdentity;
@@ -406,6 +410,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     catch(value){if(project&&chosen.projectRef.projectCode!==project.projectRef.projectCode)setError(value);else failed(value);}finally{done(abort);if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   async function place(point:Vector3){
+    if(!draft||!base||!editable||busy||placementInFlight.current)return;
     if(pendingTurbine){
       setTurbinePlacementModal({
         turbine:pendingTurbine,
@@ -421,14 +426,16 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     catch(value){failed(value);}finally{placementInFlight.current=false;}
   }
   async function confirmTurbinePlacement(){
-    if(!turbinePlacementModal||!draft||!base||!editable)return;
+    if(!turbinePlacementModal||!turbinePoint||!draft||!base||!editable||busy||placementInFlight.current)return;
+    placementInFlight.current=true;
     const {turbine,point,selectedType}=turbinePlacementModal;
     const targetRef=selectedType==='appearance'?(turbine.appearanceModel||turbine.detailedModel):(turbine.detailedModel||turbine.appearanceModel);
-    if(!targetRef){setError(new Error(locale==='zh'?'所选形态未关联模型文件':'No model bound for selected representation'));return;}
+    if(!targetRef){placementInFlight.current=false;setError(new Error(locale==='zh'?'所选形态未关联模型文件':'No model bound for selected representation'));return;}
     const abort=controller(),token=++sequence.current;editRequest.current=abort;setBusy(true);setError(null);
     try{
       const model=await client.model(targetRef.modelAssetId,targetRef.modelVersionId,abort.signal);
       if(!mounted.current||token!==sequence.current)return;
+      if(model.contentRevision!==targetRef.contentRevision||model.sha256!==targetRef.sha256)throw new ApiError(409,'RESOURCE_CHANGED');
       modelCatalog.set(model.modelVersionId,model);
       setHints(prior=>({...prior,[model.modelVersionId]:modelRef(model)}));
       const id=crypto.randomUUID();
@@ -448,7 +455,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
         }
       }
     }catch(value){failed(value);}
-    finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
+    finally{placementInFlight.current=false;done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
   }
   async function resourceDrop(reference:{modelAssetId:string,modelVersionId:string},point:Vector3){
     if(!editable||!draft||!base)return;const abort=controller(),token=++sequence.current;editRequest.current=abort;setBusy(true);
@@ -664,7 +671,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     {modal==='engineeringReview'&&reviewCandidate&&<Modal title={et('reviewObject')} description={et('reviewObjectHint')} onClose={()=>{if(!busy){setModal(null);setReviewCandidate(null);}}}><div className="se-root-review"><strong>{reviewCandidate.item.displayName}</strong><p>{[...reviewCandidate.ancestors.path].reverse().map(row=>row.object.displayName).concat(reviewCandidate.item.displayName).join(' › ')}</p>{reviewCandidate.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setModal(null);setReviewCandidate(null);}}>{et('cancel')}</Btn><Btn primary disabled={busy} onClick={()=>{acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,reviewCandidate);if(object&&refKey(object.objectRef)===refKey(reviewCandidate.objectRef))setObject(reviewCandidate);if(rootObject&&refKey(rootObject.objectRef)===refKey(reviewCandidate.objectRef))setRootRead({identity:currentIdentity,value:reviewCandidate,reading:false});setReviewDirty(true);saveRequest.current=null;setModal(null);setReviewCandidate(null);setError(null);}}>{et('confirmReview')}</Btn></div></Modal>}
     {modal==='replaceTerrain'&&candidate&&<Modal title={t('replaceTerrain')} description={t('replacementHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><label>{t('terrainStrategy')}<select value={terrainStrategy} onChange={event=>setTerrainStrategy(event.target.value as 'keep_height'|'resample_ground')}><option value="resample_ground">{t('resampleGround')}</option><option value="keep_height">{t('keepHeight')}</option></select></label><Btn primary onClick={()=>void previewReplacement({kind:'terrain',candidateTerrainVersionId:candidate.terrainVersionId,strategy:terrainStrategy})}>{t('previewReplacement')}</Btn></fieldset></Modal>}
     {modal==='anchor'&&candidate&&<Modal title={t('anchor')} description={t('anchorHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><div className="sw-field-pair">{(['x','z','longitude','latitude','heading','offset'] as const).map(key=><label key={key}>{t(key==='heading'?'anchorHeading':key==='offset'?'offset':key)}<input type="number" step="any" value={anchor[key]} onChange={event=>setAnchor(value=>({...value,[key]:event.target.value}))}/></label>)}</div><label>{t('height')}<select value={anchor.strategy} onChange={event=>setAnchor(value=>({...value,strategy:event.target.value as GeographicAnchor['heightStrategy']}))}><option value="resample_each_ground">{t('resample')}</option><option value="keep_relative_to_anchor">{t('keepRelative')}</option></select></label><Btn primary onClick={()=>void previewAnchor()}>{t('anchorPreview')}</Btn></fieldset></Modal>}
-    {turbinePlacementModal&&<Modal className="sw-turbine-modal" title={locale==='zh'?`布置风机 · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`:`Place Turbine · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`} description={locale==='zh'?'已在三维地表选定机位落点，请选择要装配的模型形态版本':'Ground position selected. Choose representation model to place.'} onClose={()=>setTurbinePlacementModal(null)}>
+    {turbinePlacementModal&&<Modal className="sw-turbine-modal" title={locale==='zh'?`布置风机 · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`:`Place Turbine · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`} description={locale==='zh'?'已在三维地表选定机位落点，请选择要装配的模型形态版本':'Ground position selected. Choose representation model to place.'} onClose={()=>{if(!busy)setTurbinePlacementModal(null);}}>
       <div className="sw-turbine-placement-dialog">
         <p className="sw-turbine-modal-intro">
           {locale==='zh'?'已在三维地表完成机位选点，请选择要装配的模型形态版本：':'Ground position selected. Choose the representation model to place:'}
@@ -674,10 +681,12 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
           <div className="sw-placement-loc-coords">
             <MapPin size={15} style={{color:'var(--primary)'}}/>
             <span>{locale==='zh'?'机位坐标':'Coordinates'}:</span>
-            <strong>X: {turbinePlacementModal.point[0].toFixed(2)}m · Y: {turbinePlacementModal.point[1].toFixed(2)}m</strong>
+            <strong>{turbinePoint?.position.mode==='geographic'
+              ?`${turbinePoint.position.longitude.toFixed(6)}°, ${turbinePoint.position.latitude.toFixed(6)}°`
+              :turbinePoint?.position.mode==='local'?`X: ${turbinePoint.position.xM.toFixed(2)} m · Z: ${turbinePoint.position.zM.toFixed(2)} m`:'—'}</strong>
           </div>
           <span className="sw-elev-pill">
-            {locale==='zh'?`地表高程 ${turbinePlacementModal.point[2].toFixed(2)}m`:`Alt ${turbinePlacementModal.point[2].toFixed(2)}m`}
+            {turbinePoint?`${turbinePoint.heightKind==='known_datum'?(locale==='zh'?'地形高程':'Elevation'):(locale==='zh'?'相对高度':'Relative height')} ${turbinePoint.heightM.toFixed(2)} m`:'—'}
           </span>
         </div>
 
@@ -718,10 +727,11 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
             <div
               role="radio"
               tabIndex={0}
+              aria-disabled={busy}
               aria-checked={turbinePlacementModal.selectedType==='appearance'}
               className={`sw-rep-choice-card ${turbinePlacementModal.selectedType==='appearance'?'selected':''}`}
-              onClick={()=>setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v)}
-              onKeyDown={e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v);}}}
+              onClick={()=>{if(!busy)setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v);}}
+              onKeyDown={e=>{if(!busy&&(e.key===' '||e.key==='Enter')){e.preventDefault();setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v);}}}
             >
               <div className="sw-rep-card-thumb">
                 <ModelThumbnail
@@ -737,11 +747,11 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                   <Badge tone="success">{locale==='zh'?'推荐 · 轻量外壳':'Recommended · Exterior'}</Badge>
                 </div>
                 <p className="sw-rep-card-desc">
-                  {locale==='zh'?'包含外部气动轮廓与塔筒外壳，专为全景风场批量高效渲染与大范围巡检设计':'Exterior aerodynamic shell for lightweight overview and fleet rendering'}
+                  {locale==='zh'?'适合场景概览，加载成本以模型实际复杂度为准':'For scene overview; loading cost depends on model complexity'}
                 </p>
                 <div className="sw-rep-card-tags">
                   <span className="sw-rep-card-tag">{locale==='zh'?'轻量低负载':'Low Memory'}</span>
-                  <span className="sw-rep-card-tag">{locale==='zh'?'高帧率漫游':'Smooth FPS'}</span>
+                  <span className="sw-rep-card-tag">{locale==='zh'?'场景概览':'Scene overview'}</span>
                   <span className="sw-rep-card-tag">{locale==='zh'?'批量排布':'Fleet Scale'}</span>
                 </div>
               </div>
@@ -755,10 +765,11 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
             <div
               role="radio"
               tabIndex={0}
+              aria-disabled={busy}
               aria-checked={turbinePlacementModal.selectedType==='detailed'}
               className={`sw-rep-choice-card ${turbinePlacementModal.selectedType==='detailed'?'selected':''}`}
-              onClick={()=>setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v)}
-              onKeyDown={e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v);}}}
+              onClick={()=>{if(!busy)setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v);}}
+              onKeyDown={e=>{if(!busy&&(e.key===' '||e.key==='Enter')){e.preventDefault();setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v);}}}
             >
               <div className="sw-rep-card-thumb">
                 <ModelThumbnail
@@ -774,7 +785,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                   <Badge tone="info">{locale==='zh'?'内部精细构件':'Internal Assemblies'}</Badge>
                 </div>
                 <p className="sw-rep-card-desc">
-                  {locale==='zh'?'包含发电机、齿轮箱、主轴与偏航驱动等内部部件，支持近景特写、透视与包围盒爆炸分析':'Includes generator, gearbox, drive shafts; supports close-up X-ray and exploded view'}
+                  {locale==='zh'?'用于近景查看；透视与爆炸示意取决于当前模型内容':'For close-up viewing; X-ray and exploded schematics depend on actual model contents'}
                 </p>
                 <div className="sw-rep-card-tags">
                   <span className="sw-rep-card-tag">{locale==='zh'?'BIM/机械构件':'Internal BIM'}</span>
@@ -791,7 +802,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
 
         <div className="sw-turbine-modal-actions">
           <Btn disabled={busy} onClick={()=>setTurbinePlacementModal(null)}>{t('cancel')}</Btn>
-          <Btn primary disabled={busy} onClick={()=>void confirmTurbinePlacement()}><Check size={14}/>{locale==='zh'?'确认落位布置':'Confirm Placement'}</Btn>
+          <Btn primary disabled={busy||!turbinePoint} onClick={()=>void confirmTurbinePlacement()}><Check size={14}/>{locale==='zh'?'确认落位布置':'Confirm Placement'}</Btn>
         </div>
       </div>
     </Modal>}

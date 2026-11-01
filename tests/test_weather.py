@@ -87,10 +87,10 @@ class WeatherStoreTests(unittest.TestCase):
             if count[0]>2:raise PreviewError(403,'FORBIDDEN')
         with self.assertRaises(PreviewError):self.store.save('P','admin',self.body(),guard)
         self.assertEqual(self.store.config('P')['revision'],0)
-    def test_validation_rejects_bad_contact_endpoint_refresh_and_strips_legacy_points(self):
+    def test_validation_rejects_bad_contact_endpoint_refresh_and_retains_legacy_scope(self):
         for change in [dict(endpoint='http://localhost'),dict(contact='x\r\nInjected:1'),dict(contact='http://example.com'),dict(refreshMinutes=1)]:
             with self.assertRaises(PreviewError):validate_config({**self.config,**change})
-        self.assertEqual(validate_config({**self.config,'points':[POINT]}),self.config)
+        self.assertEqual(validate_config({**self.config,'points':[POINT]}),{**self.config,'points':[POINT]})
     def test_same_location_cache_is_shared_and_survives_new_runtime(self):
         first=self.store.current(self.config,POINT,lambda:None)
         self.assertEqual(first['status'],'available')

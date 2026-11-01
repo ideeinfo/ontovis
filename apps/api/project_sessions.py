@@ -96,6 +96,7 @@ class ProjectSessions(UserSessions):
         self.shared_access = SharedModelAccess(self)
         self.registry.ensure_shared_model_store()
         self.shared.model_authorization = self.shared_access.authorize
+        self.shared.model_definition_authorization = self._model_definition_guard
         self.shared.model_scope = 'shared_static_glb_resources'
         self.shared.scenes.use_shared_models(lambda identifier, db=None: self.shared.project_models.content_identity(identifier), self.connection_id,
                         model_lock=self.shared.project_models.lifecycle_lock)
@@ -282,10 +283,64 @@ class ProjectSessions(UserSessions):
             return {'available': False, 'entry': None}
         raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
 
+    def _model_definition_guard(self, sid, uid):
+        ProjectModelLibrary._representation_metadata({'definitionEntityUid': uid})
+        row = self.current(sid, authenticated=True, touch=True)
+        for code, access in self.shared_access.grants(sid, row):
+            reader = SceneEngineeringReader(row.authority, self.connection_id, code, lambda: self.guard(sid, row))
+            objects = reader._resolve([uid], missing_ok=True)
+            item = objects.get(uid)
+            if item is None: continue
+            if item['objectScope'] != 'definition' or item['installationContextId'] is not None:
+                raise PreviewError(422, 'MODEL_DEFINITION_REQUIRED')
+
+            def check():
+                self.guard(sid, row)
+                if self._access(sid, row, code)['accessRevision'] != access['accessRevision']:
+                    raise PreviewError(409, 'ACCESS_CHANGED')
+                if reader._resolve([uid])[uid] != item:
+                    raise PreviewError(409, 'ENGINEERING_CHANGED')
+                self.guard(sid, row)
+
+            check()
+            return check
+        raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
+
+    def _project_turbines(self, sid, row, payload):
+        if not set(payload) <= {'expectedSessionRevision', 'projectRef', 'projectCode'}:
+            raise PreviewError(422, 'INVALID_REQUEST')
+        code = self._ref(payload.get('projectRef'))
+        if payload.get('projectCode', code) != code:
+            raise PreviewError(404, 'PROJECT_SCOPE_MISMATCH')
+        access = self._access(sid, row, code)
+
+        def authorize():
+            self.guard(sid, row)
+            if self._access(sid, row, code)['accessRevision'] != access['accessRevision']:
+                raise PreviewError(409, 'ACCESS_CHANGED')
+
+        value = self.shared.project_models.turbine_definitions(authorize)
+        reader = SceneEngineeringReader(row.authority, self.connection_id, code, authorize)
+        uids = [item['definitionEntityUid'] for item in value['items']]
+        objects = {}
+        for start in range(0, len(uids), 50):
+            objects.update(reader._resolve(uids[start:start+50], missing_ok=True))
+        items = []
+        for item in value['items']:
+            source = objects.get(item['definitionEntityUid'])
+            if source and source['objectScope'] == 'definition' and source['installationContextId'] is None:
+                items.append({**item, 'displayName': source['displayName'],
+                              'expectedEntityRevision': source['entityRevision']})
+        authorize()
+        return {**value, 'projectCode': code, 'items': items, 'sessionRevision': row.revision,
+                'projectRef': payload['projectRef']}
+
     def _call(self, method, sid, path, payload, *args):
         if path.startswith('/api/demo/'):
             raise PreviewError(410, 'DEMO_REMOVED')
         row = self._session(sid, payload)
+        if method == 'resource_request' and path == '/api/workbench/project-turbine-definitions':
+            return self._project_turbines(sid, row, payload)
         if method in ('resource_request', 'resource_upload') and (path != '/api/workbench/resources/uses' or 'projectRef' not in payload):
             clean = {k: v for k, v in payload.items() if k != 'projectRef'}
             if 'projectRef' in payload:

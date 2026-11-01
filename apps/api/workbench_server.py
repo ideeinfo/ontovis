@@ -353,10 +353,24 @@ class WorkbenchSessions(UserSessions):
         if self.project_models is None:
             raise PreviewError(503, 'MODEL_UNAVAILABLE')
         metadata = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        authorize = self.model_definition_guard(sid, metadata, authorize)
         value = self.project_models.upload(stream, length, metadata, actor, authorize)
         if self.thumbnails is not None: self.thumbnails.automatic(value, actor, authorize)
         authorize()
         return self.resource_response(value, row, access)
+
+    def model_definition_guard(self, sid, body, authorize):
+        if body.get('definitionEntityUid') is None: return authorize
+        ProjectModelLibrary._representation_metadata(body)
+        validator = getattr(self, 'model_definition_authorization', None)
+        if validator is None: raise PreviewError(422, 'MODEL_DEFINITION_REQUIRED')
+        definition_check = validator(sid, body['definitionEntityUid'])
+
+        def check():
+            authorize()
+            definition_check()
+
+        return check
 
     def resource_request(self, sid, path, payload):
         writing = path in ('/api/workbench/resources/model/calibrate', '/api/workbench/resources/model/import-existing',
@@ -379,6 +393,8 @@ class WorkbenchSessions(UserSessions):
         elif path == '/api/workbench/resources/models/legacy' and not body:
             value = self.project_models.legacy_candidates(authorize)
         elif path == '/api/workbench/project-turbine-definitions':
+            if set(body) - {'projectCode'} or body.get('projectCode', self.project_code) != self.project_code:
+                raise PreviewError(404, 'PROJECT_SCOPE_MISMATCH')
             value = self.project_models.turbine_definitions(authorize)
         elif path == '/api/workbench/resources/model' and set(body) == {'modelAssetId', 'modelVersionId'}:
             value = self.project_models.model(body['modelAssetId'], body['modelVersionId'], authorize)
@@ -389,6 +405,7 @@ class WorkbenchSessions(UserSessions):
         elif path == '/api/workbench/resources/model/metadata/save':
             value = self.model_metadata.save(body, actor, authorize)
         elif path == '/api/workbench/resources/model/info/save':
+            authorize = self.model_definition_guard(sid, body, authorize)
             value = self.project_models.save_info(body, actor, authorize)
         elif path in ('/api/workbench/resources/model/delete', '/api/workbench/resources/model/restore'):
             value = self.project_models.lifecycle(body, actor, authorize, action=path.rsplit('/', 1)[1])

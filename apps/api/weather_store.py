@@ -24,7 +24,22 @@ def validate_config(value):
         require(False)
     require(bool(re.fullmatch(r'[^@/]+@[^@/]+\.[^@/]+', contact)) or
             (target.scheme == 'https' and bool(target.hostname) and not target.username and not target.password))
-    return {k: value[k] for k in DEFAULT}
+    result = {k: value[k] for k in DEFAULT}
+    if 'points' in value:
+        points = value['points']
+        require(type(points) is list and len(points) <= 50)
+        ids = []
+        for point in points:
+            require(type(point) is dict and set(point) == {'sceneId', 'label', 'latitude', 'longitude'})
+            identifier(point['sceneId']); ids.append(point['sceneId'])
+            require(type(point['label']) is str and 0 < len(point['label'].strip()) <= 80
+                    and not any(ord(c) < 32 for c in point['label']))
+            for key, high in [('latitude', 90), ('longitude', 180)]:
+                number = point[key]
+                require(type(number) in (int, float) and math.isfinite(number) and -high <= number <= high)
+        require(len(set(ids)) == len(ids))
+        result['points'] = points
+    return result
 
 
 class WeatherStore:
@@ -54,7 +69,9 @@ class WeatherStore:
                             order by revision desc limit 1''', (self.connection_id, project)).fetchone()
         if not row: return dict(revision=0, config=dict(DEFAULT), savedAt=None)
         saved = json.loads(row['config'])
-        return dict(revision=row['revision'], config={**DEFAULT, **{k: saved[k] for k in DEFAULT if k in saved}}, savedAt=row['saved_at'])
+        legacy = None if 'points' not in saved else [point['sceneId'] for point in validate_config(saved)['points']]
+        return dict(revision=row['revision'], config={**DEFAULT, **{k: saved[k] for k in DEFAULT if k in saved}},
+                    savedAt=row['saved_at'], **({'legacySceneIds': legacy} if legacy is not None else {}))
 
     def save(self, project, actor, body, authorize):
         identifier(body['requestId']); require(type(body['expectedRevision']) is int and 0 <= body['expectedRevision'] < 1000)

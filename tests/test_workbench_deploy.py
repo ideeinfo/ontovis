@@ -281,6 +281,13 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         self.assertIn('client_max_body_size 16k;', content)
         self.assertIn('proxy_buffering off;', content)
 
+    def test_turbine_catalogue_route_is_explicit_and_bounded(self):
+        route = location_for('/api/workbench/project-turbine-definitions')
+        self.assertIn('client_max_body_size 16k;', route)
+        self.assertIn('proxy_pass http://127.0.0.1:18084;', route)
+        with self.assertRaises(AssertionError):
+            location_for('/api/workbench/project-turbine-definitions/extra')
+
 
 if __name__ == '__main__':
     unittest.main()

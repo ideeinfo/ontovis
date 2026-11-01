@@ -120,7 +120,7 @@ class SceneEngineeringReader:
         return {'items': items, 'total': value['total'], 'nextCursor': token,
                 'snapshotRevision': value['snapshotRevision'], 'basisKind': 'user_declared'}
 
-    def _resolve(self, identifiers, context_id=None):
+    def _resolve(self, identifiers, context_id=None, *, missing_ok=False):
         _require(0 < len(identifiers) <= 50 and len(set(identifiers)) == len(identifiers), 'INVALID_REQUEST', 422)
         body = {'entityUids': identifiers, 'resolutionMode': 'live'}
         if context_id is not None: body['installationContextId'] = context_id
@@ -128,12 +128,15 @@ class SceneEngineeringReader:
         _require(value.get('projectCode') == self.project_code, 'NOT_FOUND_OR_FORBIDDEN', 403)
         _require(value.get('resolutionMode') == 'live' and type(value.get('items')) is list
                  and len(value['items']) == len(identifiers))
-        result = {}
+        result, seen = {}, set()
         for resolved in value['items']:
             _require(type(resolved) is dict)
             uid = resolved.get('requestedEntityUid')
-            _require(isinstance(uid, str) and uid in identifiers and uid not in result)
+            _require(isinstance(uid, str) and uid in identifiers and uid not in seen)
+            seen.add(uid)
             if resolved.get('object') is None:
+                if missing_ok:
+                    continue
                 raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
             _require(resolved.get('resolution') == 'exact' and resolved.get('canonicalEntityUid') == uid,
                      'IDENTITY_CHANGED', 409)

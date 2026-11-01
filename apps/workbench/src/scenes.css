@@ -93,7 +93,7 @@
 
 .sw-placement-specs-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;width:100%;box-sizing:border-box}
 .sw-placement-spec-card{display:flex;flex-direction:column;gap:2px;padding:6px 10px;background:var(--surfaceRaised);border:1px solid var(--borderSubtle);border-radius:6px;min-width:0;box-sizing:border-box}
-.sw-spec-label{font-size:10.5px;color:var(--textSecondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw-spec-label{font-size:11px;color:var(--textSecondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sw-spec-value{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-feature-settings:"tnum";font-variant-numeric:tabular-nums}
 
 .sw-rep-choice-list{display:flex;flex-direction:column;gap:10px;width:100%;box-sizing:border-box}
@@ -108,14 +108,14 @@
 .sw-rep-card-thumb .ov-model-thumbnail{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:transparent;border:0}
 .sw-rep-card-thumb .ov-model-thumbnail img{width:100%;height:100%;object-fit:cover}
 .sw-rep-card-thumb .ov-model-thumbnail svg{color:var(--textSecondary);opacity:.75}
-.sw-rep-card-thumb .ov-model-thumbnail span{font-size:10px;color:var(--textSecondary);margin-top:2px}
+.sw-rep-card-thumb .ov-model-thumbnail span{font-size:11px;color:var(--textSecondary);margin-top:2px}
 
 .sw-rep-card-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
 .sw-rep-card-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.sw-rep-card-title{font-size:13.5px;font-weight:600;color:var(--text)}
-.sw-rep-card-desc{font-size:11.5px;line-height:1.5;color:var(--textSecondary);margin:0}
+.sw-rep-card-title{font-size:13px;font-weight:600;color:var(--text)}
+.sw-rep-card-desc{font-size:11px;line-height:1.5;color:var(--textSecondary);margin:0}
 .sw-rep-card-tags{display:flex;align-items:center;gap:6px;margin-top:2px;flex-wrap:wrap}
-.sw-rep-card-tag{font-size:10px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb,var(--textSecondary) 12%,transparent);color:var(--textSecondary)}
+.sw-rep-card-tag{font-size:11px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb,var(--textSecondary) 12%,transparent);color:var(--textSecondary)}
 
 .sw-rep-card-radio{width:20px;height:20px;border-radius:50%;border:2px solid var(--borderControl);margin:auto 0 auto 6px;flex:none;display:grid;place-items:center;transition:border-color .15s ease,background-color .15s ease;box-sizing:border-box}
 .sw-rep-choice-card.selected .sw-rep-card-radio{border-color:var(--primary);background:var(--primary)}

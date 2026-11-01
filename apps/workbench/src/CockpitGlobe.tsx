@@ -26,18 +26,6 @@ export function CockpitGlobe({points,active,en,light,flight,focusTarget,onSelect
  const runtime=useRef<{refresh:()=>void;focus:(longitude:number,latitude:number,distance?:number)=>void;home:()=>void;distance:()=>number;height:()=>number}|null>(null);
  const lastFocusToken=useRef<number>(-1);
  useEffect(()=>{
-  if(!focusTarget||focusTarget.token===lastFocusToken.current)return;
-  lastFocusToken.current=focusTarget.token;
-  const targetGroup=groups.find(g=>g.points.some(p=>p.sceneId===focusTarget.sceneId));
-  if(targetGroup){
-   setSelected(targetGroup.id);
-   setSelectedScene(focusTarget.sceneId);
-   const currentDistance=runtime.current?.distance()??3.65,height=runtime.current?.height()??900;
-   const targetDistance=globeClusterFocusDistance(targetGroup,height);
-   runtime.current?.focus(targetGroup.longitude,targetGroup.latitude,Math.min(currentDistance,targetDistance));
-  }else{setSelected('');setSelectedScene('');}
- },[focusTarget,groups]);
- useEffect(()=>{
   if(!mount.current)return;const element=mount.current;let renderer:THREE.WebGLRenderer;
   try{renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});}catch{setFallback(true);return;}
   let disposed=false,failed=false,frame=0,lastFlight=-1,lastDraw=0,resumeAt=performance.now(),interacting=false,drifting=false,texture:THREE.Texture|null=null;
@@ -103,6 +91,18 @@ export function CockpitGlobe({points,active,en,light,flight,focusTarget,onSelect
   runtime.current={refresh,focus,home:()=>focus(108,28,3.65),distance:()=>camera.position.length(),height:()=>Math.max(240,element.clientHeight||900)};refresh();
   return()=>{disposed=true;cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',refresh);media.removeEventListener('change',refresh);controls.removeEventListener('change',change);controls.removeEventListener('start',start);controls.removeEventListener('end',end);controls.dispose();geometry.dispose();material.dispose();glowMaterial.dispose();cloudMaterial.dispose();texture?.dispose();renderer.domElement.removeEventListener('webglcontextlost',lost);renderer.dispose();renderer.forceContextLoss();renderer.domElement.remove();runtime.current=null;};
  },[]);
+ useEffect(()=>{
+  if(!focusTarget||focusTarget.token===lastFocusToken.current)return;
+  lastFocusToken.current=focusTarget.token;
+  const targetGroup=groups.find(g=>g.points.some(p=>p.sceneId===focusTarget.sceneId));
+  if(targetGroup){
+   setSelected(targetGroup.id);
+   setSelectedScene(focusTarget.sceneId);
+   const currentDistance=runtime.current?.distance()??3.65,height=runtime.current?.height()??900;
+   const targetDistance=globeClusterFocusDistance(targetGroup,height);
+   runtime.current?.focus(targetGroup.longitude,targetGroup.latitude,Math.min(currentDistance,targetDistance));
+  }else{setSelected('');setSelectedScene('');}
+ },[focusTarget,groups]);
  useEffect(()=>{runtime.current?.refresh();},[active,light,flight,groups,paused,selectedGroup]);
  useEffect(()=>{if(!active){setSelected('');setSelectedScene('');onSelectScene?.('');}},[active]);
  return <section className={`pc-globe-view${fallback?' is-fallback':''}`} aria-label={en?'Project globe':'项目地球'}>

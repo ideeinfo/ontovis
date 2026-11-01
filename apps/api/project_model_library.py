@@ -263,28 +263,10 @@ class ProjectModelLibrary:
         _require(isinstance(description, str) and len(description) <= 2000
                  and all(ord(char) >= 32 or char in '\n\r\t' for char in description))
         
-        definition_entity_uid = body.get('definitionEntityUid')
-        if definition_entity_uid is not None:
-            if definition_entity_uid == '':
-                definition_entity_uid = None
-            else:
-                _require(isinstance(definition_entity_uid, str) and len(definition_entity_uid) <= 120)
-
-        model_code = body.get('modelCode')
-        if model_code is not None:
-            if model_code == '':
-                model_code = None
-            else:
-                _require(isinstance(model_code, str) and len(model_code) <= 120)
-
-        representation_type = body.get('representationType')
-        if representation_type is not None:
-            if representation_type == '':
-                representation_type = None
-            else:
-                _require(representation_type in ('appearance', 'detailed', 'exterior'))
-                if representation_type == 'exterior':
-                    representation_type = 'appearance'
+        association = self._representation_metadata(body)
+        definition_entity_uid = association.get('definitionEntityUid')
+        model_code = association.get('modelCode')
+        representation_type = association.get('representationType')
 
         digest = hashlib.sha256(_canonical(body).encode()).hexdigest()
         with self.library.connect() as db:
@@ -523,6 +505,23 @@ class ProjectModelLibrary:
             finally: self.library.slots.release()
 
     @staticmethod
+    def _representation_metadata(value):
+        result = {}
+        for key in ('definitionEntityUid', 'modelCode', 'representationType'):
+            if key not in value: continue
+            item = value[key]
+            if item is not None:
+                item = _text(item, 120)
+                if key == 'definitionEntityUid':
+                    _require(item.startswith('entity:'))
+                    _uuid(item[7:])
+                elif key == 'representationType':
+                    _require(item in ('appearance', 'detailed', 'exterior'), 'INVALID_REPRESENTATION_TYPE')
+                    if item == 'exterior': item = 'appearance'
+            result[key] = item
+        return result
+
+    @staticmethod
     def upload_metadata(value):
         required = ('expectedLibraryRevision', 'clientRequestId', 'displayName', 'purpose', 'sourceNote', 'rightsDeclared')
         _fields(value, required, ('modelAssetId', 'expectedSessionRevision', 'definitionEntityUid', 'modelCode', 'representationType'))
@@ -532,8 +531,7 @@ class ProjectModelLibrary:
         _require(isinstance(result['purpose'], str) and result['purpose'] in PURPOSES)
         _require(result['rightsDeclared'] is True, 'MODEL_RIGHTS_REQUIRED')
         if 'modelAssetId' in result: _uuid(result['modelAssetId'])
-        if result.get('representationType'):
-            _require(result['representationType'] in ('appearance', 'detailed'), 'INVALID_REPRESENTATION_TYPE')
+        result.update(ProjectModelLibrary._representation_metadata(result))
         return result
 
     def _prior(self, db, actor, action, request_id, digest):
@@ -773,9 +771,8 @@ class ProjectModelLibrary:
             finally:
                 self.library.slots.release()
 
-    def turbine_definitions(self, authorize=None):
-        if authorize is not None:
-            _require(callable(authorize)); authorize()
+    def turbine_definitions(self, authorize):
+        _require(callable(authorize)); authorize()
         with self.library.connect() as db:
             rows = db.execute('''
                 select a.id as asset_id, a.name as asset_name, a.definition_entity_uid, a.model_code,
@@ -789,7 +786,7 @@ class ProjectModelLibrary:
                   and a.definition_entity_uid is not null
                 order by a.model_code, a.representation_type,
                          case when p.calibration is not null and p.calibration != '' and p.calibration != 'null' then 1 else 0 end asc,
-                         v.created_at asc
+                         v.created_at desc, v.rowid desc
             ''', (self.project_code,)).fetchall()
             
             groups = {}
@@ -803,14 +800,16 @@ class ProjectModelLibrary:
                         'appearanceModel': None,
                         'detailedModel': None,
                     }
-                is_calibrated = bool(r['calibration'] and r['calibration'] not in ('', 'null', '{}'))
+                calibration = json.loads(r['calibration']) if r['calibration'] else {}
+                is_calibrated = calibration.get('state') == 'verified'
                 model_ref = {
                     'modelAssetId': r['asset_id'],
                     'modelVersionId': r['version_id'],
                     'contentRevision': r['content_revision'],
                     'sha256': r['sha256'],
                     'displayName': r['version_name'] or r['asset_name'],
-                    'calibrationState': 'verified' if is_calibrated else 'unverified',
+                    'calibrationState': calibration.get('state', 'unverified'),
+                    'representationType': r['representation_type'],
                 }
                 rep = r['representation_type']
                 target_key = 'appearanceModel' if rep == 'appearance' else 'detailedModel' if rep == 'detailed' else None
@@ -819,28 +818,14 @@ class ProjectModelLibrary:
                     if not existing or (is_calibrated and existing.get('calibrationState') != 'verified'):
                         groups[uid][target_key] = model_ref
 
+            # A shared definition label does not prove node identity or matching origins.
+            # Automatic cross-version switching needs an explicit, fixed mapping contract.
             pair_map = {}
-            for g in groups.values():
-                app = g['appearanceModel']
-                det = g['detailedModel']
-                if app and det:
-                    pair_map[app['modelVersionId']] = {
-                        'pairedVersionId': det['modelVersionId'],
-                        'pairedRef': det,
-                        'targetType': 'detailed',
-                        'definitionEntityUid': g['definitionEntityUid'],
-                        'modelCode': g['modelCode'],
-                    }
-                    pair_map[det['modelVersionId']] = {
-                        'pairedVersionId': app['modelVersionId'],
-                        'pairedRef': app,
-                        'targetType': 'appearance',
-                        'definitionEntityUid': g['definitionEntityUid'],
-                        'modelCode': g['modelCode'],
-                    }
-
+            authorize()
             return {
                 'projectCode': self.project_code,
                 'items': list(groups.values()),
                 'pairMap': pair_map,
+                'associationBasis': 'user_declared',
+                'pairingStatus': 'unverified',
             }
