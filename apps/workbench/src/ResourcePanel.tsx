@@ -116,7 +116,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
 
   useEffect(()=>{
     const code=projectCode||'Demo-PDS';
-    api.request<ProjectTurbineCatalog>(`/api/workbench/project-turbine-definitions?projectCode=${encodeURIComponent(code)}`)
+    api.request<ProjectTurbineCatalog>('/api/workbench/project-turbine-definitions',{projectCode:code})
       .then(res=>{if(res&&res.items)setTurbines(res.items);})
       .catch(()=>{});
   },[api,projectCode]);

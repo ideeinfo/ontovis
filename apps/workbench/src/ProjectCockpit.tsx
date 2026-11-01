@@ -98,7 +98,7 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  useEffect(()=>{
   if(!active)return;
   const abort=new AbortController();
-  api.request<ProjectTurbineCatalog>(`/api/workbench/project-turbine-definitions?projectCode=${encodeURIComponent(project.projectRef.projectCode)}`,{signal:abort.signal})
+  api.request<ProjectTurbineCatalog>('/api/workbench/project-turbine-definitions',{projectCode:project.projectRef.projectCode},abort.signal)
    .then(catalog=>{if(!abort.signal.aborted)setTurbineCatalog(catalog);})
    .catch(()=>{if(!abort.signal.aborted)setTurbineCatalog(null);});
   return()=>abort.abort();
