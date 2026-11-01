@@ -8,7 +8,7 @@ import {cancelled} from './api';
 import {Badge, Btn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
 import type {SceneApi} from './sceneApi';
-import type {ModelThumbnailInfo, ModelUses, ProjectModel, ProjectModelWrite} from './resourceTypes';
+import type {ModelThumbnailInfo, ModelUses, ProjectModel, ProjectModelWrite, ProjectTurbineDefinition} from './resourceTypes';
 import {calibrationInput, privateDenial, ResourceRequestGate, ResourceRequestId, resourceBytes, resourceFailure, writeDenial, modelPlacementIssue, resourceCalibrationKey} from './resourceForms';
 import {resourceText} from './resourceMessages';
 import type {ProjectRef} from './projectTypes';
@@ -21,10 +21,11 @@ interface Props {
   onRefreshLibrary: () => Promise<string|null>;
   canGenerateThumbnail?:boolean;onThumbnailUpdated?:(sha256:string,value:ModelThumbnailInfo)=>void;
   versions?:ReactNode;canEditInfo?:boolean;onInfoUpdated?:(value:ProjectModelWrite)=>void;
+  turbines?:ProjectTurbineDefinition[];
 }
 
 export function ResourceDetails({api, version, libraryRevision, canPlace, canCalibrate,
-    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, hidePreview=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary,canGenerateThumbnail=false,onThumbnailUpdated,versions,canEditInfo=false,onInfoUpdated}: Props) {
+    onPreview, onPlace, canReplace, onReplace, geographic=false, compact=false, hidePlacement=false, hidePreview=false, onUpdated, onWriteDenied, onPrivateDenied, onOpenScene, onRefreshLibrary,canGenerateThumbnail=false,onThumbnailUpdated,versions,canEditInfo=false,onInfoUpdated,turbines}: Props) {
   const {locale} = usePreferences(), t = (key: Parameters<typeof resourceText>[1]) => resourceText(locale,key);
   const [uses,setUses] = useState<ModelUses|null>(null), [usesOpen,setUsesOpen] = useState(false);
   const [sourceReport,setSourceReport]=useState(false);
@@ -97,7 +98,7 @@ export function ResourceDetails({api, version, libraryRevision, canPlace, canCal
   return <section className="ov-resource-details" aria-label={version.displayName}>
     {!compact&&<div className="ov-resource-title"><strong>{version.displayName}</strong><Badge tone={version.calibrationState==='verified'?'success':'warning'}>{t(resourceCalibrationKey(version.calibrationState))}</Badge></div>}
     {version.components.some(item=>item.geometryQuality==='proxy_schematic')&&<p className="ov-resource-caption">{t('proxyGeometry')}</p>}
-    <ModelBasicInfo api={api} version={version} canEdit={canEditInfo}
+    <ModelBasicInfo api={api} version={version} canEdit={canEditInfo} turbines={turbines}
       onUpdated={onInfoUpdated||onUpdated} onWriteDenied={onWriteDenied} onPrivateDenied={onPrivateDenied}/>
     {versions}
     <div className="ov-resource-actions">

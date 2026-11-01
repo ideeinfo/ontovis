@@ -214,8 +214,15 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     setCatalog(previous=>previous?{...previous,libraryRevision:value.libraryRevision,
       items:previous.items.map(asset=>asset.modelAssetId===value.modelAssetId?{...asset,
         displayName:value.displayName,purpose:value.purpose||asset.purpose,description:value.description,
+        definitionEntityUid:value.definitionEntityUid||undefined,
+        modelCode:value.modelCode||undefined,
+        representationType:value.representationType||undefined,
         assetRevision:value.assetRevision,versions:asset.versions.map(item=>({...item,displayName:value.displayName}))}:asset)}:previous);
     if(modelsOnly)onPreview(value);
+    const code=projectCode||'Demo-PDS';
+    api.request<ProjectTurbineCatalog>('/api/workbench/project-turbine-definitions',{projectCode:code})
+      .then(res=>{if(res&&res.items)setTurbines(res.items);})
+      .catch(()=>{});
   }
   async function updateFormLibrary() {
     const revision=await readCatalog();
@@ -327,7 +334,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
           </div>}
           <RowActions name={asset.displayName} actions={actions} locale={locale}/>
           {waiting&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
-          {active&&version&&detailVersion&&(!modelsOnly||detailsTarget)&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} hidePreview={modelsOnly} key={detailVersion.modelVersionId} api={client} version={detailVersion} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace&&detailVersion.assetState!=='deleted'} geographic={geographic} canCalibrate={canCalibrate}
+          {active&&version&&detailVersion&&(!modelsOnly||detailsTarget)&&<ResourceDetailHost target={detailsTarget} title={t('modelDetails')}><ResourceDetails compact={!detailsTarget} hidePlacement={modelsOnly} hidePreview={modelsOnly} key={detailVersion.modelVersionId} api={client} version={detailVersion} libraryRevision={catalog?.libraryRevision||''} canPlace={canPlace&&detailVersion.assetState!=='deleted'} geographic={geographic} canCalibrate={canCalibrate} turbines={turbines}
             versions={<details className="ov-resource-disclosure"><summary>{resourceText(locale,'modelVersionHistory',{count:asset.versions.length})}</summary><div className="ov-resource-version-choice"><label>{t('chooseVersion')}<select value={choice?.modelVersionId||''} onChange={event=>{const id=event.target.value;if(modelsOnly&&id)void activateCard(asset,'preview',id);else{cardIntent.current++;setAssetId(asset.modelAssetId);void selectVersion(asset.modelAssetId,id);}}}>{asset.versions.map(item=><option key={item.modelVersionId} value={item.modelVersionId}>{new Date(item.createdAt).toLocaleString(locale)} · {item.modelVersionId.slice(0,8)} · {t(resourceCalibrationKey(item.calibrationState))}</option>)}</select></label>{canUpload&&asset.assetState!=='deleted'&&<Btn onClick={()=>openUpload(asset)}>{t('appendVersion')}</Btn>}</div></details>}
             canEditInfo={catalog?.capabilities.canEditInfo===true&&detailVersion.assetState!=='deleted'&&!denied} onInfoUpdated={infoUpdated}
             canReplace={canReplace&&detailVersion.assetState!=='deleted'&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
@@ -372,23 +379,29 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
           const uid=event.target.value;
           setSelectedTurbineUid(uid);
           const chosen=turbines.find(t=>t.definitionEntityUid===uid);
-          if(chosen&&!name)setName(`${chosen.modelCode} - ${representationType==='appearance'?text('外观版','Appearance'):text('完整版','Detailed')}`);
+          if(chosen){
+            const repLabel=representationType==='appearance'?text('外观版','Appearance'):text('完整版','Detailed');
+            setName(`${chosen.displayName||chosen.modelCode} · ${repLabel}`);
+          }
         }}>
-          <option value="">{text('不关联（通用模型）','None (generic model)')}</option>
-          {turbines.map(t=><option key={t.definitionEntityUid} value={t.definitionEntityUid}>{t.displayName||t.modelCode} ({t.modelCode})</option>)}
+          <option value="">{text('不关联（通用独立模型）','None (generic independent model)')}</option>
+          {turbines.map(t=><option key={t.definitionEntityUid} value={t.definitionEntityUid}>{t.manufacturer?`${t.manufacturer} · `:''}{t.displayName||t.modelCode} ({t.modelCode})</option>)}
         </select>
       </label>}
-      {selectedTurbineUid&&<label>{text('模型形态分类','Representation type')}
+      <label>{text('模型形态设置','Model representation type')}
         <select value={representationType} disabled={uploading} onChange={event=>{
           const rep=event.target.value as 'appearance'|'detailed';
           setRepresentationType(rep);
           const chosen=turbines.find(t=>t.definitionEntityUid===selectedTurbineUid);
-          if(chosen)setName(`${chosen.modelCode} - ${rep==='appearance'?text('外观版','Appearance'):text('完整版','Detailed')}`);
+          if(chosen){
+            const repLabel=rep==='appearance'?text('外观版','Appearance'):text('完整版','Detailed');
+            setName(`${chosen.displayName||chosen.modelCode} · ${repLabel}`);
+          }
         }}>
-          <option value="appearance">{text('外观版（轻量全景）','Appearance (lightweight overview)')}</option>
-          <option value="detailed">{text('完整版（含内部构件与爆炸）','Detailed (internal components & explosion)')}</option>
+          <option value="appearance">{text('外观版（轻量外壳 · 适用于风场全景批量渲染）','Appearance (lightweight exterior for wide overview)')}</option>
+          <option value="detailed">{text('完整版（含内部机械构件 · 支持特写透视与包围盒爆炸）','Detailed (internal components & explosion)')}</option>
         </select>
-      </label>}
+      </label>
       <label>{t('displayName')}<input value={name} maxLength={120} disabled={uploading||!!upload.asset} onChange={event=>setName(event.target.value)}/></label>
       <label>{t('purpose')}<select value={use} disabled={uploading||!!upload.asset} onChange={event=>setUse(event.target.value as ModelPurpose)}>{purposes.map(value=><option key={value} value={value}>{t(value)}</option>)}</select></label>
       <label>{t('sourceNote')}<textarea value={source} rows={3} maxLength={2000} disabled={uploading} onChange={event=>setSource(event.target.value)}/></label>

@@ -7,7 +7,7 @@ import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, Scene
   SceneThumbnailInfo, SceneThumbnailWrite, UploadSceneThumbnailMetadata, LegacySceneEntry, LegacySceneEntryRequest} from './sceneTypes';
 import type {CalibrateModelRequest, CancelTerrainRequest, ImportExistingModelRequest, LegacyModelCatalog, ModelInfoRequest, ModelThumbnailInfo, ModelThumbnailReference, ModelUses, ModelUsesRequest,
   ProjectModel, ProjectModelCatalog, ProjectModelsRequest, ProjectModelVersion, ProjectModelWrite,
-  TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata} from './resourceTypes';
+  TerrainArtifact, TerrainCatalog, TerrainJob, TerrainsRequest, TerrainVersion, UploadModelMetadata, UploadTerrainMetadata, ProjectTurbineCatalog} from './resourceTypes';
 
 import type {SceneObjectChildren, SceneObjectContext, SceneObjectDetailRequest, SceneLocation, SceneLocationRequest} from './sceneEngineeringTypes';
 import type {ImageryCatalog, ImageryRecord, ImageryUploadResult, ImageryVersion, UploadImageryMetadata, ImageryTransferResult} from './resourceTypes';
@@ -129,6 +129,9 @@ export class SceneApi {
   }
   saveModelInfo(body:ModelInfoRequest,signal?:AbortSignal) {
     return this.api.request<ProjectModelWrite>(ROOT+'resources/model/info/save',body,signal);
+  }
+  turbineDefinitions(projectCode = 'Demo-PDS', signal?: AbortSignal) {
+    return this.api.request<ProjectTurbineCatalog>('/api/workbench/project-turbine-definitions', {projectCode}, signal);
   }
   modelMetadata(modelAssetId:string,modelVersionId:string,signal?:AbortSignal) {
     return this.api.request<{item:ModelResourceMetadata|null;sessionRevision:string}>(ROOT+'resources/model/metadata',

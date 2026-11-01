@@ -253,7 +253,8 @@ class ProjectModelLibrary:
 
     def save_info(self, body, actor, authorize):
         _fields(body, ('modelAssetId', 'modelVersionId', 'expectedAssetRevision', 'clientRequestId',
-                       'displayName', 'purpose', 'description'))
+                       'displayName', 'purpose', 'description'),
+                optional=('definitionEntityUid', 'modelCode', 'representationType'))
         actor = _text(actor); _require(callable(authorize)); authorize()
         for key in ('modelAssetId', 'modelVersionId', 'clientRequestId'): _uuid(body[key])
         _text(body['expectedAssetRevision']); name = _text(body['displayName'], 200)
@@ -261,6 +262,30 @@ class ProjectModelLibrary:
         description = body['description']
         _require(isinstance(description, str) and len(description) <= 2000
                  and all(ord(char) >= 32 or char in '\n\r\t' for char in description))
+        
+        definition_entity_uid = body.get('definitionEntityUid')
+        if definition_entity_uid is not None:
+            if definition_entity_uid == '':
+                definition_entity_uid = None
+            else:
+                _require(isinstance(definition_entity_uid, str) and len(definition_entity_uid) <= 120)
+
+        model_code = body.get('modelCode')
+        if model_code is not None:
+            if model_code == '':
+                model_code = None
+            else:
+                _require(isinstance(model_code, str) and len(model_code) <= 120)
+
+        representation_type = body.get('representationType')
+        if representation_type is not None:
+            if representation_type == '':
+                representation_type = None
+            else:
+                _require(representation_type in ('appearance', 'detailed', 'exterior'))
+                if representation_type == 'exterior':
+                    representation_type = 'appearance'
+
         digest = hashlib.sha256(_canonical(body).encode()).hexdigest()
         with self.library.connect() as db:
             db.execute('begin immediate')
@@ -278,8 +303,15 @@ class ProjectModelLibrary:
             db.execute('''insert into project_model_info_revisions values (?,?,?,?,?,?,?,?,?)''',
                 (str(uuid4()), asset['id'], asset['revision'] + 1, name, body['purpose'], description,
                  _canonical(previous), actor, now))
-            db.execute('update project_model_assets set name=?,purpose=?,revision=revision+1 where id=?',
-                       (name, body['purpose'], asset['id']))
+
+            def_uid = definition_entity_uid if 'definitionEntityUid' in body else asset['definition_entity_uid'] if 'definition_entity_uid' in asset.keys() else None
+            code = model_code if 'modelCode' in body else asset['model_code'] if 'model_code' in asset.keys() else None
+            rep_type = representation_type if 'representationType' in body else asset['representation_type'] if 'representation_type' in asset.keys() else None
+
+            db.execute('''update project_model_assets 
+                          set name=?, purpose=?, definition_entity_uid=?, model_code=?, representation_type=?, revision=revision+1 
+                          where id=?''',
+                       (name, body['purpose'], def_uid, code, rep_type, asset['id']))
             db.execute('update library set revision=revision+1 where id=1')
             value = {**self._version(db, body['modelVersionId']), 'libraryRevision': self.library.revision(db)}
             db.execute('insert into project_model_requests values (?,?,?,?,?,?)',

@@ -33,6 +33,9 @@ export interface ProjectModelVersion {
   report: ProjectModelReport; components: ProjectModelComponent[]; sourceModelVersionId: string | null;
   thumbnail?:ModelThumbnailInfo;
   assetRevision?:string; purpose?:ModelPurpose; description?:string; versionDisplayName?:string;
+  definitionEntityUid?: string | null;
+  modelCode?: string | null;
+  representationType?: 'appearance' | 'detailed' | null;
   assetState?:'active'|'deleted';lifecycleRevision?:number;deletedAt?:string|null;
 }
 export interface ModelThumbnailInfo {
@@ -61,6 +64,7 @@ export interface ProjectTurbineDefinition {
   definitionEntityUid: string;
   modelCode: string;
   displayName: string;
+  manufacturer?: string;
   modelName?: string;
   ratedPowerKw?: number;
   rotorDiameterM?: number;
@@ -121,6 +125,9 @@ export type ProjectModelWrite = ProjectModel & {libraryRevision: string; assetRe
 export interface ModelInfoRequest {
   modelAssetId:string;modelVersionId:string;expectedAssetRevision:string;clientRequestId:string;
   displayName:string;purpose:ModelPurpose;description:string;
+  definitionEntityUid?: string | null;
+  modelCode?: string | null;
+  representationType?: 'appearance' | 'detailed' | null;
 }
 export interface UploadModelMetadata {
   expectedLibraryRevision: string; clientRequestId: string; displayName: string; purpose: ModelPurpose;
