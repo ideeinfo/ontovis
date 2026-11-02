@@ -27,3 +27,7 @@
 本轮可作为当前 Mac 上已加载夏李场景、单设备模拟动作及三档界面倍率的比较基线。全冷首屏、长期连续往返、GPU 计时、重降水、更多高复杂度模型、实体 4K 显示器、低性能硬件和系统级减少动态仍需单独验收；不据此关闭 C4 全量性能目标。
 
 原始 JSON、页面及取样工具：[本批证据目录](../../output/cockpit-space-20261030/README.md)。三个样本分别为 `_work/performance-auto200.json`、`performance-100.json`、`performance-150.json`；布局截图为 `_work/mac-4k-layout.png`。
+
+## 2026-11-03 后续基线
+
+本批保持原硬件，场景更新为夏李15台和Crystal Rig91台。前端2b1846512a4020bf21026e7008716f2070ce780a，实际运行3600034.8ms，隐藏0.0ms；含30轮四页/跨场景/报警定位及4K稳态阶段。分段帧间隔、加载p95、堆与资源计数见[本批报告](../../output/cockpit-performance-stability-20261103/README.md)及[原始采样](../../output/cockpit-performance-stability-20261103/_work/performance-final.json)。91台全景分钟p95为17.9—18.3ms；整机半透明隔离最后5分钟p95为67.9—68.3ms，流畅目标未核销。后续优先优化隔离绘制与构件边界更新。上述为当前内容与当前Mac的后续数据，不覆盖上方2026-10-30的短样本，也不把CSS视口测量视为实体4K或GPU计时验收。
