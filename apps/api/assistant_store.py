@@ -206,8 +206,9 @@ class AssistantStore:
                 require(head is not None,'NOT_FOUND_OR_FORBIDDEN',404)
                 require(head['analysis_id']==body['analysisSessionId'] and head['analysis_revision']==body['expectedAnalysisRevision']
                     and head['version']==expected and head['head_run_id']==parent,'ASSISTANT_CONVERSATION_CHANGED',409)
-                previous=db.execute('select state from assistant_runs where id=?',(parent,)).fetchone()
+                previous=db.execute('select state,input_json from assistant_runs where id=?',(parent,)).fetchone()
                 require(previous is not None and previous['state'] not in ACTIVE,'ASSISTANT_BUSY',409)
+                require(json.loads(previous['input_json']).get('taskId','analysis')==body.get('taskId','analysis'),'LLM_CONVERSATION_TASK_CHANGED',409)
             db.execute('insert into assistant_runs values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (run_id,self.connection_id,project,owner,body['requestId'],fingerprint,body['analysisSessionId'],body['expectedAnalysisRevision'],
                  policy_revision,service_revision,'reading',1,stamp,stamp,encoded(body),'[]','[]',None,None))
@@ -226,6 +227,7 @@ class AssistantStore:
     @staticmethod
     def public(row, *, hide=False):
         return {'runId':row['id'],'state':row['state'],'version':row['version'],'createdAt':row['created_at'],'updatedAt':row['updated_at'],
+            'taskId':json.loads(row['input_json']).get('taskId','analysis'),
             'question':json.loads(row['input_json']).get('question',''),
             'conversationId':row.get('conversation_id'),'conversationVersion':row.get('turn_no',0),'parentRunId':row.get('parent_run_id'),
             'analysisSessionId':row['analysis_id'],'analysisRevision':row['analysis_revision'],'policyRevision':row['policy_revision'],

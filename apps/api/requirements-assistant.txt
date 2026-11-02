@@ -1,0 +1,2 @@
+# Authenticated encryption for project-scoped LLM credentials.
+cryptography==50.0.2

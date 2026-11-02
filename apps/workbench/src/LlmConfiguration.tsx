@@ -1,0 +1,71 @@
+import {useEffect,useMemo,useRef,useState} from 'react';
+import {Bot,Check,ChevronRight,KeyRound,RefreshCw,Workflow} from 'lucide-react';
+import {Btn,Modal} from './Primitives';
+import {assistantMessage} from './assistantApi';
+import {cancelled} from './api';
+import type {DraftApi} from './AnalysisWorkspace';
+import {llmProviderNames,llmTaskNames,modelChoices,modelConfigurationApi,providerChange,type LlmConfiguration as Config,type LlmProviderConfig,type LlmTaskConfig,type LlmProvider} from './llmSettings';
+import './llmConfiguration.css';
+
+export function LlmConfiguration({api,en,onDirtyChange,onSaved}:{api:DraftApi;en:boolean;onDirtyChange?:(dirty:boolean)=>void;onSaved:()=>void}){
+ const service=useMemo(()=>modelConfigurationApi(api),[api]),t=(zh:string,eng:string)=>en?eng:zh;
+ const [view,setView]=useState<Config|null>(null),[error,setError]=useState<unknown>(null),[notice,setNotice]=useState(''),[reload,setReload]=useState(0),[loading,setLoading]=useState(false);
+ const [provider,setProvider]=useState<LlmProviderConfig|null>(null),[task,setTask]=useState<LlmTaskConfig|null>(null);
+ const alive=useRef(true),generation=useRef(0);
+ useEffect(()=>{alive.current=true;return()=>{alive.current=false;generation.current++;};},[]);
+ useEffect(()=>{onDirtyChange?.(!!provider||!!task);return()=>onDirtyChange?.(false);},[!!provider,!!task,onDirtyChange]);
+ useEffect(()=>{const abort=new AbortController();setLoading(true);setError(null);setView(null);setProvider(null);setTask(null);setNotice('');generation.current++;
+  void service.read(abort.signal).then(v=>{if(!abort.signal.aborted)setView(v);}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setError(e);}).finally(()=>{if(!abort.signal.aborted)setLoading(false);});return()=>abort.abort();
+ },[service,api.epoch,api.revision,reload]);
+ async function saved(){const current=++generation.current;const v=await service.read();if(!alive.current||current!==generation.current)return;setView(v);setProvider(null);setTask(null);setNotice(t('配置已保存，后续新任务使用此配置。','Saved. New runs use these settings.'));onSaved();}
+ return <div className="llm-page">
+  <header className="llm-heading"><div><h3>{t('模型来源','Model providers')}</h3><p>{t('先配置来源，再为每项任务选择模型。','Configure providers, then assign a model to each task.')}</p></div><Btn disabled={loading||!!provider||!!task} onClick={()=>setReload(n=>n+1)}><RefreshCw size={14}/>{t('刷新','Refresh')}</Btn></header>
+  {!!error&&<p role="alert">{assistantMessage(error,en)}</p>}{notice&&<p role="status" className="llm-notice"><Check size={14}/>{notice}</p>}{loading&&<p role="status">{t('正在读取模型配置…','Loading model settings…')}</p>}
+  {view&&<><div className="llm-provider-grid">{view.providers.map(p=><article className="llm-provider" key={p.id}><div className="llm-provider-name"><span className="llm-provider-icon"><Bot size={20}/></span><h4>{p.name}</h4></div><span className="llm-state" data-ready={p.mode==='inherited'||p.keyConfigured}>{p.mode==='inherited'?t('沿用现有服务','Existing service'):p.keyConfigured?t('密钥已配置','Key configured'):t('尚未配置','Not configured')}</span><p>{p.mode==='inherited'?t('OntoBase · 现有 Qwen 服务','OntoBase · existing Qwen service'):new URL(p.baseUrl).hostname}</p><Btn disabled={!view.canManage} onClick={()=>{setNotice('');setProvider(p);}}><KeyRound size={14}/>{t('配置 ','Configure ')}{p.name}<ChevronRight size={14}/></Btn></article>)}</div>
+   <section className="llm-task-section"><header className="llm-heading"><div><h3><Workflow size={17}/>{t('按任务分配模型','Models by task')}</h3><p>{t('不同任务可选择不同来源；密钥在同一项目内共用。','Tasks can use different providers; credentials are shared within this project.')}</p></div><small>r{view.revision}</small></header>
+    <div className="llm-task-list">{view.tasks.map(row=>{const effective=view.services[row.id];return <article key={row.id}><div><h4>{llmTaskNames[row.id][en?1:0]}</h4><p>{({analysis:t('分析报警、趋势与资料依据','Review alarms, trends and evidence'),query:t('查询所选资料，大屏助手默认使用','Query selected materials; default for the cockpit'),work_order:t('整理供人工复核的检查与处置建议','Prepare checks and suggestions for human review')})[row.id]}</p></div><div className="llm-task-model"><strong>{llmProviderNames[row.provider]}</strong><span>{effective?.modelId||row.modelId||t('待选择模型','Select a model')}</span></div><span className="llm-state" data-ready={effective?.canRun}>{!row.enabled?t('已关闭','Off'):effective?.canRun?t('已配置','Configured'):t('待配置','Needs setup')}</span><Btn disabled={!view.canManage} onClick={()=>{setNotice('');setTask(row);}}>{t('设置','Set up')}<ChevronRight size={14}/></Btn></article>;})}</div>
+    <details className="llm-explain"><summary>{t('配置与运行范围','Configuration and run scope')}</summary><p>{t('配置只适用于当前项目。读取模型目录不会生成内容；目录列出的型号仍需支持文本对话。密钥不会在回读或历史记录中显示。模型配置变更会停止当前运行，原回答回执保留；下一次任务使用新配置。','Settings apply only to this project. Reading a model catalogue generates no content; the chosen model must support text chat. Keys are never returned or shown in history. Changes stop active runs; saved receipts remain, and new runs use the new settings.')}</p></details>
+   </section></>}
+  {view&&provider&&<ProviderEditor key={provider.id} provider={provider} view={view} service={service} en={en} onClose={()=>setProvider(null)} onSaved={saved}/>}
+  {view&&task&&<TaskEditor key={task.id} task={task} view={view} service={service} en={en} onClose={()=>setTask(null)} onSaved={saved}/>}
+ </div>;
+}
+type EditorProps={view:Config;service:ReturnType<typeof modelConfigurationApi>;en:boolean;onClose:()=>void;onSaved:()=>Promise<void>};
+function ProviderEditor({provider,view,service,en,onClose,onSaved}:EditorProps&{provider:LlmProviderConfig}){
+ const t=(zh:string,eng:string)=>en?eng:zh;
+ const [url,setUrl]=useState(provider.baseUrl),[mode,setMode]=useState(provider.mode),[secret,setSecret]=useState(''),[clear,setClear]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null),[models,setModels]=useState<string[]|null>(null);
+ const alive=useRef(true),controller=useRef<AbortController|null>(null);useEffect(()=>{alive.current=true;return()=>{alive.current=false;controller.current?.abort();};},[]);
+ async function run(save:boolean){setBusy(true);setError(null);try{if(save){await service.save(view,providerChange(provider,url,mode,secret,clear));setSecret('');await onSaved();}
+  else{const abort=new AbortController();controller.current=abort;const value=await service.catalogue(view,provider.id,url,secret||null,abort.signal);if(alive.current&&!abort.signal.aborted)setModels(value.items);}}
+  catch(e){if(alive.current&&!cancelled(e))setError(e);}finally{if(alive.current)setBusy(false);}}
+ const changedAddress=url.trim().replace(/\/$/,'')!==provider.baseUrl;
+ return <Modal className="llm-modal" title={t('配置 ','Configure ')+provider.name} description={t('当前项目的来源与密钥设置','Provider and credentials for the current project')} onClose={()=>!busy&&onClose()}>
+  {provider.id==='qwen'&&<div className="llm-mode"><button type="button" aria-pressed={mode==='inherited'} disabled={busy} onClick={()=>{setMode('inherited');setUrl(provider.baseUrl);setSecret('');setClear(false);setModels(null);}}>{t('沿用现有服务','Existing service')}</button><button type="button" aria-pressed={mode==='managed'} disabled={busy} onClick={()=>{setMode('managed');setSecret('');setClear(false);setModels(null);}}>{t('自主配置','Configure here')}</button></div>}
+  {mode==='inherited'?<div className="llm-inherited"><Bot size={25}/><h4>{t('继续使用现有 Qwen 服务','Keep the existing Qwen service')}</h4><p>{t('密钥仍由 OntoBase 管理，不复制到 ONTOVis。','OntoBase continues to manage the credentials; they are not copied into ONTOVis.')}</p></div>:<><label className="llm-field">API Key<span className="llm-field-state">{provider.keyConfigured&&!clear&&!changedAddress?t('已保存 · 留空保持','Saved · leave blank to keep'):t('尚未填写','Enter a key')}</span><input aria-label={provider.name+' API Key'} type="password" autoComplete="new-password" spellCheck={false} value={secret} maxLength={8192} disabled={busy||clear} placeholder={provider.keyConfigured&&!changedAddress?t('输入新密钥以替换','Enter a new key to replace'):t('粘贴此来源的 API Key','Paste this provider’s API key')} onChange={e=>{setSecret(e.target.value);setModels(null);}}/></label>
+   <p className="llm-caption">{t('保存后不会显示明文，所有请求由服务端发起。','The saved key is never shown; requests run on the server.')}</p>
+   <details className="llm-endpoint"><summary>{t('API 地址','API endpoint')}</summary><label className="llm-field">Base URL<input aria-label="Base URL" value={url} maxLength={300} disabled={busy} onChange={e=>{setUrl(e.target.value);setSecret('');setModels(null);}}/></label><p>{t('仅接受所选来源的官方 HTTPS 地址；更换地址需重新填写密钥。Qwen 支持阿里云工作空间域名。','Only official HTTPS addresses for this provider are accepted. Enter a new key after changing the address. Qwen workspace domains are supported.')}</p></details>
+   {provider.keyConfigured&&<label className="llm-clear"><input type="checkbox" checked={clear} disabled={busy} onChange={e=>{setClear(e.target.checked);setSecret('');setModels(null);}}/>{t('清除此项目保存的密钥','Clear this project’s saved key')}</label>}
+   <Btn disabled={busy||clear||!secret&&(!provider.keyConfigured||changedAddress)} onClick={()=>void run(false)}><RefreshCw size={14}/>{t('读取模型目录','Read model catalogue')}</Btn>
+   {models&&<div className="llm-catalogue" role="status"><strong>{t('已读取 ','Read ')+models.length+t(' 个型号',' models')}</strong><p>{models.slice(0,8).join(' · ')||t('可手工输入模型标识','You can enter a model ID manually')}</p><small>{t('仅验证目录访问，未发起内容生成。','Catalogue access only; no content generation was requested.')}</small></div>}
+  </>}
+  {!!error&&<p role="alert">{assistantMessage(error,en)}</p>}<footer className="llm-editor-actions"><Btn disabled={busy} onClick={onClose}>{t('取消','Cancel')}</Btn><Btn primary disabled={busy||mode==='managed'&&changedAddress&&!secret&&!clear} onClick={()=>void run(true)}>{busy?t('处理中…','Working…'):t('保存配置','Save settings')}</Btn></footer>
+ </Modal>;
+}
+function TaskEditor({task,view,service,en,onClose,onSaved}:EditorProps&{task:LlmTaskConfig}){
+ const t=(zh:string,eng:string)=>en?eng:zh;
+ const [provider,setProvider]=useState<LlmProvider>(task.provider),[model,setModel]=useState(task.modelId),[enabled,setEnabled]=useState(task.enabled),[items,setItems]=useState<string[]>([]),[query,setQuery]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null);
+ const selected=view.providers.find(p=>p.id===provider)!,inherited=selected.mode==='inherited';
+ const controller=useRef<AbortController|null>(null),alive=useRef(true);useEffect(()=>{alive.current=true;return()=>{alive.current=false;controller.current?.abort();};},[]);
+ async function catalogue(){controller.current?.abort();const abort=new AbortController();controller.current=abort;setBusy(true);setError(null);try{const value=await service.catalogue(view,provider,selected.baseUrl,null,abort.signal);if(!abort.signal.aborted)setItems(value.items);}catch(e){if(!abort.signal.aborted)setError(e);}finally{if(!abort.signal.aborted)setBusy(false);}}
+ async function save(){setBusy(true);setError(null);try{await service.save(view,{kind:'task',taskId:task.id,provider,modelId:inherited?'':model.trim(),enabled});await onSaved();}catch(e){if(alive.current)setError(e);}finally{if(alive.current)setBusy(false);}}
+ return <Modal className="llm-modal" title={llmTaskNames[task.id][en?1:0]} description={t('选择此任务的来源与模型','Choose this task’s provider and model')} onClose={()=>!busy&&onClose()}>
+  <label className="llm-clear"><input type="checkbox" checked={enabled} disabled={busy} onChange={e=>setEnabled(e.target.checked)}/>{t('启用此任务','Enable this task')}</label>
+  <label className="llm-field">{t('模型来源','Provider')}<select aria-label={t('模型来源','Provider')} value={provider} disabled={busy} onChange={e=>{setProvider(e.target.value as LlmProvider);setModel('');setItems([]);setQuery('');setError(null);}}>{view.providers.map(p=><option key={p.id} value={p.id}>{p.name}{p.mode==='inherited'?t(' · 现有服务',' · existing service'):!p.keyConfigured?t(' · 未配置密钥',' · no key'):''}</option>)}</select></label>
+  {inherited?<div className="llm-inherited"><strong>{t('沿用当前源服务型号','Use the current source model')}</strong><p>{view.services[task.id]?.provider==='qwen'?view.services[task.id].modelId:t('由现有 Qwen 服务确定','Resolved by the existing Qwen service')}</p><small>{t('若需选择其他 Qwen 型号，先在来源卡中选择“自主配置”。','To select another Qwen model, choose “Configure here” in the provider card first.')}</small></div>:<><label className="llm-field">{t('模型标识','Model ID')}<input aria-label={t('模型标识','Model ID')} maxLength={160} value={model} disabled={busy} placeholder={t('从目录选择，或输入准确的模型标识','Choose from the catalogue or enter an exact model ID')} onChange={e=>setModel(e.target.value)}/></label>
+   <div className="llm-model-tools"><input aria-label={t('筛选模型目录','Filter model catalogue')} placeholder={t('筛选已读取的型号','Filter loaded model IDs')} value={query} disabled={busy} onChange={e=>setQuery(e.target.value)}/><Btn disabled={busy||!selected.keyConfigured} onClick={()=>void catalogue()}><RefreshCw size={14}/>{t('读取目录','Read catalogue')}</Btn></div>
+   {!selected.keyConfigured&&<p role="status" className="llm-caption">{t('请先在来源卡中配置此项目的 API Key。','Configure this project’s API key in the provider card first.')}</p>}
+   {items.length>0&&<div className="llm-model-list" role="listbox" aria-label={t('可选模型','Available models')}>{modelChoices(items,query).map(id=><button type="button" role="option" aria-selected={model===id} key={id} onClick={()=>setModel(id)}>{id}{model===id&&<Check size={14}/>}</button>)}</div>}
+   <p className="llm-caption">{t('目录来源于当前账号；请选择支持文本对话的模型。手工输入同样会使用所选来源的密钥。','The catalogue comes from this account. Choose a text-chat model. Manual IDs use the same provider credentials.')}</p></>}
+  {!!error&&<p role="alert">{assistantMessage(error,en)}</p>}<footer className="llm-editor-actions"><Btn disabled={busy} onClick={onClose}>{t('取消','Cancel')}</Btn><Btn primary disabled={busy||enabled&&!inherited&&(!selected.keyConfigured||!model.trim())} onClick={()=>void save()}>{busy?t('保存中…','Saving…'):t('保存任务配置','Save task settings')}</Btn></footer>
+ </Modal>;
+}

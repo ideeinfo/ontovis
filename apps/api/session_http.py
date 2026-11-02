@@ -215,7 +215,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                                   '/link-work-order', '/simulation/catalogue', '/simulation/detail', '/simulation/qualify'))
             assistant_paths=tuple('/api/workbench/assistant/'+action for action in
                 ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation',
-                 'work-order-preview','work-order-apply'))
+                 'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue'))
             weather_paths=tuple('/api/workbench/weather/'+action for action in ('config','save','test','current'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',

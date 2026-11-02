@@ -12,9 +12,11 @@ import {AssistantGraph} from './AssistantGraph';
 import {AssistantTurn} from './AssistantTurn';
 import {AssistantWorkOrderDialog} from './AssistantWorkOrderDialog';
 import './assistant.css';
+import {llmTaskNames,llmProviderNames,type LlmTask} from './llmSettings';
 
 export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,initialRunId,queryOnly=false}:{api:DraftApi&{assistantScope?:()=>DraftApi};cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string)=>void;initialRunId?:string;queryOnly?:boolean}){
  const service=useMemo(()=>new AssistantApi(api),[api]);const t=(zh:string,english:string)=>en?english:zh;
+ const [taskId,setTaskId]=useState<LlmTask>(queryOnly?'query':'analysis');
  const available=cards.filter((card,index,all)=>card.source&&all.findIndex(v=>v.source?.id===card.source!.id)===index),inventory=available.map(card=>card.source!.id).join(':');
  const [view,setView]=useState<AssistantPolicyView|null>(null),[selected,setSelected]=useState<string[]>(()=>defaultAssistantEvidence(available));
  const [question,setQuestion]=useState(''),[run,setRun]=useState<AssistantRun|null>(null),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[reload,setReload]=useState(0),[summaries,setSummaries]=useState<AssistantSource[]|null>(null),[pending,setPending]=useState<string|null>(null);
@@ -45,11 +47,11 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
     if(abort.signal.aborted||current.current!==key||historyGeneration.current!==generation)return;
     if(chosen.analysisSessionId!==receipt.analysisSessionId||chosen.analysisRevision!==receipt.analysisRevision)throw new Error(t('分析来源与本轮记录不匹配','Analysis and turn do not match'));
     const head=value.items.find(item=>item.conversationId===chosen.conversationId);
-    setConversation(head??null);setTurns([chosen]);setRun(chosen);setHasEarlier(false);return;
+    if(!queryOnly)setTaskId(chosen.taskId??'analysis');setConversation(head??null);setTurns([chosen]);setRun(chosen);setHasEarlier(false);return;
    }
    if(!value.items.length)return;const detail=await service.conversation(value.items[0].conversationId,undefined,abort.signal);
    if(abort.signal.aborted||current.current!==key||historyGeneration.current!==generation)return;
-   setConversation(detail);setTurns(detail.items);setRun(detail.items.at(-1)??null);setHasEarlier(detail.hasEarlier);
+   if(!queryOnly)setTaskId(detail.items.at(-1)?.taskId??'analysis');setConversation(detail);setTurns(detail.items);setRun(detail.items.at(-1)??null);setHasEarlier(detail.hasEarlier);
   }).catch(e=>{if(!abort.signal.aborted&&!cancelled(e)&&historyGeneration.current===generation)setError(e);}).finally(()=>{if(!abort.signal.aborted&&current.current===key&&historyGeneration.current===generation)setLoadingHistory(false);});
   return()=>abort.abort();
  },[service,context,initialRunId]);
@@ -57,7 +59,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   try{const detail=await service.conversation(id,earlier?Math.min(...turns.map(r=>r.conversationVersion||1)):undefined);
    if(!alive.current||current.current!==key||historyGeneration.current!==generation)return;
    setConversation(detail);setTurns(previous=>earlier?mergeConversationTurns([...detail.items,...previous],null):detail.items);setHasEarlier(detail.hasEarlier);
-   if(!earlier){setRun(detail.items.at(-1)??null);setPending(null);setSummaries(null);setQuestion('');}
+   if(!earlier){if(!queryOnly)setTaskId(detail.items.at(-1)?.taskId??'analysis');setRun(detail.items.at(-1)??null);setPending(null);setSummaries(null);setQuestion('');}
   }catch(e){if(alive.current&&current.current===key&&historyGeneration.current===generation)setError(e);}finally{if(alive.current&&current.current===key&&historyGeneration.current===generation)setLoadingHistory(false);}
  }
  function newConversation(){historyGeneration.current++;setConversation(null);setTurns([]);setRun(null);setPending(null);setError(null);setQuestion('');setHasEarlier(false);setLoadingHistory(false);}
@@ -65,7 +67,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const selection=()=>({analysisSessionId:receipt!.analysisSessionId,expectedAnalysisRevision:receipt!.analysisRevision,evidenceRefIds:selected});
  async function start(){if(!receipt||!view)return;const key=context,requestId=crypto.randomUUID(),fixed=scope.current!;historyGeneration.current++;setTurns(previous=>mergeConversationTurns(previous,run));setBusy(true);setError(null);setPending(requestId);setSummaries(null);
   try{const value=await api.request<AssistantRun>(ASSISTANT_ROOT+'/start',{...selection(),requestId,question:question.trim(),conversationId:conversation?.conversationId??null,expectedConversationVersion:conversation?.version??0,parentRunId:conversation?.headRunId??null,expectedPolicyRevision:view.revision,
-    expectedAccessRevision:view.accessRevision,expectedServiceRevision:view.service.serviceRevision});
+    expectedAccessRevision:view.accessRevision,expectedServiceRevision:effectiveService?.serviceRevision,taskId});
     if(!alive.current||current.current!==key){if(running(value))void fixed.cancel(value).catch(()=>{});return;}setRun(value);setPending(null);setQuestion('');if(value.conversationId){const head={conversationId:value.conversationId,title:conversation?.title||value.question||'分析',version:value.conversationVersion||1,headRunId:value.runId,analysisSessionId:value.analysisSessionId,analysisRevision:value.analysisRevision,updatedAt:new Date().toISOString()};setConversation(head);setConversations(items=>[head,...items.filter(v=>v.conversationId!==head.conversationId)].slice(0,20));}
   }catch(e){if(alive.current&&current.current===key){setError(e);if(e&&typeof e==='object'&&'status'in e)setPending(null);}}
   finally{if(alive.current&&current.current===key)setBusy(false);}
@@ -79,15 +81,18 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   if(alive.current&&current.current===key){setTurns(previous=>mergeConversationTurns(previous,value));if(run?.runId===value.runId)setRun(value);}
  }catch(e){if(alive.current&&current.current===key)setError(e);}finally{if(alive.current&&current.current===key)setBusy(false);}}
  async function preview(){if(!receipt)return;const key=context;setBusy(true);setError(null);try{const value=await api.request<{items:AssistantSource[]}>(ASSISTANT_ROOT+'/summary',{...selection(),question:question.trim()});if(alive.current&&current.current===key)setSummaries(value.items);}catch(e){if(alive.current&&current.current===key)setError(e);}finally{if(alive.current&&current.current===key)setBusy(false);}}
- const names:Record<string,[string,string]>={reading:['读取所选资料','Reading selected materials'],model:['Qwen 整理中','Qwen is organizing evidence'],validating:['校验引用','Checking references'],complete:['引用校验完成','References checked'],partial:['部分资料缺失','Some sources are unavailable'],cancel_requested:['正在停止，等待后台确认','Stopping; waiting for server acknowledgement'],cancelled:['已取消','Cancelled'],interrupted:['运行已中断','Interrupted'],failed:['运行未完成','Incomplete'],changed:['来源或策略已变化','Sources or policy changed']};
+ const names:Record<string,[string,string]>={reading:['读取所选资料','Reading selected materials'],model:['模型整理中','Model is organizing evidence'],validating:['校验引用','Checking references'],complete:['引用校验完成','References checked'],partial:['部分资料缺失','Some sources are unavailable'],cancel_requested:['正在停止，等待后台确认','Stopping; waiting for server acknowledgement'],cancelled:['已取消','Cancelled'],interrupted:['运行已中断','Interrupted'],failed:['运行未完成','Incomplete'],changed:['来源或策略已变化','Sources or policy changed']};
  const focusedEarlier=!!initialRunId&&run?.runId===initialRunId&&!!conversation&&conversation.headRunId!==initialRunId;
  const active=running(run),locked=busy||running(run)||loadingHistory||!!pending,limit=view?.policy.reads??8;
+ const effectiveService=view?.services?.[taskId]??view?.service;
+ const taskMismatch=!!conversation&&!!run&&(run.taskId??'analysis')!==taskId;
  const composer=<><label className="as-question">{t('继续提问','Continue the conversation')}<textarea aria-label={t('向分析助手提问','Ask the analysis assistant')} maxLength={1000} disabled={locked||focusedEarlier} value={question} placeholder={t('例如：对比当前报警、趋势和手册，列出支持依据与缺口。','Compare the alarm, trend and manual; list supporting evidence and gaps.')} onChange={event=>{setQuestion(event.target.value);setSummaries(null);}}/></label>
-  <div className="ap-actions"><Btn primary disabled={locked||focusedEarlier||!receipt||!selected.length||!question.trim()||!view?.policy.enabled||!view.service.enabled||!view.service.canRun||!!pending} onClick={()=>void start()}><Send size={14}/>{t('发送','Send')}</Btn><Btn disabled={!active||busy||run?.state==='cancel_requested'} onClick={()=>void stop()}><Square size={14}/>{t('停止','Stop')}</Btn></div></>;
+  <div className="ap-actions"><Btn primary disabled={locked||focusedEarlier||taskMismatch||!receipt||!selected.length||!question.trim()||!view?.policy.enabled||!effectiveService?.enabled||!effectiveService.canRun||!!pending} onClick={()=>void start()}><Send size={14}/>{t('发送','Send')}</Btn><Btn disabled={!active||busy||run?.state==='cancel_requested'} onClick={()=>void stop()}><Square size={14}/>{t('停止','Stop')}</Btn></div></>;
  return <div className="as-panel"><p className="ap-caption">{t('仅发送本次所选资料的脱敏摘要。结果是待核验的整理，不代表故障确诊。','Only redacted summaries of the selected materials are sent. Results require verification.')}</p>
-  <div className="as-service"><span>Qwen · r{view?.revision??'—'}</span><Btn disabled={busy||active} onClick={()=>{setError(null);setReload(v=>v+1);}}><RefreshCw size={13}/>{t('刷新策略','Refresh policy')}</Btn></div>
-  {view&&!view.policy.enabled&&<p className="ap-caption">{assistantMessage('ASSISTANT_POLICY_DISABLED',en)}</p>}{view&&!view.service.enabled&&<p className="ap-caption">{assistantMessage(view.service.reason||'ASSISTANT_SERVICE_UNAVAILABLE',en)}</p>}
-  {queryOnly&&composer}
+  <div className="as-service"><span>{'provider' in (effectiveService??{})?llmProviderNames[(effectiveService as {provider?:keyof typeof llmProviderNames})?.provider??'qwen']:'Qwen'} · {effectiveService?.modelId||'—'}</span><Btn disabled={busy||active} onClick={()=>{setError(null);setReload(v=>v+1);}}><RefreshCw size={13}/>{t('刷新策略','Refresh policy')}</Btn></div>
+  <label className="as-task-picker">{t('当前任务','Task')}<select aria-label={t('助手任务','Assistant task')} value={taskId} disabled={locked} onChange={e=>{setTaskId(e.target.value as LlmTask);newConversation();}}>{(Object.keys(llmTaskNames) as LlmTask[]).filter(id=>!queryOnly||id==='query').map(id=><option value={id} key={id}>{llmTaskNames[id][en?1:0]}</option>)}</select></label>
+  {view&&!view.policy.enabled&&<p className="ap-caption">{assistantMessage('ASSISTANT_POLICY_DISABLED',en)}</p>}{view&&!effectiveService?.enabled&&<p className="ap-caption">{assistantMessage(effectiveService?.reason||'ASSISTANT_SERVICE_UNAVAILABLE',en)}</p>}
+  {taskMismatch&&<p className="ap-caption">{t('此记录属于另一任务，请新建对话后继续当前任务。','This record belongs to another task. Start a new conversation to continue this task.')}</p>}{queryOnly&&composer}
   <div className="as-conversation"><label>{t('当前对话','Current conversation')}<select aria-label={t('当前对话','Current conversation')} disabled={locked} value={conversation?.conversationId??''} onChange={e=>e.target.value?void openConversation(e.target.value):newConversation()}><option value="">{t('新对话','New conversation')}</option>{conversations.map(item=><option key={item.conversationId} value={item.conversationId}>{item.title}</option>)}{conversation&&!conversations.some(c=>c.conversationId===conversation.conversationId)&&<option value={conversation.conversationId}>{conversation.title}</option>}</select></label><Btn disabled={locked} onClick={newConversation}><Plus size={13}/>{t('新对话','New')}</Btn></div>
   {loadingHistory&&<p role="status">{t('读取已保存对话…','Loading saved conversation…')}</p>}
   <details className="as-sources" open={!transcript.length}><summary>{t('本次资料','Selected materials')} · {selected.length} / {limit}</summary>

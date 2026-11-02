@@ -1,0 +1,42 @@
+"""Encrypted task configuration must survive the complete PG + file recovery."""
+import os
+import sqlite3
+import unittest
+from uuid import uuid4
+from apps.api.assistant_models import AssistantModels
+from apps.api.llm_providers import PROVIDERS
+from apps.api.model_library import ModelLibrary
+from tests import test_analysis_workbench_backup_integration as base
+from tests.test_analysis_drafts import OWNER
+from tools.analysis_draft_backup import export_package
+
+@unittest.skipUnless(os.environ.get('ONTOVIS_ANALYSIS_TEST_DATABASE_URL'), 'Set an owned disposable PG test connection')
+class LlmConfigurationPairTests(unittest.TestCase):
+    setUpClass=classmethod(base.AnalysisWorkbenchBackupTests.setUpClass.__func__)
+    tearDownClass=classmethod(base.AnalysisWorkbenchBackupTests.tearDownClass.__func__)
+    setUp=base.AnalysisWorkbenchBackupTests.setUp
+    snapshot=base.AnalysisWorkbenchBackupTests.snapshot
+    restore=base.AnalysisWorkbenchBackupTests.restore
+
+    def models(self, root):
+        with sqlite3.connect(root/'library.sqlite3') as db:project,context=db.execute('select project_code,context_id from library').fetchone()
+        return AssistantModels(ModelLibrary(root,project,context),'ontobase-primary')
+
+    def test_paired_recovery_retains_all_provider_keys_task_routes_and_original_evidence(self):
+        models=self.models(self.source/'workbench-library')
+        def save(change):
+            return models.save('SYNTHETIC-A',OWNER,dict(requestId=str(uuid4()),expectedRevision=models.read('SYNTHETIC-A')['revision'],
+                expectedAccessRevision='synthetic',change=change),lambda:None)
+        for provider,p in PROVIDERS.items():
+            save(dict(kind='provider',provider=provider,baseUrl=p['baseUrl'],mode='managed',keyAction='replace',apiKey='synthetic-only-'+provider))
+        for task,provider in (('analysis','openai'),('query','gemini'),('work_order','deepseek')):
+            save(dict(kind='task',taskId=task,provider=provider,modelId='synthetic-'+task,enabled=True))
+        before=models.read('SYNTHETIC-A');original=export_package(self.urls[0])
+        receipt=self.snapshot();self.restore(receipt)
+        root=self.root/'recovered/workbench/workbench-library';restored=self.models(root)
+        self.assertEqual(restored.read('SYNTHETIC-A'),before)
+        for provider in PROVIDERS:self.assertEqual(restored.credentials('SYNTHETIC-A',provider)[1],'synthetic-only-'+provider)
+        self.assertEqual((root/'llm-credentials.key').stat().st_mode&0o777,0o600)
+        self.assertEqual(export_package(self.urls[0]),original)
+        self.assertEqual(export_package(self.urls[1])['tables'],original['tables'])
+        self.assertEqual(restored.read('OTHER-PROJECT')['revision'],0)

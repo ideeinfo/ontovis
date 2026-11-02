@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 import json
-from threading import Event, Lock, Thread
+from threading import BoundedSemaphore, Event, Lock, Thread
 import time
 from urllib.parse import quote
 
@@ -23,11 +23,15 @@ class Job:
     thread: object = None
     stop_code: str = 'ASSISTANT_CANCELLED'
     private: tuple = ()
+    configuration_revision: int = 0
 
 
 class AssistantRuntime:
     def __init__(self, library, connection_id):
         self.store=AssistantStore(library,connection_id)
+        from .assistant_models import AssistantModels
+        self.models=AssistantModels(library,connection_id)
+        self.model_slots=BoundedSemaphore(2)
         self.lock=Lock();self.jobs={}
 
     def close(self):
@@ -55,7 +59,8 @@ class AssistantRuntime:
             require(len(self.jobs)<2 and not any(j.project==project and j.owner==owner for j in self.jobs.values()),'ASSISTANT_BUSY',429)
             record,created=self.store.begin(project,owner,body,policy['revision'],service['serviceRevision'])
             if not created:return self.store.public(record)
-            job=Job(row['sid'],project,owner,private=tuple(row.get('private',(project,))));self.jobs[record['id']]=job
+            job=Job(row['sid'],project,owner,private=tuple(row.get('private',(project,))),
+                configuration_revision=service.get('configurationRevision',0));self.jobs[record['id']]=job
             thread=Thread(target=self._run,args=(record,job,body,policy,service,prepare,authorize,source_call),daemon=True)
             job.thread=thread;thread.start()
         return self.store.public(record)
@@ -114,6 +119,7 @@ class AssistantRuntime:
             answer=validate_answer(result.get('answer'),{r['key'] for r in available})
             result={'answer':answer,'usage':{k:v for k,v in result.get('usage',{}).items() if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and 0<=v<=50000},
                 'modelCalls':1,'engineeringConfirmation':False,'partial':len(available)!=len(summaries),
+                'model':{k:service.get(k) for k in ('taskId','provider','modelId')},
                 'context':dict(includedTurns=len(history),skippedTurns=skipped)}
             guard(True)
             self.store.update(run_id,'partial' if result['partial'] else 'complete',result=result)
@@ -131,18 +137,19 @@ class AssistantRuntime:
 def request(sessions,sid,path,payload):
     action=path.removeprefix('/api/workbench/assistant/')
     require(action in ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation',
-                       'work-order-preview','work-order-apply'))
+                       'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue'))
     row=sessions.current(sid,authenticated=True,touch=action not in ('policy','status'))
     require(payload.get('expectedSessionRevision')==row.revision,'SESSION_CHANGED',409)
     project=sessions._ref(payload.get('projectRef'));actor=identifier(row.subject_id)
     body={k:v for k,v in payload.items() if k not in ('projectRef','expectedSessionRevision')}
+    try:access=sessions._access(sid,row,project)
+    except PreviewError:
+        if sessions.assistant is not None:sessions.assistant.cancel_session(sid)
+        raise
     if sessions.assistant is None:
         with sessions.registry.lock:
             if sessions.assistant is None:sessions.assistant=AssistantRuntime(sessions.shared.library,sessions.connection_id)
     runtime=sessions.assistant
-    try:access=sessions._access(sid,row,project)
-    except PreviewError:
-        runtime.cancel_session(sid);raise
     prefix='/api/v1/projects/'+quote(project,safe='')+'/ontovis-assistant'
     lease=[0.0];lease_lock=Lock()
     def authorize(force=False):
@@ -153,15 +160,31 @@ def request(sessions,sid,path,payload):
             current=sessions._access(sid,row,project)
             require(current['accessRevision']==access['accessRevision'],'ACCESS_CHANGED',409)
             sessions.guard(sid,row);lease[0]=time.monotonic()
-    def service():
+    legacy_cache=[]
+    def legacy_service():
+        if legacy_cache:return legacy_cache[0]
         value=row.authority.request('GET',prefix+'/service');authorize()
         require(value.get('serviceRef')=='ontobase-qwen-ontovis-v1' and value.get('purpose')=='ontovis_analysis'
             and type(value.get('serviceRevision')) is str and len(value['serviceRevision'])==64
             and value.get('accessRevision')==access['accessRevision'],'ASSISTANT_SERVICE_UNAVAILABLE',502)
-        return value
+        legacy_cache.append(value);return value
+    def inherited_service():
+        try:return legacy_service()
+        except PreviewError as error:
+            if error.status in (401,403):raise
+            return {'enabled':False,'canRun':False,'reason':error.code}
+    def service(task_id='analysis'):
+        value=runtime.models.profile(project,task_id,inherited_service)
+        return {**value,'accessRevision':access['accessRevision']}
+    def services():
+        from .llm_providers import TASKS
+        return {task:service(task) for task in TASKS}
     def reply(value):
         sessions.guard(sid,row)
         return {**value,'projectRef':payload['projectRef'],'sessionRevision':row.revision,'accessRevision':access['accessRevision']}
+    if action=='model-config':
+        require(not body)
+        return reply({**runtime.models.public(runtime.models.read(project)),'services':services(),'canManage':access.get('role')=='admin'})
     if action in ('policy','history','preview'):
         require(set(body)==({'policy'} if action=='preview' else set()))
         current=runtime.store.policy(project)
@@ -170,9 +193,29 @@ def request(sessions,sid,path,payload):
         except PreviewError as error:
             if error.status in (401,403):raise
             available={'enabled':False,'canRun':False,'reason':error.code}
-        return reply({**current,'service':available,'canManage':access.get('role')=='admin',
+        return reply({**current,'service':available,'services':services(),'canManage':access.get('role')=='admin',
             **({'items':runtime.store.history(project)} if action=='history' else {})})
     require(access.get('role')=='admin','ASSISTANT_RUN_FORBIDDEN',403)
+    if action=='model-config-save':
+        require(body.get('expectedAccessRevision')==access['accessRevision'],'ACCESS_CHANGED',409)
+        value=runtime.models.save(project,actor,body,lambda:authorize(True))
+        with runtime.lock:
+            for job in runtime.jobs.values():
+                if job.project==project and job.configuration_revision<value['revision']:
+                    job.stop_code='ASSISTANT_CONFIGURATION_CHANGED';job.cancelled.set()
+        return reply(value)
+    if action=='model-catalogue':
+        require(set(body)=={'provider','baseUrl','apiKey','expectedRevision','expectedAccessRevision'})
+        require(type(body['expectedRevision']) is int and 0<=body['expectedRevision']<10000)
+        require(body['expectedAccessRevision']==access['accessRevision'],'ACCESS_CHANGED',409)
+        require(body['expectedRevision']==runtime.models.read(project)['revision'],'LLM_CONFIGURATION_CHANGED',409)
+        from .llm_providers import catalogue
+        url,key=runtime.models.credentials(project,body['provider'],body['baseUrl'],body['apiKey'])
+        authorize(True);require(runtime.model_slots.acquire(blocking=False),'ASSISTANT_BUSY',429)
+        try:value=catalogue(body['provider'],url,key)
+        finally:runtime.model_slots.release()
+        authorize(True);require(body['expectedRevision']==runtime.models.read(project)['revision'],'LLM_CONFIGURATION_CHANGED',409)
+        return reply(value)
     if action in ('publish','rollback'):
         require(set(body)=={'requestId','expectedRevision','expectedAccessRevision','expectedServiceRevision',
                               'restoreRevision' if action=='rollback' else 'policy'})
@@ -219,7 +262,8 @@ def request(sessions,sid,path,payload):
     if action in ('summary','start','graph'):
         common={'analysisSessionId','expectedAnalysisRevision','evidenceRefIds'}
         start=common|{'requestId','question','expectedPolicyRevision','expectedAccessRevision','expectedServiceRevision'}
-        require(set(body) in ((common, common|{'question'}) if action == 'summary' else (common,) if action == 'graph' else (start,start|{'conversationId','expectedConversationVersion','parentRunId'})))
+        allowed=(start,start|{'conversationId','expectedConversationVersion','parentRunId'})
+        require(set(body) in ((common, common|{'question'}) if action == 'summary' else (common,) if action == 'graph' else (*allowed,*(fields|{'taskId'} for fields in allowed))))
         identifier(body['analysisSessionId']);require(type(body['expectedAnalysisRevision']) is int and 1<=body['expectedAnalysisRevision']<=1000)
         ids=body['evidenceRefIds'];require(type(ids) is list and 1<=len(ids)<=8 and all(type(e) is str for e in ids) and len(set(ids))==len(ids))
         for e in ids:identifier(e)
@@ -245,11 +289,24 @@ def request(sessions,sid,path,payload):
             authorize(True);return reply({'items':result,'modelCalls':0})
         require(type(body['question']) is str and 0<len(body['question'].strip())<=1000 and '\0' not in body['question'])
         require(policy['policy']['enabled'],'ASSISTANT_POLICY_DISABLED',409)
-        selected=service();require(selected.get('canRun') is True,'ASSISTANT_RUN_FORBIDDEN',403)
+        task_id=body.get('taskId','analysis');selected=service(task_id)
+        require(selected.get('canRun') is True,selected.get('reason') or 'ASSISTANT_RUN_FORBIDDEN',409)
         require(type(body['expectedPolicyRevision']) is int and body['expectedPolicyRevision']==policy['revision'] and body['expectedAccessRevision']==access['accessRevision']
             and body['expectedServiceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
-        return reply(runtime.start({'project':project,'owner':actor,'sid':sid,'private':(project,access.get('projectName'))},body,policy,selected,prepare,authorize,
-            lambda data,cancelled,deadline:call_source(row.authority,prefix+'/analyze',data,cancelled,deadline)))
+        def invoke(data,cancelled,deadline):
+            authorize(True);latest=service(task_id)
+            require(latest['canRun'] and latest['serviceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
+            if selected['mode']=='inherited':
+                value=call_source(row.authority,prefix+'/analyze',{**data,'expectedServiceRevision':selected['sourceServiceRevision']},cancelled,deadline)
+                require(value.get('serviceRevision')==selected['sourceServiceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
+                value['serviceRevision']=selected['serviceRevision']
+            else:
+                from .llm_providers import infer
+                _,key=runtime.models.credentials(project,selected['provider'])
+                value=infer(selected,key,data,cancelled,deadline)
+            authorize(True);require(service(task_id)['serviceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
+            return value
+        return reply(runtime.start({'project':project,'owner':actor,'sid':sid,'private':(project,access.get('projectName'))},body,policy,selected,prepare,authorize,invoke))
     if action=='conversations':
         require(set(body)=={'analysisSessionId','expectedAnalysisRevision'})
         prepare_body=body;body={**body,'evidenceRefIds':[]}
@@ -268,7 +325,7 @@ def request(sessions,sid,path,payload):
             except PreviewError as error:return {**runtime.store.public(record,hide=True),'state':'changed','error':error.code}
             finally:body=original
             return runtime.store.public(record)
-        selected=service();current=runtime.store.policy(project)
+        selected=service(json.loads(record['input_json']).get('taskId','analysis'));current=runtime.store.policy(project)
         if not current['policy']['enabled'] or selected['serviceRevision']!=record['service_revision']:
             return {**runtime.store.public(record,hide=True),'state':'changed','error':'ASSISTANT_CONFIGURATION_CHANGED'}
         original=body;body=json.loads(record['input_json'])
@@ -333,7 +390,7 @@ def request(sessions,sid,path,payload):
                     store._session(cursor, record['analysis_id'], actor, active=True)
                     require(runtime.store.policy(project)['revision'] == transfer_policy_revision,
                             'ASSISTANT_POLICY_CHANGED', 409)
-                    available = service()
+                    available = service(json.loads(record['input_json']).get('taskId','analysis'))
                     require(available.get('canRun') is True and available['serviceRevision'] == record['service_revision'],
                             'ASSISTANT_CONFIGURATION_CHANGED', 409)
                     current = runtime.store.run(project, actor, record['id'])

@@ -143,6 +143,10 @@ def _database(library, entries):
         db.execute('begin')
         _require(db.execute('pragma integrity_check').fetchall() == [('ok',)], 'INVALID_DATABASE')
         _require(not db.execute('pragma foreign_key_check').fetchall(), 'INVALID_DATABASE')
+        from apps.api.assistant_models import validate_backup_credentials
+        from apps.api.authority import PreviewError
+        try: validate_backup_credentials(db, library)
+        except (PreviewError, ImportError): raise BackupError('INVALID_LLM_CREDENTIALS') from None
         schema = db.execute('select type,name,tbl_name,sql from sqlite_master order by type,name').fetchall()
         tables = {}
         for kind, name, _, sql in schema:

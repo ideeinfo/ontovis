@@ -22,6 +22,22 @@ from apps.api.imagery_library import ImageryLibrary
 
 
 class ModelStoreBackupTests(unittest.TestCase):
+    def test_project_model_credentials_are_paired_encrypted_and_recoverable(self):
+        from apps.api.assistant_models import AssistantModels
+        from apps.api.model_library import ModelLibrary
+        library=self.fixture.fixture.library;models=AssistantModels(library,'synthetic-source')
+        key='synthetic-backup-key-not-a-real-credential'
+        models.save('A','owner',dict(requestId=str(uuid4()),expectedRevision=0,expectedAccessRevision='grant',
+            change=dict(kind='provider',provider='openai',baseUrl='https://api.openai.com/v1',mode='managed',keyAction='replace',apiKey=key)),lambda:None)
+        before=self.source_state();receipt=self.snapshot();target=self.root/'restored-llm'
+        backup.restore_new(self.destination,target,receipt['manifestSha256'],service_stopped=True)
+        with library.connect() as db:scope=db.execute('select project_code,context_id from library').fetchone()
+        restored=AssistantModels(ModelLibrary(target/'workbench-library',*scope),'synthetic-source')
+        self.assertEqual(restored.credentials('A','openai')[1],key);self.assertEqual(self.source_state(),before)
+        self.assertNotIn(key,(target/'workbench-library/library.sqlite3').read_bytes().decode('latin1'))
+        (library.root/'llm-credentials.key').write_bytes(b'invalid-key')
+        self.reject(self.snapshot)
+
     def test_deleted_model_and_fixed_content_survive_paired_restore(self):
         from apps.api.model_library import ModelLibrary
         from apps.api.project_model_library import ProjectModelLibrary

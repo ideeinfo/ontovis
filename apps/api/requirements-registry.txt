@@ -1,2 +1,3 @@
 # Optional PostgreSQL registry runtime; SQLite business stores remain local.
 psycopg[binary]==3.2.3
+-r requirements-assistant.txt
