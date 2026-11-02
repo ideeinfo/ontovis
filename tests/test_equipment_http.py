@@ -161,4 +161,56 @@ class EquipmentHttpTests(unittest.TestCase):
         self.assertEqual(status,409,result)
         self.assertEqual(result,{'code':'SHARED_CONFIGURATION_REQUIRED'})
 
+    def inspection_scene(self):
+        versions = []
+        for kind in ('detailed', 'appearance'):
+            status, raw, _ = self.upload(self.metadata(representationType=kind, modelCode='SYNTHETIC-COMPRESSOR'))
+            self.assertEqual(status, 200, raw)
+            status, model, _ = self.calibrate(self.calibration(raw))
+            self.assertEqual(status, 200, model); versions.append(model)
+        self.version, appearance = versions; self.component_key = self.version['components'][0]['componentKey']
+        config = self.configure(); profile = self.profile()
+        profile['models'].append({'modelVersionId': appearance['modelVersionId'], 'mappings': []})
+        status, config, _ = self.request(ROOT+'/configurations/save', {'configurationId': self.cid,
+            'expectedConfigurationRevision': config['configurationRevision'], 'snapshot': profile, 'clientRequestId': str(uuid4())})
+        self.assertEqual(status, 200, config)
+        scene = self.create(); snapshot = copy.deepcopy(scene['snapshot'])
+        snapshot['instances'] = [self.item('合成压缩机', engineering.ROOT, appearance)]
+        return self.saved(scene, snapshot), appearance
+
+    def test_generic_hot_switch_uses_adopted_fixed_model_over_real_http_without_saving_scene(self):
+        scene, appearance = self.inspection_scene(); before = self.counts()
+        original = copy.deepcopy(scene['snapshot']['instances'][0])
+        choice = {'sceneModelInstanceId': original['sceneModelInstanceId'], 'modelVersionId': appearance['modelVersionId']}
+        ordinary = self.location(scene, engineering.CABINET, choice=choice)
+        self.assertEqual(ordinary['modelVersionId'], appearance['modelVersionId'])
+        self.assertNotIn('representation', ordinary)
+        for uid in (engineering.CABINET, 'definition', engineering.ROOT):
+            with self.subTest(uid=uid):
+                located = self.location(scene, uid, choice=choice, preferDetailed=True)
+                self.assertEqual(located['status'], 'located')
+                self.assertEqual(located['modelVersionId'], self.version['modelVersionId'])
+                self.assertEqual(located['selectedObject']['entityUid'], uid)
+                representation = located['representation']
+                self.assertEqual(representation['sourceModelVersionId'], appearance['modelVersionId'])
+                self.assertEqual(representation['model']['representationType'], 'detailed')
+                self.assertEqual(representation['modelRef']['sha256'], self.version['sha256'])
+                self.assertEqual(representation['instance']['placement'], original['placement'])
+                self.assertEqual(representation['instance']['rootBinding'], original['rootBinding'])
+                self.assertEqual(representation['instance']['componentBindings'][0]['objectRef']['entityUid'], engineering.CABINET)
+        self.assertEqual(self.open_ok(scene)['snapshot']['instances'][0], original)
+        self.assertEqual(self.counts(), before)
+
+    def test_hot_switch_discards_payload_if_access_is_revoked_during_detail_load(self):
+        scene, appearance = self.inspection_scene(); before = self.counts()
+        original = self.sessions.project_models.model
+        def load(asset, version, authorize):
+            value = original(asset, version, authorize)
+            if version == self.version['modelVersionId']: self.authority().allowed = False
+            return value
+        choice = {'sceneModelInstanceId': scene['snapshot']['instances'][0]['sceneModelInstanceId'], 'modelVersionId': appearance['modelVersionId']}
+        with patch.object(self.sessions.project_models, 'model', side_effect=load):
+            self.expect(self.locate(scene, engineering.CABINET, choice=choice, preferDetailed=True), 403, 'FORBIDDEN')
+        self.assertEqual(self.counts(), before)
+
 if __name__=='__main__':unittest.main()

@@ -57,7 +57,6 @@ export interface SceneViewportProps {
   viewCommand?:{token:number;view:SceneView};focusRequest?:{token:number;instanceId:string|null;instanceIds?:string[]};
   componentFocus?:ComponentFocusRequest;
   componentPickingInstanceId?:string|null;onComponentPick?:(pick:SceneComponentPick)=>void;
-  hotSwapRef?:{instanceId:string;modelRef:ModelResourceRef}|null;
   previewSelection?:PreviewSelection;onPreviewStructure?:(value:PreviewStructure|null)=>void;
   onPreviewPick?:(identity:string,nodeId:string|null)=>void;
   onSelect:(id:string|null,additive?:boolean)=>void;onPoint:(point:Vector3)=>void;
@@ -516,7 +515,7 @@ export function SceneViewport(props:SceneViewportProps) {
     };
     const sync=async()=>{
       const ticket=++generation;loadingAbort?.abort();loadingAbort=new AbortController();const signal=loadingAbort.signal;
-      const state=current.current;clearMotion();clearModelView();inspectionView=null;cancelDrag();resourcesLoading=true;setError(null);awaitingDisplay=null;
+      const state=current.current;if(state.editing||state.previewModel||state.active===false)clearMotion();clearModelView();inspectionView=null;cancelDrag();resourcesLoading=true;setError(null);awaitingDisplay=null;
       const plan=sceneLoadingPlan(state.snapshot,state.modelRefs,state.previewModel);
       if(!loading||loading.identity!==sceneLoadingIdentity(plan,state.preparationKey)||loading.state().stage==='failed'){
         loading?.cancel();loading=new SceneLoadingTracker(plan,value=>{if(!stale())setLoadingState(value);},state.preparationKey);
@@ -533,8 +532,7 @@ export function SceneViewport(props:SceneViewportProps) {
       const wanted=new Set(state.snapshot.instances.map(item=>item.sceneModelInstanceId));
       for(const [id,entry] of entries)if(!wanted.has(id)){entry.appearance.dispose();models.remove(entry.root);entries.delete(id);}
       const modelTasks=state.snapshot.instances.map(async item=>{
-        const isHotSwap=state.hotSwapRef&&state.hotSwapRef.instanceId===item.sceneModelInstanceId;
-        const ref=isHotSwap?(state.modelRefs.find(v=>v.modelVersionId===state.hotSwapRef!.modelRef.modelVersionId)||state.hotSwapRef!.modelRef):state.modelRefs.find(value=>value.modelVersionId===item.modelVersionId);
+        const ref=state.modelRefs.find(value=>value.modelVersionId===item.modelVersionId);
         if(!ref){
           const prior=entries.get(item.sceneModelInstanceId);if(prior){prior.appearance.dispose();models.remove(prior.root);entries.delete(item.sceneModelInstanceId);}
           throw new ApiError(409,'RESOURCE_CHANGED');
@@ -552,13 +550,10 @@ export function SceneViewport(props:SceneViewportProps) {
         try {transform(item,entry.root);}
         catch(value){entry.appearance.dispose();models.remove(entry.root);entries.delete(item.sceneModelInstanceId);throw value;}
       });
-      const effectiveIds=state.snapshot.instances.map(item=>{
-        const isHotSwap=state.hotSwapRef&&state.hotSwapRef.instanceId===item.sceneModelInstanceId;
-        return isHotSwap?state.hotSwapRef!.modelRef.modelVersionId:item.modelVersionId;
-      });
+      const effectiveIds=state.snapshot.instances.map(item=>item.modelVersionId);
       const tasks=[...new Set(effectiveIds)].map(async id=>{
         await Promise.all(modelTasks.filter((_,index)=>effectiveIds[index]===id));
-        const ref=state.modelRefs.find(value=>value.modelVersionId===id)||(state.hotSwapRef?.modelRef.modelVersionId===id?state.hotSwapRef.modelRef:null);
+        const ref=state.modelRefs.find(value=>value.modelVersionId===id);
         if(valid()&&ref)progress.done(modelLoadingKey(ref));
       });
       const terrainTask=(async()=>{
@@ -807,7 +802,7 @@ export function SceneViewport(props:SceneViewportProps) {
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
   useEffect(()=>{runtime.current?.preload();},[props.placementModel]);
   useEffect(()=>{runtime.current?.visibility();},[props.active]);
-  useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.hotSwapRef,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
+  useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
   useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,props.alarm,props.alarmLabels,props.modelView,waterOverride,cloudOverride,reduced,props.visualPaused,locale,resolved]);
   useEffect(()=>{runtime.current?.motion();},[props.simulatedMotions,props.componentFocus]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);

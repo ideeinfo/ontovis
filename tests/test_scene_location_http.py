@@ -235,6 +235,7 @@ class SceneLocationHttpTests(unittest.TestCase):
             {**body, 'sceneRevision': None}, {**body, 'sceneRevision': ''},
             {**body, 'contextEpoch': ''}, {**body, 'url': 'https://arbitrary.invalid'},
             {**body, 'representationChoice': None}, {**body, 'representationChoice': {'modelVersionId': self.version['modelVersionId']}},
+            {**body, 'preferDetailed': True}, {**body, 'preferDetailed': 'true'},
             {**body, 'representationChoice': {'sceneModelInstanceId': scene['snapshot']['instances'][0]['sceneModelInstanceId'],
                 'modelVersionId': self.version['modelVersionId'], 'path': '/private'}}]
         for invalid_body in invalid:

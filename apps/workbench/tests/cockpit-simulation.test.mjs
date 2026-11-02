@@ -62,6 +62,27 @@ test('independent drivers run together; explicitly excluding one restores it whi
  batch.clear();assert.deepEqual(snapshot(f.b),beforeB);assert.equal(batch.size,0);f.cache.dispose();
 });
 
+test('loading and replacing one representation preserves its pose while other drivers keep running',async()=>{
+ const f=await fixture(true),g=await fixture(false,shafts[0][0]),batch=new SceneMotionBatch();
+ g.adapted={...g.adapted,modelVersionId:'replacement-v2'};g.request={...g.request,modelVersionId:'replacement-v2'};
+ const a={...f.request,initialPhase:0,initialYaw:12},b={...a,instanceId:'b'};
+ const entries=new Map([['a',{root:f.a,version:f.adapted}],['b',{root:f.b,version:f.adapted}]]);
+ batch.sync(entries,[a,b],f.now);batch.step(f.now);batch.step(f.now+100);
+ const first=node(f.a,2).quaternion.z,other=node(f.b,2).quaternion.z;
+ const replacement={...g.request,epoch:a.epoch,sample:{...a.sample,seq:2},initialPhase:0,initialYaw:0};
+ assert.deepEqual(batch.sync(entries,[replacement,b],f.now+100),{a:'loading',b:'ready'});
+ batch.step(f.now+200);assert.ok(node(f.a,2).quaternion.z>first);assert.ok(node(f.b,2).quaternion.z>other);
+ const phase=node(f.a,2).quaternion.z,otherPhase=node(f.b,2).quaternion.z;
+ entries.set('a',{root:g.a,version:g.adapted});
+ assert.deepEqual(batch.sync(entries,[replacement,b],f.now+200),{a:'ready',b:'ready'});
+ batch.step(f.now+200);
+ const rotor=node(g.a,motionProfile(g.adapted.sha256).rotorStart).parent;
+ assert.ok(Math.abs(rotor.quaternion.z-phase)<1e-10);
+ assert.equal(node(f.b,2).quaternion.z,otherPhase);
+ batch.step(f.now+300);assert.ok(rotor.quaternion.z>phase);assert.ok(node(f.b,2).quaternion.z>otherPhase);
+ batch.clear();f.cache.dispose();g.cache.dispose();
+});
+
 test('isolating a mapped component keeps rotor motion and frames its actual simulated pose while preserving source geometry',async()=>{
  const f=await fixture(true),source=snapshot(f.resource.scene),other=snapshot(f.b),before=snapshot(f.a),batch=new SceneMotionBatch();
  const mesh=node(f.a,91);mesh.userData.ontoVisComponentKey='yaw';mesh.position.set(6,90,2);

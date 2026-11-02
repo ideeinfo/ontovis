@@ -59,6 +59,7 @@ export class SceneMotion {
   return keepGoing;
  }
  suspend(){this.clock.suspend();}
+ pose(){return {epoch:this.request.epoch,initialPhase:this.clock.rotor,initialYaw:this.clock.yaw};}
  dispose(){
   if(this.disposed)return;this.disposed=true;
   for(const saved of this.saved){const {node}=saved;saved.parent.add(node);node.position.copy(saved.position);node.quaternion.copy(saved.quaternion);
@@ -83,10 +84,14 @@ export class SceneMotionBatch {
   for(const id of this.drivers.keys())if(!wanted.has(id))this.clear(id);
   for(const request of requests){
    const id=request.instanceId,entry=entries.get(id);if(!entry?.root.visible){this.clear(id);status[id]='loading';continue;}
-   const existing=this.drivers.get(id);if(existing&&(existing.root!==entry.root||!existing.driver.matches(request)))this.clear(id);
+   // Keep the displayed representation running while its replacement is still loading.
+   if(entry.version.modelVersionId!==request.modelVersionId){status[id]='loading';continue;}
+   const existing=this.drivers.get(id),pose=existing?.driver.pose();
+   if(existing&&(existing.root!==entry.root||!existing.driver.matches(request)))this.clear(id);
    if(!this.drivers.has(id)){
     const key=JSON.stringify([entry.root.uuid,request.modelVersionId,request.sha256,request.contentRevision,request.epoch]);
-    const driver=this.refused.get(id)===key?null:SceneMotion.create(entry.root,entry.version,request);
+    const driver=this.refused.get(id)===key?null:SceneMotion.create(entry.root,entry.version,
+     pose?.epoch===request.epoch?{...request,initialPhase:pose.initialPhase,initialYaw:pose.initialYaw}:request);
     if(!driver){this.refused.set(id,key);status[id]='unavailable';continue;}
     this.drivers.set(id,{root:entry.root,driver});
    }

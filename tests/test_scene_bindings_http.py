@@ -10,6 +10,7 @@ from pathlib import Path
 import tempfile
 from threading import Thread
 import unittest
+from urllib.parse import quote
 from uuid import uuid4
 
 from apps.api.authority import PreviewError
@@ -34,6 +35,16 @@ class BindingAuthority(object_http.ObjectAuthority):
         source.objects[SECOND_CHILD] = source.object(SECOND_CHILD, engineering.OTHER_CTX)
         source.parents[SECOND_CHILD] = engineering.OTHER_ROOT
         source.relations[SECOND_CHILD, engineering.OTHER_ROOT] = source.relation(SECOND_CHILD, engineering.OTHER_ROOT)
+
+    def request(self, method, path, body=None):
+        if method == 'POST' and path == '/api/v1/projects/'+quote(engineering.PROJECT, safe='')+'/equipment/resolve':
+            source = self.engineering
+            return {'projectCode': engineering.PROJECT, 'items': [
+                {'item': source.objects[uid], 'context': source.contexts[source.objects[uid]['installationContextId']],
+                 'adoption': None, 'children': [row for row in source.objects.values()
+                    if row['entityUid'] != uid and row['installationContextId'] == source.objects[uid]['installationContextId']]}
+                for uid in body['entityUids']]}
+        return super().request(method, path, body)
 
 
 class SceneBindingsHttpTests(unittest.TestCase):

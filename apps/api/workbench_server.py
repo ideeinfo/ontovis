@@ -716,9 +716,11 @@ class WorkbenchSessions(UserSessions):
                 validate_resources(value['snapshot'])
                 authorize()
             elif path == '/api/workbench/scenes/locate' and {'sceneId', 'sceneRevision', 'selectedObjectRef', 'contextEpoch'} <= set(body) <= {
-                    'sceneId', 'sceneRevision', 'selectedObjectRef', 'contextEpoch', 'representationChoice'}:
+                    'sceneId', 'sceneRevision', 'selectedObjectRef', 'contextEpoch', 'representationChoice', 'preferDetailed'}:
                 if (not isinstance(body['sceneRevision'], str) or not body['sceneRevision']
-                        or 'representationChoice' in body and type(body['representationChoice']) is not dict):
+                        or 'representationChoice' in body and (type(body['representationChoice']) is not dict
+                            or set(body['representationChoice'])!={'sceneModelInstanceId','modelVersionId'})
+                        or 'preferDetailed' in body and (type(body['preferDetailed']) is not bool or not body.get('representationChoice'))):
                     raise PreviewError(422, 'INVALID_REQUEST')
                 selected_ref = validate_ref(body['selectedObjectRef'],
                     connection_id=self.ontobase_connection_id, project_code=self.project_code)
@@ -731,6 +733,17 @@ class WorkbenchSessions(UserSessions):
                 projected,uses=self.equipment_store().resolve_scene(opened,EquipmentReader(reader).resolve,authorize)
                 target=selected;shared_mapping=None;inherited=False
                 choice=body.get('representationChoice')
+                source_choice=choice
+                if body.get('preferDetailed'):
+                    from .scene_representation import inspection_projection
+                    projected,inspection_uses=inspection_projection(projected,choice,self.equipment_store(),EquipmentReader(reader).resolve,model_details,authorize)
+                    if inspection_uses is not None:uses=inspection_uses
+                    original=next((item for item in opened['snapshot']['instances']
+                                   if item['sceneModelInstanceId']==source_choice['sceneModelInstanceId']
+                                   and item['modelVersionId']==source_choice['modelVersionId']),None)
+                    chosen=next((item for item in projected['snapshot']['instances']
+                                 if original and item['sceneModelInstanceId']==original['sceneModelInstanceId']),None)
+                    if chosen:choice={'sceneModelInstanceId':chosen['sceneModelInstanceId'],'modelVersionId':chosen['modelVersionId']}
                 if selected['context'] is None and choice:
                     use=next((use for use in uses if use['sceneModelInstanceId']==choice['sceneModelInstanceId']),None)
                     if use:
@@ -749,6 +762,11 @@ class WorkbenchSessions(UserSessions):
                             shared_mapping={'configurationId':use['configurationId'],'configurationRevision':use['configurationRevision'],
                                 'equipmentEntityUid':use['equipmentEntityUid'],'definitionObjectRef':mapping['objectRef']}
                 value = SceneLocationResolver(model_details).resolve(projected, target, body['contextEpoch'],choice)
+                if body.get('preferDetailed') and value['status']=='located' and choice and value['sceneModelInstanceId']==choice['sceneModelInstanceId']:
+                    instance=next(item for item in projected['snapshot']['instances'] if item['sceneModelInstanceId']==choice['sceneModelInstanceId'])
+                    model=model_details(instance['modelVersionId'])
+                    value['representation']={'sourceModelVersionId':source_choice['modelVersionId'],'instance':instance,
+                        'modelRef':{key:model[key] for key in ('modelAssetId','modelVersionId','contentRevision','sha256')},'model':model}
                 if shared_mapping:
                     value['selectedObject']={**selected['item'],'objectRef':selected['objectRef']}
                     if value['status']=='located' and inherited:value['mode']='ancestor'

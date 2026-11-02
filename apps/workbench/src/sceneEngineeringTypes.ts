@@ -1,5 +1,6 @@
 import type {EngineeringObject, Installation, Relation} from './types';
-import type {Bounds3} from './sceneTypes';
+import type {Bounds3,ModelResourceRef,SceneModelInstance} from './sceneTypes';
+import type {ProjectModelVersion} from './resourceTypes';
 
 export interface EngineeringRef {ontobaseConnectionId:string;projectCode:string;entityUid:string}
 export interface SceneRootBinding {objectRef:EngineeringRef}
@@ -36,8 +37,10 @@ export interface SceneLocation {
   hostObject:(EngineeringObject&{objectRef:EngineeringRef})|null;sceneModelInstanceId:string|null;
   componentKeys:string[];modelVersionId:string|null;geometryQuality:'source_candidate'|'proxy_schematic'|null;
   relationshipStatus:'confirmed'|'assumed'|null;worldBounds:Bounds3|null;choices:SceneRepresentation[];reason:string|null;
+  representation?:{sourceModelVersionId:string;instance:SceneModelInstance;modelRef:ModelResourceRef;model:ProjectModelVersion};
 }
 export interface SceneLocationRequest {
   sceneId:string;sceneRevision:string;selectedObjectRef:EngineeringRef;contextEpoch:string;
   representationChoice?:Pick<SceneRepresentation,'sceneModelInstanceId'|'modelVersionId'>;
+  preferDetailed?:boolean;
 }
