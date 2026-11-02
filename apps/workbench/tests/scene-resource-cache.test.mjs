@@ -144,6 +144,31 @@ test('20 actual GLB instances share one source decode and GPU data but preserve 
   cache.dispose();
 });
 
+test('30 scene round trips reuse immutable resources, release isolated appearances and reject the prior login cache',async()=>{
+  const f=modelFixture();f.version.components=[component('cabinet',[0])];
+  const cache=new SceneResourceCache(f.api,{source:f.source}),resource=await cache.model(f.ref);
+  const sourceMeshes=meshList(resource.scene),sourceMaterial=sourceMeshes[0].material;
+  let geometryDisposals=0,materialDisposals=0,appearanceDisposals=0;
+  sourceMeshes[0].geometry.addEventListener('dispose',()=>geometryDisposals++);
+  sourceMaterial.addEventListener('dispose',()=>materialDisposals++);
+  for(let round=0;round<30;round++){
+    for(const scene of ['first','second']){
+      const root=cloneModel(await cache.model(f.ref),`${scene}-${round}`),group=new THREE.Group();group.add(root);
+      root.position.set(scene==='first'?100:-500,round,0);root.updateMatrixWorld(true);
+      const appearance=new SceneCabinetAppearance(root,resource.version);appearance.apply(['cabinet'],'#ff790d',true);
+      const copies=new Set(meshList(root).map(mesh=>mesh.material).filter(material=>material!==sourceMaterial));
+      for(const material of copies)material.addEventListener('dispose',()=>appearanceDisposals++);
+      appearance.dispose();root.removeFromParent();
+      assert.ok(meshList(root).every((mesh,index)=>mesh.material===sourceMeshes[index].material));
+      assert.equal(group.children.length,0);assert.equal(geometryDisposals,0);assert.equal(materialDisposals,0);
+    }
+  }
+  assert.equal(f.calls.modelContent,1);assert.equal(f.calls.model,1);assert.ok(appearanceDisposals>=60);
+  assert.deepEqual(resource.scene.position.toArray(),[0,0,0]);assert.equal(sourceMaterial.opacity,1);
+  f.api.session('new-login-session');await assert.rejects(cache.model(f.ref),error=>error.name==='AbortError');
+  cache.dispose();cache.dispose();assert.equal(geometryDisposals,1);assert.equal(materialDisposals,1);
+});
+
 test('actual node associations distinguish identical names and one mesh used by different GLTF nodes',async()=>{
   const f=modelFixture(glb(document=>{document.nodes.forEach(node=>node.name='same name');}));
   f.version.components=[component('fixed-zero',[0]),component('fixed-one',[1])];

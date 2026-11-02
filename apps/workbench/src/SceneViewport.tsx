@@ -38,6 +38,7 @@ import {layoutAlarmLabels,type SceneAlarm,type SceneAlarmLabel} from './sceneAla
 export interface SceneCameraControl {getView:()=>SceneView;setView:(value:SceneView)=>void;ready:()=>boolean}
 export interface SceneViewportProps {
   active?:boolean;
+  sceneKey?:string;
   presentation?:boolean;visualPaused?:boolean;
   simulatedMotions?:MotionRequest[];onMotionStatus?:(status:Record<string,MotionStatus>)=>void;
   modelView?:ModelViewRequest|null;onModelViewStatus?:(status:ModelViewStatus)=>void;
@@ -295,7 +296,7 @@ export function SceneViewport(props:SceneViewportProps) {
     let drag:{id:string;root:THREE.Group;original:THREE.Vector3;offset:THREE.Vector3;pointerId:number}|null=null;
     let movePending=false;
     let loading:SceneLoadingTracker|null=null,awaitingDisplay:SceneLoadingTracker|null=null;
-    let resourcesLoading=false,lastFrameRevision=current.current.snapshot.coordinateFrame.frameRevision;
+    let resourcesLoading=false,lastFrameRevision=current.current.snapshot.coordinateFrame.frameRevision,lastSceneKey=current.current.sceneKey;
     const stale=()=>disposed||api.epoch!==epoch||api.revision!==revision;
     const report=(value:unknown)=>{if(!stale()&&!cancelled(value)){setError(value);current.current.onError?.(value);}};
     const emit=()=>{if(!stale())current.current.onViewChange(view(camera,orbit));};
@@ -517,6 +518,13 @@ export function SceneViewport(props:SceneViewportProps) {
     const sync=async()=>{
       const ticket=++generation;loadingAbort?.abort();loadingAbort=new AbortController();const signal=loadingAbort.signal;
       const state=current.current;if(state.editing||state.previewModel||state.active===false)clearMotion();clearModelView();inspectionView=null;cancelDrag();resourcesLoading=true;setError(null);awaitingDisplay=null;
+      const sceneChanged=state.sceneKey!==lastSceneKey;
+      if(sceneChanged){
+        lastSceneKey=state.sceneKey;clearMotion();clearComponentFocus();lastComponentRequest=null;
+        focusPending=undefined;initialFocusIds=state.initialFocusIds;wheelPending=null;restoreView=null;
+        // A new scene may use the same coordinate-frame revision. Its camera still belongs to that scene.
+        moveView(state.snapshot.initialView,false);
+      }
       const plan=sceneLoadingPlan(state.snapshot,state.modelRefs,state.previewModel);
       if(!loading||loading.identity!==sceneLoadingIdentity(plan,state.preparationKey)||loading.state().stage==='failed'){
         loading?.cancel();loading=new SceneLoadingTracker(plan,value=>{if(!stale())setLoadingState(value);},state.preparationKey);
@@ -526,9 +534,9 @@ export function SceneViewport(props:SceneViewportProps) {
       const imageryPreparation=imageryLayer.prepare(state.imageryVersion??null,state.snapshot.imagery,signal);
       // Observe immediately: a model may load more slowly than a failed image read.
       void imageryPreparation.catch(()=>undefined);
-      if(state.snapshot.coordinateFrame.frameRevision!==lastFrameRevision){
+      if(sceneChanged||state.snapshot.coordinateFrame.frameRevision!==lastFrameRevision){
         lastFrameRevision=state.snapshot.coordinateFrame.frameRevision;
-        if(restoreView)restoreView=structuredClone(state.snapshot.initialView);else moveView(state.snapshot.initialView);
+        if(!sceneChanged){if(restoreView)restoreView=structuredClone(state.snapshot.initialView);else moveView(state.snapshot.initialView);}
       }
       const wanted=new Set(state.snapshot.instances.map(item=>item.sceneModelInstanceId));
       for(const [id,entry] of entries)if(!wanted.has(id)){entry.appearance.dispose();models.remove(entry.root);entries.delete(id);}
@@ -804,7 +812,7 @@ export function SceneViewport(props:SceneViewportProps) {
   },[props.api,props.api.epoch,props.api.revision,rendererAttempt]);
   useEffect(()=>{runtime.current?.preload();},[props.placementModel]);
   useEffect(()=>{runtime.current?.visibility();},[props.active]);
-  useEffect(()=>{runtime.current?.sync();},[props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
+  useEffect(()=>{runtime.current?.sync();},[props.sceneKey,props.snapshot,props.modelRefs,props.terrainVersion,props.imageryVersion,props.previewModel,props.preparationKey,attempt]);
   useEffect(()=>{runtime.current?.appearance();},[props.selectedId,props.selectedIds,props.personalVisibility,props.terrainVisible,props.imageryVisible,props.disabled,props.editing,props.pendingPlacement,props.environmentPreview,props.alarm,props.alarmLabels,props.modelView,waterOverride,cloudOverride,reduced,props.visualPaused,locale,resolved]);
   useEffect(()=>{runtime.current?.motion();},[props.simulatedMotions,props.componentFocus]);
   useEffect(()=>{if(props.viewCommand)runtime.current?.setView(props.viewCommand.view);},[props.viewCommand?.token]);
