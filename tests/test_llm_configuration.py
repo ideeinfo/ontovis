@@ -38,6 +38,8 @@ class ModelConfigurationTests(unittest.TestCase):
         profile=self.models.profile('A','analysis',inherited)
         self.assertEqual(profile['serviceRevision'],'a'*64);self.assertEqual(profile['modelId'],'original')
         self.assertNotEqual(self.models.profile('A','query',inherited)['serviceRevision'],'a'*64)
+        viewer=self.models.profile('A','analysis',lambda:{'enabled':True,'canRun':False,'modelId':'original','serviceRevision':'a'*64})
+        self.assertTrue(viewer['enabled']);self.assertFalse(viewer['canRun'])
     def test_keys_are_encrypted_scope_bound_and_never_returned_or_audited(self):
         value=self.save(self.provider());self.assertTrue(value['providers'][0]['keyConfigured'])
         self.assertEqual([p['id'] for p in self.models.public(self.models.read('A'))['providers']],list(PROVIDERS))
@@ -154,6 +156,18 @@ class ProviderProtocolTests(unittest.TestCase):
             self.assertEqual(request.call_args.args[3:6],('GET','/models',None))
 
 class ModelConfigurationHttpTests(http_fixture.AssistantHttpTests):
+    def test_managed_model_is_readable_but_never_runnable_by_a_viewer(self):
+        self.save_provider()
+        status,_=self.request('model-config-save',dict(requestId=str(uuid4()),expectedRevision=1,expectedAccessRevision='Demo-PDS:admin',change=dict(
+            kind='task',taskId='query',provider='openai',modelId='synthetic-query',enabled=True)))
+        self.assertEqual(status,200)
+        http_fixture.ProjectsAuthority.permissions['member']['Demo-PDS']='viewer'
+        value=self.request('model-config')[1]
+        self.assertFalse(value['canManage']);self.assertTrue(value['services']['query']['enabled']);self.assertFalse(value['services']['query']['canRun'])
+        self.assertEqual(value['services']['query']['reason'],'ASSISTANT_RUN_FORBIDDEN')
+        with patch('apps.api.llm_providers.infer') as infer_call:
+            self.assertEqual(self.request('start',self.start_body()|{'taskId':'query'})[0],403)
+            infer_call.assert_not_called()
     def finished(self,run_id):
         for _ in range(150):
             status,value=self.request('status',{'runId':run_id})

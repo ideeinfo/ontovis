@@ -135,9 +135,10 @@ class AssistantModels:
         value=self.read(project);task=value['config']['tasks'][task_id];provider=task['provider'];p=value['config']['providers'][provider]
         source=inherited() if p['mode']=='inherited' else {}
         rev=source.get('serviceRevision') if value['revision']==0 and task_id=='analysis' else digest([value['revision'],task_id,task,p['baseUrl'],p['mode'],source.get('serviceRevision')])
-        ready=task['enabled'] and (source.get('canRun') is True if p['mode']=='inherited' else bool(p['credential']) and bool(task['modelId']))
+        ready=task['enabled'] and (source.get('enabled') is True if p['mode']=='inherited' else bool(p['credential']) and bool(task['modelId']))
+        runnable=ready and (source.get('canRun') is True if p['mode']=='inherited' else True)
         return {'taskId':task_id,'provider':provider,'modelId':source.get('modelId') if p['mode']=='inherited' else task['modelId'],
-            'baseUrl':p['baseUrl'],'mode':p['mode'],'enabled':ready,'canRun':ready,'serviceRef':'ontovis-task-model-v1',
+            'baseUrl':p['baseUrl'],'mode':p['mode'],'enabled':ready,'canRun':runnable,'serviceRef':'ontovis-task-model-v1',
             'serviceRevision':rev,'configurationRevision':value['revision'],'sourceServiceRevision':source.get('serviceRevision'),
             'accessRevision':source.get('accessRevision'),'purpose':'ontovis_analysis',
             'reason':None if ready else 'LLM_TASK_DISABLED' if not task['enabled'] else source.get('reason','LLM_KEY_REQUIRED') if p['mode']=='inherited' else 'LLM_MODEL_REQUIRED' if p['credential'] else 'LLM_KEY_REQUIRED'}

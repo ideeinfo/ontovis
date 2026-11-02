@@ -9,6 +9,11 @@ export interface LlmProviderConfig {id:LlmProvider;name:string;baseUrl:string;mo
 export interface LlmTaskConfig {id:LlmTask;nameZh:string;nameEn:string;provider:LlmProvider;modelId:string;enabled:boolean;}
 export interface LlmConfiguration {revision:number;updatedAt:string|null;providers:LlmProviderConfig[];tasks:LlmTaskConfig[];services:Record<LlmTask,LlmService>;accessRevision:string;canManage:boolean;}
 export type LlmChange={kind:'provider';provider:LlmProvider;baseUrl:string;mode:'inherited'|'managed';keyAction:'keep'|'replace'|'clear';apiKey:string|null}|{kind:'task';taskId:LlmTask;provider:LlmProvider;modelId:string;enabled:boolean};
+export function modelTaskState(task:LlmTaskConfig,provider:LlmProviderConfig,service?:LlmService):'off'|'ready'|'unavailable'|'missing'{
+ if(!task.enabled)return 'off';
+ if(service?.enabled)return 'ready';
+ return provider.mode==='inherited'?'unavailable':'missing';
+}
 export function modelChoices(items:string[],query:string){const q=query.trim().toLocaleLowerCase();return [...new Set(items)].filter(s=>s.toLocaleLowerCase().includes(q)).sort();}
 export function providerChange(original:LlmProviderConfig,baseUrl:string,mode:LlmProviderConfig['mode'],key:string,clear:boolean):LlmChange{
  return {kind:'provider',provider:original.id,baseUrl:baseUrl.trim().replace(/\/$/,''),mode,keyAction:clear?'clear':key?'replace':'keep',apiKey:clear?null:key||null};

@@ -175,7 +175,9 @@ def request(sessions,sid,path,payload):
             return {'enabled':False,'canRun':False,'reason':error.code}
     def service(task_id='analysis'):
         value=runtime.models.profile(project,task_id,inherited_service)
-        return {**value,'accessRevision':access['accessRevision']}
+        permitted=access.get('role')=='admin'
+        return {**value,'accessRevision':access['accessRevision'],'canRun':value['canRun'] and permitted,
+            'reason':'ASSISTANT_RUN_FORBIDDEN' if value['enabled'] and not permitted else value['reason']}
     def services():
         from .llm_providers import TASKS
         return {task:service(task) for task in TASKS}

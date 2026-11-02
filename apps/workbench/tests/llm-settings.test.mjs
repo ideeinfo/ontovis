@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {llmTaskNames,llmProviderNames,modelChoices,providerChange,modelConfigurationApi} from '../src/llmSettings.ts';
+import {llmTaskNames,llmProviderNames,modelTaskState,modelChoices,providerChange,modelConfigurationApi} from '../src/llmSettings.ts';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
 import {assistantMessage} from '../src/assistantApi.ts';
 
@@ -38,4 +38,12 @@ test('provider errors explain the required action and never claim that credentia
  assert.match(assistantMessage('LLM_CONFIGURATION_CHANGED',true),/refresh/);
  assert.match(assistantMessage('LLM_CONVERSATION_TASK_CHANGED'),/新建对话/);
  assert.match(assistantMessage('LLM_NEW_ENDPOINT_KEY_REQUIRED'),/重新填写/);
+});
+
+test('an unavailable inherited source is distinct from missing settings and a viewer can see configured models',()=>{
+ const task={enabled:true},inherited={mode:'inherited'},managed={mode:'managed'};
+ assert.equal(modelTaskState(task,inherited,{enabled:false,canRun:false}),'unavailable');
+ assert.equal(modelTaskState(task,inherited,{enabled:true,canRun:false}),'ready');
+ assert.equal(modelTaskState(task,managed,{enabled:false,canRun:false}),'missing');
+ assert.equal(modelTaskState({enabled:false},inherited,{enabled:false,canRun:false}),'off');
 });
