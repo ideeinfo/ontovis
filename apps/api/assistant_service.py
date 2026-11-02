@@ -126,7 +126,7 @@ class AssistantRuntime:
         except (PreviewError,FutureTimeout) as error:
             code=job.stop_code if job.cancelled.is_set() else error.code if isinstance(error,PreviewError) else 'ASSISTANT_TIMEOUT'
             state='cancelled' if code=='ASSISTANT_CANCELLED' else 'changed' if code in (
-                'ACCESS_CHANGED','SESSION_CHANGED','SESSION_EXPIRED','FORBIDDEN','ASSISTANT_POLICY_CHANGED','ASSISTANT_CONFIGURATION_CHANGED') else 'failed'
+                'ACCESS_CHANGED','SESSION_CHANGED','SESSION_EXPIRED','FORBIDDEN','ASSISTANT_POLICY_CHANGED','ASSISTANT_CONFIGURATION_CHANGED','LLM_CONFIGURATION_CHANGED') else 'failed'
             self.store.update(run_id,state,error=code)
         except Exception:
             self.store.update(run_id,'failed',error='ASSISTANT_INTERNAL_ERROR')
@@ -210,7 +210,7 @@ def request(sessions,sid,path,payload):
         require(body['expectedAccessRevision']==access['accessRevision'],'ACCESS_CHANGED',409)
         require(body['expectedRevision']==runtime.models.read(project)['revision'],'LLM_CONFIGURATION_CHANGED',409)
         from .llm_providers import catalogue
-        url,key=runtime.models.credentials(project,body['provider'],body['baseUrl'],body['apiKey'])
+        url,key=runtime.models.credentials(project,body['provider'],body['baseUrl'],body['apiKey'],expected_revision=body['expectedRevision'])
         authorize(True);require(runtime.model_slots.acquire(blocking=False),'ASSISTANT_BUSY',429)
         try:value=catalogue(body['provider'],url,key)
         finally:runtime.model_slots.release()
@@ -302,7 +302,7 @@ def request(sessions,sid,path,payload):
                 value['serviceRevision']=selected['serviceRevision']
             else:
                 from .llm_providers import infer
-                _,key=runtime.models.credentials(project,selected['provider'])
+                _,key=runtime.models.credentials(project,selected['provider'],selected['baseUrl'],expected_revision=selected['configurationRevision'])
                 value=infer(selected,key,data,cancelled,deadline)
             authorize(True);require(service(task_id)['serviceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
             return value

@@ -54,6 +54,8 @@ class ModelConfigurationTests(unittest.TestCase):
     def test_keep_clear_address_change_and_stale_revision(self):
         self.save(self.provider());keep=self.provider()|{'keyAction':'keep','apiKey':None}
         self.save(keep);self.assertEqual(self.models.credentials('A','openai')[1],KEY)
+        with self.assertRaises(PreviewError):self.models.credentials('A','openai',expected_revision=1)
+        self.assertEqual(self.models.credentials('A','openai',expected_revision=2)[1],KEY)
         with self.assertRaises(PreviewError):self.save(keep,revision=0)
         self.save(self.provider('deepseek'))
         with self.assertRaises(PreviewError):self.save(self.provider('deepseek')|{'baseUrl':'https://api.deepseek.com/v1','keyAction':'keep','apiKey':None})

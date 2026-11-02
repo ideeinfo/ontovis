@@ -142,8 +142,11 @@ class AssistantModels:
             'accessRevision':source.get('accessRevision'),'purpose':'ontovis_analysis',
             'reason':None if ready else 'LLM_TASK_DISABLED' if not task['enabled'] else source.get('reason','LLM_KEY_REQUIRED') if p['mode']=='inherited' else 'LLM_MODEL_REQUIRED' if p['credential'] else 'LLM_KEY_REQUIRED'}
 
-    def credentials(self, project, provider, base_url=None, transient=None):
-        require(type(provider) is str and provider in PROVIDERS);p=self.read(project)['config']['providers'][provider]
+    def credentials(self, project, provider, base_url=None, transient=None, *, expected_revision=None):
+        require(type(provider) is str and provider in PROVIDERS)
+        value=self.read(project)
+        require(expected_revision is None or value['revision']==expected_revision,'LLM_CONFIGURATION_CHANGED',409)
+        p=value['config']['providers'][provider]
         url=endpoint(provider,base_url or p['baseUrl'])
         if transient:return url,api_key(transient)
         require(url==p['baseUrl'],'LLM_NEW_ENDPOINT_KEY_REQUIRED')
