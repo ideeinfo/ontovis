@@ -50,11 +50,13 @@ test('one complete canvas includes every saved card without pagination or mutati
  for(const placed of layout.cards){assert.ok(placed.x>=0&&placed.y>=0&&placed.x+placed.width<=layout.width&&placed.y+placed.height<=layout.height);assert.ok(!layout.cards.some(c=>c.id!==placed.id&&overlap(c,placed)));assert.deepEqual(placed.view,cards.find(c=>c.id===placed.id).view);}
  assert.equal(JSON.stringify(cards),saved);
 });
-test('empty and single-card canvases have a valid fit and retain a central alarm anchor',()=>{
+test('empty and single-card canvases have a valid fit and the initial fault position can be moved',()=>{
  assert.deepEqual(cockpitAnalysisLayout([]).cards,[]);assert.equal(cockpitAnalysisLayout([card('one')]).cards.length,1);
  assert.deepEqual(cockpitCanvasFit([], {width:800,height:600}),{x:24,y:24,zoom:1});
  const cards=[card('alarm','alarm'),card('drawing','drawing')],original=cockpitAnalysisLayout(cards),moved=cockpitAnalysisLayout(cards,{alarm:{x:0,y:0}});
- assert.deepEqual(moved.cards.find(c=>c.kind==='alarm'),original.cards.find(c=>c.kind==='alarm'));
+ assert.equal(original.center.id,'alarm');assert.equal(moved.center.id,'alarm');
+ assert.deepEqual([moved.cards.find(c=>c.kind==='alarm').x,moved.cards.find(c=>c.kind==='alarm').y],[0,0]);
+ const one=cockpitAnalysisLayout([card('alarm','alarm')],{alarm:{x:0,y:0}});assert.deepEqual([one.cards[0].x,one.cards[0].y],[0,0]);
 });
 test('card movement accounts for rendered world zoom and interface density exactly once',()=>{
  const value=card('drawing','drawing'),size={width:2000,height:1000};
@@ -68,19 +70,29 @@ test('dragged cards remain in the complete logical canvas, independently of the 
  for(const rendered of [{width:0,height:700},{width:1000,height:0},{width:NaN,height:700}])assert.deepEqual(cockpitCardMove(value,{x:40,y:60},rendered,size),{x:40,y:60});
  assert.deepEqual(cockpitCardMove(value,{x:NaN,y:60},size,size),{x:40,y:60});
 });
-test('temporary card positions do not alter saved views, source identities or the fault anchor',()=>{
+test('temporary positions move the fault and evidence without changing saved views or source identities',()=>{
  const cards=[card('alarm','alarm'),...Array.from({length:13},(_,i)=>({...card('drawing-'+i,'drawing'),view:{zoom:.7,centerX:.3,centerY:.4}}))],saved=JSON.stringify(cards);
  const positions={'drawing-0':{x:600,y:500},alarm:{x:0,y:0},'drawing-8':{x:240,y:90}},moved=cockpitAnalysisLayout(cards,positions),original=cockpitAnalysisLayout(cards);
- assert.deepEqual(moved.cards.find(c=>c.id==='alarm'),original.cards.find(c=>c.id==='alarm'));
+ const alarm=moved.cards.find(c=>c.id==='alarm');assert.deepEqual([alarm.x,alarm.y],[0,0]);assert.deepEqual(alarm.source,cards[0].source);
  assert.deepEqual([moved.cards.find(c=>c.id==='drawing-8').x,moved.cards.find(c=>c.id==='drawing-8').y],[240,90]);
  assert.deepEqual(moved.cards.find(c=>c.id==='drawing-0').view,cards[1].view);assert.equal(JSON.stringify(cards),saved);
  assert.deepEqual(cockpitAnalysisLayout(cards,positions),moved);assert.deepEqual(cockpitAnalysisLayout(cards,{}),original);
 });
-test('relationship geometry follows moved cards while retaining all direct registered edges',()=>{
- const cards=[card('alarm','alarm'),card('drawing','drawing')],saved=JSON.stringify(cards),original=cockpitAnalysisLayout(cards),moved=cockpitAnalysisLayout(cards,{drawing:{x:100,y:50}});
+test('relationship geometry follows the moved current alarm and evidence while retaining registered edges',()=>{
+ const cards=[card('alarm','alarm'),card('drawing','drawing')],saved=JSON.stringify(cards),original=cockpitAnalysisLayout(cards),moved=cockpitAnalysisLayout(cards,{alarm:{x:240,y:20},drawing:{x:100,y:50}});
  const edge={id:'source',fromRef:cards[0].source.id,toRef:cards[1].source.id,kind:'reference',label:'Drawing source',reason:'Fixed evidence',origin:'source',anchor:null,from:cards[0],to:cards[1]};
  const graph=cockpitRelationGraph(cards,moved.cards,[edge],[],{[cards[0].source.id]:'available',[cards[1].source.id]:'available'},[]);
- assert.equal(graph.length,1);assert.equal(graph[0].to.x,100);assert.equal(graph[0].label,'Drawing source');assert.notDeepEqual(cockpitRelationRoute(graph[0].from,graph[0].to),cockpitRelationRoute(original.cards[1],original.cards[0]));assert.equal(JSON.stringify(cards),saved);
+ assert.equal(graph.length,1);assert.equal(graph[0].from.x,240);assert.equal(graph[0].from.y,20);assert.equal(graph[0].to.x,100);assert.equal(graph[0].label,'Drawing source');assert.notDeepEqual(cockpitRelationRoute(graph[0].from,graph[0].to),cockpitRelationRoute(original.cards[1],original.cards[0]));assert.equal(JSON.stringify(cards),saved);
+});
+test('current alarm movement applies once at different rendered scales, clamps to the canvas and resets',()=>{
+ const cards=[card('alarm','alarm'),...Array.from({length:11},(_,i)=>card('photo-'+i,'photo'))],saved=JSON.stringify(cards),original=cockpitAnalysisLayout(cards),alarm=original.cards.find(c=>c.id==='alarm');
+ for(const scale of [.37,1,1.5,2]){
+  const position=cockpitCardMove(alarm,{x:80*scale,y:40*scale},{width:original.width*scale,height:original.height*scale},original);
+  const placed=cockpitAnalysisLayout(cards,{alarm:position}).cards.find(c=>c.id==='alarm');
+  assert.ok(Math.abs(placed.x-alarm.x-80)<1e-8);assert.ok(Math.abs(placed.y-alarm.y-40)<1e-8);assert.deepEqual(placed.source,alarm.source);
+ }
+ const moved=cockpitAnalysisLayout(cards,{alarm:{x:-9999,y:9999}}).cards.find(c=>c.id==='alarm');
+ assert.deepEqual([moved.x,moved.y],[0,original.height-alarm.height]);assert.equal(JSON.stringify(cards),saved);assert.deepEqual(cockpitAnalysisLayout(cards,{}),original);
 });
 test('independent recurrence and fixed dataset revisions retain historical status even with the same fault code',()=>{
  assert.equal(cockpitAnalysisHistorical(detail(),dataset),false);

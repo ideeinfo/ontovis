@@ -23,7 +23,10 @@ export function cockpitAnalysisLayout(cards:CanvasCard[],positions:CockpitCardPo
   const value={...card,x:32+(slot%columns)*432,y:32+Math.floor(slot/columns)*344,width:320,height:264};slot++;
   placed.push({...value,...cockpitCardPosition(value,positions[card.id]??value,size)});
  }
- if(center)placed.push({...center,x:32+(centerSlot%columns)*432,y:32+Math.floor(centerSlot/columns)*344,width:320,height:264});
+ if(center){
+  const value={...center,x:32+(centerSlot%columns)*432,y:32+Math.floor(centerSlot/columns)*344,width:320,height:264};
+  placed.push({...value,...cockpitCardPosition(value,positions[center.id]??value,size)});
+ }
  return {...size,cards:placed,center,total:cards.length};
 }
 export function cockpitCardPosition(card:Pick<CanvasCard,'x'|'y'|'width'|'height'>,position:CockpitCardPosition,size:CockpitCanvasSize):CockpitCardPosition{
