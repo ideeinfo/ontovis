@@ -91,6 +91,23 @@ class WorkOrderTests(unittest.TestCase):
         self.assertEqual(self.seed()['created'], 0)
         self.assertEqual(self.first()['orderRevision'], accepted['orderRevision'])
 
+    def test_recommendations_rank_before_limit_and_continue_on_the_same_snapshot(self):
+        from types import SimpleNamespace
+        from apps.api.analysis_queries import recommendations
+        self.seed();all_rows=self.orders.listing({},False)['items'];target=all_rows[-1]
+        body=dict(q='',faultCode=target['faultCode'],orderId=target['orderId'],cursor=0,expectedSnapshotRevision=None,limit=3)
+        page=self.orders.recommendation_listing(body)
+        self.assertEqual(page['items'][0]['orderId'],target['orderId'])
+        self.assertTrue(all(row['faultCode']==target['faultCode'] for row in page['items']))
+        reader=SimpleNamespace(actor='owner',reader=SimpleNamespace(project_code='Demo-PDS',connection_id='source'),orders=self.orders)
+        request={'entry':{'projectOnly':True},'section':'orders'}
+        first=recommendations(reader,request);second=recommendations(reader,request|{'cursor':first['nextCursor']})
+        self.assertEqual(len({row['selector']['orderId'] for row in first['items']+second['items']}),20)
+        self.assertIsNone(second['nextCursor'])
+        self.action(self.first(),'accept')
+        self.error('WORK_ORDER_CHANGED',recommendations,reader,request|{'cursor':first['nextCursor']})
+        self.assertEqual(self.orders.recommendation_listing(body|{'q':'%'})['items'],[])
+
     def test_every_order_can_complete_the_demo_lifecycle_and_reopen(self):
         self.seed()
         for item in self.orders.listing({}, True)['items']:

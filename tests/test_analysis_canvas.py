@@ -122,6 +122,20 @@ class CanvasStorageTests(unittest.TestCase):
         with self.assertRaises(PreviewError):self.save(b,altered)
         other=self.start(actor=OTHER);self.assertNotEqual(other['analysisSessionId'],a['analysisSessionId']);self.assertFalse(other['historyImported'])
 
+    def test_history_ranks_the_current_fixed_event_before_newer_same_code_rows_and_limit(self):
+        from apps.api.analysis_queries import history_candidates
+        self.demo=self.consumer(project='Demo-PDS');current=self.start();prior=self.start(recurrence=True)
+        for _ in range(22):
+            copy_analysis(self.demo,OWNER,{'analysisSessionId':prior['analysisSessionId'],
+                'snapshot':prior['snapshot'],'requestId':str(uuid4())},lambda:None)
+        dataset=sim.identity('13001');primary='synthetic-temperature-sensor'
+        rows=matching_history(self.demo,OWNER,dataset,primary,lambda:None)
+        self.assertEqual(len(rows),20);self.assertEqual(rows[0]['analysisSessionId'],current['analysisSessionId'])
+        entries=history_candidates(self.demo,OWNER,self.reader(),{'entry':{k:dataset[k] for k in ('datasetId','datasetRevision')}},lambda:None)['items']
+        self.assertEqual(entries[0]['relevance'],'same_event');self.assertIn('本次事件',entries[0]['reason'])
+        self.assertTrue(all(row['relevance']=='same_object_fault' for row in entries[1:]))
+        self.assertEqual(matching_history(self.demo,OTHER,dataset,primary,lambda:None),[])
+
     def test_removing_context_cards_keeps_owned_citations_and_copy_survives_restore(self):
         self.demo=self.consumer(project='Demo-PDS');a=self.start();value=deepcopy(a['snapshot']);value['cards']=[value['cards'][-1]]
         self.save(a,value)

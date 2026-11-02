@@ -18,8 +18,9 @@ export function analysisEntryRequest(entry:AnalysisEntry,requestId:string){
 }
 export type SourceKind='object'|'drawing'|'document'|'photo'|'model'|'trend'|'alarm'|'work_order';
 export type RecommendationMatch='binding'|'historical_binding'|'name_candidate'|'catalogue_search'|'simulation_mapping'|'simulation_rule';
-export type Recommendation={key:string;kind:SourceKind;title:string;reason:string;reasonEn?:string;identifier?:string;selector:Record<string,string|number>;preview?:EvidenceSource;matchType?:RecommendationMatch;availability?:'available'|'unavailable'|'field_record'};
-export type Recommendations={items:Recommendation[];nextOffset:number|null;nextCursor?:string|null;gaps:string[];dataset:SimulatedDataset|null};
+export type RecommendationRelevance='field_record'|'same_event'|'selected_object'|'object_association'|'shared_definition'|'binding'|'fault_evidence'|'simulation_mapping'|'same_object_fault'|'descendant'|'shared_photos'|'model_applicable'|'same_fault'|'historical_binding'|'simulation_rule'|'name_candidate'|'catalogue_search';
+export type Recommendation={key:string;kind:SourceKind;title:string;reason:string;reasonEn?:string;identifier?:string;selector:Record<string,string|number>;preview?:EvidenceSource;matchType?:RecommendationMatch;relevance?:RecommendationRelevance;relevancePriority?:number;assetKey?:string;availability?:'available'|'unavailable'|'field_record'};
+export type Recommendations={items:Recommendation[];nextOffset:number|null;nextCursor?:string|null;gaps:string[];dataset:SimulatedDataset|null;order?:'relevance'|'source'};
 export type EvidenceSource=Partial<Omit<ProjectModelVersion,'state'> & SimulatedTrend>&{
   title?:string;pageNumber?:number;pageCount?:number;versionNumber?:number;newerVersionAvailable?:boolean;
   documentId?:string;contentVersionId?:string;sourceSha256?:string;selector?:PhotoSelector|null;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {MATERIAL_CATEGORIES,materialCategories,materialPosition,relatedMaterialSection,withPrimaryAlarm} from '../src/analysisMaterials.ts';
+import {MATERIAL_CATEGORIES,materialCategories,materialPosition,relatedMaterialSection,withPrimaryAlarm,mergeRecommendations,recommendationRelevanceLabel} from '../src/analysisMaterials.ts';
 import {validateSnapshot} from '../src/analysisCanvas.ts';
 
 test('all nine material types are reachable and type search stays local',()=>{
@@ -11,9 +11,24 @@ test('all nine material types are reachable and type search stays local',()=>{
  assert.deepEqual(materialCategories('fault alarms').map(row=>row.id),['alarms']);
  assert.deepEqual(materialCategories('不存在'),[]);
 });
-test('installed equipment opens source-resolved materials while shared definitions retain old located evidence',()=>{
- assert.equal(relatedMaterialSection('installation'),'device_materials');
- for(const scope of ['definition','unclassified',undefined])assert.equal(relatedMaterialSection(scope),'materials');
+test('installed equipment and definitions enter the same related material picker',()=>{
+ for(const scope of ['installation','definition','unclassified',undefined])assert.equal(relatedMaterialSection(scope),'materials');
+ assert.equal(MATERIAL_CATEGORIES[0].id,'materials');
+});
+test('related pages sort by evidence strength and preserve the original located fixed source',()=>{
+ const direct={key:'region',assetKey:'photo:one:v1',kind:'photo',title:'Located',selector:{evidenceRef:'original'},relevance:'object_association',relevancePriority:10,availability:'available'};
+ const whole={...direct,key:'whole',title:'Whole',selector:{documentId:'one'},relevance:'shared_photos',relevancePriority:30};
+ const drawing={key:'drawing',kind:'drawing',title:'Drawing',selector:{},relevancePriority:10};
+ const model={key:'model',kind:'document',title:'Applicable',selector:{},relevancePriority:40};
+ const values=mergeRecommendations([direct,model],[whole,drawing]);
+ assert.deepEqual(values,[direct,drawing,model]);assert.equal(values[0],direct);
+ assert.equal(recommendationRelevanceLabel(direct,false),'本对象关联');assert.equal(recommendationRelevanceLabel(whole,true),'Shared photos');
+});
+test('fixed file deduplication prefers readable sources and never merges different versions by name',()=>{
+ const a={key:'old',assetKey:'photo:one:v1',kind:'photo',title:'Same name',selector:{},relevancePriority:10,availability:'unavailable'};
+ const b={...a,key:'readable',availability:'available',relevancePriority:30},c={...a,key:'new',assetKey:'photo:one:v2',availability:'available'};
+ assert.deepEqual(mergeRecommendations([a],[b,c]),[c,b]);
+ assert.deepEqual(mergeRecommendations([a],[a]),[a]);assert.equal(recommendationRelevanceLabel({matchType:'name_candidate'},false),'名称候选');
 });
 test('drops resolve to canvas coordinates at different pan and zoom without leaving layout limits',()=>{
  const point={x:725,y:420};for(const zoom of [.25,.43,1,1.5]){

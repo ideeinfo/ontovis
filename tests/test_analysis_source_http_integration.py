@@ -123,6 +123,31 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             self.assertIn('version_id='+VERSION,binary.call_args.args[0]);self.assertIn('page=3',binary.call_args.args[0])
             self.assertEqual(self.request(ROOT+'/evidence/detail',payload)[1]['source']['pageNumber'],2)
 
+    def test_recommendation_continuation_is_read_only_and_bound_to_current_login_and_source_page(self):
+        from tools.analysis_draft_backup import export_package
+        target={'item':{'entityUid':'cabinet','entityRevision':'r7'},'context':None}
+        rows=[dict(documentId=str(uuid4()),contentVersionId=str(uuid4()),title='Member '+str(i),availability='available') for i in range(12)]
+        last=dict(rows[0],documentId=str(uuid4()),title='Next page');original=self.source.request
+        def source(account,method,path,body=None):
+            if path.endswith('/equipment/shared-photos/query'):
+                return dict(projectCode='SYNTHETIC-A',items=rows if body['cursor'] is None else [last],
+                    nextCursor='source:next' if body['cursor'] is None else None)
+            return original(account,method,path,body)
+        request=self.body(entry={'projectOnly':True},section='photos',entityUid='cabinet',expectedEntityRevision='r7')
+        before=export_package(self.urls[0])
+        with patch.object(self.source,'request',source),patch('apps.api.scene_engineering.SceneEngineeringReader.context_for_object',return_value=target),patch('apps.api.scene_photos.ScenePhotoReader.resolve',return_value={'items':[]}):
+            status,first,*_=self.request(ROOT+'/recommendations',request);self.assertEqual(status,200,first)
+            continuation=request|{'cursor':first['nextCursor']}
+            status,second,*_=self.request(ROOT+'/recommendations',continuation)
+            self.assertEqual(status,200,second);self.assertEqual(second['items'][0]['title'],'Next page')
+            self.assertEqual(self.request(ROOT+'/recommendations',continuation|{'q':'other'})[0],409)
+            other=self.login('other');self.assertEqual(self.request(ROOT+'/recommendations',continuation,client=other)[0],409)
+            rows[0]['title']='Changed source page'
+            self.assertEqual(self.request(ROOT+'/recommendations',continuation)[0],409)
+            rows[0]['title']='Member 0';self.admin=self.login('writer')
+            self.assertEqual(self.request(ROOT+'/recommendations',continuation)[0],409)
+            self.assertEqual(export_package(self.urls[0]),before)
+
     def demo(self):
         self.source.projects['Demo-PDS']='Synthetic demo';self.source.permissions['writer']['Demo-PDS']='admin'
         project={'ontobaseConnectionId':'ontobase-primary','projectCode':'Demo-PDS'}

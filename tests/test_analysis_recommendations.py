@@ -54,14 +54,16 @@ class MaterialRecommendationTests(TestCase):
 
     def test_drawing_and_photo_categories_only_resolve_the_selected_material_type(self):
         reader=self.reader();reader._rds=Mock(return_value={'item':{'entityUid':'object','entityRevision':'r1'},'context':None})
+        reader.reader.prefix='/api/v1/projects/Demo-PDS';reader.reader._request=Mock(return_value={'projectCode':'Demo-PDS','items':[],'nextCursor':None})
         reader.photos=SimpleNamespace(resolve=Mock(return_value={'items':[{'title':'Photo','evidenceRef':'photo','selector':{'bbox':{} }}]}))
-        with patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing:
+        with patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing,patch('apps.api.related_drawings.RelatedDrawingsReader') as related:
+            related.return_value.resolve.return_value={'items':[],'nextCursor':None}
             drawing.return_value.resolve.return_value={'items':[{'title':'Drawing','evidenceRef':'drawing','availability':'available'}]}
             rows=recommendations(reader,{'entry':self.entry(),'section':'drawings'})['items']
             self.assertEqual([row['kind'] for row in rows],['drawing']);reader.photos.resolve.assert_not_called()
-            drawing.reset_mock()
+            drawing.reset_mock();related.reset_mock()
             rows=recommendations(reader,{'entry':self.entry(),'section':'photos'})['items']
-            self.assertEqual([row['kind'] for row in rows],['photo']);drawing.assert_not_called()
+            self.assertEqual([row['kind'] for row in rows],['photo']);drawing.assert_not_called();related.assert_not_called()
 
     def cabinet_reader(self):
         from apps.api.scene_engineering import SceneEngineeringReader
@@ -90,30 +92,34 @@ class MaterialRecommendationTests(TestCase):
 
     def test_shared_photo_cursor_and_unavailable_state_are_preserved(self):
         reader,photos=self.cabinet_reader();photos[1]['availability']='unavailable'
-        reader.reader._request.return_value['nextCursor']='opaque:next'
-        value=recommendations(reader,{'entry':{'projectOnly':True},'section':'photos','entityUid':'cabinet','expectedEntityRevision':'r7','cursor':'opaque:previous'})
-        self.assertEqual(value['nextCursor'],'opaque:next');self.assertIsNone(value['nextOffset'])
+        photos += [dict(photos[0],documentId=str(uuid4()),title='Extra '+str(i)) for i in range(9)]
+        def page(method,path,body):return {'projectCode':'Demo-PDS','items':photos if body['cursor'] is None else [dict(photos[0],documentId=str(uuid4()))],
+            'nextCursor':'opaque:next' if body['cursor'] is None else None}
+        reader.reader._request.side_effect=page
+        body={'entry':{'projectOnly':True},'section':'photos','entityUid':'cabinet','expectedEntityRevision':'r7'}
+        value=recommendations(reader,body)
+        self.assertTrue(value['nextCursor'].startswith('rec1.'));self.assertIsNone(value['nextOffset'])
         self.assertEqual(value['items'][1]['availability'],'unavailable')
-        self.assertEqual(reader.reader._request.call_args.args[2]['cursor'],'opaque:previous')
+        more=recommendations(reader,{**body,'cursor':value['nextCursor']});self.assertEqual(len(more['items']),1)
+        self.assertEqual(reader.reader._request.call_args.args[2]['cursor'],'opaque:next')
         with self.assertRaises(PreviewError):
             recommendations(reader,{'entry':{'projectOnly':True},'section':'photos','entityUid':'cabinet','offset':1})
 
     def test_existing_direct_photo_regions_are_not_replaced_by_cabinet_whole_images(self):
-        reader,_=self.cabinet_reader()
-        photo={'title':'Located photo','evidenceRef':'photo:fixed','selector':{'bbox':{'x':.2,'y':.3,'width':.1,'height':.1}}}
+        reader,photos=self.cabinet_reader()
+        photo={'title':'Located photo','evidenceRef':'photo:fixed','documentId':photos[0]['documentId'],'contentVersionId':photos[0]['contentVersionId'],
+            'selector':{'bbox':{'x':.2,'y':.3,'width':.1,'height':.1}}}
         reader.photos.resolve.return_value={'items':[photo]}
         value=recommendations(reader,{'entry':{'projectOnly':True},'section':'photos','entityUid':'cabinet','expectedEntityRevision':'r7'})
-        self.assertEqual(len(value['items']),1);self.assertEqual(value['items'][0]['preview'],photo)
-        self.assertEqual(value['items'][0]['selector']['evidenceRef'],'photo:fixed');reader.reader._request.assert_not_called()
+        self.assertEqual(len(value['items']),3);self.assertEqual(value['items'][0]['preview'],photo)
+        self.assertEqual(value['items'][0]['selector']['evidenceRef'],'photo:fixed');reader.reader._request.assert_called_once()
 
     def test_photo_fallback_does_not_hide_revocation_or_changed_identity(self):
         for status in (401,403,409):
             reader,_=self.cabinet_reader();reader.photos.resolve.side_effect=PreviewError(status,'SOURCE_CHANGED')
             body={'entry':{'projectOnly':True},'section':'photos','entityUid':'cabinet','expectedEntityRevision':'r7'}
-            if status in (401,403):
-                with self.assertRaises(PreviewError) as error:recommendations(reader,body)
-                self.assertEqual(error.exception.status,status)
-            else:self.assertEqual(recommendations(reader,body)['gaps'],['SOURCE_CHANGED'])
+            with self.assertRaises(PreviewError) as error:recommendations(reader,body)
+            self.assertEqual(error.exception.status,status)
             reader.reader._request.assert_not_called()
         reader,_=self.cabinet_reader();reader.reader._request.side_effect=PreviewError(403,'PROJECT_FORBIDDEN')
         with self.assertRaises(PreviewError):recommendations(reader,body)

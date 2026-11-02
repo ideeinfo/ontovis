@@ -133,6 +133,25 @@ class WorkOrders:
                     'capabilities': {'canWrite': can_write, 'canSeedDemo': can_write and self.project_code == DEMO_PROJECT},
                     'sourceKind': 'simulated'}
 
+    def recommendation_listing(self, body):
+        """Rank before slicing, keeping the same immutable page snapshot check."""
+        require(set(body)=={'q','faultCode','orderId','cursor','expectedSnapshotRevision','limit'})
+        q=text(body['q'],200,empty=True);fault=text(body['faultCode'],100,empty=True);order=text(body['orderId'],200,empty=True)
+        start,limit=body['cursor'],body['limit']
+        require(type(start) is int and 0<=start<=10000 and type(limit) is int and 1<=limit<=50)
+        with self.library.connect() as db:
+            snapshot=self._snapshot(db)
+            if start or body['expectedSnapshotRevision'] is not None:
+                require(body['expectedSnapshotRevision']==snapshot,'WORK_ORDER_CHANGED',409)
+            phrase='%'+q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
+            predicate="(title like ? escape '\\' or fault_code like ? escape '\\' or order_id like ? escape '\\')"
+            rows=db.execute('select * from work_orders where '+predicate+''' order by
+                case when order_id=? then 0 when fault_code=? and ?<>'' then 1 else 2 end,
+                updated_at desc,ordinal,order_id limit ? offset ?''',
+                (phrase,phrase,phrase,order,fault,fault,limit+1,start)).fetchall()
+            return {'items':[self._public(row) for row in rows[:limit]],'snapshotRevision':snapshot,
+                'nextCursor':start+limit if len(rows)>limit else None}
+
     def _detail(self, db, identifier):
         row = db.execute('select * from work_orders where order_id=?', (identifier,)).fetchone()
         require(row is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)

@@ -131,6 +131,22 @@ class SourceContractTests(unittest.TestCase):
         with self.assertRaises(PreviewError):source.read('photo',descriptor)
         reader.detail.assert_not_called()
 
+    def test_recommended_photo_and_drawing_cannot_register_a_changed_source_revision(self):
+        context={'item':{'entityUid':'sensor','entityRevision':'r1'},'context':None}
+        reader=SimpleNamespace(context_for_object=Mock(return_value=context))
+        source=AnalysisSourceReader(reader,None,None,lambda:None,'owner')
+        row={'evidenceRef':'fixed','sourceRevision':'a'*64,'contentSha256':'b'*64,'availability':'available',
+            'contentVersionId':str(uuid4()),'sourceSha256':'b'*64,'selector':{'displayRevision':'c'*64},'displayAvailability':'available'}
+        selection={'entityUid':'sensor','expectedEntityRevision':'r1','evidenceRef':'fixed','expectedSourceRevision':'a'*64}
+        source.photos.resolve=Mock(return_value={'items':[row]})
+        with patch('apps.api.analysis_source_reader.SceneEvidenceReader') as drawings:
+            drawings.return_value.resolve.return_value={'items':[row]}
+            for kind in ('photo','drawing'):
+                self.assertEqual(source.resolve(kind,selection)['expectedSourceRevision'],'a'*64)
+                with self.assertRaises(PreviewError) as error:source.resolve(kind,selection|{'expectedSourceRevision':'d'*64})
+                self.assertEqual(error.exception.code,'SOURCE_CHANGED')
+                with self.assertRaises(PreviewError):source.resolve(kind,selection|{'expectedSourceRevision':'not-a-hash'})
+
     def test_descriptors_reject_urls_owner_fields_and_false_versions(self):
         value={'modelAssetId':str(uuid4()),'modelVersionId':str(uuid4()),'contentRevision':'fixed:1','sha256':'a'*64}
         validate_descriptor('model',value)

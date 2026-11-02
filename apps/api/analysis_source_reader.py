@@ -52,13 +52,19 @@ class AnalysisSourceReader:
             drawing_bytes(self, selector)
             value = dict(selector)
         elif kind in ('drawing', 'photo'):
+            expected_revision=selector.get('expectedSourceRevision')
+            if expected_revision is not None:
+                from .analysis_evidence import sha
+                sha(expected_revision)
+            selection={key:value for key,value in selector.items() if key!='expectedSourceRevision'}
             photo_scope = ('photoPurpose',) if kind == 'photo' and 'photoPurpose' in selector else ()
-            body = self._selection(selector, ('evidenceRef', *photo_scope))
+            body = self._selection(selection, ('evidenceRef', *photo_scope))
             if photo_scope: body['photoPurpose'] = selector['photoPurpose']
             draft.text(selector['evidenceRef'], 512)
             rows = (self.photos if kind == 'photo' else SceneEvidenceReader(self.reader)).resolve(body)['items']
             row = next((item for item in rows if item['evidenceRef'] == selector['evidenceRef']), None)
             draft.require(row is not None, 'ANALYSIS_SOURCE_UNAVAILABLE', 404)
+            draft.require(expected_revision is None or row['sourceRevision']==expected_revision,'SOURCE_CHANGED',409)
             if kind == 'drawing':
                 draft.require(row['availability'] == 'available', 'ANALYSIS_SOURCE_UNAVAILABLE', 404)
                 value = {**body, 'evidenceRef': row['evidenceRef'], 'expectedSourceRevision': row['sourceRevision'],
