@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {ApiError, type WorkbenchApi} from './api.ts';
 import {SceneApi} from './sceneApi.ts';
-import {MOTION_MODEL_SHA,MOTION_MERGED_SHA} from './motionProfiles.ts';
+import {MOTION_MODEL_SHA,MOTION_MERGED_SHA,MOTION_APPEARANCE_SHA} from './motionProfiles.ts';
 import type {ModelResourceRef} from './sceneTypes';
 import type {ProjectModelVersion,TerrainArtifact,TerrainVersion} from './resourceTypes';
 
@@ -89,7 +89,7 @@ export const modelLogoRetiredResources=(root:THREE.Object3D):ReadonlySet<THREE.M
 const TU22K_MODEL_SHAS=new Set(['91b36e5bf0c5829cd77b1917a3e69a7f8c52fe8c39bbc7b42874e24ba98b6634',
   '7e33f1ec55e4a1d314db77a35244263df43ea58fef95e8438a4b3ffd2ab629ea']);
 export async function sanitizeModelLogos(root:THREE.Object3D,contentSha:string) {
-  const tu3000=contentSha===MOTION_MODEL_SHA||contentSha===MOTION_MERGED_SHA;
+  const tu3000=contentSha===MOTION_MODEL_SHA||contentSha===MOTION_MERGED_SHA||contentSha===MOTION_APPEARANCE_SHA;
   const tu22k=TU22K_MODEL_SHAS.has(contentSha);
   if(!tu3000&&!tu22k)return;
   const retired=new Set<THREE.Material|THREE.BufferGeometry>();

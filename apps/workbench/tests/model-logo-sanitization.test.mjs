@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {sanitizeModelLogos,modelLogoRetiredResources} from '../src/sceneResourceCache.ts';
-import {MOTION_MODEL_SHA} from '../src/motionProfiles.ts';
+import {MOTION_MODEL_SHA,MOTION_MERGED_SHA,MOTION_APPEARANCE_SHA} from '../src/motionProfiles.ts';
 const tu22kSha='91b36e5bf0c5829cd77b1917a3e69a7f8c52fe8c39bbc7b42874e24ba98b6634';
 function installImage(t,Image){
   const prior=Object.getOwnPropertyDescriptor(globalThis,'Image');
@@ -47,4 +47,21 @@ test('successful replacement owns cloned decal resources and leaves shared resou
   f.logo.geometry.computeBoundingBox();const box=f.logo.geometry.boundingBox;
   assert.ok(Math.abs((box.max.z-box.min.z)/(box.max.y-box.min.y)-2170/725)<1e-5);
   assert.ok(Math.abs(box.max.y-box.min.y-1.6)<1e-5);
+});
+test('current appearance and full models use the same official logo, size and orientation',async t=>{
+  installImage(t,class {set src(_){queueMicrotask(()=>this.onload());}});
+  const models=[];
+  for(const sha of [MOTION_MODEL_SHA,MOTION_MERGED_SHA,MOTION_APPEARANCE_SHA]) {
+    const f=fixture('Staticnacelle10');
+    await sanitizeModelLogos(f.root,sha);
+    assert.notEqual(f.logo.material,f.material);assert.notEqual(f.logo.geometry,f.geometry);
+    assert.equal(f.body.material,f.material);assert.equal(f.body.geometry,f.geometry);
+    assert.equal(f.material.map,f.texture);assert.equal(f.logo.visible,true);
+    assert.equal(f.logo.material.map.name,'ontovis-nacelle-logo');
+    assert.equal(f.logo.material.map.flipY,true);
+    models.push({positions:Array.from(f.logo.geometry.getAttribute('position').array),
+      logo:f.logo.material.map.userData,colorSpace:f.logo.material.map.colorSpace});
+  }
+  assert.deepEqual(models[1],models[0]);assert.deepEqual(models[2],models[0]);
+  assert.equal(models[2].logo.width/models[2].logo.height,2170/725);
 });

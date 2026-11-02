@@ -4,12 +4,13 @@ export interface MotionProfile {
 }
 export const MOTION_MODEL_SHA='078bbc161a9c9c8cbe0bbc872ca825b6a222d4d4c22f8c16c7889908a97a5806';
 export const MOTION_MERGED_SHA='fb7963a94988d67a16c5ef08c024b200881df53d4f4e2e2cde27661861d9d9b1';
+export const MOTION_APPEARANCE_SHA='94faced193391ad68d79f2d6779acdc7e949b97aa571d82d704c275393390506';
 const grouped=(nodes:number,movingEnd:number,rotorStart:number,rotorEnd:number):MotionProfile=>({nodes,layout:'grouped',movingStart:12,movingEnd,rotorStart,rotorEnd,hubHeight:90,rotorZ:6.67,rpm:[6,10]});
 const baked=(nodes:number,movingStart:number,rotorStart:number,rotorEnd:number,hubHeight:number,rotorZ:number,rpm:[number,number]):MotionProfile=>({nodes,layout:'baked',movingStart,movingEnd:rotorStart-1,rotorStart,rotorEnd,hubHeight,rotorZ,rpm});
 // Fixed-content teaching models. Pivots come from the source zero pose, not the asymmetrical hub bounds.
 const profiles:Record<string,MotionProfile>={
  [MOTION_MODEL_SHA]:grouped(20,14,15,19),[MOTION_MERGED_SHA]:grouped(184,142,143,175),
- '94faced193391ad68d79f2d6779acdc7e949b97aa571d82d704c275393390506':grouped(20,14,15,19),
+ [MOTION_APPEARANCE_SHA]:grouped(20,14,15,19),
  'e5fecd93d0fe846883be50fd6b8b89cede9f6739d4fe7a83d3f9e918f4348c7d':baked(41,18,36,40,74,6.214,[7,11]),
  '40aa13d46bc60f3c7ba4120ed900d591ded5c120ac08833dab4e9df71e96bcfe':baked(71,34,61,70,120,8.2,[5,8]),
  'e1c6381f7307d8e607d85a5b665f9ba5a0d882484ed85625206210d221c0a24c':baked(62,18,41,61,73.5,5.248,[6,10]),
