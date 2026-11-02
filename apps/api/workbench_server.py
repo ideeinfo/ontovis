@@ -730,14 +730,13 @@ class WorkbenchSessions(UserSessions):
                 fixed_terrains.update({item['terrainVersionId']: item for item in opened.get('terrainRefs', [])})
                 validate_resources(opened['snapshot'])
                 selected = reader.context_for_object(selected_ref['entityUid'])
-                projected,uses=self.equipment_store().resolve_scene(opened,EquipmentReader(reader).resolve,authorize)
                 target=selected;shared_mapping=None;inherited=False
                 choice=body.get('representationChoice')
                 source_choice=choice
+                from .scene_representation import location_projection
+                projected,uses=location_projection(opened,choice,body.get('preferDetailed',False),
+                    self.equipment_store(),EquipmentReader(reader).resolve,model_details,authorize)
                 if body.get('preferDetailed'):
-                    from .scene_representation import inspection_projection
-                    projected,inspection_uses=inspection_projection(projected,choice,self.equipment_store(),EquipmentReader(reader).resolve,model_details,authorize)
-                    if inspection_uses is not None:uses=inspection_uses
                     original=next((item for item in opened['snapshot']['instances']
                                    if item['sceneModelInstanceId']==source_choice['sceneModelInstanceId']
                                    and item['modelVersionId']==source_choice['modelVersionId']),None)

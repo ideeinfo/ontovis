@@ -15,6 +15,16 @@ def calibrated_representation(model, geographic):
             and model['calibration'].get('axes') == 'Y_UP_RIGHT_HANDED')
 
 
+def location_projection(opened, choice, prefer_detailed, store, equipment, load_model, authorize):
+    if prefer_detailed:
+        projected, uses = inspection_projection(opened, choice, store, equipment, load_model, authorize)
+        if uses is not None:
+            return projected, uses
+    # A detail projection already composes every scene instance. Do it only once;
+    # inspection_projection still rechecks the adopted configuration and access.
+    return store.resolve_scene(opened, equipment, authorize)
+
+
 def inspection_projection(opened, choice, store, equipment, load_model, authorize):
     """Use only a current root's adopted configuration, preserving the saved scene."""
     authorize()

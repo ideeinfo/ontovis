@@ -8,7 +8,7 @@ from uuid import uuid4
 from apps.api.authority import PreviewError
 from apps.api.equipment_configurations import EquipmentConfigurations
 from apps.api.model_library import ModelLibrary
-from apps.api.scene_representation import inspection_projection
+from apps.api.scene_representation import inspection_projection, location_projection
 
 
 class SceneRepresentationTests(unittest.TestCase):
@@ -141,6 +141,49 @@ class SceneRepresentationTests(unittest.TestCase):
         def authorize():
             if not permitted: raise PreviewError(403, 'FORBIDDEN')
         with self.assertRaisesRegex(PreviewError, 'FORBIDDEN'): self.project(load=load, authorize=authorize)
+
+    def test_location_composes_the_raw_scene_once_and_retains_fresh_adoption_recheck(self):
+        scene=copy.deepcopy(self.scene)
+        for instance in scene['snapshot']['instances']: instance['componentBindings']=[]
+        before=copy.deepcopy(scene);reads=[]
+        def equipment(uids):
+            reads.append(list(uids));return self.equipment(uids)
+        projected,uses=location_projection(scene,self.choice,True,self.store,equipment,self.models.__getitem__,self.authorize)
+        self.assertEqual(reads,[['compressor-7'],['compressor-18','compressor-7'],['compressor-7']])
+        self.assertEqual(projected['snapshot']['instances'][0]['modelVersionId'],self.inner)
+        self.assertEqual(projected['snapshot']['instances'][0]['componentBindings'][0]['componentKeys'],['inside-key'])
+        self.assertEqual(projected['snapshot']['instances'][1]['componentBindings'][0]['componentKeys'],['outside-key'])
+        self.assertEqual(len(uses),2);self.assertEqual(scene,before)
+
+    def test_location_without_a_detail_candidate_still_composes_normal_bindings(self):
+        reads=[];scene=copy.deepcopy(self.scene)
+        for instance in scene['snapshot']['instances']: instance['componentBindings']=[]
+        self.models[self.outer]['representationType']='detailed'
+        def equipment(uids):
+            reads.append(list(uids));return self.equipment(uids)
+        for preferred in (False,True):
+            reads.clear()
+            projected,uses=location_projection(scene,self.choice,preferred,self.store,equipment,self.models.__getitem__,self.authorize)
+            self.assertEqual(reads,[['compressor-18','compressor-7']]);self.assertEqual(len(uses),2)
+            self.assertEqual(projected['snapshot']['instances'][0]['componentBindings'][0]['componentKeys'],['outside-key'])
+
+    def test_location_refuses_access_or_adoption_changes_after_the_single_composition(self):
+        reads=0
+        def equipment(uids):
+            nonlocal reads
+            reads+=1;result=self.equipment(uids)
+            if reads==3:
+                for row in result.values(): row['adoption']=None
+            return result
+        with self.assertRaisesRegex(PreviewError,'REVISION_CONFLICT'):
+            location_projection(self.scene,self.choice,True,self.store,equipment,self.models.__getitem__,self.authorize)
+        calls=0
+        def authorize():
+            nonlocal calls
+            calls+=1
+            if calls>=3:raise PreviewError(403,'FORBIDDEN')
+        with self.assertRaisesRegex(PreviewError,'FORBIDDEN'):
+            location_projection(self.scene,self.choice,True,self.store,self.equipment,self.models.__getitem__,authorize)
 
 
 if __name__ == '__main__': unittest.main()

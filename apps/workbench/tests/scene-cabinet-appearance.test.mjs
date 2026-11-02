@@ -24,6 +24,23 @@ const disposed=value=>{
   const state={count:0};value.addEventListener('dispose',()=>state.count++);return state;
 };
 
+test('many meshes reuse a display material per source and role, retaining opacity, picking and exact cleanup',()=>{
+  const f=fixture(),extra=[];
+  for(let i=0;i<100;i++){
+    const item=f.interior.clone();item.material=f.material;f.root.add(item);extra.push(item);
+  }
+  f.effect.apply(['CT'],theme,true);
+  assert.equal(f.interior.material.opacity,.5);assert.equal(f.shell.material.opacity,.32);
+  assert.notEqual(f.interior.material,f.shell.material);assert.notEqual(f.cabinet.material,f.interior.material);
+  const state=disposed(f.interior.material),shell=disposed(f.shell.material),highlight=disposed(f.cabinet.material);
+  for(const item of extra){assert.equal(item.material,f.interior.material);assert.equal(f.effect.isFadedOccluder(item),true);}
+  assert.equal(f.effect.isFadedOccluder(f.cabinet),false);
+  f.effect.restore();f.effect.restore();f.effect.dispose();
+  for(const item of extra)assert.equal(item.material,f.material);
+  assert.equal(state.count,1);assert.equal(shell.count,1);assert.equal(highlight.count,1);
+  assert.equal(f.material.opacity,1);assert.equal(f.material.transparent,false);
+});
+
 test('one instance borrows cache data while its material effects leave another instance unchanged',()=>{
   const shared=new THREE.MeshStandardMaterial({color:0x87968a,emissive:0x102030,emissiveIntensity:.1});
   const a=fixture('instance-A',shared),b=fixture('instance-B',shared);

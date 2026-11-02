@@ -87,6 +87,16 @@ class SceneLocationHttpTests(unittest.TestCase):
         self.assertEqual(value['componentKeys'], [self.component_key])
         self.assertEqual(self.counts(), before)
 
+    def test_detail_preference_without_a_paired_representation_keeps_the_fixed_location_contract(self):
+        scene,_=self.bound_scene();before=self.counts()
+        normal=self.location(scene)
+        choice={'sceneModelInstanceId':normal['sceneModelInstanceId'],'modelVersionId':normal['modelVersionId']}
+        preferred=self.location(scene,choice=choice,preferDetailed=True)
+        for key in ('status','mode','sceneModelInstanceId','modelVersionId','componentKeys','worldBounds','selectedObject'):
+            self.assertEqual(preferred[key],normal[key])
+        self.assertEqual(preferred['representation']['sourceModelVersionId'],choice['modelVersionId'])
+        self.assertEqual(self.counts(),before)
+
     def test_multiple_representations_require_exact_instance_and_version_choice(self):
         scene, _ = self.bound_scene(); candidate = copy.deepcopy(scene['snapshot'])
         extra = self.item('第二个表示', engineering.ROOT)

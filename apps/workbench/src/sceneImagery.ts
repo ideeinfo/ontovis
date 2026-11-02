@@ -30,16 +30,33 @@ export function imageryUvs(positions:THREE.BufferAttribute|THREE.InterleavedBuff
 }
 
 type Layer={key:string;mesh:THREE.Mesh<THREE.BufferGeometry,THREE.MeshBasicMaterial|THREE.MeshStandardMaterial>;source:THREE.MeshBasicMaterial;lit:THREE.MeshStandardMaterial|null;texture:THREE.Texture;partial:boolean};
-type PreparedImage={key:string;abort:AbortController;promise:Promise<ImageBitmap>;bitmap:ImageBitmap|null};
+type PreparedImage={key:string;abort:AbortController;promise:Promise<ImageBitmap>;bitmap:ImageBitmap|null;bytes:number};
 export class SceneImageryLayer {
   private layer:Layer|null=null;
   private prepared:PreparedImage|null=null;
+  private images=new Map<string,PreparedImage>();
+  private scope:string;
   private sequence=0;
   private disposed=false;
   private api:SceneApi;
-  constructor(api:SceneApi){this.api=api;}
+  constructor(api:SceneApi){this.api=api;this.scope=api.sessionScope;}
   private releaseLayer(){const value=this.layer;this.layer=null;if(value){value.mesh.removeFromParent();value.mesh.geometry.dispose();value.source.dispose();value.lit?.dispose();value.texture.dispose();}}
-  private release(){this.releaseLayer();const prepared=this.prepared;this.prepared=null;if(prepared){prepared.abort.abort();prepared.bitmap?.close();prepared.bitmap=null;}}
+  private discard(prepared:PreparedImage){
+    this.images.delete(prepared.key);prepared.abort.abort();prepared.bitmap?.close();prepared.bitmap=null;
+    if(this.prepared===prepared){this.prepared=null;this.releaseLayer();}
+  }
+  private deactivate(){
+    this.releaseLayer();const prepared=this.prepared;this.prepared=null;
+    if(prepared&&!prepared.bitmap)this.discard(prepared);
+  }
+  private release(){this.deactivate();for(const prepared of this.images.values())this.discard(prepared);}
+  private current(prepared:PreparedImage){return !this.disposed&&this.api.sessionScope===this.scope&&this.prepared===prepared&&!prepared.abort.signal.aborted;}
+  private reserve(bytes:number){
+    // At most two decoded RGBA images and 64 MiB, within this authorized viewport only.
+    while(this.images.size>=2||[...this.images.values()].reduce((sum,image)=>sum+image.bytes,bytes)>64*1024*1024){
+      const oldest=this.images.values().next().value;if(!oldest)break;this.discard(oldest);
+    }
+  }
   private cancelled(){return new DOMException('Imagery changed','AbortError');}
   private consume(prepared:PreparedImage,signal?:AbortSignal):Promise<ImageBitmap>{
     if(this.disposed||signal?.aborted)return Promise.reject(this.cancelled());
@@ -47,7 +64,7 @@ export class SceneImageryLayer {
       const aborted=()=>{signal?.removeEventListener('abort',aborted);reject(this.cancelled());};
       signal?.addEventListener('abort',aborted,{once:true});
       prepared.promise.then(bitmap=>{signal?.removeEventListener('abort',aborted);
-        if(this.disposed||prepared!==this.prepared||signal?.aborted)reject(this.cancelled());else resolve(bitmap);
+        if(!this.current(prepared)||signal?.aborted)reject(this.cancelled());else resolve(bitmap);
       },error=>{signal?.removeEventListener('abort',aborted);reject(error);});
     });
   }
@@ -66,21 +83,27 @@ export class SceneImageryLayer {
   /** Start the fixed private read alongside model/terrain loading; only sync may attach it. */
   prepare(imagery:ImageryRecord|null,reference:SceneImageryRef|null|undefined,signal?:AbortSignal):Promise<ImageBitmap|null>{
     if(this.disposed||signal?.aborted)return Promise.reject(this.cancelled());
-    if(!imagery||!reference){this.release();return Promise.resolve(null);}
+    if(this.api.sessionScope!==this.scope){this.release();this.scope=this.api.sessionScope;}
+    if(!imagery||!reference){this.deactivate();return Promise.resolve(null);}
     if(imagery.imageryVersionId!==reference.imageryVersionId||imagery.contentRevision!==reference.expectedContentRevision||imagery.expectedReportSha256!==reference.expectedReportSha256){this.release();return Promise.reject(new ApiError(409,'RESOURCE_CHANGED'));}
     const key=JSON.stringify([imagery.imageryVersionId,imagery.contentRevision,imagery.expectedReportSha256,imagery.texture.sha256]);
     let prepared=this.prepared;
     if(prepared?.key!==key){
-      this.release();
+      this.deactivate();
+      const cached=this.images.get(key);
+      if(cached){this.images.delete(key);this.images.set(key,cached);this.prepared=cached;return this.consume(cached,signal);}
+      const {width,height}=imagery.report;
+      if(!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1||width>4096||height>4096)return Promise.reject(new ApiError(422,'UNSUPPORTED_IMAGERY'));
+      const bytes=width*height*4;this.reserve(bytes);
       const abort=new AbortController();
       const promise:Promise<ImageBitmap>=this.api.imageryContent(imagery,abort.signal).then(async blob=>{
-        if(this.disposed||pending!==this.prepared||abort.signal.aborted)throw this.cancelled();
+        if(!this.current(pending))throw this.cancelled();
         const bitmap=await createImageBitmap(blob,{imageOrientation:'flipY',premultiplyAlpha:'none',colorSpaceConversion:'none'});
-        if(this.disposed||pending!==this.prepared||abort.signal.aborted){bitmap.close();throw this.cancelled();}
+        if(!this.current(pending)){bitmap.close();throw this.cancelled();}
         if(bitmap.width!==imagery.report.width||bitmap.height!==imagery.report.height){bitmap.close();throw new ApiError(409,'RESOURCE_CHANGED');}
         pending.bitmap=bitmap;return bitmap;
-      }).catch(error=>{if(this.prepared===pending){this.prepared=null;this.releaseLayer();}throw error;});
-      const pending:PreparedImage={key,abort,promise,bitmap:null};prepared=pending;this.prepared=pending;
+      }).catch(error=>{if(this.images.get(key)===pending)this.discard(pending);throw error;});
+      const pending:PreparedImage={key,abort,promise,bitmap:null,bytes};prepared=pending;this.prepared=pending;this.images.set(key,pending);
     }
     return this.consume(prepared,signal);
   }

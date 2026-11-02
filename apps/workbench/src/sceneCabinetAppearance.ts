@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type {ProjectModelVersion} from './resourceTypes';
 
-type MaterialChange={mesh:THREE.Mesh;original:THREE.Material|THREE.Material[];owned:THREE.Material[]};
+type MaterialChange={mesh:THREE.Mesh;original:THREE.Material|THREE.Material[]};
 const sourceIndex=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
 const shells=new Set(['tower','nacelle','rotor_cover']);
 
@@ -10,6 +10,7 @@ export class SceneCabinetAppearance {
   private readonly root:THREE.Group;
   private readonly version:Pick<ProjectModelVersion,'modelVersionId'|'components'>;
   private changes:MaterialChange[]=[];
+  private owned=new Set<THREE.Material>();
   private fadedOccluders=new Map<THREE.Mesh,Set<THREE.Material>>();
   private selected:THREE.Mesh[]=[];
   private activeKey:string|null=null;
@@ -36,19 +37,30 @@ export class SceneCabinetAppearance {
     });
     if(!selected.size)return;
     this.selected=[...selected];
+    const copies=new Map<THREE.Material,Map<string,THREE.Material>>();
     for(const mesh of isolate?meshes:new Set([...selected,...enclosing])){
-      const original=mesh.material,owned:THREE.Material[]=[],highlight=selected.has(mesh);
+      const original=mesh.material,faded=new Set<THREE.Material>(),highlight=selected.has(mesh);
+      let changed=false;
       const copy=(material:THREE.Material)=>{
+        const role=highlight?'highlight':isolate?(shells.has(mesh.userData.component)?'shell':'interior'):'enclosing';
+        const cached=copies.get(material)?.get(role);if(cached){changed=true;if(!highlight)faded.add(cached);return cached;}
+        const own=(value:THREE.Material)=>{
+          changed=true;
+          let roles=copies.get(material);if(!roles){roles=new Map();copies.set(material,roles);}roles.set(role,value);
+          this.owned.add(value);if(!highlight)faded.add(value);return value;
+        };
         // Keep the surrounding assembly readable, including mesh parents of the selection.
-        if(isolate&&!highlight){const value=material.clone();value.transparent=true;value.opacity=material.opacity*(shells.has(mesh.userData.component)?.32:.5);value.depthWrite=false;owned.push(value);return value;}
+        if(isolate&&!highlight){const value=material.clone();value.transparent=true;value.opacity=material.opacity*(shells.has(mesh.userData.component)?.32:.5);value.depthWrite=false;return own(value);}
         if(!(material instanceof THREE.MeshStandardMaterial))return material;
-        const value=material.clone();owned.push(value);
+        const value=material.clone();
         if(highlight){value.emissive.set(color);value.emissiveIntensity=.25;}
         else {value.transparent=true;value.opacity=.2;value.depthWrite=false;}
-        value.needsUpdate=true;return value;
+        value.needsUpdate=true;return own(value);
       };
       const replacement=Array.isArray(original)?original.map(copy):copy(original);
-      if(owned.length){mesh.material=replacement;this.changes.push({mesh,original,owned});if(!highlight)this.fadedOccluders.set(mesh,new Set(owned));}
+      if(changed){
+        mesh.material=replacement;this.changes.push({mesh,original});if(!highlight)this.fadedOccluders.set(mesh,faded);
+      }
     }
     this.activeKey=key;
   }
@@ -86,7 +98,8 @@ export class SceneCabinetAppearance {
     return this.fadedOccluders.get(object)?.has(material)===true;
   }
   restore(){
-    for(const {mesh,original,owned} of this.changes){mesh.material=original;for(const material of owned)material.dispose();}
+    for(const {mesh,original} of this.changes)mesh.material=original;
+    for(const material of this.owned)material.dispose();this.owned.clear();
     this.changes=[];this.fadedOccluders.clear();this.selected=[];this.activeKey=null;
   }
   dispose(){this.restore();this.disposed=true;}

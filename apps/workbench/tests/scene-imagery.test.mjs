@@ -163,7 +163,7 @@ test('a prepared bitmap cleared between readiness and attachment is never displa
   try{
     await layer.prepare(imagery,ref);const pending=layer.sync(terrain,terrainVersion,imagery,ref,signal);
     await layer.prepare(null,null);await assert.rejects(pending,e=>e.name==='AbortError');
-    assert.equal(terrain.children.length,0);assert.equal(closed,1);
+    assert.equal(terrain.children.length,0);assert.equal(closed,0);layer.dispose();assert.equal(closed,1);
   }finally{globalThis.createImageBitmap=previous;layer.dispose();terrain.geometry.dispose();terrain.material.dispose();}
 });
 test('prepared private reads keep the real API session guard and refuse a late response after logout',async()=>{
@@ -175,5 +175,41 @@ test('prepared private reads keep the real API session guard and refuse a late r
     const pending=layer.prepare({...imagery,texture:{...imagery.texture,bytes:32}},ref);assert.equal(reads,1);
     api.session('');gate.resolve(new Response('private',{headers:{'Content-Type':'image/png'}}));
     await assert.rejects(pending,e=>e.name==='AbortError');assert.equal(decoded,0);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();}
+});
+
+const changedImage=(name,width=4,height=4)=>({value:{...imagery,imageryVersionId:name,report:{...report,width,height}},reference:{...ref,imageryVersionId:name}});
+test('ready images survive scene gaps with two-entry LRU reuse and each eviction closes exactly once',async()=>{
+  const previous=globalThis.createImageBitmap;let reads=0;const closed=[];
+  globalThis.createImageBitmap=async()=>{const id=reads;return {width:4,height:4,close(){closed.push(id);}};};
+  const layer=new SceneImageryLayer({async imageryContent(){reads++;return new Blob();}}),a=changedImage('a'),b=changedImage('b'),c=changedImage('c');
+  try{
+    const first=await layer.prepare(a.value,a.reference);await layer.prepare(null,null);
+    await layer.prepare(b.value,b.reference);assert.equal(await layer.prepare(a.value,a.reference),first);assert.equal(reads,2);
+    await layer.prepare(c.value,c.reference);assert.deepEqual(closed,[2]);
+    await layer.prepare(a.value,a.reference);assert.equal(reads,3);
+    await layer.prepare(b.value,b.reference);assert.equal(reads,4);assert.deepEqual(closed,[2,3]);
+    layer.dispose();layer.dispose();assert.deepEqual(closed.sort(),[1,2,3,4]);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();}
+});
+test('decoded RGBA budget evicts a 4096-square image before accepting another and rejects oversized reports before fetching',async()=>{
+  const previous=globalThis.createImageBitmap;let reads=0,closed=0;
+  globalThis.createImageBitmap=async()=>({width:4096,height:4096,close(){closed++;}});
+  const layer=new SceneImageryLayer({async imageryContent(){reads++;return new Blob();}}),a=changedImage('a',4096,4096),b=changedImage('b',4096,4096);
+  try{
+    await layer.prepare(a.value,a.reference);await layer.prepare(b.value,b.reference);assert.equal(closed,1);assert.equal(reads,2);
+    const bad=changedImage('bad',4097,4096);await assert.rejects(layer.prepare(bad.value,bad.reference),e=>e.code==='UNSUPPORTED_IMAGERY');assert.equal(reads,2);
+    layer.dispose();assert.equal(closed,2);
+  }finally{globalThis.createImageBitmap=previous;layer.dispose();}
+});
+test('cached private images never survive an authorization scope change and a pinned mismatch purges prior entries',async()=>{
+  const previous=globalThis.createImageBitmap;let reads=0,closed=0,scope='project-A:1';
+  globalThis.createImageBitmap=async()=>({width:4,height:4,close(){closed++;}});
+  const layer=new SceneImageryLayer({get sessionScope(){return scope;},async imageryContent(){reads++;return new Blob();}});
+  try{
+    const first=await layer.prepare(imagery,ref);scope='project-B:2';const next=await layer.prepare(imagery,ref);
+    assert.notEqual(first,next);assert.equal(reads,2);assert.equal(closed,1);
+    await assert.rejects(layer.prepare(imagery,{...ref,expectedReportSha256:'changed'}),e=>e.code==='RESOURCE_CHANGED');assert.equal(closed,2);
+    await layer.prepare(imagery,ref);assert.equal(reads,3);layer.dispose();assert.equal(closed,3);
   }finally{globalThis.createImageBitmap=previous;layer.dispose();}
 });
