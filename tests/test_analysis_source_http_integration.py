@@ -79,6 +79,34 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             fixed.version['source_sha256']='c'*64
             self.assertNotEqual(self.request(ROOT+'/evidence/detail',payload)[1]['availability'],'available')
 
+    def test_cabinet_member_photo_recommendation_preserves_scope_and_writes_only_on_explicit_register(self):
+        from tests.test_equipment_materials import DocumentReader, DOC, VERSION
+        from tools.analysis_draft_backup import export_package
+        created,_=self.create();before=export_package(self.urls[0]);fixed=DocumentReader();fixed.version['preview_kind']='image'
+        target={'item':{'entityUid':'cabinet','entityRevision':'r7','displayName':'Cabinet','objectScope':'definition'},'context':None}
+        original=self.source.request;calls=[]
+        def source(account,method,path,body=None):
+            if path.endswith('/equipment/shared-photos/query'):
+                calls.append(body)
+                return dict(projectCode='SYNTHETIC-A',items=[dict(documentId=DOC,contentVersionId=VERSION,
+                    title='Cabinet member photo',availability='available')],nextCursor=None)
+            if '/documents/' in path:return fixed._request(method,path,body)
+            return original(account,method,path,body)
+        request=self.body(entry={'projectOnly':True},section='photos',entityUid='cabinet',expectedEntityRevision='r7')
+        with patch.object(self.source,'request',source),patch('apps.api.scene_engineering.SceneEngineeringReader.context_for_object',return_value=target),patch('apps.api.scene_photos.ScenePhotoReader.resolve',return_value={'items':[]}):
+            status,value,*_=self.request(ROOT+'/recommendations',request)
+            self.assertEqual(status,200,value);self.assertEqual(calls[0]['entityUid'],'cabinet')
+            self.assertEqual(value['items'][0]['selector'],dict(sourceType='project_document',documentId=DOC,contentVersionId=VERSION))
+            self.assertEqual(export_package(self.urls[0]),before)
+            self.assertEqual(self.request(ROOT+'/recommendations',request,client=False)[0],401)
+            self.assertEqual(self.request(ROOT+'/recommendations',request,headers={'Origin':'https://wrong.invalid'})[0],403)
+            status,ref,*_=self.request(ROOT+'/evidence/register',self.body(analysisSessionId=created['analysisSessionId'],expectedAnalysisRevision=1,
+                requestId=str(uuid4()),sourceKind='photo',selector=value['items'][0]['selector']))
+            self.assertEqual(status,200,ref)
+            read=self.request(ROOT+'/evidence/detail',self.reference(created,ref))
+            self.assertEqual(read[0],200,read[1]);self.assertIsNone(read[1]['source']['selector'])
+            self.assertEqual(self.detail(created)[1]['analysisRevision'],1)
+
     def test_unpublished_pdf_minimal_selection_keeps_fixed_hash_and_page(self):
         from tests.test_equipment_materials import DocumentReader, DOC, VERSION, PNG
         created,_=self.create();fixed=DocumentReader();original=self.source.request

@@ -57,6 +57,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   const lifecyclePending=useRef<{item:AnalysisListItem;action:'trash'|'untrash';task:ReturnType<typeof pendingLifecycle>}|null>(null);
   const [section,setSection]=useState('types'),[recommendations,setRecommendations]=useState<Recommendations|null>(null),[recommendLoading,setRecommendLoading]=useState(false);
   const [related,setRelated]=useState<{entityUid:string;expectedEntityRevision:string}|null>(null),[relatedLabel,setRelatedLabel]=useState(''),[sourceAttempt,setSourceAttempt]=useState(0);
+  const [relatedSource,setRelatedSource]=useState(''),[relatedPending,setRelatedPending]=useState(false);
   const [expandedAnchor,setExpandedAnchor]=useState<SourceAnchor|null>(null);
   const [openPreviews,setOpenPreviews]=useState<ReadonlySet<string>>(()=>new Set()),[expanded,setExpanded]=useState('');
   const [compare,setCompare]=useState(false),[trendData,setTrendData]=useState<Record<string,SimulatedTrend>>({}),[linkOrderOpen,setLinkOrderOpen]=useState(false),[orderId,setOrderId]=useState('');
@@ -82,6 +83,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   const archived=receipt?.lifecycle==='trashed';
   const editable=writable&&!busy&&!uncertain&&!fixed&&!archived&&!lifecycleUnknown;
   const selectedCard=draft?.cards.find(card=>card.id===selected);
+  const relatedTarget=selectedCard?.kind==='object'?selectedCard.source:undefined;
   const sources=useMemo(()=>receipt?new AnalysisSources(api,receipt.analysisSessionId):null,[api,receipt?.analysisSessionId,api.epoch,api.revision]);
   useEffect(()=>()=>sources?.dispose(),[sources]);
   useEffect(()=>setOpenPreviews(new Set()),[sources]);
@@ -103,12 +105,23 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     return()=>abort.abort();
   },[initialEntry,api,startAttempt]);
   useEffect(()=>{
-    if(!materialsOpen||!analysisEntry||section==='types'){setRecommendations(null);setRecommendLoading(false);return;}const abort=new AbortController();setRecommendLoading(true);setRecommendations(null);
+    if(!materialsOpen||!sources||!relatedTarget)return;
+    let live=true;setRelatedPending(true);setRelated(null);setRelatedLabel('');setRelatedSource('');
+    void sources.detail(relatedTarget).then(value=>{
+      if(!live)return;
+      if(value.availability!=='available'||!value.source?.item)throw new Error(t('所选对象暂不可用，请刷新对象资料。','The selected object is unavailable. Refresh its source.'));
+      setRelated({entityUid:value.source.item.entityUid,expectedEntityRevision:value.source.item.entityRevision});
+      setRelatedLabel(value.source.item.displayName||t('所选对象','Selected object'));setRelatedSource(relatedTarget.id);
+    }).catch(value=>{if(live)failure(value);}).finally(()=>{if(live)setRelatedPending(false);});
+    return()=>{live=false;};
+  },[materialsOpen,sources,relatedTarget?.id,relatedTarget?.revision,sourceAttempt]);
+  useEffect(()=>{
+    if(!materialsOpen||!analysisEntry||section==='types'||relatedPending||relatedTarget&&relatedSource!==relatedTarget.id){setRecommendations(null);setRecommendLoading(false);return;}const abort=new AbortController();setRecommendLoading(true);setRecommendations(null);
     setChosen([]);
     void api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendFilter!==undefined&&['objects','models','documents','project_documents','orders','alarms','trends'].includes(section)?{q:recommendFilter}:{}),...(['materials','drawings','photos','device_materials','models'].includes(section)&&related?related:{})},abort.signal)
       .then(value=>{if(!abort.signal.aborted)setRecommendations(value);}).catch(value=>{if(!abort.signal.aborted)failure(value);}).finally(()=>{if(!abort.signal.aborted)setRecommendLoading(false);});
     return()=>abort.abort();
-  },[analysisEntry,materialsOpen,section,related,sourceAttempt,recommendFilter,api]);
+  },[analysisEntry,materialsOpen,section,related,relatedPending,relatedSource,relatedTarget?.id,sourceAttempt,recommendFilter,api]);
   useEffect(()=>{onDirtyChange?.(dirty);return()=>onDirtyChange?.(false);},[dirty,onDirtyChange]);
   useEffect(()=>{const warn=(event:BeforeUnloadEvent)=>{if(dirty){event.preventDefault();event.returnValue='';}};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty]);
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;request.current?.abort();cancelAnimationFrame(frame.current);};},[]);
@@ -324,7 +337,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   function openRelation(link:CardSourceRelation){setSelected(link.to.id);openSource(link.to,link.anchor);}
   async function addAndOpen(item:Recommendation){const id=await addSource(item);if(id){setExpandedAnchor(null);setExpanded(id);}}
   const sourceContent=(card:CanvasCard,full=false)=>sources&&<AnalysisSourceCard key={card.id+(full?':full':':inline')} card={card} sources={sources} en={en} full={full} anchor={full?expandedAnchor:null} onAddMaterial={editable?item=>void addAndOpen(item):undefined} onUpdateWorkOrder={editable&&card.kind==='work_order'?async item=>{const loaded=await addSources([item],card.id);if(loaded)setNotice(t('已载入工单进展，保存为新修订后可继续分析。','Order progress loaded. Save a new revision to continue analysis.'));return !!loaded;}:undefined} active={full||openPreviews.has(card.id)}
-    onActivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,true))} onDeactivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,false))} onOpen={()=>openSource(card)} onRelated={chooseRelated} onPage={(page,value)=>pageAction.current(card,page,value)}
+    onActivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,true))} onDeactivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,false))} onOpen={()=>openSource(card)} onRelated={value=>{setSelected(card.id);chooseRelated(value);}} onPage={(page,value)=>pageAction.current(card,page,value)}
     onAvailability={(id,state)=>setReferenceState(previous=>previous[id]===state?previous:{...previous,[id]:state})}
     onView={view=>viewAction.current(card.id,view)} cursor={card.historical?undefined:trendCursor} onCursor={card.historical?undefined:setTrendCursor}
     onTrend={(id,value)=>setTrendData(previous=>previous[id]===value?previous:{...previous,[id]:value})}/>;
@@ -356,7 +369,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
 
         {fixed&&receipt&&<div className="ad-alert" role="status">{t('正在查看工单关联的固定版本','Viewing the linked fixed revision')} · r{receipt.analysisRevision}<Btn onClick={()=>void open(receipt.analysisSessionId)}>{t('继续最新分析','Continue latest analysis')}</Btn></div>}
         {archived&&<div className="ad-alert" role="status">{t('画布已在回收站中，当前为只读查看。','This canvas is in the recycle bin and is read only.')}<Btn disabled={!list?.capabilities.canManageLifecycle||busy||lifecycleUnknown} onClick={()=>receipt&&void manageLifecycle({analysisSessionId:receipt.analysisSessionId,analysisRevision:receipt.headRevision??receipt.analysisRevision,lifecycleRevision:receipt.lifecycleRevision,title:draft.title,status:draft.status,updatedAt:''},'untrash')}>{t('恢复画布','Restore canvas')}</Btn></div>}
-        <div className="ad-tools"><Btn className="ac-add-materials" aria-pressed={materialsOpen} onClick={()=>{setMaterialsOpen(v=>!v);setSection('types');setRecommendFilter(undefined);setRecommendQuery('');setRight(false);}}><Plus size={16}/>{t('加入资料','Add materials')}</Btn>
+        <div className="ad-tools"><Btn className="ac-add-materials" aria-pressed={materialsOpen} onClick={()=>{setMaterialsOpen(v=>!v);setRelated(null);setRelatedLabel('');setRelatedSource('');setSection('types');setRecommendFilter(undefined);setRecommendQuery('');setRight(false);}}><Plus size={16}/>{t('加入资料','Add materials')}</Btn>
           <IconBtn label={t('选择工具','Select tool')} aria-pressed={tool==='pointer'} onClick={()=>setTool('pointer')}><MousePointer2 size={16}/></IconBtn><IconBtn label={t('平移工具','Pan tool')} aria-pressed={tool==='hand'} onClick={()=>setTool('hand')}><Hand size={16}/></IconBtn>
           <IconBtn label={t('撤销修改','Undo change')} disabled={!undo.length||!editable} onClick={()=>undoChange()}><Undo2 size={16}/></IconBtn>
           <IconBtn label={t('重做修改','Redo change')} disabled={!redo.length||!editable} onClick={()=>undoChange(true)}><Redo2 size={16}/></IconBtn>
@@ -375,7 +388,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           onPointerDownCapture={event=>{if(event.button===1||event.button===0&&(tool==='hand'||space.current))pointerDown(event);}}
           onAuxClick={event=>{if(event.button===1)event.preventDefault();}}
           onPointerDown={event=>pointerDown(event)} onPointerMove={pointerMove} onPointerUp={finishGesture} onPointerCancel={finishGesture} onLostPointerCapture={finishGesture}>
-          {materialsOpen&&<AnalysisMaterialPanel section={section} query={recommendQuery} en={en} loading={recommendLoading} value={recommendations} chosen={chosen} editable={editable} canAdd={editable&&draft.cards.length<50}
+          {materialsOpen&&<AnalysisMaterialPanel section={section} query={recommendQuery} en={en} loading={recommendLoading||relatedPending} value={recommendations} chosen={chosen} editable={editable} canAdd={editable&&draft.cards.length<50}
             contextLabel={[draft.context.faultCode?t('当前报警 '+draft.context.faultCode,'Current alarm '+draft.context.faultCode):'',related?relatedLabel:''].filter(Boolean).join(' · ')} onClose={()=>setMaterialsOpen(false)}
             onSection={value=>{setSection(value);setRecommendFilter(undefined);setRecommendQuery('');setChosen([]);}} onQuery={setRecommendQuery} onSearch={()=>{if(section!=='types')setRecommendFilter(recommendQuery);}}
             onToggle={key=>setChosen(keys=>keys.includes(key)?keys.filter(value=>value!==key):[...keys,key])} onAdd={item=>void addSource(item)} onAddChosen={()=>void addSources(recommendations!.items.filter(item=>chosen.includes(item.key)))}

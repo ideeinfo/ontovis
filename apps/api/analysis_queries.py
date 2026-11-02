@@ -142,6 +142,27 @@ def recommendations(reader, body, scene_library=None):
             attempt(add)
             if kind=='photo' and selection['installationContextId'] is not None:
                 attempt(lambda:add(purpose='field_record'))
+        if section=='photos' and (not rows or cursor is not None) and not gaps:
+            # A cabinet's photos can be linked to its members rather than the
+            # cabinet itself. The source owns that scope; never guess by name.
+            d.require(offset==0 and (cursor is None or type(cursor) is str))
+            value=reader.reader._request('POST',reader.reader.prefix+'/equipment/shared-photos/query',
+                {**selection,'limit':12,'cursor':cursor})
+            d.require(value.get('projectCode')==reader.reader.project_code and type(value.get('items')) is list
+                and len(value['items'])<=12,'SOURCE_CHANGED',409)
+            following=value.get('nextCursor')
+            d.require(following is None or type(following) is str and 0<len(following)<=4096,'SOURCE_CHANGED',409)
+            shared=[]
+            for item in value['items']:
+                d.require(type(item) is dict and item.get('availability') in ('available','unavailable'),'SOURCE_CHANGED',409)
+                if not item.get('contentVersionId'):continue
+                selector={'sourceType':'project_document','documentId':d.identifier(item['documentId']),
+                    'contentVersionId':d.identifier(item['contentVersionId'])}
+                shared.append(recommendation('photo',d.text(item['title'],2000),selector,
+                    '所选对象及其下级的共享照片；整图查看，不声明柜体定位区域',
+                    reasonEn='Shared photo of the selected object or its members; whole image, without a cabinet region.',
+                    availability=item['availability']))
+            return {'items':shared,'nextOffset':None,'nextCursor':following,'gaps':gaps,'dataset':dataset}
     elif section in ('alarms','trends'):
         query = body.get('q', '');d.require(type(query) is str and len(query) <= 200)
         if section == 'alarms':
