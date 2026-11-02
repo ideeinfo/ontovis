@@ -38,5 +38,8 @@ class LlmConfigurationPairTests(unittest.TestCase):
         for provider in PROVIDERS:self.assertEqual(restored.credentials('SYNTHETIC-A',provider)[1],'synthetic-only-'+provider)
         self.assertEqual((root/'llm-credentials.key').stat().st_mode&0o777,0o600)
         self.assertEqual(export_package(self.urls[0]),original)
-        self.assertEqual(export_package(self.urls[1])['tables'],original['tables'])
+        recovered=export_package(self.urls[1])
+        self.assertNotEqual(recovered['sourceStoreId'],original['sourceStoreId'])
+        self.assertEqual({k:v for k,v in recovered['tables'].items() if k!='store_meta'},
+            {k:v for k,v in original['tables'].items() if k!='store_meta'})
         self.assertEqual(restored.read('OTHER-PROJECT')['revision'],0)
