@@ -340,12 +340,13 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         const assetItem=catalog?.items.find(item=>item.modelAssetId===preferredRef?.modelAssetId);
         const verItem=assetItem?.versions.find(item=>item.modelVersionId===preferredRef?.modelVersionId);
         const thumbnailRef=preferredRef?{...preferredRef,thumbnail:verItem?.thumbnail||preferredRef.thumbnail}:null;
-        return <li className="ov-resource-card" key={turbine.definitionEntityUid} aria-label={title}>
+        return <li className="ov-resource-card" key={turbine.catalogueKey||turbine.definitionEntityUid} aria-label={title}>
           <div className="ov-resource-card-heading">
             <ModelThumbnail api={client} version={thumbnailRef} name={title} onStatus={thumbnailUpdated}/>
             <span className="ov-resource-card-label">
               <strong>{title}</strong>
               <small style={{display:'block',color:'var(--ov-text-subtle,#8c9ba5)',fontSize:11,margin:'2px 0 4px'}}>
+                {turbine.projectApplicationRef?text('项目型号 · 声明关联','Project type · declared association'):null}
                 {turbine.ratedPowerKw?`${turbine.ratedPowerKw/1000} MW · `:''}{turbine.rotorDiameterM?`叶轮 ⌀${turbine.rotorDiameterM}m · `:''}{turbine.hubHeightM?`轮毂 ${turbine.hubHeightM}m`:''}
               </small>
             </span>
@@ -423,7 +424,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     {upload&&<Modal title={t(upload.asset?'appendVersion':'uploadModel')} description={t('glbLimit')} onClose={()=>{if(!uploading)setUpload(null);}}><div className="ov-resource-form">
       <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);setUploadError(null);requestId.current.reset();}}/></label>
       <p className="ov-resource-caption">{t('glbLimit')}</p>
-      {turbines.length>0&&<label>{text('关联风机型号（可选）','Turbine type (optional)')}
+      {turbines.some(item=>item.definitionEntityUid)&&<label>{text('工程对象定义（可选）','Engineering object definition (optional)')}
         <select value={selectedTurbineUid} disabled={uploading||!!upload.asset} onChange={event=>{
           const uid=event.target.value;
           setSelectedTurbineUid(uid);
@@ -434,7 +435,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
           }
         }}>
           <option value="">{text('不关联（通用独立模型）','None (generic independent model)')}</option>
-          {turbines.map(t=><option key={t.definitionEntityUid} value={t.definitionEntityUid}>{t.manufacturer?`${t.manufacturer} · `:''}{t.displayName||t.modelCode} ({t.modelCode})</option>)}
+          {turbines.filter(t=>t.definitionEntityUid).map(t=><option key={t.definitionEntityUid} value={t.definitionEntityUid!}>{t.manufacturer?`${t.manufacturer} · `:''}{t.displayName||t.modelCode} ({t.modelCode})</option>)}
         </select>
       </label>}
       <label>{text('模型形态设置','Model representation type')}

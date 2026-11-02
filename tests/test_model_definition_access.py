@@ -21,6 +21,8 @@ class ModelDefinitionAccessTests(TestCase):
         row = self.sessions.current(self.sid, authenticated=True)
         original = row.authority.request
         def request(method, path, body=None):
+            if method=='GET' and '/equipment-applications?' in path:
+                return {'items':[],'total':0,'offset':0,'limit':50}
             if method == 'POST' and path.endswith('/objects/resolve'):
                 code = unquote(path.split('/')[4])
                 if code not in projects.ProjectsAuthority.permissions['member']: raise PreviewError(403, 'FORBIDDEN')

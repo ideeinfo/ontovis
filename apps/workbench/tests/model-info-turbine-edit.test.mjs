@@ -13,3 +13,9 @@ test('clearing or changing an association sends the selected code, and cannot in
   assert.deepEqual(modelRepresentationFields(original,target.definitionEntityUid,'appearance',[target]),{...target,representationType:'appearance'});
   assert.throws(()=>modelRepresentationFields(original,'missing','detailed',[]),error=>error.code==='ENGINEERING_CHANGED');
 });
+test('project application identities never become engineering object identities',()=>{
+  const applicationOnly={catalogueKey:'application:00000000-0000-0000-0000-000000000002',definitionEntityUid:null,modelCode:'SPEC-1',
+    projectApplicationRef:{applicationId:'00000000-0000-0000-0000-000000000002',applicationRevisionId:'fixed',specificationRevisionId:'spec'}};
+  assert.throws(()=>modelRepresentationFields({},applicationOnly.projectApplicationRef.applicationId,'appearance',[applicationOnly]),error=>error.code==='ENGINEERING_CHANGED');
+  assert.deepEqual(modelRepresentationFields(original,original.definitionEntityUid,'detailed',[applicationOnly]),{representationType:'detailed'});
+});

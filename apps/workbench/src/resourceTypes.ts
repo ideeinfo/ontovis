@@ -63,7 +63,11 @@ export interface ProjectTurbineModelRef {
   calibrationState?: string;
 }
 export interface ProjectTurbineDefinition {
-  definitionEntityUid: string;
+  catalogueKey?: string;
+  definitionEntityUid?: string | null;
+  projectApplicationRef?: {applicationId:string;applicationRevisionId:string;specificationRevisionId:string};
+  configurationId?: string;
+  configurationRevision?: string;
   modelCode: string;
   displayName: string;
   manufacturer?: string;

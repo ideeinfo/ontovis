@@ -321,6 +321,10 @@ class ProjectSessions(UserSessions):
 
         value = self.shared.project_models.turbine_definitions(authorize)
         reader = SceneEngineeringReader(row.authority, self.connection_id, code, authorize)
+        from .project_application_models import application_model_catalogue
+        workspace = self.registry.lookup(code)
+        store = self._workspace(workspace).equipment_store() if workspace and workspace['state']=='ready' else None
+        application_items, covered = application_model_catalogue(store, reader, self.shared.project_models, authorize)
         uids = [item['definitionEntityUid'] for item in value['items']]
         objects = {}
         for start in range(0, len(uids), 50):
@@ -328,11 +332,11 @@ class ProjectSessions(UserSessions):
         items = []
         for item in value['items']:
             source = objects.get(item['definitionEntityUid'])
-            if source and source['objectScope'] == 'definition' and source['installationContextId'] is None:
-                items.append({**item, 'displayName': source['displayName'],
+            if source and source['objectScope'] == 'definition' and source['installationContextId'] is None and source['entityUid'] not in covered:
+                items.append({**item, 'catalogueKey':'definition:'+item['definitionEntityUid'], 'displayName': source['displayName'],
                               'expectedEntityRevision': source['entityRevision']})
         authorize()
-        return {**value, 'projectCode': code, 'items': items, 'sessionRevision': row.revision,
+        return {**value, 'projectCode': code, 'items': sorted(application_items+items,key=lambda item:(item['modelCode'],item['catalogueKey'])), 'sessionRevision': row.revision,
                 'projectRef': payload['projectRef']}
 
     def _call(self, method, sid, path, payload, *args):

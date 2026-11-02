@@ -86,7 +86,6 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
   }
 
   const conflict=error instanceof ApiError&&error.code==='MODEL_ASSET_CHANGED';
-  const boundTurbine=turbines.find(t=>t.definitionEntityUid===version.definitionEntityUid);
 
   return <section aria-label={text('基本信息','Basic information')}>
     <div className="ov-resource-actions">
@@ -96,8 +95,12 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
     <dl className="ov-resource-facts">
       <dt>{text('名称','Name')}</dt>
       <dd>{version.displayName}</dd>
-      <dt>{text('关联风机型号','Turbine type')}</dt>
-      <dd>{boundTurbine?(boundTurbine.displayName||boundTurbine.modelCode):version.definitionEntityUid?(version.modelCode||text('关联待核对','Association requires review')):text('未关联（通用独立模型）','Not bound (generic model)')}</dd>
+      <dt>{text('模型型号声明','Declared model type')}</dt>
+      <dd>{version.modelCode||text('未声明','Unspecified')}</dd>
+      {turbines.some(item=>item.projectApplicationRef&&[item.appearanceModel,item.detailedModel].some(model=>model?.modelVersionId===version.modelVersionId))&&<>
+        <dt>{text('项目型号关联','Project type associations')}</dt>
+        <dd>{turbines.filter(item=>item.projectApplicationRef&&[item.appearanceModel,item.detailedModel].some(model=>model?.modelVersionId===version.modelVersionId)).map(item=><div key={item.catalogueKey}>{item.displayName}</div>)}</dd>
+      </>}
       <dt>{text('模型形态','Representation')}</dt>
       <dd>
         {version.representationType==='detailed'
@@ -108,10 +111,10 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
       <dt>{text('说明','Description')}</dt>
       <dd>{version.description||'—'}</dd>
     </dl>
-    {editing&&<Modal title={text('编辑模型基本信息','Edit model information')} description={text('修改模型名称、所属风机型号、形态及用途。','Edit the model name, turbine type, representation and purpose.')} onClose={()=>{if(!busy)setEditing(false);}}>
+    {editing&&<Modal title={text('编辑模型基本信息','Edit model information')} description={text('修改模型名称、形态与用途；项目型号关联在设备层级中管理。','Edit the model name, representation and purpose. Manage project type associations in Equipment hierarchy.')} onClose={()=>{if(!busy)setEditing(false);}}>
       <form className="ov-resource-form" onSubmit={event=>{event.preventDefault();void save();}}>
         <label>
-          {text('关联风机型号','Turbine model')}
+          {text('工程对象定义（兼容关联）','Engineering object definition (legacy)')}
           <select value={selectedTurbineUid} disabled={busy} onChange={event=>{
             const uid=event.target.value;
             setSelectedTurbineUid(uid);
@@ -123,7 +126,7 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
           }}>
             <option value="">{text('不关联（通用独立模型）','None (generic independent model)')}</option>
             {selectedTurbineUid&&!turbines.some(item=>item.definitionEntityUid===selectedTurbineUid)&&<option value={selectedTurbineUid}>{version.modelCode||text('当前关联（待核对）','Current association (review required)')}</option>}
-            {turbines.map(t=><option key={t.definitionEntityUid} value={t.definitionEntityUid}>{t.manufacturer?`${t.manufacturer} · `:''}{t.displayName||t.modelCode} ({t.modelCode})</option>)}
+            {turbines.filter(t=>t.definitionEntityUid).map(t=><option key={t.definitionEntityUid} value={t.definitionEntityUid!}>{t.manufacturer?`${t.manufacturer} · `:''}{t.displayName||t.modelCode} ({t.modelCode})</option>)}
           </select>
         </label>
         <label>
