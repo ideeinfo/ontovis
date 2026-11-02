@@ -1,4 +1,5 @@
 import type {PreviewRow} from './analysisSources';
+import {objectLocationLabel} from './objectCatalog.ts';
 
 const typeNames:Record<string,[string,string]>={
   equipment:['设备','Equipment'],heater:['加热器','Heater'],pump:['泵','Pump'],tank:['罐/容器','Tank / vessel'],fan:['风机','Fan'],
@@ -21,6 +22,17 @@ function rowType(row:PreviewRow,en:boolean){
   raw=aliases[raw]||raw;
   const nameKey=raw.startsWith('pid_')&&aliases[raw.slice(4)]===raw?raw.slice(4):raw;
   return {key:JSON.stringify(['type',raw]),label:raw==='unknown'||raw==='unclassified'?(en?'Unclassified':'未分类'):typeNames[nameKey]?.[en?1:0]||row.objectType||raw};
+}
+
+export function drawingObjectLocationLabel(row:PreviewRow|undefined,en:boolean){
+  if(!row)return '';
+  const code=row.identifier?.trim()||'';
+  if(row.classification)return objectLocationLabel({classification:{code:row.classification.code,
+    nameZh:row.classification.nameZh??null,nameEn:row.classification.nameEn??null,reviewState:row.classification.reviewState??null},
+    identifiers:code?[{role:'primary',value:code}]:[]},en?'en':'zh');
+  const raw=row.objectType?.trim().toLowerCase();
+  const type=raw&&raw!=='unknown'&&raw!=='unclassified'?rowType(row,en).label:'';
+  return [type,code].filter(Boolean).join('-');
 }
 
 export function drawingGroups(rows:PreviewRow[],ports:boolean,en:boolean,query=''):DrawingTypeGroup[]{
