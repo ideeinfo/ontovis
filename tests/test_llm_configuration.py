@@ -40,6 +40,7 @@ class ModelConfigurationTests(unittest.TestCase):
         self.assertNotEqual(self.models.profile('A','query',inherited)['serviceRevision'],'a'*64)
     def test_keys_are_encrypted_scope_bound_and_never_returned_or_audited(self):
         value=self.save(self.provider());self.assertTrue(value['providers'][0]['keyConfigured'])
+        self.assertEqual([p['id'] for p in self.models.public(self.models.read('A'))['providers']],list(PROVIDERS))
         self.assertEqual(self.models.credentials('A','openai')[1],KEY)
         self.assertEqual(os.stat(self.library.root/'llm-credentials.key').st_mode&0o777,0o600)
         self.assertNotIn(KEY,(self.library.root/'library.sqlite3').read_bytes().decode('latin1'))

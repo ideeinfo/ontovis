@@ -74,8 +74,8 @@ class AssistantModels:
     def public(value):
         return {'revision':value['revision'],'updatedAt':value['updatedAt'],
             'providers':[{ 'id':name,'name':PROVIDERS[name]['name'],'baseUrl':p['baseUrl'],'mode':p['mode'],
-                'keyConfigured':bool(p['credential'])} for name,p in value['config']['providers'].items()],
-            'tasks':[{ 'id':name,'nameZh':TASKS[name][0],'nameEn':TASKS[name][1],**task} for name,task in value['config']['tasks'].items()]}
+                'keyConfigured':bool(p['credential'])} for name in PROVIDERS for p in (value['config']['providers'][name],)],
+            'tasks':[{ 'id':name,'nameZh':TASKS[name][0],'nameEn':TASKS[name][1],**value['config']['tasks'][name]} for name in TASKS]}
 
     def save(self, project, actor, body, authorize):
         require(type(body) is dict and set(body)=={'requestId','expectedRevision','expectedAccessRevision','change'})
