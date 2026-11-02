@@ -43,6 +43,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
   const [turbines,setTurbines]=useState<ProjectTurbineDefinition[]>([]);
+  const [turbineLoading,setTurbineLoading]=useState(true),[turbineError,setTurbineError]=useState<unknown>(null);
   const [turbineRefresh,setTurbineRefresh]=useState(0);
   const turbineGate=useMemo(()=>new ResourceRequestGate(),[]);
   const [turbineMode,setTurbineMode]=useState<'turbines'|'all'>('turbines');
@@ -52,6 +53,8 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const [query,setQuery]=useState(''),[purpose,setPurpose]=useState<ModelPurpose|''>('');
   const [filters,setFilters]=useState<{q:string;purpose:ModelPurpose|'';state:'active'|'deleted'}>({q:'',purpose:'',state:'active'});
   const latestFilters=useRef(filters);latestFilters.current=filters;const recycled=filters.state==='deleted';
+  const showTurbines=!modelsOnly&&!recycled&&turbineMode==='turbines';
+  const visibleTurbines=turbines.filter(item=>!query||(item.displayName||item.modelCode).toLowerCase().includes(query.toLowerCase())||item.modelCode.toLowerCase().includes(query.toLowerCase()));
   const [deleteTarget,setDeleteTarget]=useState<ProjectModelAsset|null>(null),[lifecycleBusy,setLifecycleBusy]=useState(false),[lifecycleError,setLifecycleError]=useState<unknown>(null),[lifecycleNotice,setLifecycleNotice]=useState('');
   const lifecycleGate=useMemo(()=>new ResourceRequestGate(),[]),lifecycleId=useRef(new ResourceRequestId());
   const [catalogView,setCatalogView]=useState<'grid'|'list'>('grid');
@@ -86,7 +89,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   },[]);
   function clearPrivate() {
     cardIntent.current++;lifecycleGate.cancel();setDeleteTarget(null);setLifecycleBusy(false);setLifecycleError(null);setLifecycleNotice('');
-    turbineGate.cancel();setTurbines([]);setSelectedTurbineUid('');
+    turbineGate.cancel();setTurbines([]);setTurbineLoading(false);setTurbineError(null);setSelectedTurbineUid('');
     setPublicAcquisition(false);setResourceRefresh(0);
     catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();setCatalog(null);setVersion(null);setAssetId(null);setVersionId('');
     previewCallback.current(null);setUpload(null);setFile(null);setName('');setSource('');setError(null);setUploadError(null);
@@ -122,10 +125,11 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   useEffect(()=>{
     setTurbines([]);
     if(privateUnavailable)return;
-    const request=turbineGate.start();
+    const request=turbineGate.start();setTurbineLoading(true);setTurbineError(null);
     void client.turbineDefinitions(projectCode,request.signal)
       .then(res=>{if(request.isCurrent())setTurbines(res.items);})
-      .catch(value=>{if(request.isCurrent())failed(value);});
+      .catch(value=>{if(request.isCurrent()&&!cancelled(value)){if(privateDenial(value))failed(value);else setTurbineError(value);}})
+      .finally(()=>{if(request.isCurrent())setTurbineLoading(false);});
     return()=>turbineGate.cancel();
   },[client,projectCode,turbineGate,turbineRefresh,privateUnavailable]);
 
@@ -311,11 +315,11 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
           <button type="button" aria-pressed={catalogView==='list'} onClick={()=>setCatalogView('list')}><List size={15}/>{text('列表','List')}</button>
         </div>}
         {catalog?.capabilities.modelLifecycleWriteVersion===1&&<Btn disabled={lifecycleBusy||loading} onClick={()=>changeFilters(query,purpose,recycled?'active':'deleted')}><Trash2 size={14}/>{recycled?text('返回模型目录','Back to models'):text('模型回收站','Model recycle bin')}</Btn>}
-        <IconBtn label={t('refresh')} disabled={loading||lifecycleBusy} onClick={()=>void readCatalog()}><RefreshCw size={14}/></IconBtn>
+        <IconBtn label={t('refresh')} disabled={loading||lifecycleBusy} onClick={()=>{setTurbineRefresh(value=>value+1);void readCatalog();}}><RefreshCw size={14}/></IconBtn>
         {!recycled&&(modelsOnly?<Btn primary disabled={!canUpload||lifecycleBusy} onClick={()=>openUpload()}><FileUp size={15}/>{t('uploadModel')}</Btn>:<IconBtn label={t('uploadModel')} disabled={!canUpload} onClick={()=>openUpload()}><Plus size={16}/></IconBtn>)}
       </div></div>
-      {!modelsOnly&&turbines.length>0&&<div className="pm-library-filter-bar"><div className="pm-category-filter" role="group" aria-label={text('模型展示模式','Model view mode')}>
-        <button type="button" aria-pressed={turbineMode==='turbines'} onClick={()=>setTurbineMode('turbines')}>{text('风机型号','Turbine models')} ({turbines.length})</button>
+      {!modelsOnly&&!recycled&&<div className="pm-library-filter-bar"><div className="pm-category-filter" role="group" aria-label={text('模型展示模式','Model view mode')}>
+        <button type="button" aria-pressed={turbineMode==='turbines'} onClick={()=>setTurbineMode('turbines')}>{text('风机型号','Turbine models')}{!turbineLoading&&!turbineError?` (${turbines.length})`:''}</button>
         <button type="button" aria-pressed={turbineMode==='all'} onClick={()=>setTurbineMode('all')}>{text('全部模型','All models')}</button>
       </div></div>}
       {modelsOnly&&<div className="pm-library-filter-bar"><div className="pm-category-filter" role="group" aria-label={text('模型分类','Model category')}>
@@ -329,10 +333,13 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
       </p>}
       {recycled&&<p className="ov-resource-caption">{text('模型文件和已用场景保留，恢复后可再次选用。','Files and existing scenes are retained. Restore a model to use it again.')}</p>}
       {!!error&&<p className="ov-resource-error" role="alert">{resourceFailure(error,locale)}</p>}
-      {loading&&!catalog&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
-      {catalog?.items.length===0&&!loading&&<p className="ov-resource-empty">{recycled?text('回收站为空','The recycle bin is empty'):t('noModels')}</p>}
+      {showTurbines&&turbineLoading&&<p className="ov-resource-caption" role="status">{text('正在读取型号…','Loading turbine models…')}</p>}
+      {showTurbines&&!!turbineError&&<div className="ov-resource-error" role="alert">{resourceFailure(turbineError,locale)} <Btn onClick={()=>setTurbineRefresh(value=>value+1)}>{text('重试','Retry')}</Btn></div>}
+      {showTurbines&&!turbineLoading&&!turbineError&&visibleTurbines.length===0&&<p className="ov-resource-empty">{query?text('暂无匹配型号','No matching turbine models'):text('暂无关联型号','No associated turbine models')}</p>}
+      {!showTurbines&&loading&&!catalog&&<p className="ov-resource-caption" role="status">{t('loading')}</p>}
+      {!showTurbines&&catalog?.items.length===0&&!loading&&<p className="ov-resource-empty">{recycled?text('回收站为空','The recycle bin is empty'):t('noModels')}</p>}
       {modelsOnly&&catalogView==='list'&&<div className="pm-catalog-columns" aria-hidden="true"><span>{t('models')}</span><span>{text('用途分类','Purpose')}</span><span>{t('versions')}</span><span className="pm-meta-size">{t('size')}</span><span className="pm-meta-created">{text('版本创建时间','Version created')}</span></div>}
-      {!modelsOnly&&turbines.length>0&&turbineMode==='turbines'?<ul className="ov-resource-model-list" aria-label={text('风机型号列表','Turbine definitions')}>{turbines.filter(item=>!query||(item.displayName||item.modelCode).toLowerCase().includes(query.toLowerCase())||item.modelCode.toLowerCase().includes(query.toLowerCase())).map(turbine=>{
+      {showTurbines?<ul className="ov-resource-model-list" aria-label={text('风机型号列表','Turbine definitions')} aria-busy={turbineLoading}>{visibleTurbines.map(turbine=>{
         const targetRef=turbine.appearanceModel||turbine.detailedModel;
         const usable=!!targetRef;
         const title=turbine.displayName||turbine.modelCode;

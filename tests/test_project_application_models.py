@@ -15,11 +15,12 @@ class ProjectApplicationModelTests(unittest.TestCase):
         self.sessions,self.sid=self.fixture.sessions,self.fixture.sid
         self.projects.create('A')
         self.apps={'A':[],'B':[]}
-        self.list_reads=0;self.application_reads=0;self.on_list=None;self.on_application=None
+        self.list_reads=0;self.application_reads=0;self.access_reads=0;self.on_list=None;self.on_application=None
         authority=self.sessions.current(self.sid,authenticated=True).authority
         original=authority.request
         def request(method,path,body=None):
             code=unquote(path.split('/')[4]) if path.startswith('/api/v1/projects/') else None
+            if method=='GET' and path.endswith('/access'):self.access_reads+=1
             if method=='GET' and '/equipment-applications?' in path:
                 self.list_reads+=1
                 if self.on_list:self.on_list(self.list_reads)
@@ -55,7 +56,7 @@ class ProjectApplicationModelTests(unittest.TestCase):
         return self.sessions.equipment_request(self.sid,'/api/workbench/equipment/configurations/save',body)
 
     def catalogue(self,project='A'):
-        self.list_reads=0;self.application_reads=0
+        self.list_reads=0;self.application_reads=0;self.access_reads=0
         return self.sessions.resource_request(self.sid,'/api/workbench/project-turbine-definitions',
             self.projects.payload(project,projectCode=project))
 
@@ -141,3 +142,27 @@ class ProjectApplicationModelTests(unittest.TestCase):
         app['specification']['revisionId']=str(uuid4())
         with self.assertRaises(PreviewError) as error:self.catalogue()
         self.assertEqual(error.exception.code,'SOURCE_UNAVAILABLE')
+
+    def test_project_access_reads_stay_bounded_when_model_count_grows(self):
+        for _ in range(20):self.configure(self.application())
+        self.assertEqual(sum('projectApplicationRef' in item for item in self.catalogue()['items']),20)
+        self.assertEqual(self.access_reads,2)
+        self.assertEqual(self.application_reads,40,'Fixed source revisions must still be rechecked')
+
+    def test_project_access_revision_change_before_response_rejects_catalogue(self):
+        self.configure(self.application())
+        def change(count):
+            if count==2:
+                from tests.test_project_workspaces import ProjectsAuthority
+                ProjectsAuthority.permissions['member']['A']='viewer'
+        self.on_application=change
+        with self.assertRaises(PreviewError) as error:self.catalogue()
+        self.assertEqual(error.exception.code,'ACCESS_CHANGED')
+
+    def test_signout_during_projection_still_stops_local_model_reads(self):
+        self.configure(self.application())
+        def signout(count):
+            if count==1:self.sessions.invalidate(self.sid,self.sessions.current(self.sid,authenticated=True))
+        self.on_application=signout
+        with self.assertRaises(PreviewError) as error:self.catalogue()
+        self.assertEqual(error.exception.status,401)

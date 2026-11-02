@@ -319,12 +319,15 @@ class ProjectSessions(UserSessions):
             if self._access(sid, row, code)['accessRevision'] != access['accessRevision']:
                 raise PreviewError(409, 'ACCESS_CHANGED')
 
-        value = self.shared.project_models.turbine_definitions(authorize)
-        reader = SceneEngineeringReader(row.authority, self.connection_id, code, authorize)
+        # Source endpoints enforce current membership. Check project access around
+        # the complete projection; inner local/content checks still guard the session.
+        session_guard = lambda: self.guard(sid, row)
+        value = self.shared.project_models.turbine_definitions(session_guard)
+        reader = SceneEngineeringReader(row.authority, self.connection_id, code, session_guard)
         from .project_application_models import application_model_catalogue
         workspace = self.registry.lookup(code)
         store = self._workspace(workspace).equipment_store() if workspace and workspace['state']=='ready' else None
-        application_items, covered = application_model_catalogue(store, reader, self.shared.project_models, authorize)
+        application_items, covered = application_model_catalogue(store, reader, self.shared.project_models, session_guard)
         uids = [item['definitionEntityUid'] for item in value['items']]
         objects = {}
         for start in range(0, len(uids), 50):

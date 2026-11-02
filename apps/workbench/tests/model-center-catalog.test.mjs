@@ -64,6 +64,18 @@ test('scene resource sidebar retains its compact placement controls instead of t
  assert.doesNotMatch(html,/pm-model-browser|pm-view-switch|aria-label="模型分类"/);
  assert.match(html,/<select[^>]+aria-label="用途"/);
 });
+test('scene model modes render before any directory response without showing a false zero or switching to all models',()=>{
+ for(const locale of ['zh','en']){
+  const html=render(ResourcePanel,{canPlace:false,projectCode:'synthetic',onPlace(){},onPreview(){},onTerrainReady(){}},locale);
+  const modes=locale==='zh'?['风机型号','全部模型']:['Turbine models','All models'];
+  assert.match(html,new RegExp(`aria-pressed="true">${modes[0]}</button>`));
+  assert.match(html,new RegExp(`aria-pressed="false">${modes[1]}</button>`));
+  assert.ok(html.includes(locale==='zh'?'正在读取型号…':'Loading turbine models…'));
+  assert.match(html,/aria-busy="true"/);
+  assert.doesNotMatch(html,new RegExp(`${modes[0]} \\(0\\)`));
+  assert.doesNotMatch(html,/暂无关联型号|No associated turbine models/);
+ }
+});
 test('model basic information renders current fields and exposes editing only to maintainers',()=>{
  const version={displayName:'Synthetic model',assetRevision:'asset:fixture:2',purpose:'equipment',description:'Saved description'};
  for(const canEdit of [true,false]){
