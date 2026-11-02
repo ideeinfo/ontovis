@@ -9,6 +9,7 @@ import type {WorkOrderReferenceEntry} from './workOrderReferences';
 import {photoCitation} from './workOrderInvestigation';
 import {RowContext} from './ListMenus';
 import {Btn} from './Primitives';
+import {objectLocationLabel} from './objectCatalog';
 import './workOrders.css';
 
 const ROOT='/api/workbench/work-orders';
@@ -46,7 +47,7 @@ function PhotoPanel({en,location,photos,chosen,image,reading,error,onOpen,onImag
       {location.referenceMatch?.status==='needs_review'&&<p className="wo-caption">{en?'Recorded full primary tag · identifier review pending.':'完整主位号已记录，标识审核尚待完成。'}</p>}
       {photos?.length===0&&<p className="wo-empty">{en?'No stored photo association for this object. No region has been invented.':'该对象暂无已存照片关联，尚不能在照片中定位。'}</p>}
       {!!photos?.length&&<div className="wo-photo-list">{photos.map(photo=><button type="button" key={photo.evidenceRef} className="wo-photo-choice" aria-pressed={chosen?.evidenceRef===photo.evidenceRef} disabled={reading||!photo.selector||!!photo.unavailableReason} onClick={()=>onOpen(photo)}><Image size={14}/><span>{photo.title}<small>v{photo.versionNumber??'—'} · {photo.sourceRelation==='template_definition'?(en?'Fixed template reference':'固定型号来源'):(en?'Object association':'对象自身关联')}{photo.newerVersionAvailable?' · '+(en?'New version available':'有新版本'):''}{photo.anchorUnavailableReason?' · '+photo.anchorUnavailableReason:''}</small></span><ArrowRight size={13}/></button>)}</div>}
-      {chosen&&image&&<><WorkOrderPhotoViewport key={chosen.evidenceRef+image} image={image} selector={chosen.selector} label={`${location.item.displayName} · ${chosen.title}`} en={en} onError={onImageError}/>
+      {chosen&&image&&<><WorkOrderPhotoViewport key={chosen.evidenceRef+image} image={image} selector={chosen.selector} label={`${location.item.displayName} · ${chosen.title}`} regionLabel={objectLocationLabel(location.item,en?'en':'zh')} en={en} onError={onImageError}/>
         <p className="wo-caption">{en?'Source annotation; applicability unverified. It does not confirm this installation or the root cause.':'区域来自已有标注，适用性待核实；不据此确认独立安装对象的现场一致性或故障根因。'}</p>
         <details className="wo-source"><summary>{en?'Fixed photo reference':'固定照片依据'}</summary><p>{chosen.contentVersionId}</p><p>{chosen.sourceRevision}</p><p>{chosen.selector?.displayRevision}</p></details></>}
     </>}

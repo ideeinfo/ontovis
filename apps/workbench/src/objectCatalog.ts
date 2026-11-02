@@ -14,6 +14,14 @@ export function categoryLabel(value:Pick<CatalogGroup,'code'|'nameZh'|'nameEn'|'
 export function objectCategory(item:Pick<EngineeringObject,'objectKind'|'classification'>, locale:Locale) {
   return categoryLabel({code:null,nameZh:null,nameEn:null,...item.classification,objectKind:item.objectKind},locale);
 }
+export function objectLocationLabel(item:{objectKind?:string;classification?:EngineeringObject['classification'];identifiers?:{value:string;role:string}[]}|null|undefined,locale:Locale){
+  if(!item)return '';
+  const standard=item.classification;
+  const type=(locale==='en'?standard?.nameEn||standard?.nameZh:standard?.nameZh||standard?.nameEn)?.trim()
+    ||standard?.code?.trim()||(item.objectKind&&item.objectKind!=='unknown'?objectCategory({objectKind:item.objectKind},locale):'');
+  const code=[...new Set(item.identifiers?.filter(value=>value.role==='primary').map(value=>value.value.trim()).filter(Boolean))].join(' / ');
+  return [type,code].filter(Boolean).join('-');
+}
 export function recordedObjectPath(detail:ObjectView) {
   if (!detail.item.installationContextId) return [];
   return [...detail.ancestors.path].reverse().map(row=>row.object).concat(detail.item);

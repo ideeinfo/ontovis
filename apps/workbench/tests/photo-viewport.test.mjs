@@ -7,7 +7,7 @@ import * as geometry from '../src/workOrderPhoto.ts';
 
 // Exercise the production component's buttons, wheel listener and resize effects.
 // The viewport supplies browser geometry; React hooks run until updates settle.
-function mount({embedded=false,initialView,natural=[1962,4096],selector=null}={}){
+function mount({embedded=false,initialView,natural=[1962,4096],selector=null,regionLabel}={}){
   const states=[],refs=[],layouts=[],effects=[],reports=[];
   let si,ri,li,ei,dirty,tree,observer;
   const viewport={clientWidth:1066,clientHeight:432,scrollLeft:0,scrollTop:0,listeners:new Map(),
@@ -30,7 +30,7 @@ function mount({embedded=false,initialView,natural=[1962,4096],selector=null}={}
   const exports={};new Function('require','exports',compiled)(name=>dependencies[name]??require(name),exports);
   const savedObserver=globalThis.ResizeObserver;
   globalThis.ResizeObserver=class{constructor(callback){observer=callback;}observe(){observer();}disconnect(){}};
-  const props={embedded,initialView,selector,image:'blob:synthetic-photo',label:'synthetic photo',en:false,onError:()=>assert.fail('unexpected image error'),onViewChange:value=>reports.push(value)};
+  const props={embedded,initialView,selector,regionLabel,image:'blob:synthetic-photo',label:'synthetic photo',en:false,onError:()=>assert.fail('unexpected image error'),onViewChange:value=>reports.push(value)};
   const nodes=()=>{const result=[];function walk(node){if(!node||typeof node!=='object')return;
     if(Array.isArray(node)){node.forEach(walk);return;}result.push(node);walk(node.props?.children);
   }walk(tree);return result;};
@@ -42,6 +42,7 @@ function mount({embedded=false,initialView,natural=[1962,4096],selector=null}={}
   render();nodes().find(node=>node.type==='img').props.onLoad({currentTarget:{naturalWidth:natural[0],naturalHeight:natural[1]}});render();
   const find=(tag,predicate=()=>true)=>nodes().find(node=>node.type===tag&&predicate(node.props));
   return {reports,viewport,
+    annotations:()=>nodes().filter(node=>node.props?.className==='wo-photo-region').map(node=>({box:node.props.style,label:node.props.children?.props?.children})),
     frame:()=>find('div',p=>p.className==='wo-photo-frame').props.style,
     output:()=>find('output').props.children,
     click(label){const text=value=>Array.isArray(value)?value.map(text).join(''):typeof value==='string'?value:'';
@@ -53,6 +54,16 @@ function mount({embedded=false,initialView,natural=[1962,4096],selector=null}={}
     destroy(){for(const slot of [...layouts,...effects])slot.cleanup?.();globalThis.ResizeObserver=savedObserver;}
   };
 }
+
+test('photo annotation shows the object identity while preserving source geometry at every zoom',()=>{
+ const selector={kind:'image_bbox',regionKind:'label_region',coordinateSpace:'oriented_display_normalized',bbox:{x:.4,y:.6,width:.02,height:.03}};
+ const view=mount({selector,regionLabel:'温度变送器-+CN1-1B4'});try{
+  const expected=[{box:{left:'40%',top:'60%',width:'2%',height:'3%'},label:'温度变送器-+CN1-1B4'}];
+  assert.deepEqual(view.annotations(),expected);view.click('100%（1:1）');view.wheel(-300);assert.deepEqual(view.annotations(),expected);
+ }finally{view.destroy();}
+ const unnamed=mount({selector});try{assert.equal(unnamed.annotations().length,1);assert.equal(unnamed.annotations()[0].label,undefined);}finally{unnamed.destroy();}
+ const whole=mount({regionLabel:'柜体-CN1'});try{assert.deepEqual(whole.annotations(),[]);}finally{whole.destroy();}
+});
 
 for(const embedded of [false,true]){
   test(`${embedded?'embedded':'standalone'} photo keeps button and wheel magnification after scrollbars resize the viewport`,()=>{

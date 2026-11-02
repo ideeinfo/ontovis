@@ -90,7 +90,7 @@ class SourceContractTests(unittest.TestCase):
     def test_photo_purpose_is_retained_in_fixed_device_source_and_old_descriptors_still_read(self):
         context={'item':{'entityUid':'unit7-cabinet','entityRevision':'object:1'},
             'context':{'installationContextId':str(uuid4()),'hierarchyRevision':'tree:1'}}
-        reader=SimpleNamespace(context_for_object=Mock(return_value=context))
+        reader=SimpleNamespace(context_for_object=Mock(return_value=context),detail=Mock(return_value=context))
         source=AnalysisSourceReader(reader,None,None,lambda:None,'owner')
         photo={'evidenceRef':'photo:field','sourceRevision':'a'*64,'contentVersionId':str(uuid4()),
             'sourceSha256':'b'*64,'selector':{'displayRevision':'c'*64},'displayAvailability':'available','photoPurpose':'field_record'}
@@ -99,11 +99,37 @@ class SourceContractTests(unittest.TestCase):
             'evidenceRef':'photo:field','photoPurpose':'field_record'})
         self.assertEqual(descriptor['photoPurpose'],'field_record')
         self.assertEqual(source.read('photo',descriptor)['photoPurpose'],'field_record')
+        self.assertEqual(source.read('photo',descriptor)['item'],context['item'])
+        reader.detail.assert_called_with(context['context']['installationContextId'],'unit7-cabinet','tree:1',expected_entity_revision='object:1')
         self.assertEqual(source.photos.resolve.call_args.args[0]['entityUid'],'unit7-cabinet')
         self.assertEqual(source.photos.resolve.call_args.args[0]['photoPurpose'],'field_record')
         old={k:v for k,v in descriptor.items() if k!='photoPurpose'}
         validate_descriptor('photo',old)
         with self.assertRaises(PreviewError):validate_descriptor('photo',descriptor|{'installationContextId':None,'expectedHierarchyRevision':None})
+
+    def test_photo_annotation_metadata_uses_the_same_versioned_selection_and_denies_revoked_or_changed_identity(self):
+        item={'entityUid':'sensor','entityRevision':'object:1','displayName':'Source display',
+            'objectKind':'device','classification':{'code':'BTA','nameZh':'温度变送器','nameEn':'Temperature transmitter'},
+            'identifiers':[{'role':'primary','value':'+CN1-1B4'}],'privateServerPath':'must not be returned'}
+        reader=SimpleNamespace(detail=Mock(return_value={'item':item}))
+        authorize=Mock();source=AnalysisSourceReader(reader,None,None,authorize,'owner')
+        photo={'evidenceRef':'photo:sensor','sourceRevision':'a'*64,'contentVersionId':str(uuid4()),
+            'sourceSha256':'b'*64,'selector':{'displayRevision':'c'*64}}
+        descriptor={'entityUid':'sensor','expectedEntityRevision':'object:1','installationContextId':None,'expectedHierarchyRevision':None,
+            'evidenceRef':'photo:sensor','expectedSourceRevision':'a'*64,'expectedContentVersionId':photo['contentVersionId'],
+            'expectedSourceSha256':'b'*64,'expectedDisplayRevision':'c'*64}
+        original=deepcopy(photo);source.photos.resolve=Mock(return_value={'items':[photo]})
+        result=source.read('photo',descriptor)
+        self.assertEqual(result['item'],{key:value for key,value in item.items() if key!='privateServerPath'})
+        self.assertEqual(photo,original);self.assertGreaterEqual(authorize.call_count,2)
+        reader.detail.assert_called_once_with(None,'sensor',None,expected_entity_revision='object:1')
+        for status,code in ((409,'ENGINEERING_CHANGED'),(403,'NOT_FOUND_OR_FORBIDDEN')):
+            reader.detail.side_effect=PreviewError(status,code)
+            with self.assertRaises(PreviewError) as raised:source.read('photo',descriptor)
+            self.assertEqual(raised.exception.code,code)
+        reader.detail.reset_mock();photo['sourceRevision']='d'*64
+        with self.assertRaises(PreviewError):source.read('photo',descriptor)
+        reader.detail.assert_not_called()
 
     def test_descriptors_reject_urls_owner_fields_and_false_versions(self):
         value={'modelAssetId':str(uuid4()),'modelVersionId':str(uuid4()),'contentRevision':'fixed:1','sha256':'a'*64}

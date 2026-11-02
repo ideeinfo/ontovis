@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {categoryLabel,objectCategory,recordedObjectPath} from '../src/objectCatalog.ts';
+import {categoryLabel,objectCategory,objectLocationLabel,recordedObjectPath} from '../src/objectCatalog.ts';
 const object=(uid,name,context='unit')=>({entityUid:uid,displayName:name,installationContextId:context,objectKind:'unknown'});
+test('photo location labels use the source type and primary code, independently of display name and internal UID',()=>{
+ const item={...object('entity:internal','renamed photo title'),classification:{code:'BTA',nameZh:'温度变送器',nameEn:'Temperature transmitter'},
+  identifiers:[{role:'alias',value:'wrong'},{role:'primary',value:' +CN1-1B4 '},{role:'primary',value:'+CN1-1B4'}]};
+ const before=structuredClone(item);
+ assert.equal(objectLocationLabel(item,'zh'),'温度变送器-+CN1-1B4');assert.equal(objectLocationLabel(item,'en'),'Temperature transmitter-+CN1-1B4');
+ assert.deepEqual(item,before);
+});
+test('photo labels retain partial recorded identity without inventing a type, code, or source label',()=>{
+ assert.equal(objectLocationLabel(null,'zh'),'');assert.equal(objectLocationLabel(object('internal','file.jpg'),'zh'),'');
+ assert.equal(objectLocationLabel({objectKind:'cabinet',identifiers:[{role:'primary',value:'CN1'}]},'zh'),'柜体-CN1');
+ assert.equal(objectLocationLabel({classification:{code:'BTA',nameZh:'温度变送器',nameEn:null}},'en'),'温度变送器');
+ assert.equal(objectLocationLabel({classification:{code:'BTA'},identifiers:[{role:'alias',value:'not primary'}]},'zh'),'BTA');
+ assert.equal(objectLocationLabel({identifiers:[{role:'primary',value:'R1'}]},'zh'),'R1');
+});
 test('standard classification uses source code and the selected language without a second type line',()=>{
  const classification={code:'A1',nameZh:'控制接口',nameEn:'Control interface',reviewState:'unreviewed'};
  const item={...object('definition','控制定义',null),classification};

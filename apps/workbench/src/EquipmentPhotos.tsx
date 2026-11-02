@@ -5,6 +5,7 @@ import type {SceneObjectContext} from './sceneEngineeringTypes';
 import type {ObjectPhoto} from './workOrderTypes';
 import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
 import {EquipmentApi,type MaterialSelection,type SharedPhoto,type SharedPhotoRegion} from './equipmentApi';
+import {objectLocationLabel} from './objectCatalog';
 
 function Thumbnail({photo,read,en}:{photo:SharedPhoto;read:(photo:SharedPhoto,representation:'thumbnail'|'preview'|'original',signal:AbortSignal)=>Promise<string>;en:boolean}){
   const [image,setImage]=useState('');
@@ -61,7 +62,7 @@ export function EquipmentPhotos({api,definition,device,en,purpose='object_locati
       <div className="eq-photo-toolbar"><Btn onClick={()=>void open(chosen,!original)}>{original?(en?'Fast preview':'快速预览'):(en?'Full resolution':'原尺寸')}</Btn>
       {'regionCount' in chosen&&<><label>{en?'Original object region':'原对象区域'}<select aria-label={en?'Original object region':'原对象区域'} value={region} onChange={event=>setRegion(event.target.value)}><option value="">{en?'Whole photo':'整张照片'}</option>{regions.map(row=><option key={row.photo.evidenceRef} value={row.photo.evidenceRef}>{row.object.displayName}</option>)}</select></label>{regionNext&&<Btn disabled={regionBusy} onClick={()=>void loadRegions(chosen,regionNext)}>{en?'More regions':'更多区域'}</Btn>}</>}
       </div>{selected&&<p className="eq-caption">{selected.object.displayName} · {selected.object.entityUid}</p>}
-      {image?<WorkOrderPhotoViewport key={region} image={image} selector={selected?.photo.selector??('regionCount' in chosen?null:chosen.selector)} label={chosen.title} en={en} focusFraction={.35} onError={()=>setImage('')}/>:<p role={error?'alert':'status'}>{error?failureMessage(error,en?'en':'zh'):(en?'Loading photo…':'正在载入照片…')}</p>}
+      {image?<WorkOrderPhotoViewport key={region} image={image} selector={selected?.photo.selector??('regionCount' in chosen?null:chosen.selector)} label={chosen.title} regionLabel={objectLocationLabel(selected?.object||current?.item,en?'en':'zh')} en={en} focusFraction={.35} onError={()=>setImage('')}/>:<p role={error?'alert':'status'}>{error?failureMessage(error,en?'en':'zh'):(en?'Loading photo…':'正在载入照片…')}</p>}
     </Modal>}
   </section>;
 }

@@ -128,6 +128,10 @@ class AnalysisSourceReader:
                 draft.require(value['sourceRevision'] == descriptor['expectedSourceRevision'] and value['contentVersionId'] == descriptor['expectedContentVersionId']
                     and value['sourceSha256'] == descriptor['expectedSourceSha256'] and value['selector'] is not None
                     and value['selector']['displayRevision'] == descriptor['expectedDisplayRevision'], 'SOURCE_CHANGED', 409)
+                obj = self.reader.detail(descriptor['installationContextId'], descriptor['entityUid'],
+                    descriptor['expectedHierarchyRevision'], expected_entity_revision=descriptor['expectedEntityRevision'])
+                value = {**value, 'item': {key: obj['item'][key] for key in
+                    ('entityUid', 'entityRevision', 'displayName', 'objectKind', 'classification', 'identifiers') if key in obj['item']}}
         elif kind == 'model':
             value = self.models.model(descriptor['modelAssetId'], descriptor['modelVersionId'], self.authorize)
             draft.require(value['contentRevision'] == descriptor['contentRevision'] and value['sha256'] == descriptor['sha256'], 'RESOURCE_CHANGED', 409)

@@ -5,7 +5,7 @@ import type {ImageView} from './analysisCanvas';
 import {clampPhotoZoom,MAX_PHOTO_ZOOM,MIN_PHOTO_ZOOM,photoBoxes,photoFitZoom,photoFocusScroll,photoFocusZoom,photoRestoreZoom,photoWheelZoom,photoZoomScroll} from './workOrderPhoto';
 import './workOrders.css';
 
-export function WorkOrderPhotoViewport({image,selector,label,en,onError,embedded=false,initialView,onViewChange,decodedImage,regions=[],onRegion,focusFraction=.09}:{image:string;selector:PhotoSelector|null;label:string;en:boolean;onError:()=>void;embedded?:boolean;initialView?:ImageView;onViewChange?:(value:ImageView)=>void;decodedImage?:HTMLImageElement;regions?:{id:string;title:string;bbox:{x:number;y:number;width:number;height:number}}[];onRegion?:(id:string)=>void;focusFraction?:number}){
+export function WorkOrderPhotoViewport({image,selector,label,regionLabel,en,onError,embedded=false,initialView,onViewChange,decodedImage,regions=[],onRegion,focusFraction=.09}:{image:string;selector:PhotoSelector|null;label:string;regionLabel?:string;en:boolean;onError:()=>void;embedded?:boolean;initialView?:ImageView;onViewChange?:(value:ImageView)=>void;decodedImage?:HTMLImageElement;regions?:{id:string;title:string;bbox:{x:number;y:number;width:number;height:number}}[];onRegion?:(id:string)=>void;focusFraction?:number}){
   const viewer=useRef<HTMLDivElement>(null);
   const [size,setSize]=useState({width:600,height:500}),[natural,setNatural]=useState({width:0,height:0});
   const [zoom,setZoom]=useState(1),[panning,setPanning]=useState(false);
@@ -101,7 +101,7 @@ export function WorkOrderPhotoViewport({image,selector,label,en,onError,embedded
         <img src={image} alt={label} draggable={false} onLoad={event=>setNatural({width:event.currentTarget.naturalWidth,height:event.currentTarget.naturalHeight})} onError={onError}/>
         {regions.map(region=><button key={region.id} type="button" className="ac-drawing-hotspot" aria-label={region.title} title={region.title}
           onPointerDown={event=>event.stopPropagation()} onClick={()=>onRegion?.(region.id)} style={{left:`${region.bbox.x*100}%`,top:`${region.bbox.y*100}%`,width:`${region.bbox.width*100}%`,height:`${region.bbox.height*100}%`}}/>)}
-        {boxes.map((region,index)=><span key={index} className="wo-photo-region" style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${region.width*100}%`,height:`${region.height*100}%`}}><span>{selector?.regionKind==='label_region'?(en?'Label region':'来源标签区域'):(en?'Object region':'来源对象区域')}</span></span>)}
+        {boxes.map((region,index)=><span key={index} className="wo-photo-region" style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${region.width*100}%`,height:`${region.height*100}%`}}>{regionLabel&&<span>{regionLabel}</span>}</span>)}
       </div></div>
     </div>
   </>;
