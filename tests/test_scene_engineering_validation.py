@@ -6,6 +6,7 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from uuid import uuid4
 
@@ -54,6 +55,85 @@ class SceneEngineeringValidationTests(unittest.TestCase):
         self.original = snapshot(instance())
         self.validation = self.facts(self.original)
         self.authority.calls.clear()
+
+    def test_parallel_read_keeps_the_same_fresh_proofs_and_at_most_four_in_flight(self):
+        refs=[]
+        for i in range(8):
+            uid='parallel-device-'+str(i);refs.append(ref(uid))
+            self.authority.objects[uid]=self.authority.object(uid,fixture.CTX)
+            self.authority.parents[uid]=fixture.ROOT
+            self.authority.relations[uid,fixture.ROOT]=self.authority.relation(uid,fixture.ROOT)
+        expected=self.validator._read(refs);read_count=len(self.authority.calls);self.authority.calls.clear()
+        original=self.reader.context_for_object;lock=threading.Lock();ready=threading.Event();release=threading.Event();done=threading.Event()
+        active=maximum=entered=0;values=[];errors=[]
+        def read(uid):
+            nonlocal active,maximum,entered
+            with lock:
+                active+=1;entered+=1;maximum=max(maximum,active)
+                if entered==4:ready.set()
+            try:
+                if not release.wait(4):raise RuntimeError('test read gate did not open')
+                return original(uid)
+            finally:
+                with lock:active-=1
+        self.reader.context_for_object=read
+        def operation():
+            try:values.append(self.validator._read(refs,parallel=True))
+            except BaseException as error:errors.append(error)
+            finally:done.set()
+        thread=threading.Thread(target=operation);thread.start()
+        try:
+            self.assertTrue(ready.wait(3));self.assertFalse(done.is_set())
+            with lock:self.assertEqual(active,4)
+        finally:release.set();thread.join(5)
+        self.assertFalse(thread.is_alive());self.assertEqual(errors,[]);self.assertEqual(values,[expected]);self.assertEqual(maximum,4)
+        self.assertEqual(len(self.authority.calls),read_count)
+        self.assertEqual(list(values[0][0]),[(fixture.CONNECTION,fixture.PROJECT,x['entityUid']) for x in refs])
+
+    def test_parallel_read_propagates_revocation_without_waiting_for_another_in_flight_read(self):
+        blocked=threading.Event();release=threading.Event();done=threading.Event();drained=threading.Event();errors=[]
+        original=self.reader.context_for_object
+        def read(uid):
+            if uid==fixture.ROOT:
+                blocked.set()
+                try:
+                    if not release.wait(4):raise RuntimeError('test gate did not open')
+                    return original(uid)
+                finally:drained.set()
+            if not blocked.wait(3):raise RuntimeError('read did not start')
+            self.authority.allowed=False;self.authority.guard()
+        self.reader.context_for_object=read
+        def operation():
+            try:self.validator._read([ref(fixture.ROOT),ref(fixture.CHILD)],parallel=True)
+            except BaseException as error:errors.append(error)
+            finally:done.set()
+        thread=threading.Thread(target=operation);thread.start()
+        try:
+            self.assertTrue(blocked.wait(3));self.assertTrue(done.wait(2));self.assertFalse(drained.is_set())
+            self.assertEqual(len(errors),1);self.assertIsInstance(errors[0],PreviewError)
+            self.assertEqual((errors[0].status,errors[0].code),(403,'FORBIDDEN'))
+        finally:release.set();thread.join(5)
+        self.assertTrue(drained.wait(2))
+
+    def test_parallel_read_rejects_different_revisions_of_the_same_context(self):
+        original=self.reader.context_for_object
+        def read(uid):
+            selected=original(uid)
+            if uid==fixture.CHILD:
+                selected['context']['hierarchyRevision']=fixture.CTX+':8'
+                selected['expectation']['expectedHierarchyRevision']=fixture.CTX+':8'
+            return selected
+        self.reader.context_for_object=read
+        self.expect('ENGINEERING_CHANGED',lambda:self.validator._read([ref(fixture.ROOT),ref(fixture.CHILD)],parallel=True),409)
+
+    def test_only_open_uses_parallel_reads_and_saves_keep_the_serial_path(self):
+        original=self.validator._read;modes=[]
+        def read(refs,*,parallel=False):
+            modes.append(parallel)
+            return original(refs,parallel=parallel)
+        self.validator._read=read
+        self.run_check(mode='open');self.run_check();self.run_check(mode='replacement');self.save()
+        self.assertEqual(modes,[True,False,False,False])
 
     def test_shared_configuration_requires_component_edits_at_project_level(self):
         self.validator.shared_configuration=lambda uid:{'configurationId':'00000000-0000-4000-8000-000000000001','configurationRevision':'equipment-config:1','snapshot':{'models':[{'modelVersionId':VERSION}]}}

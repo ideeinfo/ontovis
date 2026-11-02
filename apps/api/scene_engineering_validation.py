@@ -5,6 +5,7 @@ callback combines those facts with a fixed model's actual component directory;
 client review declarations supply concurrency conditions, never facts.
 """
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from .authority import PreviewError
 from .scene_bindings import (VerifiedBinding, derive_binding_issues,
@@ -43,10 +44,26 @@ class SceneEngineeringValidator:
             item['rootBinding'], item['componentBindings'], **self.scope)}
             for item in snapshot['instances']}
 
-    def _read(self, refs):
+    def _read(self, refs, *, parallel=False):
+        # Only read operations use concurrent independent proofs. Keep at most
+        # four requests in flight; failed/late work can never enter the result.
+        if parallel and len(refs)>1:
+            pool=ThreadPoolExecutor(max_workers=min(4,len(refs)))
+            pending={};resolved={};next_index=0
+            try:
+                while pending or next_index<len(refs):
+                    while len(pending)<4 and next_index<len(refs):
+                        future=pool.submit(self.reader.context_for_object,refs[next_index]['entityUid'])
+                        pending[future]=next_index;next_index+=1
+                    completed,_=wait(pending,return_when=FIRST_COMPLETED)
+                    for future in completed:resolved[pending.pop(future)]=future.result()
+                selected_values=[resolved[i] for i in range(len(refs))]
+            finally:
+                pool.shutdown(wait=False,cancel_futures=True)
+        else:
+            selected_values=(self.reader.context_for_object(ref['entityUid']) for ref in refs)
         selections, expectations, known_objects, known_contexts = {}, {}, {}, {}
-        for ref in refs:
-            selected = self.reader.context_for_object(ref['entityUid'])
+        for ref,selected in zip(refs,selected_values):
             _require(selected['objectRef'] == ref, 'IDENTITY_CHANGED', 409)
             identity = _key(ref); selections[identity] = selected
             context = selected['context']
@@ -147,7 +164,7 @@ class SceneEngineeringValidator:
             self.reader.authorize()
             return {'engineeringExpectations': [], 'bindingIssues': [],
                     'rootBindingChanges': declarations, 'rootBindingImpact': impacts,**shared_uses}
-        selections, current = self._read(refs)
+        selections, current = self._read(refs,parallel=mode=='open')
         expectations = [current[key] for key in sorted(current)]
         if mode == 'save':
             declared = validate_expectations(reviewed, required_refs=refs, **self.scope)
