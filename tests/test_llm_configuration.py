@@ -54,6 +54,39 @@ class ModelConfigurationTests(unittest.TestCase):
         token=self.models.read('A')['config']['providers']['openai']['credential']
         with self.assertRaises(PreviewError):self.models._secret('B','openai',token)
         with self.assertRaises(PreviewError):self.models._secret('A','gemini',token)
+    def test_ontobase_execution_follows_the_current_service_without_vis_credentials(self):
+        current={'enabled':True,'canRun':True,'provider':'openai','modelId':'source-a','serviceRevision':'a'*64}
+        first=self.models.profile('A','query',lambda:current)
+        self.assertEqual((first['execution'],first['provider'],first['modelId']),('ontobase','openai','source-a'))
+        current.update(provider='gemini',modelId='source-b',serviceRevision='b'*64)
+        second=self.models.profile('A','query',lambda:current)
+        self.assertEqual((second['provider'],second['modelId']),('gemini','source-b'))
+        self.assertNotEqual(first['serviceRevision'],second['serviceRevision'])
+        self.assertIsNone(second['baseUrl']);self.assertEqual(second['configurationRevision'],0)
+        self.assertFalse((self.library.root/'llm-credentials.key').exists())
+    def test_ontobase_task_save_forbids_model_provider_and_key_overrides(self):
+        change=dict(kind='task',taskId='query',execution='ontobase',enabled=True)
+        for overrides in ({'provider':'openai'},{'modelId':'override'},{'apiKey':KEY}):
+            with self.subTest(fields=list(overrides)),self.assertRaises(PreviewError):self.save(change|overrides)
+        value=self.save(change)
+        task=next(t for t in value['tasks'] if t['id']=='query')
+        self.assertEqual(set(task),{'id','nameZh','nameEn','execution','enabled'})
+        self.assertFalse((self.library.root/'llm-credentials.key').exists())
+    def test_existing_inherited_tasks_become_base_services_without_rewriting_stored_keys(self):
+        self.save(self.provider())
+        with self.library.connect() as db:
+            row=db.execute('select config_json from assistant_model_configs').fetchone()
+            old=json.loads(row['config_json'])
+            old['providers']['qwen']['mode']='inherited'
+            old['tasks']['analysis']={'provider':'qwen','modelId':'old-default','enabled':True}
+            old['tasks']['query']={'provider':'openai','modelId':'own-model','enabled':True}
+            raw=json.dumps(old)
+            db.execute('update assistant_model_configs set config_json=?',(raw,))
+        current=self.models.read('A')
+        self.assertEqual(current['config']['tasks']['analysis'],{'execution':'ontobase','enabled':True})
+        self.assertEqual(current['config']['tasks']['query']['execution'],'ontovis')
+        self.assertEqual(self.models.credentials('A','openai')[1],KEY)
+        with self.library.connect() as db:self.assertEqual(db.execute('select config_json from assistant_model_configs').fetchone()[0],raw)
     def test_keep_clear_address_change_and_stale_revision(self):
         self.save(self.provider());keep=self.provider()|{'keyAction':'keep','apiKey':None}
         self.save(keep);self.assertEqual(self.models.credentials('A','openai')[1],KEY)
@@ -77,15 +110,15 @@ class ModelConfigurationTests(unittest.TestCase):
         self.assertIsNone(self.models.read('A')['config']['providers']['gemini']['credential'])
     def test_task_routes_are_independent_and_credentials_cannot_be_borrowed_across_providers(self):
         self.save(self.provider());self.save(self.provider('deepseek'))
-        self.save(dict(kind='task',taskId='analysis',provider='openai',modelId='synthetic-a',enabled=True))
-        self.save(dict(kind='task',taskId='query',provider='deepseek',modelId='synthetic-b',enabled=True))
+        self.save(dict(kind='task',execution='ontovis',taskId='analysis',provider='openai',modelId='synthetic-a',enabled=True))
+        self.save(dict(kind='task',execution='ontovis',taskId='query',provider='deepseek',modelId='synthetic-b',enabled=True))
         inherited=Mock(side_effect=AssertionError('No source fallback for configured tasks'))
         a=self.models.profile('A','analysis',inherited);b=self.models.profile('A','query',inherited)
         self.assertEqual((a['provider'],a['modelId']),('openai','synthetic-a'))
         self.assertEqual((b['provider'],b['modelId']),('deepseek','synthetic-b'))
         self.assertNotEqual(a['serviceRevision'],b['serviceRevision'])
-        with self.assertRaises(PreviewError):self.save(dict(kind='task',taskId='work_order',provider='gemini',modelId='synthetic-c',enabled=True))
-        self.save(dict(kind='task',taskId='analysis',provider='openai',modelId='synthetic-a',enabled=False))
+        with self.assertRaises(PreviewError):self.save(dict(kind='task',execution='ontovis',taskId='work_order',provider='gemini',modelId='synthetic-c',enabled=True))
+        self.save(dict(kind='task',execution='ontovis',taskId='analysis',provider='openai',modelId='synthetic-a',enabled=False))
         self.assertFalse(self.models.profile('A','analysis',inherited)['canRun'])
     def test_copy_restores_encrypted_credentials_and_missing_or_unsafe_key_fails_closed(self):
         import shutil
@@ -156,10 +189,27 @@ class ProviderProtocolTests(unittest.TestCase):
             self.assertEqual(request.call_args.args[3:6],('GET','/models',None))
 
 class ModelConfigurationHttpTests(http_fixture.AssistantHttpTests):
+    def test_base_task_invokes_only_the_source_service_and_sends_no_llm_overrides(self):
+        self.enable()
+        original=http_fixture.ProjectsAuthority.request
+        def authority(instance,method,path,body=None):
+            value=original(instance,method,path,body)
+            return value|{'provider':'openai','modelId':'active-source-model'} if path.endswith('/ontovis-assistant/service') else value
+        result={'answer':answer(),'usage':{},'purpose':'ontovis_analysis','serviceRevision':'a'*64,'modelCalls':1,'engineeringConfirmation':False}
+        with patch.object(http_fixture.ProjectsAuthority,'request',authority),patch('apps.api.assistant_service.call_source',return_value=result) as source,patch('apps.api.llm_providers.infer') as direct:
+            profile=self.request('model-config')[1]
+            self.assertEqual(profile['services']['analysis']['provider'],'openai')
+            status,started=self.request('start',self.start_body());self.assertEqual(status,200,started)
+            completed=self.finished(started['runId']);self.assertEqual(completed['state'],'complete',completed)
+            self.assertEqual(completed['result']['model']['execution'],'ontobase')
+            payload=source.call_args.args[2]
+            self.assertFalse({'provider','model','modelId','apiKey','baseUrl'}&set(payload))
+            source.assert_called_once();direct.assert_not_called()
+            self.assertFalse((self.sessions.shared.library.root/'llm-credentials.key').exists())
     def test_managed_model_is_readable_but_never_runnable_by_a_viewer(self):
         self.save_provider()
         status,_=self.request('model-config-save',dict(requestId=str(uuid4()),expectedRevision=1,expectedAccessRevision='Demo-PDS:admin',change=dict(
-            kind='task',taskId='query',provider='openai',modelId='synthetic-query',enabled=True)))
+            kind='task',execution='ontovis',taskId='query',provider='openai',modelId='synthetic-query',enabled=True)))
         self.assertEqual(status,200)
         http_fixture.ProjectsAuthority.permissions['member']['Demo-PDS']='viewer'
         value=self.request('model-config')[1]
@@ -179,7 +229,7 @@ class ModelConfigurationHttpTests(http_fixture.AssistantHttpTests):
     def test_configuration_change_cancels_an_active_provider_call_and_hides_late_answers(self):
         self.enable();self.save_provider()
         task_change=dict(requestId=str(uuid4()),expectedRevision=1,expectedAccessRevision='Demo-PDS:admin',change=dict(
-            kind='task',taskId='query',provider='openai',modelId='synthetic-query',enabled=True))
+            kind='task',execution='ontovis',taskId='query',provider='openai',modelId='synthetic-query',enabled=True))
         self.assertEqual(self.request('model-config-save',task_change)[0],200)
         profile=self.request('policy')[1]['services']['query'];entered=Event();cancelled_seen=Event()
         signal=[]
@@ -233,7 +283,7 @@ class ModelConfigurationHttpTests(http_fixture.AssistantHttpTests):
     def test_an_actual_run_uses_the_configured_task_model_and_old_default_still_runs(self):
         self.assertEqual(self.enable()[0],200);self.assertEqual(self.save_provider()[0],200)
         status,_=self.request('model-config-save',dict(requestId=str(uuid4()),expectedRevision=1,expectedAccessRevision='Demo-PDS:admin',change=dict(
-            kind='task',taskId='query',provider='openai',modelId='synthetic-query',enabled=True)))
+            kind='task',execution='ontovis',taskId='query',provider='openai',modelId='synthetic-query',enabled=True)))
         self.assertEqual(status,200);profile=self.request('policy')[1]['services']['query']
         result={'answer':answer(),'usage':{},'purpose':'ontovis_analysis','serviceRevision':profile['serviceRevision'],'modelCalls':1,'engineeringConfirmation':False}
         with patch('apps.api.llm_providers.infer',return_value=result) as model,patch('apps.api.assistant_service.call_source') as legacy:

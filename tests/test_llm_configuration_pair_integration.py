@@ -30,7 +30,7 @@ class LlmConfigurationPairTests(unittest.TestCase):
         for provider,p in PROVIDERS.items():
             save(dict(kind='provider',provider=provider,baseUrl=p['baseUrl'],mode='managed',keyAction='replace',apiKey='synthetic-only-'+provider))
         for task,provider in (('analysis','openai'),('query','gemini'),('work_order','deepseek')):
-            save(dict(kind='task',taskId=task,provider=provider,modelId='synthetic-'+task,enabled=True))
+            save(dict(kind='task',execution='ontovis',taskId=task,provider=provider,modelId='synthetic-'+task,enabled=True))
         before=models.read('SYNTHETIC-A');original=export_package(self.urls[0])
         receipt=self.snapshot();self.restore(receipt)
         root=self.root/'recovered/workbench/workbench-library';restored=self.models(root)

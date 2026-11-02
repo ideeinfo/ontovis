@@ -119,7 +119,7 @@ class AssistantRuntime:
             answer=validate_answer(result.get('answer'),{r['key'] for r in available})
             result={'answer':answer,'usage':{k:v for k,v in result.get('usage',{}).items() if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and 0<=v<=50000},
                 'modelCalls':1,'engineeringConfirmation':False,'partial':len(available)!=len(summaries),
-                'model':{k:service.get(k) for k in ('taskId','provider','modelId')},
+                'model':{k:service.get(k) for k in ('taskId','execution','provider','modelId')},
                 'context':dict(includedTurns=len(history),skippedTurns=skipped)}
             guard(True)
             self.store.update(run_id,'partial' if result['partial'] else 'complete',result=result)
@@ -298,7 +298,7 @@ def request(sessions,sid,path,payload):
         def invoke(data,cancelled,deadline):
             authorize(True);latest=service(task_id)
             require(latest['canRun'] and latest['serviceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
-            if selected['mode']=='inherited':
+            if selected['execution']=='ontobase':
                 value=call_source(row.authority,prefix+'/analyze',{**data,'expectedServiceRevision':selected['sourceServiceRevision']},cancelled,deadline)
                 require(value.get('serviceRevision')==selected['sourceServiceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
                 value['serviceRevision']=selected['serviceRevision']

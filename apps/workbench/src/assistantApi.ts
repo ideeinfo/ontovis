@@ -14,7 +14,7 @@ export function defaultAssistantEvidence(cards:CanvasCard[]){
 }
 export interface AssistantPolicy {enabled:boolean;serviceRef:string;allowedKinds:string[];reads:number;parallel:number;seconds:number}
 export interface AssistantPolicyView {revision:number;policy:AssistantPolicy;canManage:boolean;accessRevision:string;savedAt:string|null;
- service:{enabled:boolean;canRun:boolean;serviceRef?:string;serviceRevision?:string;modelId?:string;reason?:string};services?:Record<LlmTask,LlmService>;}
+ service:LlmService;services?:Record<LlmTask,LlmService>;}
 export function policyChanges(current:AssistantPolicy,next:AssistantPolicy){
  return (['enabled','allowedKinds','reads','parallel','seconds'] as const).filter(key=>key==='allowedKinds'
   ?JSON.stringify([...current.allowedKinds].sort())!==JSON.stringify([...next.allowedKinds].sort())
@@ -26,7 +26,7 @@ export interface AssistantSource {retrieval?:RetrievalTrace;key:string;kind:stri
 export interface AssistantRun {runId:string;state:string;version:number;analysisSessionId:string;analysisRevision:number;policyRevision:number;
  taskId?:LlmTask;
  question?:string;conversationId?:string|null;conversationVersion?:number;parentRunId?:string|null;
- progress:{key:string;state:string}[];sources:AssistantSource[];error:string|null;result:null|{answer:Record<'observations'|'hypotheses'|'gaps'|'nextSteps',{text:string;refs:string[]}[]>;model?:{taskId?:LlmTask;provider?:string;modelId?:string};usage:Record<string,number>;modelCalls:number;engineeringConfirmation:false;partial:boolean;context?:{includedTurns:number;skippedTurns:{runId:string;reason:string}[]}};}
+ progress:{key:string;state:string}[];sources:AssistantSource[];error:string|null;result:null|{answer:Record<'observations'|'hypotheses'|'gaps'|'nextSteps',{text:string;refs:string[]}[]>;model?:{taskId?:LlmTask;execution?:'ontobase'|'ontovis';provider?:string;modelId?:string};usage:Record<string,number>;modelCalls:number;engineeringConfirmation:false;partial:boolean;context?:{includedTurns:number;skippedTurns:{runId:string;reason:string}[]}};}
 export interface AssistantConversation {conversationId:string;title:string;version:number;headRunId:string;analysisSessionId:string;analysisRevision:number;updatedAt:string}
 export interface AssistantConversationDetail extends AssistantConversation {items:AssistantRun[];hasEarlier:boolean}
 export interface EngineeringGraph {root:string;revision:string;truncated:boolean;gaps:string[];nodes:{id:string;kind:string;title:string;entityUid?:string;statement?:string;documentName?:string}[];

@@ -19,7 +19,7 @@ test('leaving the key blank keeps it, replacement is explicit, and clear never s
 });
 test('save and catalogue pin the displayed access and configuration revision without generating content',async()=>{
  const calls=[],client=modelConfigurationApi({request:async(path,body)=>{calls.push({path,body});return {};}}),view={revision:4,accessRevision:'project-grant'};
- await client.save(view,{kind:'task',taskId:'query',provider:'gemini',modelId:'synthetic-text',enabled:true},'fixed-request');
+ await client.save(view,{kind:'task',execution:'ontovis',taskId:'query',provider:'gemini',modelId:'synthetic-text',enabled:true},'fixed-request');
  await client.catalogue(view,'gemini','https://generativelanguage.googleapis.com/v1beta/openai',null);
  assert.equal(calls[0].body.expectedRevision,4);assert.equal(calls[0].body.expectedAccessRevision,'project-grant');
  assert.equal(calls[0].body.requestId,'fixed-request');assert.equal(calls[0].body.change.taskId,'query');
@@ -40,10 +40,13 @@ test('provider errors explain the required action and never claim that credentia
  assert.match(assistantMessage('LLM_NEW_ENDPOINT_KEY_REQUIRED'),/重新填写/);
 });
 
-test('an unavailable inherited source is distinct from missing settings and a viewer can see configured models',()=>{
- const task={enabled:true},inherited={mode:'inherited'},managed={mode:'managed'};
- assert.equal(modelTaskState(task,inherited,{enabled:false,canRun:false}),'unavailable');
- assert.equal(modelTaskState(task,inherited,{enabled:true,canRun:false}),'ready');
- assert.equal(modelTaskState(task,managed,{enabled:false,canRun:false}),'missing');
- assert.equal(modelTaskState({enabled:false},inherited,{enabled:false,canRun:false}),'off');
+test('Base execution has no model override fields and is distinct from ONTOVis provider setup',async()=>{
+ const base={enabled:true,execution:'ontobase'},own={enabled:true,execution:'ontovis'};
+ assert.equal(modelTaskState(base,{enabled:false,canRun:false}),'unavailable');
+ assert.equal(modelTaskState(base,{enabled:true,canRun:false}),'ready');
+ assert.equal(modelTaskState(own,{enabled:false,canRun:false}),'missing');
+ assert.equal(modelTaskState({...base,enabled:false},{enabled:false,canRun:false}),'off');
+ const calls=[],service=modelConfigurationApi({request:async(path,body)=>{calls.push(body);return {};}});
+ await service.save({revision:0,accessRevision:'grant'},{kind:'task',taskId:'query',execution:'ontobase',enabled:true},'request');
+ assert.deepEqual(calls[0].change,{kind:'task',taskId:'query',execution:'ontobase',enabled:true});
 });

@@ -65,10 +65,18 @@ class AssistantModels:
         if db is None:
             with self.library.connect() as current:return self.read(project,current)
         row=db.execute('select * from assistant_model_configs where connection_id=? and project_code=?',(self.connection_id,project)).fetchone()
-        if row:return {'revision':row['revision'],'updatedAt':row['updated_at'],'config':json.loads(row['config_json'])}
+        if row:
+            config=json.loads(row['config_json'])
+            for task in config['tasks'].values():
+                if 'execution' not in task:
+                    task['execution']='ontobase' if config['providers'][task['provider']]['mode']=='inherited' else 'ontovis'
+                if task['execution']=='ontobase':
+                    task.pop('provider',None);task.pop('modelId',None)
+            for provider in config['providers'].values():provider['mode']='managed'
+            return {'revision':row['revision'],'updatedAt':row['updated_at'],'config':config}
         return {'revision':0,'updatedAt':None,'config':{
-            'providers':{name:{'baseUrl':p['baseUrl'],'mode':'inherited' if name=='qwen' else 'managed','credential':None} for name,p in PROVIDERS.items()},
-            'tasks':{name:{'provider':'qwen','modelId':'','enabled':True} for name in TASKS}}}
+            'providers':{name:{'baseUrl':p['baseUrl'],'mode':'managed','credential':None} for name,p in PROVIDERS.items()},
+            'tasks':{name:{'execution':'ontobase','enabled':True} for name in TASKS}}}
 
     @staticmethod
     def public(value):
@@ -84,16 +92,19 @@ class AssistantModels:
         if change['kind']=='provider':
             require(set(change)=={'kind','provider','baseUrl','mode','keyAction','apiKey'})
             provider=change['provider'];url=endpoint(provider,change['baseUrl'])
-            require(change['mode']=='managed' or provider=='qwen' and change['mode']=='inherited')
+            require(change['mode']=='managed','LLM_CONFIGURATION_CHANGED',409)
             require(change['keyAction'] in ('keep','replace','clear'))
             if change['keyAction']=='replace':api_key(change['apiKey'])
             else:require(change['apiKey'] is None)
         else:
-            require(set(change)=={'kind','taskId','provider','modelId','enabled'})
-            require(type(change['taskId']) is str and change['taskId'] in TASKS and type(change['provider']) is str
-                and change['provider'] in PROVIDERS and type(change['enabled']) is bool)
-            require(type(change['modelId']) is str)
-            if change['modelId']:model_id(change['modelId'])
+            require('execution' in change,'LLM_CONFIGURATION_CHANGED',409)
+            require(change['execution'] in ('ontobase','ontovis'))
+            fields={'kind','taskId','execution','enabled'}
+            require(set(change)==(fields if change['execution']=='ontobase' else fields|{'provider','modelId'}))
+            require(type(change['taskId']) is str and change['taskId'] in TASKS and type(change['enabled']) is bool)
+            if change['execution']=='ontovis':
+                require(type(change['provider']) is str and change['provider'] in PROVIDERS and type(change['modelId']) is str)
+                if change['modelId']:model_id(change['modelId'])
         # The request fingerprint contains no plaintext key, even in audit rows.
         def fingerprint():
             cleaned=copy.deepcopy(body)
@@ -116,11 +127,10 @@ class AssistantModels:
                 if change['keyAction']=='replace':secret=self._seal(project,provider,change['apiKey'])
                 config['providers'][provider]={'baseUrl':url,'mode':change['mode'],'credential':secret}
             else:
-                p=config['providers'][change['provider']]
-                if p['mode']=='inherited':require(change['modelId']=='','LLM_INHERITED_MODEL_FIXED')
-                elif change['enabled']:
+                if change['execution']=='ontovis' and change['enabled']:
+                    p=config['providers'][change['provider']]
                     model_id(change['modelId']);require(bool(p['credential']),'LLM_KEY_REQUIRED')
-                config['tasks'][change['taskId']]={k:change[k] for k in ('provider','modelId','enabled')}
+                config['tasks'][change['taskId']]={k:change[k] for k in change if k not in ('kind','taskId')}
             stamp=now();revision=current['revision']+1
             result=self.public({'revision':revision,'updatedAt':stamp,'config':config})
             require(db.execute('select count(*) from assistant_model_config_events where connection_id=? and project_code=?',(self.connection_id,project)).fetchone()[0]<10000,'LLM_CONFIGURATION_LIMIT',413)
@@ -132,16 +142,19 @@ class AssistantModels:
 
     def profile(self, project, task_id, inherited):
         require(type(task_id) is str and task_id in TASKS,'LLM_TASK_INVALID')
-        value=self.read(project);task=value['config']['tasks'][task_id];provider=task['provider'];p=value['config']['providers'][provider]
-        source=inherited() if p['mode']=='inherited' else {}
-        rev=source.get('serviceRevision') if value['revision']==0 and task_id=='analysis' else digest([value['revision'],task_id,task,p['baseUrl'],p['mode'],source.get('serviceRevision')])
-        ready=task['enabled'] and (source.get('enabled') is True if p['mode']=='inherited' else bool(p['credential']) and bool(task['modelId']))
-        runnable=ready and (source.get('canRun') is True if p['mode']=='inherited' else True)
-        return {'taskId':task_id,'provider':provider,'modelId':source.get('modelId') if p['mode']=='inherited' else task['modelId'],
-            'baseUrl':p['baseUrl'],'mode':p['mode'],'enabled':ready,'canRun':runnable,'serviceRef':'ontovis-task-model-v1',
+        value=self.read(project);task=value['config']['tasks'][task_id];execution=task['execution']
+        base=execution=='ontobase';source=inherited() if base else {}
+        p=None if base else value['config']['providers'][task['provider']]
+        rev=source.get('serviceRevision') if value['revision']==0 and task_id=='analysis' else digest([
+            value['revision'],task_id,task,None if base else p['baseUrl'],execution,source.get('serviceRevision')])
+        ready=task['enabled'] and (source.get('enabled') is True if base else bool(p['credential']) and bool(task['modelId']))
+        runnable=ready and (source.get('canRun') is True if base else True)
+        return {'taskId':task_id,'execution':execution,'provider':source.get('provider') if base else task['provider'],
+            'modelId':source.get('modelId') if base else task['modelId'],
+            'baseUrl':None if base else p['baseUrl'],'enabled':ready,'canRun':runnable,'serviceRef':'ontovis-task-model-v1',
             'serviceRevision':rev,'configurationRevision':value['revision'],'sourceServiceRevision':source.get('serviceRevision'),
             'accessRevision':source.get('accessRevision'),'purpose':'ontovis_analysis',
-            'reason':None if ready else 'LLM_TASK_DISABLED' if not task['enabled'] else source.get('reason','LLM_KEY_REQUIRED') if p['mode']=='inherited' else 'LLM_MODEL_REQUIRED' if p['credential'] else 'LLM_KEY_REQUIRED'}
+            'reason':None if ready else 'LLM_TASK_DISABLED' if not task['enabled'] else source.get('reason','ASSISTANT_SERVICE_UNAVAILABLE') if base else 'LLM_MODEL_REQUIRED' if p['credential'] else 'LLM_KEY_REQUIRED'}
 
     def credentials(self, project, provider, base_url=None, transient=None, *, expected_revision=None):
         require(type(provider) is str and provider in PROVIDERS)

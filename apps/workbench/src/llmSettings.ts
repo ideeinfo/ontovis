@@ -4,15 +4,15 @@ export type LlmProvider='openai'|'gemini'|'qwen'|'deepseek';
 export type LlmTask='analysis'|'query'|'work_order';
 export const llmTaskNames:Record<LlmTask,[string,string]>={analysis:['故障分析','Fault analysis'],query:['资料问答','Material questions'],work_order:['工单建议','Work-order suggestions']};
 export const llmProviderNames:Record<LlmProvider,string>={openai:'OpenAI',gemini:'Gemini',qwen:'Qwen',deepseek:'DeepSeek'};
-export interface LlmService {taskId?:LlmTask;provider?:LlmProvider;modelId?:string|null;enabled:boolean;canRun:boolean;serviceRevision?:string;reason?:string|null;mode?:'inherited'|'managed';}
+export interface LlmService {taskId?:LlmTask;execution?:'ontobase'|'ontovis';provider?:LlmProvider|null;modelId?:string|null;enabled:boolean;canRun:boolean;serviceRevision?:string;reason?:string|null;mode?:'inherited'|'managed';}
 export interface LlmProviderConfig {id:LlmProvider;name:string;baseUrl:string;mode:'inherited'|'managed';keyConfigured:boolean;}
-export interface LlmTaskConfig {id:LlmTask;nameZh:string;nameEn:string;provider:LlmProvider;modelId:string;enabled:boolean;}
+export type LlmTaskConfig={id:LlmTask;nameZh:string;nameEn:string;enabled:boolean}&({execution:'ontobase'}|{execution:'ontovis';provider:LlmProvider;modelId:string});
 export interface LlmConfiguration {revision:number;updatedAt:string|null;providers:LlmProviderConfig[];tasks:LlmTaskConfig[];services:Record<LlmTask,LlmService>;accessRevision:string;canManage:boolean;}
-export type LlmChange={kind:'provider';provider:LlmProvider;baseUrl:string;mode:'inherited'|'managed';keyAction:'keep'|'replace'|'clear';apiKey:string|null}|{kind:'task';taskId:LlmTask;provider:LlmProvider;modelId:string;enabled:boolean};
-export function modelTaskState(task:LlmTaskConfig,provider:LlmProviderConfig,service?:LlmService):'off'|'ready'|'unavailable'|'missing'{
+export type LlmChange={kind:'provider';provider:LlmProvider;baseUrl:string;mode:'inherited'|'managed';keyAction:'keep'|'replace'|'clear';apiKey:string|null}|{kind:'task';taskId:LlmTask;execution:'ontobase';enabled:boolean}|{kind:'task';taskId:LlmTask;execution:'ontovis';provider:LlmProvider;modelId:string;enabled:boolean};
+export function modelTaskState(task:LlmTaskConfig,service?:LlmService):'off'|'ready'|'unavailable'|'missing'{
  if(!task.enabled)return 'off';
  if(service?.enabled)return 'ready';
- return provider.mode==='inherited'?'unavailable':'missing';
+ return task.execution==='ontobase'?'unavailable':'missing';
 }
 export function modelChoices(items:string[],query:string){const q=query.trim().toLocaleLowerCase();return [...new Set(items)].filter(s=>s.toLocaleLowerCase().includes(q)).sort();}
 export function providerChange(original:LlmProviderConfig,baseUrl:string,mode:LlmProviderConfig['mode'],key:string,clear:boolean):LlmChange{

@@ -9,7 +9,7 @@ export function AssistantTurn({run,cards,en,canAddNote,canCheck,onFocus,onAddNot
  return <section className="as-turn" data-run-id={run.runId}>
   <article className="as-user-message"><b>{t('你','You')} · {t('第','Turn ')}{run.conversationVersion||1}{t('轮','')}</b><p>{run.question}</p></article>
   <article className="as-assistant-message"><b>{t('助手','Assistant')} · {t('第','Turn ')}{run.conversationVersion||1}{t('轮','')}</b>
-   {run.result?.model?.modelId&&<small>{run.result.model.provider} · {run.result.model.modelId}</small>}
+   {run.result?.model?.modelId&&<small>{run.result.model.execution==='ontobase'?'OntoBase · ':''}{run.result.model.provider} · {run.result.model.modelId}</small>}
    {run.error&&<p className="ap-caption">{assistantMessage(run.error,en)}</p>}
    {run.result&&['complete','partial'].includes(run.state)?<>{Object.entries({observations:t('观察','Observations'),hypotheses:t('待验证假设','Hypotheses'),gaps:t('缺口','Gaps'),nextSteps:t('下一步核验','Next checks')}).map(([key,name])=><div className="as-answer-group" key={key}><h4>{name}</h4>{run.result!.answer[key as keyof typeof run.result.answer].map((row,index)=><p key={index}>{row.text}<span>{row.refs.map(ref=>{const source=run.sources.find(s=>s.key===ref),card=cards.find(c=>c.source?.id===source?.evidenceRefId);return <button type="button" key={ref} title={card?ref+' · '+card.title:ref} disabled={!card} onClick={()=>card&&onFocus(card,source?assistantSourceAnchor(source):null)}>{ref}</button>;})}</span></p>)}</div>)}
     {run.result.context&&<p className="ap-caption">{t('参与本轮的历史对话','History included')}: {run.result.context.includedTurns} {t('轮','turns')}{!!run.result.context.skippedTurns.length&&t('；资料范围或来源变化，部分旧轮次未参与。','; some earlier turns were excluded after material changes.')}</p>}
