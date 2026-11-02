@@ -41,6 +41,7 @@ export interface SceneViewportProps {
   presentation?:boolean;visualPaused?:boolean;
   simulatedMotions?:MotionRequest[];onMotionStatus?:(status:Record<string,MotionStatus>)=>void;
   modelView?:ModelViewRequest|null;onModelViewStatus?:(status:ModelViewStatus)=>void;
+  onModelReady?:(version:ProjectModelVersion)=>void;
   onPreparationState?:(key:string,state:'loading'|'ready'|'error')=>void;
   alarm?:SceneAlarm|null;onAlarmFocus?:()=>void;
   alarmLabels?:SceneAlarmLabel[];onAlarmLabelFocus?:(id:string)=>void;
@@ -549,6 +550,7 @@ export function SceneViewport(props:SceneViewportProps) {
         }
         try {transform(item,entry.root);}
         catch(value){entry.appearance.dispose();models.remove(entry.root);entries.delete(item.sceneModelInstanceId);throw value;}
+        if(valid())state.onModelReady?.(entry.version);
       });
       const effectiveIds=state.snapshot.instances.map(item=>item.modelVersionId);
       const tasks=[...new Set(effectiveIds)].map(async id=>{
