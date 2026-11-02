@@ -127,9 +127,10 @@ def recommendations(reader, body, scene_library=None):
         else:return {'items':[],'nextOffset':None,'gaps':['先选择对象的关联资料入口。'],'dataset':None}
         selection = selected(chosen)
         from .scene_evidence import SceneEvidenceReader
-        for kind, source in (('drawing',SceneEvidenceReader(reader.reader)),('photo',reader.photos)):
+        for kind in ('drawing','photo'):
             if section == 'drawings' and kind != 'drawing' or section == 'photos' and kind != 'photo':
                 continue
+            source=reader.photos if kind=='photo' else SceneEvidenceReader(reader.reader)
             def add(kind=kind, source=source, purpose=None):
                 scope = {**selection, **({'photoPurpose':purpose} if purpose else {})}
                 for item in source.resolve(scope)['items']:

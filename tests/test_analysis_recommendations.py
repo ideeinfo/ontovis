@@ -59,9 +59,9 @@ class MaterialRecommendationTests(TestCase):
             drawing.return_value.resolve.return_value={'items':[{'title':'Drawing','evidenceRef':'drawing','availability':'available'}]}
             rows=recommendations(reader,{'entry':self.entry(),'section':'drawings'})['items']
             self.assertEqual([row['kind'] for row in rows],['drawing']);reader.photos.resolve.assert_not_called()
-            drawing.return_value.resolve.reset_mock()
+            drawing.reset_mock()
             rows=recommendations(reader,{'entry':self.entry(),'section':'photos'})['items']
-            self.assertEqual([row['kind'] for row in rows],['photo']);drawing.return_value.resolve.assert_not_called()
+            self.assertEqual([row['kind'] for row in rows],['photo']);drawing.assert_not_called()
 
     def cabinet_reader(self):
         from apps.api.scene_engineering import SceneEngineeringReader
