@@ -1,7 +1,7 @@
 .llm-page{font-size:13px;min-width:0}
 .llm-overview{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 12px;min-height:34px}
 .llm-overview>p{margin:0;font-size:11px;line-height:1.6;color:var(--textSecondary)}
-.llm-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0;padding:18px 20px;border-bottom:1px solid var(--borderSubtle)}
+.llm-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0;padding:14px 20px;border-bottom:1px solid var(--borderSubtle)}
 .llm-heading h2{font-size:15px;line-height:1.5;margin:0 0 4px;font-weight:600}
 .llm-heading p,.llm-caption,.llm-capability-list>p{font-size:11px;color:var(--textSecondary);line-height:1.7;overflow-wrap:anywhere}
 .llm-heading p{margin:0}
@@ -24,7 +24,7 @@
 .llm-field{display:grid;align-content:start;gap:7px;margin:0;font-size:13px;line-height:1.5;min-width:0}
 .llm-field input,.llm-field select,.llm-field textarea{min-width:0;max-width:100%;width:100%;box-sizing:border-box;min-height:34px;padding:6px 9px;border:1px solid var(--borderControl);border-radius:5px;background:var(--surface);color:var(--text);font:inherit}
 .llm-field input[readonly]{color:var(--textSecondary);background:var(--background)}
-.llm-field textarea{resize:vertical;min-height:110px;line-height:1.7}
+.llm-field textarea{resize:vertical;min-height:96px;line-height:1.7}
 .llm-clear{display:flex!important;align-items:center;gap:8px;margin:0;font-size:13px;line-height:1.7;flex-shrink:0}
 .llm-clear input{accent-color:var(--primary);width:15px;height:15px;flex-shrink:0;margin:0}
 .llm-caption{margin:8px 0 0}
@@ -32,11 +32,11 @@
 .llm-subtabs{display:flex;gap:24px;border-bottom:1px solid var(--borderSubtle);margin:8px 20px 0}
 .llm-subtabs button{padding:12px 0 10px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--textSecondary);font:inherit;cursor:pointer}
 .llm-subtabs button[data-state=active]{border-bottom-color:var(--primary);color:var(--primary);font-weight:600}
-.llm-tab-content{padding:20px}
+.llm-tab-content{padding:16px 20px}
 .llm-tab-content[data-state=inactive]{display:none}
 .llm-runtime-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .llm-instruction-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-.llm-tools{display:grid;gap:12px;margin-top:20px}
+.llm-tools{display:grid;gap:10px;margin-top:16px}
 .llm-instruction-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .llm-editor-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;border-top:1px solid var(--borderSubtle);padding:12px 20px;margin:0}
 .llm-editor-actions>.llm-caption{margin:0 auto 0 0}
