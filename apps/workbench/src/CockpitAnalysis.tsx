@@ -11,7 +11,7 @@ import {COCKPIT_CANVAS_MIN_ZOOM,COCKPIT_CANVAS_MAX_ZOOM,cockpitAnalysisLayout,co
 import type {AssistantRun} from './assistantApi';
 import {PageDeck} from './CockpitPanels';
 import {cockpitAnalysisDetail,cockpitAnalysisHistorical,cockpitAnalysisIndex,cockpitAnalysisTurns,cockpitNoteRecords,type CockpitAnalysisDetail,type CockpitFault} from './cockpitAnalysisState';
-import './analysisWorkspace.css';
+import './analysisMaterials.css';
 import './cockpitAnalysis.css';
 
 const icons={object:Box,drawing:FileText,document:BookOpen,photo:Image,model3d:Box,trend:TrendingUp,alarm:TriangleAlert,work_order:CheckCheck,analysis:StickyNote};

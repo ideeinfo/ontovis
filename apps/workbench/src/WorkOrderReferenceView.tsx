@@ -8,7 +8,6 @@ import {referenceNames,workOrderReferenceCard,workOrderReferenceMaterial,type Wo
 import type {CanvasCard,CanvasSnapshot} from './analysisCanvas';
 import type {DraftReceipt} from './analysisDraftState';
 import type {DraftApi} from './AnalysisWorkspace';
-import './analysisWorkspace.css';
 import './analysisMaterials.css';
 import './workOrderReferences.css';
 const EvidenceViewer=lazy(()=>import('./AnalysisEvidenceViewer').then(module=>({default:module.AnalysisEvidenceViewer})));

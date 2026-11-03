@@ -10,7 +10,6 @@ import {AnalysisSources,ANALYSIS_ROOT,analysisEntryRequest,setCardPreviewOpen,ty
 import {AnalysisSourceCard,AnalysisTrend,materialNames} from './AnalysisSourceCard';
 import {useSourceRelations,SourceRelationLines,SourceRelationDetails,type CardSourceRelation} from './AnalysisSourceRelations';
 import type {SimulatedTrend} from './simulatedAlarms';
-import './analysisWorkspace.css';
 import './analysisMaterials.css';
 import {noteSections,readNote,writeNote} from './analysisNotes';
 import {applyCanvasAction} from './analysisActions';
