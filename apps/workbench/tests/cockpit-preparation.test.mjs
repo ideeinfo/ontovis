@@ -43,6 +43,17 @@ test('an early visual preview cannot enable isolation while the location proof i
  assert.match(button(html,'隔离所选'),/disabled/);assert.match(button(html,'定位所选'),/disabled/);
  assert.match(html,/<button disabled="" class="pc-text-action">切换/);
 });
+test('checking an alarm target on a prepared model is verification, then restores focus controls',()=>{
+ for(const en of [false,true]){
+  const checking=render(CockpitDevice,{...base,en,locating:true,previewing:true,location:null});
+  assert.match(checking,en?/Verifying/:/核对中/);
+  assert.doesNotMatch(checking,/正在切换模型|Switching model/);
+  assert.match(button(checking,en?'Focus selection':'定位所选'),/disabled/);
+  const ready=render(CockpitDevice,{...base,en});
+  assert.match(ready,en?/Located/:/已定位/);
+  assert.doesNotMatch(button(ready,en?'Focus selection':'定位所选'),/disabled/);
+ }
+});
 test('failed model allows choosing another device, while spatial operations stay blocked',()=>{
  const html=render(CockpitDevice,{...base,preparationState:'error'});
  assert.match(html,/模型加载失败/);assert.doesNotMatch(html,/<button disabled="" class="pc-text-action">切换/);

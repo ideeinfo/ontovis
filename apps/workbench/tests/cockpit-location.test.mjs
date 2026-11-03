@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {cockpitInspectionScene,cockpitLocationCurrent,cockpitPickedObject,cockpitParentPath,readCockpitLocation,retryCockpitRead} from '../src/cockpitLocation.ts';
 import {ApiError} from '../src/api.ts';
-import {sceneLoadingPlan,modelLoadingKey,SceneLoadingTracker} from '../src/sceneLoading.ts';
+import {sceneLoadingPlan,sceneLoadingIdentity,scenePreparationStatus,modelLoadingKey,SceneLoadingTracker} from '../src/sceneLoading.ts';
 const ref={entityUid:'part',projectCode:'project',ontobaseConnectionId:'source'};
 const request={sceneId:'scene',sceneRevision:'r1',contextEpoch:'epoch',selectedObjectRef:ref,representationChoice:{sceneModelInstanceId:'instance',modelVersionId:'model'}};
 const context={item:{entityUid:'part',entityRevision:'part-r1'},ancestors:{path:[{object:{entityUid:'parent'}},{object:{entityUid:'root'}},{object:{entityUid:'outside'}}]}};
@@ -96,6 +96,22 @@ test('loading plan accounts for the inspected detail and the other appearances, 
  tracker.done(modelLoadingKey(modelRef));assert.equal(tracker.state().stage,'display');
  tracker.drawn();assert.equal(tracker.state().stage,'complete');
  assert.equal(sceneLoadingPlan(source.snapshot,source.resourceRefs).length,1);
+});
+test('alarm target changes on the same fixed detailed model retain prepared resource identity',()=>{
+ const source=opened(),first=cockpitInspectionScene(source,instance,detail());
+ const identity=display=>sceneLoadingIdentity(sceneLoadingPlan(display.snapshot,display.resourceRefs),JSON.stringify([
+  'scene:r1',0,'login','project',display.snapshot.instances.map(item=>[item.sceneModelInstanceId,item.modelVersionId])]));
+ const prepared={key:identity(first),state:'ready'};
+ const next=detail();next.instance.componentBindings.push({objectRef:{...ref,entityUid:'another-part'},componentKeys:['another-key']});
+ const refreshed=cockpitInspectionScene(source,instance,next);
+ assert.equal(identity(first),identity(refreshed));
+ assert.equal(scenePreparationStatus(identity(refreshed),prepared),'ready');
+ assert.deepEqual(refreshed.snapshot.instances[0].placement,first.snapshot.instances[0].placement);
+ const revised=detail();revised.modelRef={...modelRef,contentRevision:'detail:2',sha256:'c'.repeat(64)};
+ revised.model={...revised.model,...revised.modelRef};
+ const changed=cockpitInspectionScene(source,instance,revised);
+ assert.notEqual(identity(changed),prepared.key);
+ assert.equal(scenePreparationStatus(identity(changed),prepared),'loading');
 });
 
 const settle=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
