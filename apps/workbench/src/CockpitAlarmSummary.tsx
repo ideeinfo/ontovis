@@ -32,11 +32,11 @@ export function CockpitAlarmSummary({replay,targets,en,onOpen,onReplay}:{replay:
  </aside>;
 }
 
-export function CockpitAlarmCard({row,en,targetLabel,compact=false,onOpen}:{row:CockpitAlarmRow&{target:CockpitAlarmTarget|null};en:boolean;targetLabel?:string;compact?:boolean;onOpen:(selection:ReplaySelection,target:CockpitAlarmTarget)=>void}){
+export function CockpitAlarmCard({row,en,targetLabel,compact=false,disabled=false,onOpen}:{row:CockpitAlarmRow&{target:CockpitAlarmTarget|null};en:boolean;targetLabel?:string;compact?:boolean;disabled?:boolean;onOpen:(selection:ReplaySelection,target:CockpitAlarmTarget)=>void}){
  const {alarm,state,status,severity}=cockpitAlarmPresentation(row,en);
  const label=targetLabel||row.target?.displayName||(en?'No matching installed equipment':'未匹配安装设备');
  const time=alarm?new Intl.DateTimeFormat(en?'en-GB':'zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(alarm.sourceTime)):'—';
- return <button className={'pc-alarm-card'+(compact?' pc-alarm-card-compact':' pc-home-alarm-row')} data-state={state} data-severity={severity} disabled={!row.target||!alarm} title={`${row.dataset.title} · ${label} · ${time}`} aria-label={`${row.dataset.faultCode} · ${row.dataset.title} · ${label}`} onClick={()=>{if(row.target&&alarm)onOpen(row.dataset,row.target);}}>
+ return <button className={'pc-alarm-card'+(compact?' pc-alarm-card-compact':' pc-home-alarm-row')} data-state={state} data-severity={severity} disabled={disabled||!row.target||!alarm} title={`${row.dataset.title} · ${label} · ${time}`} aria-label={`${row.dataset.faultCode} · ${row.dataset.title} · ${label}`} onClick={()=>{if(!disabled&&row.target&&alarm)onOpen(row.dataset,row.target);}}>
   <TriangleAlert className="pc-alarm-card-icon" size={19}/><span className="pc-alarm-card-copy"><span className="pc-home-alarm-meta"><b>{row.dataset.faultCode}</b><span className="pc-home-alarm-badge">{status}</span></span><strong>{row.dataset.title}</strong><span className="pc-home-alarm-time"><span>{row.target?.displayName||label}</span></span></span><ArrowUpRight className="pc-alarm-card-arrow" size={14}/>
  </button>;
 }

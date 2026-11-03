@@ -1,6 +1,10 @@
 import type {EditableSceneSnapshot,ModelResourceRef} from './sceneTypes';
 
 export type SceneLoadingState={completed:number;total:number;stage:'resources'|'display'|'complete'|'failed'|'cancelled'};
+export type ScenePreparationState={key:string;state:'loading'|'ready'|'error'};
+export function scenePreparationStatus(key:string,reported:ScenePreparationState|null):ScenePreparationState['state']{
+  return reported?.key===key?reported.state:'loading';
+}
 export const sceneLoadingIdentity=(keys:readonly string[],context?:string)=>JSON.stringify([keys,context??null]);
 export const modelLoadingKey=(ref:Pick<ModelResourceRef,'modelVersionId'|'contentRevision'|'sha256'>)=>
   `model:${JSON.stringify([ref.modelVersionId,ref.contentRevision,ref.sha256])}`;

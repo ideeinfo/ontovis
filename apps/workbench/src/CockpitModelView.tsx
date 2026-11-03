@@ -8,10 +8,10 @@ export function CockpitModelView({instanceId,modelVersionId,contentRevision,sha2
  const [mode,setMode]=useState<'solid'|'xray'|'exploded'>('solid'),t=(zh:string,eng:string)=>en?eng:zh;
  useEffect(()=>()=>onChange(null),[onChange]);
  const supported=canInspect;
- function choose(next:typeof mode){setMode(next);onChange(next==='solid'?null:{instanceId,modelVersionId,contentRevision,sha256,mode:next});}
+ function choose(next:typeof mode){if(pending)return;setMode(next);onChange(next==='solid'?null:{instanceId,modelVersionId,contentRevision,sha256,mode:next});}
  return <section className="pc-model-view" aria-label={t('模型查看','Model inspection')}><div role="group" aria-label={t('模型查看模式','Model view mode')}>{([
   ['solid',Box,t('实体','Solid')],['xray',Layers,t('透视','X-ray')],['exploded',Network,t('爆炸示意','Exploded')],
- ] as const).map(([value,Icon,label])=><button key={value} aria-pressed={mode===value} disabled={value!=='solid'&&!supported} onClick={()=>choose(value)}><Icon size={15}/>{label}</button>)}</div>
+ ] as const).map(([value,Icon,label])=><button key={value} aria-pressed={mode===value} disabled={pending||value!=='solid'&&!supported} onClick={()=>choose(value)}><Icon size={15}/>{label}</button>)}</div>
   {!supported&&!pending?<small>{t('当前模型仅支持实体','Solid view only for this model')}</small>:mode!=='solid'?<p role="status">{status==='unavailable'?t('模型内容或节点不匹配，已阻止变形。','Content or nodes do not match. Deformation blocked.'):t(mode==='xray'?'外壳半透明 · 显示源模型内部':'分组位移示意 · 非拆解步骤或测量依据',mode==='xray'?'Transparent shell · source model internals':'Illustrative group offsets · not disassembly or measurement guidance')}</p>:null}
  </section>;
 }

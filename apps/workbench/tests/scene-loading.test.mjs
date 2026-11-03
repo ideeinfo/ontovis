@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {SceneLoadingTracker,sceneLoadingPlan,modelLoadingKey} from '../src/sceneLoading.ts';
+import {SceneLoadingTracker,sceneLoadingPlan,sceneLoadingIdentity,scenePreparationStatus,modelLoadingKey} from '../src/sceneLoading.ts';
 const a={modelVersionId:'a',contentRevision:'a1',sha256:'sha-a'},b={modelVersionId:'b',contentRevision:'b1',sha256:'sha-b'};
 const scene={instances:[{modelVersionId:'a'},{modelVersionId:'a'},{modelVersionId:'b'}],terrain:{terrainVersionId:'t',expectedContentRevision:'t1'},imagery:{imageryVersionId:'i',expectedContentRevision:'i1',expectedReportSha256:'ri',visible:true}};
 test('loading counts one task per immutable model version, terrain and imagery; repeated instances and shared preview reuse it',()=>{
@@ -39,4 +39,32 @@ test('same resources in a new open or metadata retry own a new completion identi
  const keys=sceneLoadingPlan(scene,[a,b]),first=new SceneLoadingTracker(keys,()=>{},'scene:1:open1');for(const key of keys)first.done(key);first.drawn();
  const refresh=new SceneLoadingTracker(keys,()=>{},'scene:1:open2'),retry=new SceneLoadingTracker(keys,()=>{},'scene:1:retry1');
  assert.notEqual(refresh.identity,first.identity);assert.notEqual(retry.identity,refresh.identity);assert.equal(refresh.state().completed,0);assert.equal(first.state().stage,'complete');
+});
+
+test('a replacement cannot inherit readiness from the old model, placement, session or retry',()=>{
+ const appearance=sceneLoadingIdentity([modelLoadingKey(a)],'scene:instance1:session1:attempt1');
+ const ready={key:appearance,state:'ready'};
+ assert.equal(scenePreparationStatus(appearance,ready),'ready');
+ for(const key of [sceneLoadingIdentity([modelLoadingKey(b)],'scene:instance1:session1:attempt1'),
+  sceneLoadingIdentity([modelLoadingKey(a)],'scene:instance2:session1:attempt1'),
+  sceneLoadingIdentity([modelLoadingKey(a)],'scene:instance1:session2:attempt1'),
+  sceneLoadingIdentity([modelLoadingKey(a)],'scene:instance1:session1:attempt2')]){
+  assert.equal(scenePreparationStatus(key,ready),'loading');
+  assert.equal(scenePreparationStatus(key,{key,state:'loading'}),'loading');
+  assert.equal(scenePreparationStatus(key,{key,state:'error'}),'error');
+  assert.equal(scenePreparationStatus(key,{key,state:'ready'}),'ready');
+ }
+ assert.equal(scenePreparationStatus(appearance,null),'loading');
+});
+
+test('cached model resources alone cannot unlock navigation before the current view is drawn',()=>{
+ let reported=null;
+ const tracker=new SceneLoadingTracker(['cached-model'],state=>{
+  reported={key:'current-detail',state:state.stage==='complete'?'ready':state.stage==='failed'?'error':'loading'};
+ });
+ assert.equal(scenePreparationStatus('current-detail',reported),'loading');
+ tracker.done('cached-model');assert.equal(tracker.state().stage,'display');
+ assert.equal(scenePreparationStatus('current-detail',reported),'loading');
+ tracker.drawn();assert.equal(scenePreparationStatus('current-detail',reported),'ready');
+ assert.equal(scenePreparationStatus('another-detail',reported),'loading');
 });

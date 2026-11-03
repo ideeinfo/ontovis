@@ -359,7 +359,11 @@ export function SceneViewport(props:SceneViewportProps) {
           const link=button.querySelector<HTMLElement>('.ov-alarm-label-link');
           if(link){const dx=anchor.x-label.left-label.width/2,dy=anchor.y-label.top-label.height;link.style.width=Math.hypot(dx,dy)+'px';link.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`;}
         }
-        try{renderer.render(scene,camera);dirtyFrame=false;}
+        try{
+          // Install the pending component focus/isolation before the ready draw.
+          if(awaitingDisplay===loading&&awaitingDisplay){resourcesLoading=false;highlight();}
+          renderer.render(scene,camera);dirtyFrame=false;
+        }
         catch(value){loading?.fail();setReading(false);report(value);return;}
         if(awaitingDisplay===loading&&awaitingDisplay){awaitingDisplay.drawn();awaitingDisplay=null;resourcesLoading=false;setReading(false);}
       }
@@ -527,9 +531,14 @@ export function SceneViewport(props:SceneViewportProps) {
       }
       const plan=sceneLoadingPlan(state.snapshot,state.modelRefs,state.previewModel);
       if(!loading||loading.identity!==sceneLoadingIdentity(plan,state.preparationKey)||loading.state().stage==='failed'){
-        loading?.cancel();loading=new SceneLoadingTracker(plan,value=>{if(!stale())setLoadingState(value);},state.preparationKey);
+        loading?.cancel();loading=new SceneLoadingTracker(plan,value=>{
+          if(stale()||ticket!==generation)return;
+          setLoadingState(value);
+          if(value.stage==='complete')state.onPreparationState?.(state.preparationKey??'','ready');
+        },state.preparationKey);
       }
       const progress=loading,valid=()=>!stale()&&ticket===generation;setReading(progress.state().stage!=='complete');
+      if(progress.state().stage!=='complete')state.onPreparationState?.(state.preparationKey??'','loading');
       highlight();
       const imageryPreparation=imageryLayer.prepare(state.imageryVersion??null,state.snapshot.imagery,signal);
       // Observe immediately: a model may load more slowly than a failed image read.
@@ -732,7 +741,7 @@ export function SceneViewport(props:SceneViewportProps) {
           .finally(()=>{movePending=false;if(!stale()){setMoving(false);highlight();}});
         return;
       }
-      const state=current.current;if(!clicked||state.disabled)return;
+      const state=current.current;if(!clicked||state.disabled||resourcesLoading)return;
       if(state.previewModel){if(!preview||!previewInspection||stale())return;prepareRay(event.clientX,event.clientY);
         const identity=previewIdentity(state.previewModel);
         state.onPreviewPick?.(identity,previewInspection.pick(ray.intersectObject(preview,true),identity));return;}
@@ -843,14 +852,14 @@ export function SceneViewport(props:SceneViewportProps) {
           </div>
         </div>
       )}
-      {props.alarm&&!props.presentation&&<button ref={alarmMarker} style={{display:'none'}} type="button" className={`ov-scene-alarm-marker ${props.alarm.state}`} aria-label={`${props.alarm.label} · ${props.alarm.target}`} onClick={props.onAlarmFocus}>{props.alarm.label}</button>}
-      {props.alarmLabels?.map(label=><button key={label.id} ref={node=>{if(node)alarmLabels.current.set(label.id,node);else alarmLabels.current.delete(label.id);}} type="button" style={{display:'none'}} className="ov-scene-alarm-label" data-level={label.level} data-severity={label.severity} aria-label={`${label.label} · ${label.detail}`} title={`${label.label} · ${label.detail}`} onClick={()=>props.onAlarmLabelFocus?.(label.id)}><TriangleAlert size={18}/><span><b>{label.label}</b><small>{label.detail}</small></span><ArrowRight size={13}/><i className="ov-alarm-label-link" aria-hidden="true"/></button>)}
+      {props.alarm&&!props.presentation&&<button ref={alarmMarker} style={{display:'none'}} type="button" className={`ov-scene-alarm-marker ${props.alarm.state}`} aria-label={`${props.alarm.label} · ${props.alarm.target}`} disabled={props.disabled||reading||!!displayError} onClick={props.onAlarmFocus}>{props.alarm.label}</button>}
+      {props.alarmLabels?.map(label=><button key={label.id} ref={node=>{if(node)alarmLabels.current.set(label.id,node);else alarmLabels.current.delete(label.id);}} type="button" style={{display:'none'}} className="ov-scene-alarm-label" data-level={label.level} data-severity={label.severity} aria-label={`${label.label} · ${label.detail}`} title={`${label.label} · ${label.detail}`} disabled={props.disabled||reading||!!displayError} onClick={()=>props.onAlarmLabelFocus?.(label.id)}><TriangleAlert size={18}/><span><b>{label.label}</b><small>{label.detail}</small></span><ArrowRight size={13}/><i className="ov-alarm-label-link" aria-hidden="true"/></button>)}
       {(reading||!!displayError) && <div className="ov-scene-viewport-state" role={displayError?'alert':undefined}>{displayError?<>{displayError instanceof ApiError&&/IMAGERY/.test(displayError.code)?imageryFailure(displayError,locale):errorMessage}
-        <button className="ov-btn" onClick={()=>props.preparationError?props.onRetryPreparation?.():webglFailure.current?setRendererAttempt(value=>value+1):setAttempt(value=>value+1)}>{message('retry')}</button></>:<SceneLoadingProgress locale={locale} state={loadingState}/>}</div>}
-      <div className="ov-scene-viewport-tools"><IconBtn label={message('zoomIn')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(.8);}}><ZoomIn size={16}/></IconBtn>
-        <IconBtn label={message('zoomOut')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(1.25);}}><ZoomOut size={16}/></IconBtn>
-        <IconBtn label={message('fit')} onClick={()=>{props.onCameraInteraction?.();runtime.current?.fit();}}><Maximize size={16}/></IconBtn>
-        <IconBtn label={message('focus')} disabled={!props.selectedId||!!props.previewModel} onClick={()=>{props.onCameraInteraction?.();runtime.current?.focus((props.selectedIds?.length??0)>1?props.selectedIds!:props.selectedId);}}><Focus size={16}/></IconBtn></div>
+        <button className="ov-btn" onClick={()=>props.preparationError?props.onRetryPreparation?.():webglFailure.current?setRendererAttempt(value=>value+1):setAttempt(value=>value+1)}>{message('retry')}</button></>:<SceneLoadingProgress locale={locale} state={loadingState} phase={props.presentation&&props.selectedId?'model':'scene'}/>}</div>}
+      <div className="ov-scene-viewport-tools"><IconBtn label={message('zoomIn')} disabled={props.disabled||reading||!!displayError} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(.8);}}><ZoomIn size={16}/></IconBtn>
+        <IconBtn label={message('zoomOut')} disabled={props.disabled||reading||!!displayError} onClick={()=>{props.onCameraInteraction?.();runtime.current?.zoom(1.25);}}><ZoomOut size={16}/></IconBtn>
+        <IconBtn label={message('fit')} disabled={props.disabled||reading||!!displayError} onClick={()=>{props.onCameraInteraction?.();runtime.current?.fit();}}><Maximize size={16}/></IconBtn>
+        <IconBtn label={message('focus')} disabled={props.disabled||reading||!!displayError||!props.selectedId||!!props.previewModel} onClick={()=>{props.onCameraInteraction?.();runtime.current?.focus((props.selectedIds?.length??0)>1?props.selectedIds!:props.selectedId);}}><Focus size={16}/></IconBtn></div>
       {!props.presentation&&props.imageryVersion&&props.snapshot.imagery&&props.imageryVisible&&props.terrainVisible&&!props.previewModel&&!environmentStatus.water&&<div className="ov-scene-imagery-attribution">
         <span>{props.imageryVersion.displayName} · {props.imageryVersion.metadata.acquiredAt} · {props.imageryVersion.report.pixelSize.map(v=>Number(v.toPrecision(3))).join(' × ')} {props.imageryVersion.report.horizontalCrs==='EPSG:4326'?'°':'m'} · {imageryText(locale,'precision')}</span>
         <span>{props.imageryVersion.metadata.attribution}</span>{imageryPartial&&<span>{imageryText(locale,'partial')}</span>}
