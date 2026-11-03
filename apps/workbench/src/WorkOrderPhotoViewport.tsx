@@ -5,7 +5,7 @@ import type {ImageView} from './analysisCanvas';
 import {clampPhotoZoom,MAX_PHOTO_ZOOM,MIN_PHOTO_ZOOM,photoBoxes,photoFitZoom,photoFocusScroll,photoFocusZoom,photoRestoreZoom,photoWheelZoom,photoZoomScroll} from './workOrderPhoto';
 import './workOrders.css';
 
-export function WorkOrderPhotoViewport({image,selector,label,regionLabel,en,onError,embedded=false,initialView,onViewChange,decodedImage,regions=[],onRegion,focusFraction=.09}:{image:string;selector:PhotoSelector|null;label:string;regionLabel?:string;en:boolean;onError:()=>void;embedded?:boolean;initialView?:ImageView;onViewChange?:(value:ImageView)=>void;decodedImage?:HTMLImageElement;regions?:{id:string;title:string;bbox:{x:number;y:number;width:number;height:number}}[];onRegion?:(id:string)=>void;focusFraction?:number}){
+export function WorkOrderPhotoViewport({image,selector,label,regionLabel,en,onError,embedded=false,initialView,onViewChange,decodedImage,regions=[],onRegion,focusFraction=.09,focusZoom=1.5}:{image:string;selector:PhotoSelector|null;label:string;regionLabel?:string;en:boolean;onError:()=>void;embedded?:boolean;initialView?:ImageView;onViewChange?:(value:ImageView)=>void;decodedImage?:HTMLImageElement;regions?:{id:string;title:string;bbox:{x:number;y:number;width:number;height:number}}[];onRegion?:(id:string)=>void;focusFraction?:number;focusZoom?:number|null}){
   const viewer=useRef<HTMLDivElement>(null);
   const [size,setSize]=useState({width:600,height:500}),[natural,setNatural]=useState({width:0,height:0});
   const [zoom,setZoom]=useState(1),[panning,setPanning]=useState(false);
@@ -42,7 +42,7 @@ export function WorkOrderPhotoViewport({image,selector,label,regionLabel,en,onEr
   }
   function focusPhoto(){
     const view=viewer.current;if(!view||!natural.width)return;
-    cancelPan();restoring.current=null;const next=photoFocusZoom(box,size.width,size.height,natural.width,natural.height,focusFraction);
+    cancelPan();restoring.current=null;const next=box&&focusZoom!==null?clampPhotoZoom(focusZoom):photoFocusZoom(box,size.width,size.height,natural.width,natural.height,focusFraction);
     pending.current=photoFocusScroll(box,base.width*next,base.height*next,view.clientWidth,view.clientHeight);
     zoomRef.current=next;setZoom(next);
     if(next===zoom){view.scrollTo(pending.current);pending.current=null;}

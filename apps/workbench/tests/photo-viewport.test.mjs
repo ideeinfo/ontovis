@@ -7,7 +7,7 @@ import * as geometry from '../src/workOrderPhoto.ts';
 
 // Exercise the production component's buttons, wheel listener and resize effects.
 // The viewport supplies browser geometry; React hooks run until updates settle.
-function mount({embedded=false,initialView,natural=[1962,4096],selector=null,regionLabel}={}){
+function mount({embedded=false,initialView,natural=[1962,4096],selector=null,regionLabel,focusZoom}={}){
   const states=[],refs=[],layouts=[],effects=[],reports=[];
   let si,ri,li,ei,dirty,tree,observer;
   const viewport={clientWidth:1066,clientHeight:432,scrollLeft:0,scrollTop:0,listeners:new Map(),
@@ -30,7 +30,7 @@ function mount({embedded=false,initialView,natural=[1962,4096],selector=null,reg
   const exports={};new Function('require','exports',compiled)(name=>dependencies[name]??require(name),exports);
   const savedObserver=globalThis.ResizeObserver;
   globalThis.ResizeObserver=class{constructor(callback){observer=callback;}observe(){observer();}disconnect(){}};
-  const props={embedded,initialView,selector,regionLabel,image:'blob:synthetic-photo',label:'synthetic photo',en:false,onError:()=>assert.fail('unexpected image error'),onViewChange:value=>reports.push(value)};
+  const props={embedded,initialView,selector,regionLabel,focusZoom,image:'blob:synthetic-photo',label:'synthetic photo',en:false,onError:()=>assert.fail('unexpected image error'),onViewChange:value=>reports.push(value)};
   const nodes=()=>{const result=[];function walk(node){if(!node||typeof node!=='object')return;
     if(Array.isArray(node)){node.forEach(walk);return;}result.push(node);walk(node.props?.children);
   }walk(tree);return result;};
@@ -98,9 +98,24 @@ test('old fit-relative views restore without rewriting history and new pixel vie
     assert.equal(current.frame().height,4096);assert.equal(current.output(),'100%');
   }finally{current.destroy();}
 });
-test('source annotation remains normalized through true pixel zoom and explicit focus',()=>{
+for(const embedded of [false,true])for(const natural of [[1962,4096],[5076,10599]]){
+ test(`photo annotation starts and refocuses at 150% (${embedded?'embedded':'standalone'}, ${natural[0]} pixels)`,()=>{
   const selector={kind:'image_bbox',coordinateSpace:'oriented_display_normalized',bbox:{x:.4,y:.6,width:.02,height:.03}};
-  const view=mount({selector});try{
+  const view=mount({embedded,natural,selector});try{
+   assert.equal(view.output(),'150%');assert.equal(view.frame().width,natural[0]*1.5);
+   assert.equal(view.reports.length,0,'automatic focus must not save a view');
+   view.resize(1051,417);assert.equal(view.output(),'150%');
+   view.click('照片放大');assert.equal(view.output(),'195%');
+   view.click('定位标注');assert.equal(view.output(),'150%');
+   assert.ok(Math.abs(view.viewport.scrollLeft+1051/2-16-.41*natural[0]*1.5)<1e-8);
+   assert.ok(Math.abs(view.viewport.scrollTop+417/2-16-.615*natural[1]*1.5)<1e-8);
+   assert.deepEqual(view.annotations()[0].box,{left:'40%',top:'60%',width:'2%',height:'3%'});
+  }finally{view.destroy();}
+ });
+}
+test('drawing annotation retains adaptive focus when fixed photo magnification is disabled',()=>{
+  const selector={kind:'image_bbox',coordinateSpace:'oriented_display_normalized',bbox:{x:.4,y:.6,width:.02,height:.03}};
+  const view=mount({selector,focusZoom:null});try{
     const focus=view.frame().height;view.click('100%（1:1）');view.click('照片放大');view.resize(1051,417);
     assert.equal(view.output(),'130%');view.click('定位标注');assert.ok(view.frame().height<4096*1.3&&view.frame().height>0);
     assert.notEqual(view.frame().height,focus,'explicit focus uses the current viewport');
