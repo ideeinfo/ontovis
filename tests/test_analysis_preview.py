@@ -26,7 +26,7 @@ class SourceViewerTests(TestCase):
             'bbox':{'x':.2,'y':.3,'width':.1,'height':.1},'display_name':'Temperature sensor'}
         self.location.update(object_type='unknown',text_span={'source_instance_id':'instance-1'})
         self.location['entity_properties']['result_import']['classification']={'standard':{'code':'BTA','revision_id':'catalogue-v1','name_zh':'温度变送器','name_en':'Temperature transmitter','review_state':'unreviewed'}}
-        self.extra_locations=[];self.owner_resolution='resolved'
+        self.extra_locations=[];self.owner_resolution='resolved';self.import_batches={};self.import_error=None
         self.wrapper=SimpleNamespace(project_code='P',connection_id='source',prefix='/api/v1/projects/P',
                                     _request=Mock(side_effect=self.request),authority=SimpleNamespace(source_bytes=Mock(return_value={'content':b'pdf','sha256':self.sha})))
         self.reader=SimpleNamespace(reader=self.wrapper,read=Mock(return_value={}),authorize=Mock())
@@ -62,6 +62,9 @@ class SourceViewerTests(TestCase):
         if url.path.endswith('/knowledge/releases'):
             self.assertEqual(q['version_id'],[self.document['contentVersionId']])
             return {'items':[{'id':self.document['knowledgeReleaseId'],'content_version_id':self.document['contentVersionId'],'state':'published'}]}
+        if '/result-imports/' in path:
+            if self.import_error:raise self.import_error
+            return deepcopy(self.import_batches[url.path.rsplit('/',1)[-1]])
         if '/object-locations/' in path:return {**deepcopy(self.location),'project_code':self.project}
         if url.path.endswith('/object-locations'):return {'items':[self.location,*self.extra_locations]}
         if url.path.endswith('/result-relation-imports'):return {'items':[{'id':'batch'}]}
@@ -88,6 +91,57 @@ class SourceViewerTests(TestCase):
         self.assertEqual(row['semantics'],'document_reference');self.assertEqual(row['selector']['drawingUid'],'project:next')
         self.current=False;row=drawing_preview(self.reader,self.drawing,{'section':'references'})['references'][0]
         self.assertNotIn('selector',row);self.assertIsNone(row['bbox'])
+
+    def occurrence_import(self):
+        self.location['source_run_id']='page-import'
+        self.location['text_span']['source']='result_template_import'
+        self.location['entity_properties']['result_import']['drawing_revision']='b'*64
+        self.import_batches['page-import']={'id':'page-import','drawing_uid':'project:drawing-1',
+            'plugin_id':'result_template_import','result_summary':{'result_import':{'drawing_revision':self.sha}}}
+
+    def test_shared_entity_geometry_uses_its_drawing_occurrence_and_reuses_the_scoped_import_read(self):
+        self.occurrence_import()
+        other=deepcopy(self.location);other.update(id='second-symbol',bbox={'x':.6,'y':.6,'width':.1,'height':.1})
+        self.extra_locations=[other]
+        descriptor={'evidenceRef':'location:region','entityUid':'sensor','expectedContentSha256':self.sha}
+        value=drawing_preview(self.reader,descriptor,{})
+        self.assertEqual(value['selector']['bbox'],self.location['bbox'])
+        self.assertEqual([row['bbox'] for row in value['objects']],[self.location['bbox'],other['bbox']])
+        imports=[call for call in self.wrapper._request.call_args_list if '/result-imports/' in call.args[1]]
+        self.assertEqual(len(imports),1)
+        self.assertIn('/drawings/project%3Adrawing-1/result-imports/page-import',imports[0].args[1])
+
+    def test_an_old_occurrence_revision_cannot_borrow_a_current_revision_from_the_shared_entity(self):
+        self.occurrence_import()
+        self.location['entity_properties']['result_import']['drawing_revision']=self.sha
+        self.import_batches['page-import']['result_summary']['result_import']['drawing_revision']='b'*64
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{})['objects'][0]['bbox'])
+
+    def test_occurrence_import_must_match_drawing_run_and_importer(self):
+        for field,value in [('drawing_uid','project:another-drawing'),('id','another-run'),('plugin_id','another-importer')]:
+            with self.subTest(field=field):
+                self.occurrence_import();self.import_batches['page-import'][field]=value
+                with self.assertRaises(PreviewError) as error:drawing_preview(self.reader,self.drawing,{})
+                self.assertEqual(error.exception.code,'SOURCE_CHANGED')
+
+    def test_missing_occurrence_proof_has_no_overlay_and_auth_or_transport_failure_is_not_no_region(self):
+        self.occurrence_import()
+        self.location['entity_properties']['result_import']['drawing_revision']=self.sha
+        self.import_error=PreviewError(404,'NOT_FOUND_OR_FORBIDDEN')
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{})['objects'][0]['bbox'])
+        for status in (401,403,503):
+            with self.subTest(status=status):
+                self.import_error=PreviewError(status,'SOURCE_UNAVAILABLE')
+                with self.assertRaises(PreviewError) as error:drawing_preview(self.reader,self.drawing,{})
+                self.assertEqual(error.exception.status,status)
+
+    def test_current_page_port_owner_survives_another_page_import_of_the_same_entity(self):
+        self.occurrence_import()
+        port=drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]
+        self.assertEqual(port['owner'],'Temperature sensor')
+        self.assertEqual(port['classification']['code'],'BTA')
+        self.import_batches['page-import']['result_summary']['result_import']['drawing_revision']='b'*64
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]['classification'])
 
     def test_object_and_port_groups_preserve_the_source_standard_and_owner_identity(self):
         obj=drawing_preview(self.reader,self.drawing,{})['objects'][0]

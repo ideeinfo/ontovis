@@ -61,10 +61,37 @@ def drawing_bytes(reader, descriptor):
     return value
 
 
-def object_geometry(row, revision):
-    imported = row.get('entity_properties', {}).get('result_import', {})
-    # Only source records tied to these exact PDF bytes may place an overlay.
-    if imported.get('drawing_revision') != revision:
+def location_import_revisions(reader, drawing_uid, rows, revisions):
+    for row in rows:
+        run = row.get('source_run_id')
+        if (row.get('text_span') or {}).get('source') != 'result_template_import' or not run:
+            continue
+        d.require(type(run) is str and len(run) <= 512, 'SOURCE_UNAVAILABLE', 502)
+        if run in revisions:
+            continue
+        try:
+            batch = reader.reader._request('GET', '/api/v1/drawings/' + quote(drawing_uid, safe='')
+                + '/result-imports/' + quote(run, safe=''))
+        except PreviewError as error:
+            if error.status != 404:
+                raise
+            revisions[run] = None
+            continue
+        d.require(batch.get('id') == run and batch.get('drawing_uid') == drawing_uid
+                  and batch.get('plugin_id') == 'result_template_import', 'SOURCE_CHANGED', 409)
+        revisions[run] = batch.get('result_summary', {}).get('result_import', {}).get('drawing_revision')
+
+
+def location_revision(row, import_revisions=None):
+    run = row.get('source_run_id')
+    if (row.get('text_span') or {}).get('source') == 'result_template_import' and run:
+        return (import_revisions or {}).get(run)
+    return row.get('entity_properties', {}).get('result_import', {}).get('drawing_revision')
+
+
+def object_geometry(row, revision, import_revisions=None):
+    # A shared entity's last import may belong to another drawing occurrence.
+    if location_revision(row, import_revisions) != revision:
         return None
     return bbox(row.get('bbox'))
 
@@ -99,13 +126,17 @@ def drawing_preview(reader, descriptor, options):
     result = {'kind': 'drawing', 'drawingUid': drawing['drawing_uid'], 'title': drawing.get('drawing_name'),
               'pageNumber': drawing.get('source_page_number'), 'drawingNumber': drawing.get('drawing_no'),
               'sourceRevision': revision, 'objects': [], 'ports': [], 'connections': [], 'references': [], 'gaps': [], 'nextCursor': None}
+    import_revisions = {}
     if selected:
+        location_import_revisions(reader, drawing['drawing_uid'], [selected], import_revisions)
         result['focusId'] = selected['id']
-        result['selector'] = image_selector(object_geometry(selected, revision), revision)
+        result['selector'] = image_selector(object_geometry(selected, revision, import_revisions), revision)
     if section == 'objects':
         rows = reader.reader._request('GET', path + '/object-locations')['items']
-        for row in rows[cursor:cursor + 200]:
-            box = object_geometry(row, revision)
+        visible = rows[cursor:cursor + 200]
+        location_import_revisions(reader, drawing['drawing_uid'], visible, import_revisions)
+        for row in visible:
+            box = object_geometry(row, revision, import_revisions)
             result['objects'].append({'id': row['id'], 'entityUid': row.get('entity_uid'),
                 'title': row.get('display_name') or row.get('rds_designation') or row['id'],
                 'identifier': row.get('rds_designation'), 'bbox': box, 'state': row.get('review_status'),
@@ -126,10 +157,14 @@ def drawing_preview(reader, descriptor, options):
         owners = {}
         if section == 'ports' and current:
             locations = reader.reader._request('GET', path + '/object-locations')['items']
+            needed = {item['document'].get('source_instance_id') for item in records['items']}
+            locations = [loc for loc in locations if loc.get('text_span', {}).get('source_instance_id') in needed
+                or loc.get('entity_properties', {}).get('result_import', {}).get('source_instance_id') in needed]
+            location_import_revisions(reader, drawing['drawing_uid'], locations, import_revisions)
             for loc in locations:
                 imported = loc.get('entity_properties', {}).get('result_import', {})
                 owner_id = loc.get('text_span', {}).get('source_instance_id') or imported.get('source_instance_id')
-                if owner_id and imported.get('drawing_revision') == revision:
+                if owner_id and location_revision(loc, import_revisions) == revision:
                     # An ambiguous source instance cannot identify a port owner.
                     owners[owner_id] = None if owner_id in owners else loc
         result['nextCursor'] = records.get('next_after')
