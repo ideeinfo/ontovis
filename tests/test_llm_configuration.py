@@ -188,3 +188,12 @@ class ModelConfigurationHttpTests(http_fixture.AssistantHttpTests):
         self.assertEqual(self.save_settings(settings)[0],200)
         selected=self.request('policy')[1]['services']['analysis'];body={**self.start_body(),'evidenceRefIds':[self.evidence,str(uuid4())],'expectedServiceRevision':selected['serviceRevision']}
         self.assertEqual(self.request('start',body)[1]['code'],'ASSISTANT_READ_LIMIT')
+    def test_capability_concurrency_is_enforced_across_different_project_users(self):
+        from apps.api.assistant_service import Job
+        self.enable();self.assertEqual(self.save_settings({**defaults('analysis'),'concurrency':1})[0],200)
+        selected=self.request('policy')[1]['services']['analysis'];runtime=self.sessions.assistant
+        runtime.jobs['synthetic-running-job']=Job(self.sid,'Demo-PDS','another-user',task_id='analysis')
+        try:
+            status,value=self.request('start',{**self.start_body(),'expectedServiceRevision':selected['serviceRevision']})
+            self.assertEqual(status,429,value);self.assertEqual(value['code'],'ASSISTANT_BUSY')
+        finally:runtime.jobs.clear()

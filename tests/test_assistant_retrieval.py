@@ -66,3 +66,11 @@ class CapabilityToolTests(unittest.TestCase):
   limited=plan(fixed,'核对13001',8,['selected_sources'])
   self.assertEqual(full[0]['tool'],'engineering_neighborhood');self.assertEqual(full[1]['faultCode'],'13001')
   self.assertEqual(limited[0]['tool'],'selected_object');self.assertIsNone(limited[1]['faultCode']);self.assertEqual(sum(p['operations'] for p in limited),2)
+ def test_disabled_graph_reads_only_the_selected_object(self):
+  from unittest.mock import patch
+  from apps.api.assistant_retrieval import retrieve
+  class ObjectReader:
+   def read(self,kind,descriptor):return {'item':{'objectKind':'definition','reviewStatus':'pending'}}
+  with patch('apps.api.assistant_graph.read_graph',side_effect=AssertionError('disabled graph must not be read')):
+   value=retrieve(ObjectReader(),'object',{},dict(tool='selected_object',faultCode=None,operations=1))
+  self.assertEqual(value['retrieval']['tools'][0]['tool'],'selected_object');self.assertIn('pending',value['summary'])
