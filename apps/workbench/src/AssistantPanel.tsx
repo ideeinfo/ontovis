@@ -1,4 +1,4 @@
-import {useEffect,useMemo,useRef,useState} from 'react';
+import {useEffect,useId,useMemo,useRef,useState} from 'react';
 import {Plus,RefreshCw,Send,Square} from 'lucide-react';
 import {AssistantRetrieval} from './AssistantRetrieval';
 import type {SourceAnchor} from './analysisSources';
@@ -7,7 +7,7 @@ import {cancelled} from './api';
 import type {DraftApi} from './AnalysisWorkspace';
 import type {CanvasCard} from './analysisCanvas';
 import type {DraftReceipt} from './analysisDraftState';
-import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantEvidenceKey,assistantMessage,running,sourceLabels,watchAssistantRun,type AssistantConversation,type AssistantPolicyView,type AssistantRun,type AssistantSource} from './assistantApi';
+import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantEvidenceKey,assistantMessage,assistantSendBlocker,running,sourceLabels,watchAssistantRun,type AssistantConversation,type AssistantPolicyView,type AssistantRun,type AssistantSource} from './assistantApi';
 import {AssistantGraph} from './AssistantGraph';
 import {AssistantTurn} from './AssistantTurn';
 import {AssistantWorkOrderDialog} from './AssistantWorkOrderDialog';
@@ -19,6 +19,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const [taskId,setTaskId]=useState<LlmTask>(queryOnly?'query':'analysis');
  const available=cards.filter((card,index,all)=>card.source&&all.findIndex(v=>v.source?.id===card.source!.id)===index),inventory=available.map(card=>card.source!.id).join(':');
  const [view,setView]=useState<AssistantPolicyView|null>(null),[selected,setSelected]=useState<string[]>(()=>defaultAssistantEvidence(available));
+ const [policyError,setPolicyError]=useState<unknown>(null),sendStatusId=useId();
  const [question,setQuestion]=useState(''),[run,setRun]=useState<AssistantRun|null>(null),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[reload,setReload]=useState(0),[summaries,setSummaries]=useState<AssistantSource[]|null>(null),[pending,setPending]=useState<string|null>(null);
  const [pollState,setPollState]=useState<'reading'|'retrying'|'paused'>('reading'),[pollReload,setPollReload]=useState(0);
  const [conversations,setConversations]=useState<AssistantConversation[]>([]),[conversation,setConversation]=useState<AssistantConversation|null>(null),[turns,setTurns]=useState<AssistantRun[]>([]),[hasEarlier,setHasEarlier]=useState(false);
@@ -34,7 +35,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   return()=>{alive.current=false;const previous=latest.current;if(running(previous))void fixed.cancel(previous!).catch(()=>{});};
  },[context]);
  useEffect(()=>{setSelected(previous=>previous.filter(id=>available.some(card=>card.source!.id===id)));setSummaries(null);},[inventory]);
- useEffect(()=>{const abort=new AbortController();setView(null);service.policy(abort.signal).then(value=>{if(!abort.signal.aborted){setView(value);setSelected(ids=>ids.slice(0,value.policy.reads));}}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setError(e);});return()=>abort.abort();},[service,context,reload]);
+ useEffect(()=>{const abort=new AbortController();setView(null);setPolicyError(null);service.policy(abort.signal).then(value=>{if(!abort.signal.aborted){setView(value);setSelected(ids=>ids.slice(0,value.policy.reads));}}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setPolicyError(e);});return()=>abort.abort();},[service,context,reload]);
  useEffect(()=>{if(busy||!run||!running(run))return;const abort=new AbortController(),key=context;
   const stop=watchAssistantRun(service,run,abort.signal,value=>{if(current.current===key){setRun(value);setError(null);setPollState('reading');}},
    (e,retrying)=>{if(current.current===key){setError(e);setPollState(retrying?'retrying':'paused');}});
@@ -65,7 +66,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  function newConversation(){historyGeneration.current++;setConversation(null);setTurns([]);setRun(null);setPending(null);setError(null);setQuestion('');setHasEarlier(false);setLoadingHistory(false);}
  const transcript=mergeConversationTurns(turns,run);
  const selection=()=>({analysisSessionId:receipt!.analysisSessionId,expectedAnalysisRevision:receipt!.analysisRevision,evidenceRefIds:selected});
- async function start(){if(!receipt||!view)return;const key=context,requestId=crypto.randomUUID(),fixed=scope.current!;historyGeneration.current++;setTurns(previous=>mergeConversationTurns(previous,run));setBusy(true);setError(null);setPending(requestId);setSummaries(null);
+ async function start(){if(!receipt||!view||sendBlocker)return;const key=context,requestId=crypto.randomUUID(),fixed=scope.current!;historyGeneration.current++;setTurns(previous=>mergeConversationTurns(previous,run));setBusy(true);setError(null);setPending(requestId);setSummaries(null);
   try{const value=await api.request<AssistantRun>(ASSISTANT_ROOT+'/start',{...selection(),requestId,question:question.trim(),conversationId:conversation?.conversationId??null,expectedConversationVersion:conversation?.version??0,parentRunId:conversation?.headRunId??null,expectedPolicyRevision:view.revision,
     expectedAccessRevision:view.accessRevision,expectedServiceRevision:effectiveService?.serviceRevision,taskId});
     if(!alive.current||current.current!==key){if(running(value))void fixed.cancel(value).catch(()=>{});return;}setRun(value);setPending(null);setQuestion('');if(value.conversationId){const head={conversationId:value.conversationId,title:conversation?.title||value.question||'分析',version:value.conversationVersion||1,headRunId:value.runId,analysisSessionId:value.analysisSessionId,analysisRevision:value.analysisRevision,updatedAt:new Date().toISOString()};setConversation(head);setConversations(items=>[head,...items.filter(v=>v.conversationId!==head.conversationId)].slice(0,20));}
@@ -86,13 +87,16 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const active=running(run),locked=busy||running(run)||loadingHistory||!!pending,limit=view?.policy.reads??8;
  const effectiveService=view?.services?.[taskId]??view?.service;
  const taskMismatch=!!conversation&&!!run&&(run.taskId??'analysis')!==taskId;
+ const sendBlocker=assistantSendBlocker({busy,active,pending:!!pending,loadingHistory,focusedEarlier,taskMismatch,hasReceipt:!!receipt,view,policyError,service:effectiveService,selectedCount:selected.length,question});
+ const refreshService=()=>{setError(null);setReload(v=>v+1);};
+ const canRefreshService=sendBlocker==='ASSISTANT_POLICY_READ_FAILED'||!!view&&view.policy.enabled&&!effectiveService?.enabled;
  const composer=<><label className="as-question">{t('继续提问','Continue the conversation')}<textarea aria-label={t('向分析助手提问','Ask the analysis assistant')} maxLength={1000} disabled={locked||focusedEarlier} value={question} placeholder={t('例如：对比当前报警、趋势和手册，列出支持依据与缺口。','Compare the alarm, trend and manual; list supporting evidence and gaps.')} onChange={event=>{setQuestion(event.target.value);setSummaries(null);}}/></label>
-  <div className="ap-actions"><Btn primary disabled={locked||focusedEarlier||taskMismatch||!receipt||!selected.length||!question.trim()||!view?.policy.enabled||!effectiveService?.enabled||!effectiveService.canRun||!!pending} onClick={()=>void start()}><Send size={14}/>{t('发送','Send')}</Btn><Btn disabled={!active||busy||run?.state==='cancel_requested'} onClick={()=>void stop()}><Square size={14}/>{t('停止','Stop')}</Btn></div></>;
+  {sendBlocker&&<p className="ap-caption" role="status" id={sendStatusId}>{assistantMessage(sendBlocker,en)}</p>}
+  <div className="ap-actions"><Btn primary disabled={!!sendBlocker} aria-describedby={sendBlocker?sendStatusId:undefined} onClick={()=>void start()}><Send size={14}/>{t('发送','Send')}</Btn><Btn disabled={!active||busy||run?.state==='cancel_requested'} onClick={()=>void stop()}><Square size={14}/>{t('停止','Stop')}</Btn>{canRefreshService&&<Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn>}</div></>;
  return <div className="as-panel"><p className="ap-caption">{t('仅发送本次所选资料的脱敏摘要。结果是待核验的整理，不代表故障确诊。','Only redacted summaries of the selected materials are sent. Results require verification.')}</p>
-  <div className="as-service"><span>{effectiveService?.execution==='ontobase'?'OntoBase':effectiveService?.provider?llmProviderNames[effectiveService.provider]:'—'} · {effectiveService?.modelId||'—'}</span><Btn disabled={busy||active} onClick={()=>{setError(null);setReload(v=>v+1);}}><RefreshCw size={13}/>{t('刷新策略','Refresh policy')}</Btn></div>
+  <div className="as-service"><span>{effectiveService?.execution==='ontobase'?'OntoBase':effectiveService?.provider?llmProviderNames[effectiveService.provider]:'—'} · {effectiveService?.modelId||'—'}</span><Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn></div>
   <label className="as-task-picker">{t('当前任务','Task')}<select aria-label={t('助手任务','Assistant task')} value={taskId} disabled={locked} onChange={e=>{setTaskId(e.target.value as LlmTask);newConversation();}}>{(Object.keys(llmTaskNames) as LlmTask[]).filter(id=>!queryOnly||id==='query').map(id=><option value={id} key={id}>{llmTaskNames[id][en?1:0]}</option>)}</select></label>
-  {view&&!view.policy.enabled&&<p className="ap-caption">{assistantMessage('ASSISTANT_POLICY_DISABLED',en)}</p>}{view&&!effectiveService?.enabled&&<p className="ap-caption">{assistantMessage(effectiveService?.reason||'ASSISTANT_SERVICE_UNAVAILABLE',en)}</p>}
-  {taskMismatch&&<p className="ap-caption">{t('此记录属于另一任务，请新建对话后继续当前任务。','This record belongs to another task. Start a new conversation to continue this task.')}</p>}{queryOnly&&composer}
+  {queryOnly&&composer}
   <div className="as-conversation"><label>{t('当前对话','Current conversation')}<select aria-label={t('当前对话','Current conversation')} disabled={locked} value={conversation?.conversationId??''} onChange={e=>e.target.value?void openConversation(e.target.value):newConversation()}><option value="">{t('新对话','New conversation')}</option>{conversations.map(item=><option key={item.conversationId} value={item.conversationId}>{item.title}</option>)}{conversation&&!conversations.some(c=>c.conversationId===conversation.conversationId)&&<option value={conversation.conversationId}>{conversation.title}</option>}</select></label><Btn disabled={locked} onClick={newConversation}><Plus size={13}/>{t('新对话','New')}</Btn></div>
   {loadingHistory&&<p role="status">{t('读取已保存对话…','Loading saved conversation…')}</p>}
   <details className="as-sources" open={!transcript.length}><summary>{t('本次资料','Selected materials')} · {selected.length} / {limit}</summary>

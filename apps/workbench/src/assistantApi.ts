@@ -15,6 +15,23 @@ export function defaultAssistantEvidence(cards:CanvasCard[]){
 export interface AssistantPolicy {enabled:boolean;serviceRef:string;allowedKinds:string[];reads:number;parallel:number;seconds:number}
 export interface AssistantPolicyView {revision:number;policy:AssistantPolicy;canManage:boolean;accessRevision:string;savedAt:string|null;
  service:LlmService;services?:Record<LlmTask,LlmService>;}
+export function assistantSendBlocker(state:{busy:boolean;active:boolean;pending:boolean;loadingHistory:boolean;focusedEarlier:boolean;taskMismatch:boolean;hasReceipt:boolean;view:AssistantPolicyView|null;policyError:unknown;service?:LlmService;selectedCount:number;question:string}){
+ if(state.busy)return 'ASSISTANT_WORKING';
+ if(state.pending)return 'ASSISTANT_START_UNCERTAIN';
+ if(state.active)return 'ASSISTANT_RUNNING';
+ if(state.loadingHistory)return 'ASSISTANT_HISTORY_LOADING';
+ if(state.focusedEarlier)return 'ASSISTANT_HISTORICAL_TURN';
+ if(state.taskMismatch)return 'LLM_CONVERSATION_TASK_CHANGED';
+ if(!state.hasReceipt)return 'ASSISTANT_SAVE_REQUIRED';
+ if(!state.view)return state.policyError?'ASSISTANT_POLICY_READ_FAILED':'ASSISTANT_POLICY_LOADING';
+ if(!state.view.policy.enabled)return 'ASSISTANT_POLICY_DISABLED';
+ if(!state.service?.enabled)return state.service?.reason||'ASSISTANT_SERVICE_UNAVAILABLE';
+ if(!state.service.canRun)return state.service.reason||'ASSISTANT_RUN_FORBIDDEN';
+ if(!state.selectedCount)return 'ASSISTANT_SELECTION_REQUIRED';
+ if(state.selectedCount>state.view.policy.reads)return 'ASSISTANT_SELECTION_LIMIT';
+ if(!state.question.trim())return 'ASSISTANT_QUESTION_REQUIRED';
+ return null;
+}
 export function policyChanges(current:AssistantPolicy,next:AssistantPolicy){
  return (['enabled','allowedKinds','reads','parallel','seconds'] as const).filter(key=>key==='allowedKinds'
   ?JSON.stringify([...current.allowedKinds].sort())!==JSON.stringify([...next.allowedKinds].sort())
@@ -71,6 +88,22 @@ export function answerNote(run:AssistantRun){
 }
 export function assistantMessage(error:unknown,en=false){
  const code=error instanceof ApiError?error.code:typeof error==='string'?error:'';
+ const readiness:Record<string,[string,string]>={
+  ASSISTANT_WORKING:['正在处理当前操作，请稍候。','Wait for the current operation to finish.'],
+  ASSISTANT_START_UNCERTAIN:['提交结果尚未确认，请先检查运行。','The submission result is uncertain. Check the run first.'],
+  ASSISTANT_RUNNING:['本轮回答尚未结束，请等待完成或停止。','Wait for this answer to finish or stop it.'],
+  ASSISTANT_HISTORY_LOADING:['正在读取对话，请稍候。','Loading the conversation. Please wait.'],
+  ASSISTANT_HISTORICAL_TURN:['当前为历史轮次，请打开完整对话后继续。','Open the full conversation to continue from this historical turn.'],
+  ASSISTANT_SAVE_REQUIRED:['请先保存当前画布，再向助手提问。','Save the current canvas before asking the assistant.'],
+  ASSISTANT_POLICY_LOADING:['正在检查助手服务…','Checking assistant availability…'],
+  ASSISTANT_POLICY_READ_FAILED:['助手服务状态读取失败，请刷新服务。','Could not read assistant availability. Refresh the service.'],
+  SOURCE_UNAVAILABLE:['无法读取 OntoBase 模型服务，请刷新服务后重试。','Cannot read the OntoBase model service. Refresh the service and retry.'],
+  ASSISTANT_PROJECT_DISABLED:['OntoBase 尚未为本项目开放助手服务，请联系管理员。','Ask an administrator to enable the OntoBase assistant for this project.'],
+  ASSISTANT_SERVICE_NOT_APPROVED:['OntoBase 模型连接配置不可用，请联系管理员检查。','Ask an administrator to check the OntoBase model connection.'],
+  ASSISTANT_SELECTION_REQUIRED:['请至少选择一份资料。','Select at least one material.'],
+  ASSISTANT_SELECTION_LIMIT:['已选资料超过本项目上限，请减少选择。','Reduce the selection to the project limit.'],
+  ASSISTANT_QUESTION_REQUIRED:['请输入问题后发送。','Enter a question to send.']};
+ if(readiness[code])return readiness[code][en?1:0];
  if(code==='ASSISTANT_CANCELLED')return en?'This run stopped. No model answer was applied.':'本次运行已停止，未采用模型结果。';
  const modelErrors:Record<string,[string,string]>={LLM_CONFIGURATION_CHANGED:['模型配置已更新，请关闭表单并刷新后重试。','Model settings changed. Close the form, refresh, and retry.'],LLM_KEY_REQUIRED:['请先配置所选来源的 API Key。','Configure the selected provider’s API key first.'],LLM_KEY_INVALID:['密钥格式不正确，请检查后重试。','Check the API key format.'],LLM_MODEL_REQUIRED:['请选择或输入文本对话模型标识。','Select or enter a text-chat model ID.'],LLM_AUTH_FAILED:['来源未接受此密钥，请检查来源、地址和密钥是否匹配。','The provider rejected the key. Check its provider and endpoint.'],LLM_ENDPOINT_INVALID:['请输入所选来源支持的官方 HTTPS 地址。','Use a supported official HTTPS address for this provider.'],LLM_NEW_ENDPOINT_KEY_REQUIRED:['地址已变化，请重新填写此地址对应的密钥。','The endpoint changed. Enter the key for the new endpoint.'],LLM_KEY_STORE_UNAVAILABLE:['保存的密钥暂不可用，请联系管理员检查配置存储。','Saved credentials are unavailable. Ask an administrator to check the store.'],LLM_INHERITED_MODEL_FIXED:['现有服务的型号由源端管理；选择其他型号需先自主配置来源。','The existing service manages its model; configure the provider to choose another one.'],LLM_TASK_DISABLED:['此任务已关闭，请在 AI 策略中设置。','This task is disabled in the AI policy.'],LLM_TASK_INVALID:['任务类型不受支持，请刷新页面。','Unsupported task. Refresh the page.'],LLM_PROVIDER_UNAVAILABLE:['模型来源暂不可用；没有自动重发，请检查配置后重试。','The provider is unavailable. No automatic retry was made.'],LLM_CATALOGUE_INVALID:['模型目录返回格式不可用，可检查来源或手工输入型号。','The model catalogue is unusable. Check the provider or enter a model ID manually.'],LLM_RATE_LIMITED:['来源调用额度或频率受限，请稍后重试。','The provider rate or quota limit was reached.'],ASSISTANT_OUTPUT_INCOMPLETE:['模型返回不完整，没有采用为有效回答。','The response was incomplete and was not accepted.']};
  if(modelErrors[code])return modelErrors[code][en?1:0];

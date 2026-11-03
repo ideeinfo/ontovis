@@ -1,10 +1,38 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
-import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,filterEngineeringGraph,groupEngineeringEdges,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
+import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,assistantSendBlocker,filterEngineeringGraph,groupEngineeringEdges,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
 
 const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],reads:8,parallel:2,seconds:120};
 const view={revision:1,accessRevision:'grant',policy,service:{serviceRevision:'r'}};
+const readyToSend={busy:false,active:false,pending:false,loadingHistory:false,focusedEarlier:false,taskMismatch:false,
+ hasReceipt:true,view:{...view,policy:{...policy,enabled:true}},policyError:null,service:{enabled:true,canRun:true},selectedCount:6,question:'比较所选资料'};
+test('send readiness reports the exact unmet condition and requires all guards to pass',()=>{
+ assert.equal(assistantSendBlocker(readyToSend),null);
+ for(const [change,reason] of [
+  [{busy:true},'ASSISTANT_WORKING'],[{active:true},'ASSISTANT_RUNNING'],[{pending:true},'ASSISTANT_START_UNCERTAIN'],
+  [{loadingHistory:true},'ASSISTANT_HISTORY_LOADING'],[{focusedEarlier:true},'ASSISTANT_HISTORICAL_TURN'],
+  [{taskMismatch:true},'LLM_CONVERSATION_TASK_CHANGED'],[{hasReceipt:false},'ASSISTANT_SAVE_REQUIRED'],
+  [{view:null},'ASSISTANT_POLICY_LOADING'],[{view:null,policyError:new ApiError(502,'SOURCE_UNAVAILABLE')},'ASSISTANT_POLICY_READ_FAILED'],
+  [{view},'ASSISTANT_POLICY_DISABLED'],[{service:{enabled:false,canRun:false,reason:'SOURCE_UNAVAILABLE'}},'SOURCE_UNAVAILABLE'],
+  [{service:{enabled:true,canRun:false}},'ASSISTANT_RUN_FORBIDDEN'],[{selectedCount:0},'ASSISTANT_SELECTION_REQUIRED'],
+  [{selectedCount:9},'ASSISTANT_SELECTION_LIMIT'],[{question:'  '},'ASSISTANT_QUESTION_REQUIRED']
+ ])assert.equal(assistantSendBlocker({...readyToSend,...change}),reason);
+});
+test('service refresh restores sending without changing the question or materials',()=>{
+ const unavailable={...readyToSend,selectedCount:7,service:{enabled:false,canRun:false,reason:'SOURCE_UNAVAILABLE'}};
+ assert.equal(assistantSendBlocker(unavailable),'SOURCE_UNAVAILABLE');
+ assert.equal(assistantSendBlocker({...unavailable,service:readyToSend.service}),null);
+ assert.equal(assistantSendBlocker({...readyToSend,selectedCount:8}),null);
+ assert.equal(assistantSendBlocker({...readyToSend,pending:true,active:true}),'ASSISTANT_START_UNCERTAIN');
+});
+test('source availability failures are not mislabeled as changed engineering evidence',()=>{
+ for(const error of ['SOURCE_UNAVAILABLE',new ApiError(502,'SOURCE_UNAVAILABLE')]){
+  assert.match(assistantMessage(error),/OntoBase 模型服务/);
+  assert.match(assistantMessage(error,true),/OntoBase model service/);
+  assert.doesNotMatch(assistantMessage(error),/版本已变化/);
+ }
+});
 test('material E labels follow the submitted selection order, including removal and re-selection',()=>{
  assert.equal(assistantEvidenceKey('alarm',['manual','alarm']),'E2');
  assert.equal(assistantEvidenceKey('manual',['manual','alarm']),'E1');
