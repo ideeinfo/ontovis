@@ -24,12 +24,12 @@ export function useCockpitLocation(api:WorkbenchApi,opened:SceneOpen|null,instan
 
 export function useCockpitEquipment(api:WorkbenchApi,opened:SceneOpen|null,instance:SceneModelInstance|undefined,enabled:boolean,attempt=0){
  const key=enabled&&opened&&instance&&opened.sceneRevision===opened.headRevision?JSON.stringify([opened.sceneId,opened.sceneRevision,instance.sceneModelInstanceId,instance.modelVersionId,api.epoch,api.revision]):'';
- const [state,setState]=useState<{key:string;record:EquipmentRecord}|null>(null);
- useEffect(()=>{if(!key||!instance?.rootBinding){setState(null);return;}if(state?.key===key)return;const abort=new AbortController(),client=new EquipmentApi(api);
+ const [state,setState]=useState<{key:string;owner:WorkbenchApi;record:EquipmentRecord}|null>(null);
+ useEffect(()=>{if(!key||!instance?.rootBinding){setState(null);return;}if(state?.key===key&&state.owner===api)return;const abort=new AbortController(),client=new EquipmentApi(api);
   void retryCockpitRead(api,()=>client.resolve([instance.rootBinding!.objectRef.entityUid],abort.signal),abort.signal).then(result=>{
    const record=result.items.find(item=>item.item.entityUid===instance.rootBinding?.objectRef.entityUid);
-   if(record&&!abort.signal.aborted)setState({key,record});
+   if(record&&!abort.signal.aborted)setState({key,owner:api,record});
   }).catch(()=>{if(!abort.signal.aborted)setState(null);});return()=>abort.abort();
  },[api,key,attempt]);
- return state?.key===key?state:null;
+ return state?.key===key&&state.owner===api?state:null;
 }
