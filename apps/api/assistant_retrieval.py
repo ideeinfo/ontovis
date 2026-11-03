@@ -16,14 +16,16 @@ TOOLS = {'object': 'engineering_neighborhood', 'document': 'selected_manual', 'a
          'photo': 'selected_metadata', 'model': 'selected_metadata'}
 
 
-def plan(fixed, question, budget):
+def plan(fixed, question, budget, allowed_tools=None):
     require(1 <= len(fixed) <= budget <= 8, 'ASSISTANT_READ_LIMIT', 422)
     codes = list(dict.fromkeys(re.findall(r'(?<![A-Za-z0-9_])\d{5}(?![A-Za-z0-9_])', question)))[:3]
     remaining = budget - len(fixed)
     rows = []
     for ref, descriptor in fixed:
         tool = TOOLS[ref['sourceKind']]
-        query = codes[0] if codes and tool == 'selected_manual' and descriptor.get('knowledgeReleaseId') and remaining else None
+        if tool=='engineering_neighborhood' and allowed_tools is not None and 'engineering_neighborhood' not in allowed_tools:
+            tool='selected_object'
+        query = codes[0] if codes and tool == 'selected_manual' and descriptor.get('knowledgeReleaseId') and remaining and (allowed_tools is None or 'manual_fault_lookup' in allowed_tools) else None
         if query: remaining -= 1
         rows.append(dict(tool=tool, faultCode=query, operations=2 if query else 1))
     return rows
@@ -31,7 +33,7 @@ def plan(fixed, question, budget):
 
 def retrieve(reader, kind, descriptor, selected, private=()):
     require(type(selected) is dict and set(selected) == {'tool', 'faultCode', 'operations'}
-            and selected['tool'] == TOOLS.get(kind) and selected['operations'] == (2 if selected['faultCode'] else 1), 'ASSISTANT_TOOL_NOT_ALLOWED', 422)
+            and (selected['tool'] == TOOLS.get(kind) or kind=='object' and selected['tool']=='selected_object') and selected['operations'] == (2 if selected['faultCode'] else 1), 'ASSISTANT_TOOL_NOT_ALLOWED', 422)
     code = selected['faultCode']
     require(code is None or kind == 'document' and type(code) is str and re.fullmatch(r'\d{5}', code)
             and selected['operations'] == 2, 'ASSISTANT_TOOL_NOT_ALLOWED', 422)
@@ -67,6 +69,11 @@ def retrieve(reader, kind, descriptor, selected, private=()):
                                        relations=len(neighborhood['relations']), truncated=neighborhood['truncated']))
             trace['anchor'] = dict(nodeId=fixed['knowledgeNodeId'], pageNumber=pages[0])
             result = dict(summary=text, summaryHash=digest(text), retrievalRevision=digest(neighborhood))
+    elif selected['tool']=='selected_object':
+        from .assistant_summaries import summarize
+        text=summarize(reader,kind,descriptor,private)
+        result=dict(summary=text,summaryHash=digest(text))
+        trace['tools'].append(dict(tool='selected_object',state='complete'))
     else:
         result = material_summary(reader, kind, descriptor, private)
         trace['tools'].append(dict(tool=selected['tool'], state='complete'))

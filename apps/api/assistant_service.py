@@ -24,6 +24,7 @@ class Job:
     stop_code: str = 'ASSISTANT_CANCELLED'
     private: tuple = ()
     configuration_revision: int = 0
+    task_id: str = 'analysis'
 
 
 class AssistantRuntime:
@@ -57,10 +58,11 @@ class AssistantRuntime:
             except PreviewError as error:
                 if error.status!=404:raise
             require(len(self.jobs)<2 and not any(j.project==project and j.owner==owner for j in self.jobs.values()),'ASSISTANT_BUSY',429)
+            require(sum(j.project==project and j.task_id==service.get('taskId','analysis') for j in self.jobs.values())<service.get('settings',{}).get('concurrency',2),'ASSISTANT_BUSY',429)
             record,created=self.store.begin(project,owner,body,policy['revision'],service['serviceRevision'])
             if not created:return self.store.public(record)
             job=Job(row['sid'],project,owner,private=tuple(row.get('private',(project,))),
-                configuration_revision=service.get('configurationRevision',0));self.jobs[record['id']]=job
+                configuration_revision=service.get('configurationRevision',0),task_id=service.get('taskId','analysis'));self.jobs[record['id']]=job
             thread=Thread(target=self._run,args=(record,job,body,policy,service,prepare,authorize,source_call),daemon=True)
             job.thread=thread;thread.start()
         return self.store.public(record)
@@ -81,7 +83,7 @@ class AssistantRuntime:
             guard(True)
             fixed,reader=prepare(guard)
             require(all(ref['sourceKind'] in policy['policy']['allowedKinds'] for ref,_ in fixed),'ASSISTANT_TOOL_NOT_ALLOWED',403)
-            plans = retrieval_plan(fixed, body['question'], policy['policy']['reads'])
+            plans = retrieval_plan(fixed, body['question'], policy['policy']['reads'],service.get('settings',{}).get('tools'))
             planned_operations = sum(item['operations'] for item in plans)
             def one(index,item):
                 ref,descriptor=item;guard()
@@ -160,16 +162,15 @@ def request(sessions,sid,path,payload):
             current=sessions._access(sid,row,project)
             require(current['accessRevision']==access['accessRevision'],'ACCESS_CHANGED',409)
             sessions.guard(sid,row);lease[0]=time.monotonic()
-    legacy_cache=[]
-    def legacy_service():
-        if legacy_cache:return legacy_cache[0]
-        value=row.authority.request('GET',prefix+'/service');authorize()
+    def source_service(configuration=None):
+        value=row.authority.request('POST',prefix+'/profile',configuration) if configuration else row.authority.request('GET',prefix+'/service')
+        authorize()
         require(value.get('serviceRef')=='ontobase-qwen-ontovis-v1' and value.get('purpose')=='ontovis_analysis'
             and type(value.get('serviceRevision')) is str and len(value['serviceRevision'])==64
             and value.get('accessRevision')==access['accessRevision'],'ASSISTANT_SERVICE_UNAVAILABLE',502)
-        legacy_cache.append(value);return value
-    def inherited_service():
-        try:return legacy_service()
+        return value
+    def inherited_service(configuration=None):
+        try:return source_service(configuration)
         except PreviewError as error:
             if error.status in (401,403):raise
             return {'enabled':False,'canRun':False,'reason':error.code}
@@ -186,7 +187,19 @@ def request(sessions,sid,path,payload):
         return {**value,'projectRef':payload['projectRef'],'sessionRevision':row.revision,'accessRevision':access['accessRevision']}
     if action=='model-config':
         require(not body)
-        return reply({**runtime.models.public(runtime.models.read(project)),'services':services(),'canManage':access.get('role')=='admin'})
+        connections=[];connection_error=None
+        if access.get('role')=='admin':
+            try:
+                catalog=row.authority.request('GET',prefix+'/connections');authorize(True)
+                require(catalog.get('accessRevision')==access['accessRevision'],'ACCESS_CHANGED',409)
+                connections=catalog['items']
+            except PreviewError as error:
+                if error.status in (401,403):raise
+                connection_error=error.code
+        default_service=inherited_service()
+        return reply({**runtime.models.public(runtime.models.read(project)),'connections':connections,'connectionError':connection_error,
+            'defaultService':default_service,'protocol':default_service.get('protocol'),
+            'services':services(),'canManage':access.get('role')=='admin'})
     if action in ('policy','history','preview'):
         require(set(body)==({'policy'} if action=='preview' else set()))
         current=runtime.store.policy(project)
@@ -200,21 +213,23 @@ def request(sessions,sid,path,payload):
     require(access.get('role')=='admin','ASSISTANT_RUN_FORBIDDEN',403)
     if action=='model-config-save':
         require(body.get('expectedAccessRevision')==access['accessRevision'],'ACCESS_CHANGED',409)
-        value=runtime.models.save(project,actor,body,lambda:authorize(True))
+        def validate_source(configuration,expected_version):
+            selected=source_service(configuration)
+            require(configuration['connectionId'] is None or selected.get('connectionVersion')==expected_version,'LLM_CONFIGURATION_CHANGED',409)
+        value=runtime.models.save(project,actor,body,lambda:authorize(True),validate_source)
         with runtime.lock:
             for job in runtime.jobs.values():
                 if job.project==project and job.configuration_revision<value['revision']:
                     job.stop_code='ASSISTANT_CONFIGURATION_CHANGED';job.cancelled.set()
         return reply(value)
     if action=='model-catalogue':
-        require(set(body)=={'provider','baseUrl','apiKey','expectedRevision','expectedAccessRevision'})
+        require(set(body)=={'connectionId','expectedConnectionVersion','expectedRevision','expectedAccessRevision'})
         require(type(body['expectedRevision']) is int and 0<=body['expectedRevision']<10000)
         require(body['expectedAccessRevision']==access['accessRevision'],'ACCESS_CHANGED',409)
         require(body['expectedRevision']==runtime.models.read(project)['revision'],'LLM_CONFIGURATION_CHANGED',409)
-        from .llm_providers import catalogue
-        url,key=runtime.models.credentials(project,body['provider'],body['baseUrl'],body['apiKey'],expected_revision=body['expectedRevision'])
+        identifier(body['connectionId']);require(type(body['expectedConnectionVersion']) is int and body['expectedConnectionVersion']>=1)
         authorize(True);require(runtime.model_slots.acquire(blocking=False),'ASSISTANT_BUSY',429)
-        try:value=catalogue(body['provider'],url,key)
+        try:value=row.authority.request('POST',prefix+'/models',{k:body[k] for k in ('connectionId','expectedConnectionVersion')})
         finally:runtime.model_slots.release()
         authorize(True);require(body['expectedRevision']==runtime.models.read(project)['revision'],'LLM_CONFIGURATION_CHANGED',409)
         return reply(value)
@@ -265,7 +280,7 @@ def request(sessions,sid,path,payload):
         common={'analysisSessionId','expectedAnalysisRevision','evidenceRefIds'}
         start=common|{'requestId','question','expectedPolicyRevision','expectedAccessRevision','expectedServiceRevision'}
         allowed=(start,start|{'conversationId','expectedConversationVersion','parentRunId'})
-        require(set(body) in ((common, common|{'question'}) if action == 'summary' else (common,) if action == 'graph' else (*allowed,*(fields|{'taskId'} for fields in allowed))))
+        require(set(body) in ((common, common|{'question'},common|{'taskId'},common|{'question','taskId'}) if action == 'summary' else (common,) if action == 'graph' else (*allowed,*(fields|{'taskId'} for fields in allowed))))
         identifier(body['analysisSessionId']);require(type(body['expectedAnalysisRevision']) is int and 1<=body['expectedAnalysisRevision']<=1000)
         ids=body['evidenceRefIds'];require(type(ids) is list and 1<=len(ids)<=8 and all(type(e) is str for e in ids) and len(set(ids))==len(ids))
         for e in ids:identifier(e)
@@ -280,7 +295,10 @@ def request(sessions,sid,path,payload):
         if action=='summary':
             require(type(body.get('question','')) is str and len(body.get('question',''))<=1000)
             fixed,reader=prepare(authorize)
-            plans=retrieval_plan(fixed,body.get('question',''),policy['policy']['reads'])
+            task_id=body.get('taskId','analysis');require(type(task_id) is str and task_id in runtime.models.public(runtime.models.read(project))['defaults'],'LLM_TASK_INVALID');settings=runtime.models.settings(runtime.models.read(project)['config'],task_id)
+            policy={'policy':{**policy['policy'],'reads':min(policy['policy']['reads'],settings['readLimit']),
+                'parallel':min(policy['policy']['parallel'],settings['readParallel'])},'revision':policy['revision']}
+            plans=retrieval_plan(fixed,body.get('question',''),policy['policy']['reads'],settings['tools'])
             def preview(item):
                 i,(ref,descriptor)=item
                 require(ref['sourceKind'] in policy['policy']['allowedKinds'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
@@ -292,20 +310,21 @@ def request(sessions,sid,path,payload):
         require(type(body['question']) is str and 0<len(body['question'].strip())<=1000 and '\0' not in body['question'])
         require(policy['policy']['enabled'],'ASSISTANT_POLICY_DISABLED',409)
         task_id=body.get('taskId','analysis');selected=service(task_id)
+        settings=selected['settings']
+        policy={**policy,'policy':{**policy['policy'],'reads':min(policy['policy']['reads'],settings['readLimit']),
+            'parallel':min(policy['policy']['parallel'],settings['readParallel'])}}
+        require(len(ids)<=policy['policy']['reads'],'ASSISTANT_READ_LIMIT',422)
         require(selected.get('canRun') is True,selected.get('reason') or 'ASSISTANT_RUN_FORBIDDEN',409)
         require(type(body['expectedPolicyRevision']) is int and body['expectedPolicyRevision']==policy['revision'] and body['expectedAccessRevision']==access['accessRevision']
             and body['expectedServiceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
         def invoke(data,cancelled,deadline):
             authorize(True);latest=service(task_id)
             require(latest['canRun'] and latest['serviceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
-            if selected['execution']=='ontobase':
-                value=call_source(row.authority,prefix+'/analyze',{**data,'expectedServiceRevision':selected['sourceServiceRevision']},cancelled,deadline)
-                require(value.get('serviceRevision')==selected['sourceServiceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
-                value['serviceRevision']=selected['serviceRevision']
-            else:
-                from .llm_providers import infer
-                _,key=runtime.models.credentials(project,selected['provider'],selected['baseUrl'],expected_revision=selected['configurationRevision'])
-                value=infer(selected,key,data,cancelled,deadline)
+            source_body={**data,'expectedServiceRevision':selected['sourceServiceRevision']}
+            if selected.get('configuration'):source_body['configuration']=selected['configuration']
+            value=call_source(row.authority,prefix+'/analyze',source_body,cancelled,deadline)
+            require(value.get('serviceRevision')==selected['sourceServiceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
+            value['serviceRevision']=selected['serviceRevision']
             authorize(True);require(service(task_id)['serviceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
             return value
         return reply(runtime.start({'project':project,'owner':actor,'sid':sid,'private':(project,access.get('projectName'))},body,policy,selected,prepare,authorize,invoke))

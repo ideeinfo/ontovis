@@ -1,52 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {llmTaskNames,llmProviderNames,modelTaskState,modelChoices,providerChange,modelConfigurationApi} from '../src/llmSettings.ts';
-import {WorkbenchApi,ApiError} from '../src/api.ts';
-import {assistantMessage} from '../src/assistantApi.ts';
-
-test('four providers and three actual task choices are exposed without invented model IDs',()=>{
- assert.deepEqual(Object.keys(llmProviderNames),['openai','gemini','qwen','deepseek']);
- assert.deepEqual(Object.keys(llmTaskNames),['analysis','query','work_order']);
- assert.deepEqual(modelChoices(['B-text','a-text','B-text'],' TEXT '),['B-text','a-text']);
- assert.deepEqual(modelChoices(['alpha','beta'],'unavailable'),[]);
+import {llmTaskNames,modelTaskState,modelConfigurationApi,capabilitySettings,capabilityProblems} from '../src/llmSettings.ts';
+import {WorkbenchApi} from '../src/api.ts';
+const settings={enabled:true,connectionId:null,modelId:'',timeoutSeconds:50,concurrency:2,reasoningEffort:'default',goal:'按资料核对',focus:'',readLimit:8,readParallel:2,tools:['selected_sources']};
+test('capabilities have no provider or execution decision and accept source connection IDs',async()=>{
+ assert.deepEqual(Object.keys(llmTaskNames),['analysis','query','work_order']);assert.deepEqual(capabilityProblems(settings),[]);
+ const calls=[],client=modelConfigurationApi({request:async(path,body)=>{calls.push({path,body});return {};}}),view={revision:4,accessRevision:'grant',connections:[{id:'shared',version:3}]};
+ await client.save(view,'query',{...settings,connectionId:'shared',modelId:'future-provider-model'},'request');
+ assert.equal(calls[0].body.change.expectedConnectionVersion,3);assert.equal(calls[0].body.expectedRevision,4);assert.equal(calls[0].body.expectedAccessRevision,'grant');
+ assert.equal('provider' in calls[0].body.change.settings,false);assert.equal('execution' in calls[0].body.change.settings,false);assert.equal('apiKey' in calls[0].body.change.settings,false);
+ await client.catalogue(view,view.connections[0]);assert.equal(calls[1].body.connectionId,'shared');assert.equal(calls[1].body.expectedConnectionVersion,3);assert.equal('question' in calls[1].body,false);
 });
-test('leaving the key blank keeps it, replacement is explicit, and clear never submits a typed secret',()=>{
- const original={id:'openai',baseUrl:'https://api.openai.com/v1',mode:'managed',keyConfigured:true};
- assert.deepEqual(providerChange(original,original.baseUrl,'managed','',false),{kind:'provider',provider:'openai',baseUrl:original.baseUrl,mode:'managed',keyAction:'keep',apiKey:null});
- assert.equal(providerChange(original,original.baseUrl,'managed','synthetic-only',false).keyAction,'replace');
- const cleared=providerChange(original,original.baseUrl,'managed','synthetic-only',true);
- assert.equal(cleared.keyAction,'clear');assert.equal(cleared.apiKey,null);
+test('invalid runtime, instructions and tools cannot be saved',()=>{
+ for(const change of [{timeoutSeconds:51},{concurrency:3},{readLimit:9},{readParallel:0},{goal:' '},{tools:[]},{tools:['selected_sources','write']},{connectionId:'shared',modelId:''}])assert.ok(capabilityProblems({...settings,...change}).length);
+ assert.deepEqual(capabilitySettings({...settings,id:'query',legacyNeedsReview:false}),settings);
 });
-test('save and catalogue pin the displayed access and configuration revision without generating content',async()=>{
- const calls=[],client=modelConfigurationApi({request:async(path,body)=>{calls.push({path,body});return {};}}),view={revision:4,accessRevision:'project-grant'};
- await client.save(view,{kind:'task',execution:'ontovis',taskId:'query',provider:'gemini',modelId:'synthetic-text',enabled:true},'fixed-request');
- await client.catalogue(view,'gemini','https://generativelanguage.googleapis.com/v1beta/openai',null);
- assert.equal(calls[0].body.expectedRevision,4);assert.equal(calls[0].body.expectedAccessRevision,'project-grant');
- assert.equal(calls[0].body.requestId,'fixed-request');assert.equal(calls[0].body.change.taskId,'query');
- assert.ok(calls[1].path.endsWith('/model-catalogue'));assert.equal(calls[1].body.apiKey,null);
- assert.equal('question' in calls[1].body,false);
+test('source availability, capability switch and legacy review have distinct states',()=>{
+ assert.equal(modelTaskState({enabled:true,legacyNeedsReview:false},{enabled:true}),'ready');
+ assert.equal(modelTaskState({enabled:true,legacyNeedsReview:false},{enabled:false}),'unavailable');
+ assert.equal(modelTaskState({enabled:false,legacyNeedsReview:false}),'off');
+ assert.equal(modelTaskState({enabled:false,legacyNeedsReview:true}),'review');
 });
-test('a captured model settings request cannot save a key to the next selected project',async()=>{
- const calls=[];const api=new WorkbenchApi(async(path,options)=>{calls.push(JSON.parse(options.body));return new Response(JSON.stringify({sessionRevision:'session'}),{headers:{'Content-Type':'application/json'}});});
- api.session('session');api.selectProject({ontobaseConnectionId:'source',projectCode:'A'});const service=modelConfigurationApi(api);
- api.selectProject({ontobaseConnectionId:'source',projectCode:'B'});
- await service.save({revision:0,accessRevision:'A:admin'},{kind:'provider',provider:'openai',baseUrl:'https://api.openai.com/v1',mode:'managed',keyAction:'replace',apiKey:'synthetic-not-real'});
+test('captured capability settings stay scoped to the original project',async()=>{
+ const calls=[],api=new WorkbenchApi(async(path,options)=>{calls.push(JSON.parse(options.body));return new Response(JSON.stringify({sessionRevision:'session'}),{headers:{'Content-Type':'application/json'}});});
+ api.session('session');api.selectProject({ontobaseConnectionId:'source',projectCode:'A'});const service=modelConfigurationApi(api);api.selectProject({ontobaseConnectionId:'source',projectCode:'B'});
+ await service.save({revision:0,accessRevision:'A:admin',connections:[]},'analysis',settings);
  assert.equal(calls[0].projectRef.projectCode,'A');assert.equal(api.project.projectCode,'B');
-});
-test('provider errors explain the required action and never claim that credentials were verified',()=>{
- assert.match(assistantMessage(new ApiError(502,'LLM_AUTH_FAILED')),/密钥/);
- assert.match(assistantMessage('LLM_CONFIGURATION_CHANGED',true),/refresh/);
- assert.match(assistantMessage('LLM_CONVERSATION_TASK_CHANGED'),/新建对话/);
- assert.match(assistantMessage('LLM_NEW_ENDPOINT_KEY_REQUIRED'),/重新填写/);
-});
-
-test('Base execution has no model override fields and is distinct from ONTOVis provider setup',async()=>{
- const base={enabled:true,execution:'ontobase'},own={enabled:true,execution:'ontovis'};
- assert.equal(modelTaskState(base,{enabled:false,canRun:false}),'unavailable');
- assert.equal(modelTaskState(base,{enabled:true,canRun:false}),'ready');
- assert.equal(modelTaskState(own,{enabled:false,canRun:false}),'missing');
- assert.equal(modelTaskState({...base,enabled:false},{enabled:false,canRun:false}),'off');
- const calls=[],service=modelConfigurationApi({request:async(path,body)=>{calls.push(body);return {};}});
- await service.save({revision:0,accessRevision:'grant'},{kind:'task',taskId:'query',execution:'ontobase',enabled:true},'request');
- assert.deepEqual(calls[0].change,{kind:'task',taskId:'query',execution:'ontobase',enabled:true});
 });

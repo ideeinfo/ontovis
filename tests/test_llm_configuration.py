@@ -1,7 +1,5 @@
 from pathlib import Path
 import json
-import os
-import sqlite3
 import tempfile
 from threading import Event
 import time
@@ -9,8 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock,patch
 from uuid import uuid4
-
-from apps.api.assistant_models import AssistantModels,validate_backup_credentials
+from apps.api.assistant_models import AssistantModels,defaults,source_configuration,validate_backup_credentials
 from apps.api.llm_providers import PROVIDERS,endpoint,infer,catalogue,request_json
 from apps.api.model_library import ModelLibrary
 from apps.api.authority import PreviewError
@@ -18,117 +15,73 @@ from tests.test_assistant import answer
 from tests import test_assistant_http as http_fixture
 
 KEY='synthetic-only-key-never-a-real-credential'
+CONNECTION=str(uuid4())
 
 class ModelConfigurationTests(unittest.TestCase):
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
-        self.root=Path(temp.name);self.library=ModelLibrary(self.root/'library','A',None)
-        self.models=AssistantModels(self.library,'source')
-    def save(self,change,revision=None,guard=lambda:None,project='A',request=None):
-        body={'requestId':request or str(uuid4()),'expectedRevision':self.models.read(project)['revision'] if revision is None else revision,
-            'expectedAccessRevision':'grant','change':change}
-        return self.models.save(project,'owner',body,guard)
-    def provider(self,provider='openai',**changes):
-        return dict(kind='provider',provider=provider,baseUrl=PROVIDERS[provider]['baseUrl'],mode='managed',keyAction='replace',apiKey=KEY,**changes)
-    def test_defaults_preserve_the_existing_source_and_do_not_create_keys_or_rows(self):
-        value=self.models.public(self.models.read('A'));self.assertEqual(len(value['providers']),4)
-        self.assertEqual(len(value['tasks']),3);self.assertEqual(value['revision'],0)
+        self.library=ModelLibrary(Path(temp.name)/'library','A',None);self.models=AssistantModels(self.library,'source')
+    def body(self,settings=None,task='analysis',request=None,revision=None):
+        return dict(requestId=request or str(uuid4()),expectedRevision=self.models.read('A')['revision'] if revision is None else revision,
+            expectedAccessRevision='grant',change=dict(kind='capability',taskId=task,settings=settings or defaults(task),expectedConnectionVersion=None))
+    def save(self,body=None,guard=lambda:None,source=lambda *_:None):return self.models.save('A','owner',body or self.body(),guard,source)
+    def test_defaults_do_not_create_rows_or_credentials_and_preserve_legacy_analysis_revision(self):
+        value=self.models.public(self.models.read('A'))
+        self.assertNotIn('providers',value);self.assertEqual(len(value['tasks']),3)
         self.assertFalse((self.library.root/'llm-credentials.key').exists())
-        inherited=Mock(return_value={'enabled':True,'canRun':True,'serviceRevision':'a'*64,'modelId':'original'})
-        profile=self.models.profile('A','analysis',inherited)
-        self.assertEqual(profile['serviceRevision'],'a'*64);self.assertEqual(profile['modelId'],'original')
-        self.assertNotEqual(self.models.profile('A','query',inherited)['serviceRevision'],'a'*64)
-        viewer=self.models.profile('A','analysis',lambda:{'enabled':True,'canRun':False,'modelId':'original','serviceRevision':'a'*64})
-        self.assertTrue(viewer['enabled']);self.assertFalse(viewer['canRun'])
-    def test_keys_are_encrypted_scope_bound_and_never_returned_or_audited(self):
-        value=self.save(self.provider());self.assertTrue(value['providers'][0]['keyConfigured'])
-        self.assertEqual([p['id'] for p in self.models.public(self.models.read('A'))['providers']],list(PROVIDERS))
-        self.assertEqual(self.models.credentials('A','openai')[1],KEY)
-        self.assertEqual(os.stat(self.library.root/'llm-credentials.key').st_mode&0o777,0o600)
-        self.assertNotIn(KEY,(self.library.root/'library.sqlite3').read_bytes().decode('latin1'))
-        with self.library.connect() as db:
-            for table in ('assistant_model_configs','assistant_model_config_requests','assistant_model_config_events'):
-                self.assertNotIn(KEY,repr([tuple(row) for row in db.execute('select * from '+table)]))
-            validate_backup_credentials(db,self.library.root)
-        self.assertNotIn(KEY,json.dumps(value));self.assertEqual(self.models.read('B')['revision'],0)
-        token=self.models.read('A')['config']['providers']['openai']['credential']
-        with self.assertRaises(PreviewError):self.models._secret('B','openai',token)
-        with self.assertRaises(PreviewError):self.models._secret('A','gemini',token)
-    def test_ontobase_execution_follows_the_current_service_without_vis_credentials(self):
-        current={'enabled':True,'canRun':True,'provider':'openai','modelId':'source-a','serviceRevision':'a'*64}
-        first=self.models.profile('A','query',lambda:current)
-        self.assertEqual((first['execution'],first['provider'],first['modelId']),('ontobase','openai','source-a'))
-        current.update(provider='gemini',modelId='source-b',serviceRevision='b'*64)
-        second=self.models.profile('A','query',lambda:current)
-        self.assertEqual((second['provider'],second['modelId']),('gemini','source-b'))
-        self.assertNotEqual(first['serviceRevision'],second['serviceRevision'])
-        self.assertIsNone(second['baseUrl']);self.assertEqual(second['configurationRevision'],0)
-        self.assertFalse((self.library.root/'llm-credentials.key').exists())
-    def test_ontobase_task_save_forbids_model_provider_and_key_overrides(self):
-        change=dict(kind='task',taskId='query',execution='ontobase',enabled=True)
-        for overrides in ({'provider':'openai'},{'modelId':'override'},{'apiKey':KEY}):
-            with self.subTest(fields=list(overrides)),self.assertRaises(PreviewError):self.save(change|overrides)
-        value=self.save(change)
-        task=next(t for t in value['tasks'] if t['id']=='query')
-        self.assertEqual(set(task),{'id','nameZh','nameEn','execution','enabled'})
-        self.assertFalse((self.library.root/'llm-credentials.key').exists())
-    def test_existing_inherited_tasks_become_base_services_without_rewriting_stored_keys(self):
-        self.save(self.provider())
-        with self.library.connect() as db:
-            row=db.execute('select config_json from assistant_model_configs').fetchone()
-            old=json.loads(row['config_json'])
-            old['providers']['qwen']['mode']='inherited'
-            old['tasks']['analysis']={'provider':'qwen','modelId':'old-default','enabled':True}
-            old['tasks']['query']={'provider':'openai','modelId':'own-model','enabled':True}
-            raw=json.dumps(old)
-            db.execute('update assistant_model_configs set config_json=?',(raw,))
-        current=self.models.read('A')
-        self.assertEqual(current['config']['tasks']['analysis'],{'execution':'ontobase','enabled':True})
-        self.assertEqual(current['config']['tasks']['query']['execution'],'ontovis')
-        self.assertEqual(self.models.credentials('A','openai')[1],KEY)
-        with self.library.connect() as db:self.assertEqual(db.execute('select config_json from assistant_model_configs').fetchone()[0],raw)
-    def test_keep_clear_address_change_and_stale_revision(self):
-        self.save(self.provider());keep=self.provider()|{'keyAction':'keep','apiKey':None}
-        self.save(keep);self.assertEqual(self.models.credentials('A','openai')[1],KEY)
-        with self.assertRaises(PreviewError):self.models.credentials('A','openai',expected_revision=1)
-        self.assertEqual(self.models.credentials('A','openai',expected_revision=2)[1],KEY)
-        with self.assertRaises(PreviewError):self.save(keep,revision=0)
-        self.save(self.provider('deepseek'))
-        with self.assertRaises(PreviewError):self.save(self.provider('deepseek')|{'baseUrl':'https://api.deepseek.com/v1','keyAction':'keep','apiKey':None})
-        self.save(keep|{'keyAction':'clear'})
-        with self.assertRaises(PreviewError):self.models.credentials('A','openai')
-    def test_idempotent_save_and_revocation_before_commit(self):
-        request=str(uuid4());change=self.provider();first=self.save(change,revision=0,request=request)
-        self.assertEqual(self.save(change,revision=0,request=request),first)
-        with self.assertRaises(PreviewError):self.save(change|{'apiKey':KEY+'changed'},revision=0,request=request)
+        source=lambda _:{'enabled':True,'canRun':True,'serviceRevision':'a'*64,'modelId':'original'}
+        self.assertEqual(self.models.profile('A','analysis',source)['serviceRevision'],'a'*64)
+        self.assertNotEqual(self.models.profile('A','query',source)['serviceRevision'],'a'*64)
+    def test_capabilities_reuse_connections_and_keep_parameters_independent(self):
+        settings={**defaults('query'),'connectionId':CONNECTION,'modelId':'team-model','goal':'仅回答资料问题','tools':['selected_sources']}
+        seen=[];body=self.body(settings,'query');body['change']['expectedConnectionVersion']=2
+        self.save(body,source=lambda *args:seen.append(args))
+        self.assertEqual(seen,[(source_configuration('query',settings),2)])
+        public=self.models.public(self.models.read('A'));self.assertEqual(public['tasks'][0]['configured'],False)
+        self.assertEqual(next(t for t in public['tasks'] if t['id']=='query')['modelId'],'team-model')
+        profiles=[]
+        def source(configuration):
+            profiles.append(configuration);return dict(enabled=True,canRun=True,serviceRevision='b'*64,provider='future-provider',modelId='team-model')
+        profile=self.models.profile('A','query',source)
+        self.assertEqual(profile['provider'],'future-provider');self.assertEqual(profiles,[source_configuration('query',settings)])
+        self.assertNotIn('apiKey',json.dumps(public));self.assertFalse((self.library.root/'llm-credentials.key').exists())
+    def test_only_explicit_capability_fields_and_supported_tools_are_accepted(self):
+        for change in ({'apiKey':KEY},{'provider':'openai'},{'endpoint':'http://private'},{'execution':'ontovis'},
+                       {'tools':['selected_sources','write']},{'tools':[]},{'timeoutSeconds':51},{'concurrency':3},{'readLimit':9},{'readParallel':True},{'goal':' '}):
+            with self.subTest(change=change),self.assertRaises(PreviewError):self.save(self.body({**defaults('analysis'),**change}))
+        with self.assertRaises(PreviewError):self.save({**self.body(),'change':{'kind':'provider','apiKey':KEY}})
+    def test_stale_source_or_permission_rolls_back_and_replay_does_not_validate_again(self):
+        body=self.body();seen=[]
+        def fail(*_):raise PreviewError(409,'LLM_CONFIGURATION_CHANGED')
+        with self.assertRaises(PreviewError):self.save(body,source=fail)
+        self.assertEqual(self.models.read('A')['revision'],0)
+        value=self.save(body,source=lambda *_:seen.append(True));self.assertEqual(self.save(body,source=fail),value);self.assertEqual(len(seen),1)
+        with self.assertRaises(PreviewError):self.save(self.body(revision=0))
         calls=[]
-        def guard():
-            calls.append(1)
-            if len(calls)==2:raise PreviewError(403,'FORBIDDEN')
-        with self.assertRaises(PreviewError):self.save(self.provider('gemini'),guard=guard)
+        def revoke():
+            calls.append(True)
+            if len(calls)>1:raise PreviewError(403,'FORBIDDEN')
+        with self.assertRaises(PreviewError):self.save(self.body(),guard=revoke)
         self.assertEqual(self.models.read('A')['revision'],1)
-        self.assertIsNone(self.models.read('A')['config']['providers']['gemini']['credential'])
-    def test_task_routes_are_independent_and_credentials_cannot_be_borrowed_across_providers(self):
-        self.save(self.provider());self.save(self.provider('deepseek'))
-        self.save(dict(kind='task',execution='ontovis',taskId='analysis',provider='openai',modelId='synthetic-a',enabled=True))
-        self.save(dict(kind='task',execution='ontovis',taskId='query',provider='deepseek',modelId='synthetic-b',enabled=True))
-        inherited=Mock(side_effect=AssertionError('No source fallback for configured tasks'))
-        a=self.models.profile('A','analysis',inherited);b=self.models.profile('A','query',inherited)
-        self.assertEqual((a['provider'],a['modelId']),('openai','synthetic-a'))
-        self.assertEqual((b['provider'],b['modelId']),('deepseek','synthetic-b'))
-        self.assertNotEqual(a['serviceRevision'],b['serviceRevision'])
-        with self.assertRaises(PreviewError):self.save(dict(kind='task',execution='ontovis',taskId='work_order',provider='gemini',modelId='synthetic-c',enabled=True))
-        self.save(dict(kind='task',execution='ontovis',taskId='analysis',provider='openai',modelId='synthetic-a',enabled=False))
-        self.assertFalse(self.models.profile('A','analysis',inherited)['canRun'])
-    def test_copy_restores_encrypted_credentials_and_missing_or_unsafe_key_fails_closed(self):
-        import shutil
-        self.save(self.provider());copy=self.root/'recovered';shutil.copytree(self.library.root,copy)
-        restored=AssistantModels(ModelLibrary(copy,'A',None),'source')
-        self.assertEqual(restored.credentials('A','openai')[1],KEY)
-        (copy/'llm-credentials.key').chmod(0o644)
-        with self.assertRaises(PreviewError):restored.credentials('A','openai')
-        (copy/'llm-credentials.key').unlink();(copy/'llm-credentials.key').symlink_to(self.library.root/'llm-credentials.key')
-        with self.assertRaises(PreviewError):restored.credentials('A','openai')
+    def test_disabled_capability_can_be_saved_while_source_is_unavailable(self):
+        def unavailable(*_):raise AssertionError('disabled settings should not need a model')
+        self.save(self.body({**defaults('analysis'),'enabled':False}),source=unavailable)
+        self.assertFalse(self.models.public(self.models.read('A'))['tasks'][0]['enabled'])
+    def test_legacy_local_provider_is_inactive_and_preserved_without_rewriting(self):
+        self.save()
+        with self.library.connect() as db:
+            value=json.loads(db.execute('select config_json from assistant_model_configs').fetchone()[0]);value.pop('capabilities')
+            value['tasks']['query']=dict(execution='ontovis',provider='openai',modelId='old-model',enabled=True)
+            raw=json.dumps(value);db.execute('update assistant_model_configs set config_json=?',(raw,))
+        value=self.models.public(self.models.read('A'));task=next(t for t in value['tasks'] if t['id']=='query')
+        self.assertTrue(task['legacyNeedsReview']);self.assertFalse(task['enabled'])
+        profile=self.models.profile('A','query',lambda _:dict(enabled=True,canRun=True,serviceRevision='a'*64))
+        self.assertFalse(profile['canRun']);self.assertEqual(profile['reason'],'LLM_CONNECTION_REVIEW_REQUIRED')
+        with self.library.connect() as db:self.assertEqual(db.execute('select config_json from assistant_model_configs').fetchone()[0],raw)
+    def test_source_configuration_changes_invalidate_a_configured_capability(self):
+        self.save();current=dict(enabled=True,canRun=True,serviceRevision='a'*64)
+        first=self.models.profile('A','analysis',lambda _:current);current['serviceRevision']='b'*64
+        second=self.models.profile('A','analysis',lambda _:current);self.assertNotEqual(first['serviceRevision'],second['serviceRevision'])
 
 class ProviderProtocolTests(unittest.TestCase):
     def test_transport_sends_only_to_the_fixed_destination_and_never_echoes_errors_or_retries(self):
@@ -189,109 +142,49 @@ class ProviderProtocolTests(unittest.TestCase):
             self.assertEqual(request.call_args.args[3:6],('GET','/models',None))
 
 class ModelConfigurationHttpTests(http_fixture.AssistantHttpTests):
-    def test_base_task_invokes_only_the_source_service_and_sends_no_llm_overrides(self):
-        self.enable()
+    def setUp(self):
+        super().setUp();self.source_profiles=[];self.connection_version=2
         original=http_fixture.ProjectsAuthority.request
         def authority(instance,method,path,body=None):
-            value=original(instance,method,path,body)
-            return value|{'provider':'openai','modelId':'active-source-model'} if path.endswith('/ontovis-assistant/service') else value
-        result={'answer':answer(),'usage':{},'purpose':'ontovis_analysis','serviceRevision':'a'*64,'modelCalls':1,'engineeringConfirmation':False}
-        with patch.object(http_fixture.ProjectsAuthority,'request',authority),patch('apps.api.assistant_service.call_source',return_value=result) as source,patch('apps.api.llm_providers.infer') as direct:
-            profile=self.request('model-config')[1]
-            self.assertEqual(profile['services']['analysis']['provider'],'openai')
-            status,started=self.request('start',self.start_body());self.assertEqual(status,200,started)
-            completed=self.finished(started['runId']);self.assertEqual(completed['state'],'complete',completed)
-            self.assertEqual(completed['result']['model']['execution'],'ontobase')
-            payload=source.call_args.args[2]
-            self.assertFalse({'provider','model','modelId','apiKey','baseUrl'}&set(payload))
-            source.assert_called_once();direct.assert_not_called()
-            self.assertFalse((self.sessions.shared.library.root/'llm-credentials.key').exists())
-    def test_managed_model_is_readable_but_never_runnable_by_a_viewer(self):
-        self.save_provider()
-        status,_=self.request('model-config-save',dict(requestId=str(uuid4()),expectedRevision=1,expectedAccessRevision='Demo-PDS:admin',change=dict(
-            kind='task',execution='ontovis',taskId='query',provider='openai',modelId='synthetic-query',enabled=True)))
-        self.assertEqual(status,200)
+            if path.endswith('/ontovis-assistant/connections'):
+                return dict(items=[dict(id=CONNECTION,name='Shared connection',provider='future-provider',version=self.connection_version,keyConfigured=True)],accessRevision='Demo-PDS:admin',modelCalls=0)
+            if path.endswith('/ontovis-assistant/profile'):
+                self.source_profiles.append(body)
+                from apps.api.assistant_store import digest
+                return dict(serviceRef='ontobase-qwen-ontovis-v1',purpose='ontovis_analysis',serviceRevision=digest([body,self.connection_version]),
+                    accessRevision='Demo-PDS:admin',enabled=True,canRun=True,modelId=body['modelId'] or 'source-default',provider='future-provider',connectionVersion=self.connection_version)
+            if path.endswith('/ontovis-assistant/models'):
+                return dict(items=['source-text'],reasoningOptions={'source-text':['default']},modelCalls=0)
+            return original(instance,method,path,body)
+        p=patch.object(http_fixture.ProjectsAuthority,'request',authority);p.start();self.addCleanup(p.stop)
+    def save_settings(self,settings=None,task='analysis',revision=0):
+        return self.request('model-config-save',dict(requestId=str(uuid4()),expectedRevision=revision,expectedAccessRevision='Demo-PDS:admin',
+            change=dict(kind='capability',taskId=task,settings=settings or defaults(task),expectedConnectionVersion=self.connection_version)))
+    def test_connection_catalogue_uses_source_refs_and_viewers_cannot_save_or_fetch_models(self):
+        status,view=self.request('model-config');self.assertEqual(status,200,view);self.assertEqual(view['connections'][0]['provider'],'future-provider');self.assertNotIn('providers',view)
+        body=dict(connectionId=CONNECTION,expectedConnectionVersion=2,expectedRevision=0,expectedAccessRevision='Demo-PDS:admin')
+        self.assertEqual(self.request('model-catalogue',body)[1]['items'],['source-text'])
         http_fixture.ProjectsAuthority.permissions['member']['Demo-PDS']='viewer'
-        value=self.request('model-config')[1]
-        self.assertFalse(value['canManage']);self.assertTrue(value['services']['query']['enabled']);self.assertFalse(value['services']['query']['canRun'])
-        self.assertEqual(value['services']['query']['reason'],'ASSISTANT_RUN_FORBIDDEN')
-        with patch('apps.api.llm_providers.infer') as infer_call:
-            self.assertEqual(self.request('start',self.start_body()|{'taskId':'query'})[0],403)
-            infer_call.assert_not_called()
-    def finished(self,run_id):
-        for _ in range(150):
-            status,value=self.request('status',{'runId':run_id})
-            self.assertEqual(status,200,value)
-            if value['state'] not in ('reading','model','validating','cancel_requested'):return value
-            time.sleep(.01)
-        self.fail('run did not finish')
-
-    def test_configuration_change_cancels_an_active_provider_call_and_hides_late_answers(self):
-        self.enable();self.save_provider()
-        task_change=dict(requestId=str(uuid4()),expectedRevision=1,expectedAccessRevision='Demo-PDS:admin',change=dict(
-            kind='task',execution='ontovis',taskId='query',provider='openai',modelId='synthetic-query',enabled=True))
-        self.assertEqual(self.request('model-config-save',task_change)[0],200)
-        profile=self.request('policy')[1]['services']['query'];entered=Event();cancelled_seen=Event()
-        signal=[]
-        def slow(_profile,_key,_body,cancelled,_deadline):
-            signal.append(cancelled)
-            entered.set();self.assertTrue(cancelled.wait(3));cancelled_seen.set()
-            return {'answer':answer(),'usage':{},'purpose':'ontovis_analysis','serviceRevision':profile['serviceRevision'],'modelCalls':1,'engineeringConfirmation':False}
-        with patch('apps.api.llm_providers.infer',side_effect=slow) as model:
-            status,started=self.request('start',self.start_body()|{'taskId':'query','expectedServiceRevision':profile['serviceRevision']})
-            self.assertEqual(status,200,started);self.assertTrue(entered.wait(3))
-            self.assertEqual(self.request('model-config-save',task_change)[0],200)
-            self.assertFalse(signal[0].is_set(),'Replayed saves cannot cancel a later run')
-            self.assertEqual(self.save_provider(revision=2,apiKey=KEY+'new')[0],200)
-            run=self.finished(started['runId']);self.assertTrue(cancelled_seen.is_set());self.assertEqual(run['state'],'changed',run)
-            self.assertIsNone(run['result']);model.assert_called_once()
-
-    def test_a_conversation_keeps_its_task_and_cannot_silently_change_provider_intent(self):
-        self.enable();result={'answer':answer(),'usage':{},'purpose':'ontovis_analysis','serviceRevision':'a'*64,'modelCalls':1,'engineeringConfirmation':False}
-        with patch('apps.api.assistant_service.call_source',return_value=result):
-            status,first=self.request('start',self.start_body()|dict(conversationId=None,expectedConversationVersion=0,parentRunId=None))
-            self.assertEqual(status,200);first=self.finished(first['runId'])
-            profile=self.request('policy')[1]['services']['query']
-            body=self.start_body()|dict(taskId='query',expectedServiceRevision=profile['serviceRevision'],conversationId=first['conversationId'],expectedConversationVersion=1,parentRunId=first['runId'])
-            status,value=self.request('start',body);self.assertEqual(status,409,value)
-            self.assertEqual(value['code'],'LLM_CONVERSATION_TASK_CHANGED')
-    def save_provider(self,provider='openai',revision=0,**changes):
-        body=dict(kind='provider',provider=provider,baseUrl=PROVIDERS[provider]['baseUrl'],mode='managed',keyAction='replace',apiKey=KEY)|changes
-        return self.request('model-config-save',dict(requestId=str(uuid4()),expectedRevision=revision,expectedAccessRevision='Demo-PDS:admin',change=body))
-    def test_model_permissions_scope_stale_changes_and_key_redaction(self):
-        status,first=self.request('model-config');self.assertEqual(status,200)
-        self.assertEqual(self.save_provider()[0],200);self.assertEqual(self.save_provider()[0],409)
-        self.assertNotIn(KEY,json.dumps(self.request('model-config')[1]))
-        self.assertEqual(self.request('model-config',project='B')[1]['revision'],0)
-        self.assertEqual(self.request('model-config',origin=False)[0],403)
-        http_fixture.ProjectsAuthority.permissions['member']['Demo-PDS']='viewer'
-        self.assertFalse(self.request('model-config')[1]['canManage']);self.assertEqual(self.save_provider(revision=1)[0],403)
-        self.assertEqual(self.request('model-catalogue',{})[0],403)
-    def test_catalogue_cannot_reuse_another_endpoint_or_survive_revocation(self):
-        self.assertEqual(self.save_provider('deepseek')[0],200)
-        body=dict(provider='deepseek',baseUrl=PROVIDERS['deepseek']['baseUrl'],apiKey=None,expectedRevision=1,expectedAccessRevision='Demo-PDS:admin')
-        with patch('apps.api.llm_providers.catalogue',return_value={'items':['synthetic'],'modelCalls':0,'verified':'catalogue_only'}) as call:
-            status,value=self.request('model-catalogue',body);self.assertEqual(status,200,value);self.assertNotIn(KEY,json.dumps(value))
-            self.assertEqual(call.call_args.args[2],KEY)
-            self.assertEqual(self.request('model-catalogue',body|{'baseUrl':'https://api.deepseek.com/v1'})[0],422)
-        def revoke(*_):
-            http_fixture.ProjectsAuthority.permissions['member']['Demo-PDS']='viewer'
-            return {'items':['must-not-be-returned'],'modelCalls':0,'verified':'catalogue_only'}
-        with patch('apps.api.llm_providers.catalogue',side_effect=revoke):
-            status,value=self.request('model-catalogue',body)
-            self.assertEqual(status,409,value);self.assertNotIn('must-not-be-returned',json.dumps(value))
-    def test_an_actual_run_uses_the_configured_task_model_and_old_default_still_runs(self):
-        self.assertEqual(self.enable()[0],200);self.assertEqual(self.save_provider()[0],200)
-        status,_=self.request('model-config-save',dict(requestId=str(uuid4()),expectedRevision=1,expectedAccessRevision='Demo-PDS:admin',change=dict(
-            kind='task',execution='ontovis',taskId='query',provider='openai',modelId='synthetic-query',enabled=True)))
-        self.assertEqual(status,200);profile=self.request('policy')[1]['services']['query']
-        result={'answer':answer(),'usage':{},'purpose':'ontovis_analysis','serviceRevision':profile['serviceRevision'],'modelCalls':1,'engineeringConfirmation':False}
-        with patch('apps.api.llm_providers.infer',return_value=result) as model,patch('apps.api.assistant_service.call_source') as legacy:
-            body=self.start_body()|{'taskId':'query','expectedServiceRevision':profile['serviceRevision']}
-            status,started=self.request('start',body);self.assertEqual(status,200,started)
-            for _ in range(100):
-                _,run=self.request('status',{'runId':started['runId']})
+        status,view=self.request('model-config');self.assertEqual(status,200,view);self.assertFalse(view['canManage']);self.assertEqual(view['connections'],[])
+        self.assertEqual(self.save_settings()[0],403);self.assertEqual(self.request('model-catalogue',body)[0],403)
+    def test_saved_capability_uses_source_configuration_for_real_start_and_rechecks_revisions(self):
+        self.enable();settings={**defaults('query'),'connectionId':CONNECTION,'modelId':'source-text','goal':'只查所选资料','focus':'保留模拟标签','tools':['selected_sources']}
+        self.assertEqual(self.save_settings(settings,'query')[0],200)
+        selected=self.request('policy')[1]['services']['query'];body={**self.start_body(),'taskId':'query','expectedServiceRevision':selected['serviceRevision']}
+        def model(_authority,_path,data,*_):
+            self.assertEqual(data['configuration'],source_configuration('query',settings));self.assertNotIn('apiKey',data);self.assertNotIn('provider',data)
+            return dict(answer=answer(),usage={},serviceRevision=selected['sourceServiceRevision'] if 'sourceServiceRevision' in selected else data['expectedServiceRevision'],purpose='ontovis_analysis',modelCalls=1,engineeringConfirmation=False)
+        with patch('apps.api.assistant_service.call_source',side_effect=model) as invoke:
+            status,run=self.request('start',body);self.assertEqual(status,200,run)
+            for _ in range(60):
+                _,run=self.request('status',dict(runId=run['runId']))
                 if run['state'] not in ('reading','model','validating'):break
                 time.sleep(.01)
-            self.assertEqual(run['state'],'complete',run);self.assertEqual(model.call_args.args[0]['modelId'],'synthetic-query');legacy.assert_not_called()
-            self.assertEqual(run['taskId'],'query');self.assertEqual(run['result']['model']['provider'],'openai')
+            self.assertEqual(run['state'],'complete',run);self.assertEqual(invoke.call_count,1)
+            self.connection_version=3
+            _,changed=self.request('status',dict(runId=run['runId']));self.assertEqual(changed['state'],'changed');self.assertIsNone(changed['result'])
+    def test_capability_read_limit_is_enforced_before_start(self):
+        self.enable();settings={**defaults('analysis'),'readLimit':1}
+        self.assertEqual(self.save_settings(settings)[0],200)
+        selected=self.request('policy')[1]['services']['analysis'];body={**self.start_body(),'evidenceRefIds':[self.evidence,str(uuid4())],'expectedServiceRevision':selected['serviceRevision']}
+        self.assertEqual(self.request('start',body)[1]['code'],'ASSISTANT_READ_LIMIT')

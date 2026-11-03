@@ -1,14 +1,39 @@
 """Project model routing and encrypted credentials in the existing paired store."""
 from __future__ import annotations
 import copy
-import hashlib
-import hmac
 import json
 import os
 import stat
 from .assistant_store import require, identifier, encoded, digest, now
 from .authority import PreviewError
-from .llm_providers import PROVIDERS, TASKS, endpoint, model_id, api_key
+from .llm_providers import PROVIDERS, TASKS, FOCUS, endpoint, model_id, api_key
+
+
+TOOLS=('selected_sources','engineering_neighborhood','manual_fault_lookup')
+
+def defaults(task):
+    return dict(enabled=True,connectionId=None,modelId='',timeoutSeconds=50,concurrency=2,
+        reasoningEffort='default',goal=FOCUS[task],focus='',readLimit=8,readParallel=2,tools=list(TOOLS))
+
+
+def validate_settings(value):
+    require(type(value) is dict and set(value)==set(defaults('analysis')))
+    require(type(value['enabled']) is bool)
+    if value['connectionId'] is not None:identifier(value['connectionId']);model_id(value['modelId'])
+    else:require(value['modelId']=='','LLM_MODEL_REQUIRED')
+    for key,lo,hi in [('timeoutSeconds',10,50),('concurrency',1,2),('readLimit',1,8),('readParallel',1,2)]:
+        require(type(value[key]) is int and lo<=value[key]<=hi,'LLM_SETTINGS_INVALID')
+    require(type(value['reasoningEffort']) is str and 0<len(value['reasoningEffort'])<=32)
+    for key in ('goal','focus'):
+        require(type(value[key]) is str and len(value[key])<=2000 and '\0' not in value[key],'LLM_SETTINGS_INVALID')
+    require(bool(value['goal'].strip()),'LLM_SETTINGS_INVALID')
+    require(type(value['tools']) is list and all(type(t) is str for t in value['tools']) and len(set(value['tools']))==len(value['tools'])
+        and set(value['tools'])<=set(TOOLS) and 'selected_sources' in value['tools'],'ASSISTANT_TOOL_NOT_ALLOWED')
+    return copy.deepcopy(value)
+
+
+def source_configuration(task_id, settings):
+    return {'taskId':task_id,**{key:settings[key] for key in ('connectionId','modelId','timeoutSeconds','reasoningEffort','goal','focus')}}
 
 
 class AssistantModels:
@@ -47,11 +72,6 @@ class AssistantModels:
             require(len(key)==44,'LLM_KEY_STORE_UNAVAILABLE',409);Fernet(key);return key
         except (OSError,ValueError):raise PreviewError(409,'LLM_KEY_STORE_UNAVAILABLE') from None
 
-    def _seal(self, project, provider, key):
-        from cryptography.fernet import Fernet
-        raw=encoded({'connection':self.connection_id,'project':project,'provider':provider,'key':api_key(key)})
-        return Fernet(self._key(True)).encrypt(raw.encode()).decode()
-
     def _secret(self, project, provider, token):
         from cryptography.fernet import Fernet,InvalidToken
         try:
@@ -79,93 +99,69 @@ class AssistantModels:
             'tasks':{name:{'execution':'ontobase','enabled':True} for name in TASKS}}}
 
     @staticmethod
-    def public(value):
-        return {'revision':value['revision'],'updatedAt':value['updatedAt'],
-            'providers':[{ 'id':name,'name':PROVIDERS[name]['name'],'baseUrl':p['baseUrl'],'mode':p['mode'],
-                'keyConfigured':bool(p['credential'])} for name in PROVIDERS for p in (value['config']['providers'][name],)],
-            'tasks':[{ 'id':name,'nameZh':TASKS[name][0],'nameEn':TASKS[name][1],**value['config']['tasks'][name]} for name in TASKS]}
+    def settings(config, task_id):
+        saved=config.get('capabilities',{}).get(task_id)
+        if saved is not None:return copy.deepcopy(saved)
+        old=config['tasks'][task_id]
+        return {**defaults(task_id),'enabled':old['enabled'] and old['execution']=='ontobase'}
 
-    def save(self, project, actor, body, authorize):
+    @staticmethod
+    def public(value):
+        config=value['config']
+        return {'schemaVersion':2,'revision':value['revision'],'updatedAt':value['updatedAt'],
+            'defaults':{task:defaults(task) for task in TASKS},
+            'tasks':[{'id':task,'nameZh':TASKS[task][0],'nameEn':TASKS[task][1],
+                **AssistantModels.settings(config,task),
+                'configured':task in config.get('capabilities',{}),
+                'legacyNeedsReview':task not in config.get('capabilities',{}) and config['tasks'][task]['execution']=='ontovis'} for task in TASKS]}
+
+    def save(self, project, actor, body, authorize, validate_source):
         require(type(body) is dict and set(body)=={'requestId','expectedRevision','expectedAccessRevision','change'})
         identifier(body['requestId']);require(type(body['expectedRevision']) is int and 0<=body['expectedRevision']<10000)
-        change=body['change'];require(type(change) is dict and change.get('kind') in ('provider','task'))
-        if change['kind']=='provider':
-            require(set(change)=={'kind','provider','baseUrl','mode','keyAction','apiKey'})
-            provider=change['provider'];url=endpoint(provider,change['baseUrl'])
-            require(change['mode']=='managed','LLM_CONFIGURATION_CHANGED',409)
-            require(change['keyAction'] in ('keep','replace','clear'))
-            if change['keyAction']=='replace':api_key(change['apiKey'])
-            else:require(change['apiKey'] is None)
-        else:
-            require('execution' in change,'LLM_CONFIGURATION_CHANGED',409)
-            require(change['execution'] in ('ontobase','ontovis'))
-            fields={'kind','taskId','execution','enabled'}
-            require(set(change)==(fields if change['execution']=='ontobase' else fields|{'provider','modelId'}))
-            require(type(change['taskId']) is str and change['taskId'] in TASKS and type(change['enabled']) is bool)
-            if change['execution']=='ontovis':
-                require(type(change['provider']) is str and change['provider'] in PROVIDERS and type(change['modelId']) is str)
-                if change['modelId']:model_id(change['modelId'])
-        # The request fingerprint contains no plaintext key, even in audit rows.
-        def fingerprint():
-            cleaned=copy.deepcopy(body)
-            if cleaned['change'].get('apiKey'):
-                cleaned['change']['apiKey']=hmac.new(self._key(),change['apiKey'].encode(),'sha256').hexdigest()
-            return digest(cleaned)
+        change=body['change']
+        require(type(change) is dict and set(change)=={'kind','taskId','settings','expectedConnectionVersion'} and change['kind']=='capability')
+        require(type(change['taskId']) is str and change['taskId'] in TASKS,'LLM_TASK_INVALID')
+        task=validate_settings(change['settings'])
+        require(change['expectedConnectionVersion'] is None or type(change['expectedConnectionVersion']) is int and change['expectedConnectionVersion']>=1)
+        fingerprint=digest(body)
         authorize()
         with self.library.connect() as db:
             db.execute('begin immediate')
             previous=db.execute('select fingerprint,result_json from assistant_model_config_requests where connection_id=? and project_code=? and actor=? and request_id=?',
                 (self.connection_id,project,actor,body['requestId'])).fetchone()
             if previous:
-                require(previous['fingerprint']==fingerprint(),'ASSISTANT_REQUEST_CONFLICT',409);authorize();return json.loads(previous['result_json'])
+                require(previous['fingerprint']==fingerprint,'ASSISTANT_REQUEST_CONFLICT',409);authorize();return json.loads(previous['result_json'])
             current=self.read(project,db);require(current['revision']==body['expectedRevision'],'LLM_CONFIGURATION_CHANGED',409)
-            config=current['config'];audit={k:v for k,v in change.items() if k!='apiKey'}
-            if change['kind']=='provider':
-                old=config['providers'][provider]
-                require(change['keyAction']!='keep' or not old['credential'] or old['baseUrl']==url,'LLM_NEW_ENDPOINT_KEY_REQUIRED')
-                secret=old['credential'] if change['keyAction']=='keep' else None
-                if change['keyAction']=='replace':secret=self._seal(project,provider,change['apiKey'])
-                config['providers'][provider]={'baseUrl':url,'mode':change['mode'],'credential':secret}
-            else:
-                if change['execution']=='ontovis' and change['enabled']:
-                    p=config['providers'][change['provider']]
-                    model_id(change['modelId']);require(bool(p['credential']),'LLM_KEY_REQUIRED')
-                config['tasks'][change['taskId']]={k:change[k] for k in change if k not in ('kind','taskId')}
+            # Source authorization and connection versions are checked before committing.
+            if task['enabled']:validate_source(source_configuration(change['taskId'],task),change['expectedConnectionVersion'])
+            config=current['config'];config.setdefault('capabilities',{})[change['taskId']]=task
             stamp=now();revision=current['revision']+1
             result=self.public({'revision':revision,'updatedAt':stamp,'config':config})
             require(db.execute('select count(*) from assistant_model_config_events where connection_id=? and project_code=?',(self.connection_id,project)).fetchone()[0]<10000,'LLM_CONFIGURATION_LIMIT',413)
             db.execute('insert into assistant_model_configs values(?,?,?,?,?,?) on conflict(connection_id,project_code) do update set revision=excluded.revision,config_json=excluded.config_json,actor=excluded.actor,updated_at=excluded.updated_at',
                 (self.connection_id,project,revision,encoded(config),actor,stamp))
-            db.execute('insert into assistant_model_config_events values(?,?,?,?,?,?)',(self.connection_id,project,revision,actor,stamp,encoded(audit)))
-            db.execute('insert into assistant_model_config_requests values(?,?,?,?,?,?)',(self.connection_id,project,actor,body['requestId'],fingerprint(),encoded(result)))
+            db.execute('insert into assistant_model_config_events values(?,?,?,?,?,?)',(self.connection_id,project,revision,actor,stamp,encoded(change)))
+            db.execute('insert into assistant_model_config_requests values(?,?,?,?,?,?)',(self.connection_id,project,actor,body['requestId'],fingerprint,encoded(result)))
             authorize();return result
 
     def profile(self, project, task_id, inherited):
         require(type(task_id) is str and task_id in TASKS,'LLM_TASK_INVALID')
-        value=self.read(project);task=value['config']['tasks'][task_id];execution=task['execution']
-        base=execution=='ontobase';source=inherited() if base else {}
-        p=None if base else value['config']['providers'][task['provider']]
-        rev=source.get('serviceRevision') if value['revision']==0 and task_id=='analysis' else digest([
-            value['revision'],task_id,task,None if base else p['baseUrl'],execution,source.get('serviceRevision')])
-        ready=task['enabled'] and (source.get('enabled') is True if base else bool(p['credential']) and bool(task['modelId']))
-        runnable=ready and (source.get('canRun') is True if base else True)
-        return {'taskId':task_id,'execution':execution,'provider':source.get('provider') if base else task['provider'],
-            'modelId':source.get('modelId') if base else task['modelId'],
-            'baseUrl':None if base else p['baseUrl'],'enabled':ready,'canRun':runnable,'serviceRef':'ontovis-task-model-v1',
-            'serviceRevision':rev,'configurationRevision':value['revision'],'sourceServiceRevision':source.get('serviceRevision'),
-            'accessRevision':source.get('accessRevision'),'purpose':'ontovis_analysis',
-            'reason':None if ready else 'LLM_TASK_DISABLED' if not task['enabled'] else source.get('reason','ASSISTANT_SERVICE_UNAVAILABLE') if base else 'LLM_MODEL_REQUIRED' if p['credential'] else 'LLM_KEY_REQUIRED'}
-
-    def credentials(self, project, provider, base_url=None, transient=None, *, expected_revision=None):
-        require(type(provider) is str and provider in PROVIDERS)
-        value=self.read(project)
-        require(expected_revision is None or value['revision']==expected_revision,'LLM_CONFIGURATION_CHANGED',409)
-        p=value['config']['providers'][provider]
-        url=endpoint(provider,base_url or p['baseUrl'])
-        if transient:return url,api_key(transient)
-        require(url==p['baseUrl'],'LLM_NEW_ENDPOINT_KEY_REQUIRED')
-        require(p['credential'] is not None,'LLM_KEY_REQUIRED')
-        return url,self._secret(project,provider,p['credential'])
+        value=self.read(project);config=value['config'];task=self.settings(config,task_id)
+        configured=task_id in config.get('capabilities',{})
+        source=inherited(source_configuration(task_id,task) if configured else None)
+        old=config['tasks'][task_id]
+        if not configured and old['execution']=='ontovis':
+            source={'enabled':False,'canRun':False,'reason':'LLM_CONNECTION_REVIEW_REQUIRED'}
+        if not configured:
+            revision=source.get('serviceRevision') if value['revision']==0 and task_id=='analysis' else digest([
+                value['revision'],task_id,old,None,'ontobase',source.get('serviceRevision')])
+        else:revision=digest([value['revision'],task_id,task,source.get('serviceRevision')])
+        ready=task['enabled'] and source.get('enabled') is True
+        return {'taskId':task_id,'execution':'ontobase','provider':source.get('provider'),'modelId':source.get('modelId'),
+            'enabled':ready,'canRun':ready and source.get('canRun') is True,'serviceRef':'ontovis-task-model-v1',
+            'serviceRevision':revision,'configurationRevision':value['revision'],'sourceServiceRevision':source.get('serviceRevision'),
+            'accessRevision':source.get('accessRevision'),'purpose':'ontovis_analysis','configuration':source_configuration(task_id,task) if configured else None,
+            'settings':task,'reasoningOptions':source.get('reasoningOptions',['default']),'reason':None if ready else source.get('reason') or ('LLM_TASK_DISABLED' if not task['enabled'] else 'ASSISTANT_SERVICE_UNAVAILABLE')}
 
 
 def validate_backup_credentials(db, root):

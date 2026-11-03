@@ -57,3 +57,12 @@ class RetrievalTests(unittest.TestCase):
   self.assertEqual(value['summaryHash'],material_summary(self.reader,'document',DESCRIPTOR)['summaryHash'])
  def test_a_question_cannot_select_another_tool(self):
   with self.assertRaises(PreviewError):retrieve(self.reader,'document',DESCRIPTOR,{'tool':'arbitrary_url','faultCode':None,'operations':1})
+
+class CapabilityToolTests(unittest.TestCase):
+ def test_optional_tools_are_disabled_in_the_saved_plan(self):
+  fixed=[({'sourceKind':'object'},{}),({'sourceKind':'document'},{'knowledgeReleaseId':'fixed'})]
+  from apps.api.assistant_retrieval import plan
+  full=plan(fixed,'核对13001',8)
+  limited=plan(fixed,'核对13001',8,['selected_sources'])
+  self.assertEqual(full[0]['tool'],'engineering_neighborhood');self.assertEqual(full[1]['faultCode'],'13001')
+  self.assertEqual(limited[0]['tool'],'selected_object');self.assertIsNone(limited[1]['faultCode']);self.assertEqual(sum(p['operations'] for p in limited),2)

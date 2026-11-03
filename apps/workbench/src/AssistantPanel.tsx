@@ -12,7 +12,7 @@ import {AssistantGraph} from './AssistantGraph';
 import {AssistantTurn} from './AssistantTurn';
 import {AssistantWorkOrderDialog} from './AssistantWorkOrderDialog';
 import './assistant.css';
-import {llmTaskNames,llmProviderNames,type LlmTask} from './llmSettings';
+import {llmTaskNames,type LlmTask} from './llmSettings';
 
 export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,initialRunId,queryOnly=false}:{api:DraftApi&{assistantScope?:()=>DraftApi};cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string)=>void;initialRunId?:string;queryOnly?:boolean}){
  const service=useMemo(()=>new AssistantApi(api),[api]);const t=(zh:string,english:string)=>en?english:zh;
@@ -81,11 +81,12 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  async function checkTurn(item:AssistantRun){const key=context;setBusy(true);setError(null);try{const value=await service.status(item);
   if(alive.current&&current.current===key){setTurns(previous=>mergeConversationTurns(previous,value));if(run?.runId===value.runId)setRun(value);}
  }catch(e){if(alive.current&&current.current===key)setError(e);}finally{if(alive.current&&current.current===key)setBusy(false);}}
- async function preview(){if(!receipt)return;const key=context;setBusy(true);setError(null);try{const value=await api.request<{items:AssistantSource[]}>(ASSISTANT_ROOT+'/summary',{...selection(),question:question.trim()});if(alive.current&&current.current===key)setSummaries(value.items);}catch(e){if(alive.current&&current.current===key)setError(e);}finally{if(alive.current&&current.current===key)setBusy(false);}}
+ async function preview(){if(!receipt)return;const key=context;setBusy(true);setError(null);try{const value=await api.request<{items:AssistantSource[]}>(ASSISTANT_ROOT+'/summary',{...selection(),question:question.trim(),taskId});if(alive.current&&current.current===key)setSummaries(value.items);}catch(e){if(alive.current&&current.current===key)setError(e);}finally{if(alive.current&&current.current===key)setBusy(false);}}
  const names:Record<string,[string,string]>={reading:['读取所选资料','Reading selected materials'],model:['模型整理中','Model is organizing evidence'],validating:['校验引用','Checking references'],complete:['引用校验完成','References checked'],partial:['部分资料缺失','Some sources are unavailable'],cancel_requested:['正在停止，等待后台确认','Stopping; waiting for server acknowledgement'],cancelled:['已取消','Cancelled'],interrupted:['运行已中断','Interrupted'],failed:['运行未完成','Incomplete'],changed:['来源或策略已变化','Sources or policy changed']};
  const focusedEarlier=!!initialRunId&&run?.runId===initialRunId&&!!conversation&&conversation.headRunId!==initialRunId;
- const active=running(run),locked=busy||running(run)||loadingHistory||!!pending,limit=view?.policy.reads??8;
+ const active=running(run),locked=busy||running(run)||loadingHistory||!!pending;
  const effectiveService=view?.services?.[taskId]??view?.service;
+ const limit=Math.min(view?.policy.reads??8,effectiveService?.settings?.readLimit??8);
  const taskMismatch=!!conversation&&!!run&&(run.taskId??'analysis')!==taskId;
  const sendBlocker=assistantSendBlocker({busy,active,pending:!!pending,loadingHistory,focusedEarlier,taskMismatch,hasReceipt:!!receipt,view,policyError,service:effectiveService,selectedCount:selected.length,question});
  const refreshService=()=>{setError(null);setReload(v=>v+1);};
@@ -94,7 +95,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {sendBlocker&&<p className="ap-caption" role="status" id={sendStatusId}>{assistantMessage(sendBlocker,en)}</p>}
   <div className="ap-actions"><Btn primary disabled={!!sendBlocker} aria-describedby={sendBlocker?sendStatusId:undefined} onClick={()=>void start()}><Send size={14}/>{t('发送','Send')}</Btn><Btn disabled={!active||busy||run?.state==='cancel_requested'} onClick={()=>void stop()}><Square size={14}/>{t('停止','Stop')}</Btn>{canRefreshService&&<Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn>}</div></>;
  return <div className="as-panel"><p className="ap-caption">{t('仅发送本次所选资料的脱敏摘要。结果是待核验的整理，不代表故障确诊。','Only redacted summaries of the selected materials are sent. Results require verification.')}</p>
-  <div className="as-service"><span>{effectiveService?.execution==='ontobase'?'OntoBase':effectiveService?.provider?llmProviderNames[effectiveService.provider]:'—'} · {effectiveService?.modelId||'—'}</span><Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn></div>
+  <div className="as-service"><span>{effectiveService?.execution==='ontobase'?'OntoBase':effectiveService?.provider??'—'} · {effectiveService?.modelId||'—'}</span><Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn></div>
   <label className="as-task-picker">{t('当前任务','Task')}<select aria-label={t('助手任务','Assistant task')} value={taskId} disabled={locked} onChange={e=>{setTaskId(e.target.value as LlmTask);newConversation();}}>{(Object.keys(llmTaskNames) as LlmTask[]).filter(id=>!queryOnly||id==='query').map(id=><option value={id} key={id}>{llmTaskNames[id][en?1:0]}</option>)}</select></label>
   {queryOnly&&composer}
   <div className="as-conversation"><label>{t('当前对话','Current conversation')}<select aria-label={t('当前对话','Current conversation')} disabled={locked} value={conversation?.conversationId??''} onChange={e=>e.target.value?void openConversation(e.target.value):newConversation()}><option value="">{t('新对话','New conversation')}</option>{conversations.map(item=><option key={item.conversationId} value={item.conversationId}>{item.title}</option>)}{conversation&&!conversations.some(c=>c.conversationId===conversation.conversationId)&&<option value={conversation.conversationId}>{conversation.title}</option>}</select></label><Btn disabled={locked} onClick={newConversation}><Plus size={13}/>{t('新对话','New')}</Btn></div>
