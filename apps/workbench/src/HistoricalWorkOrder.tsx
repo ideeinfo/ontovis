@@ -3,7 +3,7 @@ import {ArrowRight,CheckCheck,ChevronDown,ChevronUp,ClipboardList,Clock3,FileChe
 import {historicalOrderView,orderActionLabel,orderOutcomeLabel,orderRecordTime,orderStateLabel,type HistoricalOrderSource} from './workOrderHistory';
 import './HistoricalWorkOrder.css';
 
-const PAGE_SIZE=3;
+const PAGE_SIZE=2;
 function Pager({page,total,en,onChange}:{page:number;total:number;en:boolean;onChange:(page:number)=>void}){
  if(total<=PAGE_SIZE)return null;
  return <nav className="ho-pager" aria-label={en?'Record pages':'记录分页'}><span>{page*PAGE_SIZE+1}–{Math.min(total,(page+1)*PAGE_SIZE)} / {total}</span><button type="button" aria-label={en?'Previous records':'上一组记录'} disabled={!page} onClick={()=>onChange(page-1)}><ChevronUp size={15}/></button><button type="button" aria-label={en?'Next records':'下一组记录'} disabled={(page+1)*PAGE_SIZE>=total} onClick={()=>onChange(page+1)}><ChevronDown size={15}/></button></nav>;

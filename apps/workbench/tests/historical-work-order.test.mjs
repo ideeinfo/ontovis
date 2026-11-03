@@ -50,7 +50,7 @@ test('detail pages expose investigation statuses and paginate without editing th
 });
 test('timeline uses newest-first events, readable actions and pages back to the original creation event',()=>{
  const view=mount(fixture());view.click('查看完整时间线');assert.match(view.text(),/保留原始处理内容4/);assert.match(view.text(),/提交复核/);assert.doesNotMatch(view.text(),/创建演示工单/);
- view.click('下一组记录');assert.match(view.text(),/创建演示工单/);assert.doesNotMatch(view.text(),/保留原始处理内容4/);assert.match(view.text(),/此事件未附备注/);
+ view.click('下一组记录');view.click('下一组记录');assert.match(view.text(),/创建演示工单/);assert.doesNotMatch(view.text(),/保留原始处理内容4/);assert.match(view.text(),/此事件未附备注/);
 });
 test('read full record selects the latest nonempty event even if it is on an older page',()=>{
  const source=fixture();source.events.forEach((e,i)=>e.note=i===0?'仅创建时附有备注':'');const view=mount(source);view.click('查看处理原文');assert.match(view.text(),/创建演示工单/);assert.match(view.text(),/仅创建时附有备注/);
