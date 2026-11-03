@@ -2,7 +2,7 @@
 
 .ap-page{font-size:13px;color:var(--text);padding:0 16px 16px;width:100%;min-height:0;flex:1;overflow:auto;box-sizing:border-box}
 .ap-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--borderSubtle);margin-bottom:12px}
-.ap-caption{font-size:11px;color:var(--textSecondary);line-height:1.7;overflow-wrap:anywhere;margin:10px 0 0}
+.ap-page .ap-caption{font-size:11px;color:var(--textSecondary);line-height:1.7;overflow-wrap:anywhere;margin:10px 0 0}
 .ap-topbar>.ap-caption{margin:0;text-align:right}
 .ap-policy-card{background:var(--surface);border:1px solid var(--borderSubtle);border-radius:8px;overflow:hidden;min-width:0}
 .ap-policy-sections{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:0}
