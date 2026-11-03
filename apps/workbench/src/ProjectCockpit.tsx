@@ -111,7 +111,7 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  const canInspectModel=(representation?.model??loadedModel)?.representationType==='detailed';
  const [modelView,setModelView]=useState<ModelViewRequest|null>(null),[modelViewStatus,setModelViewStatus]=useState<ModelViewStatus>('loading');
  const modelViewRequest=motionVisible&&modelView?.instanceId===selected?.sceneModelInstanceId&&modelView?.modelVersionId===effectiveMotionRef?.modelVersionId&&modelView?.contentRevision===effectiveMotionRef?.contentRevision&&modelView?.sha256===effectiveMotionRef?.sha256?modelView:null;
- const equipment=useCockpitEquipment(api,opened,selected,motionVisible);
+ const equipment=useCockpitEquipment(api,opened,selected,motionVisible,locationAttempt);
  const inspecting=motionVisible&&!!uid&&uid!==boundInstance?.rootBinding?.objectRef.entityUid;
  const quickFocus=useMemo(()=>inspecting&&!modelViewRequest?cockpitQuickFocus(displayOpened,boundInstance,representation?.model||null,equipment?.record,uid,locationAttempt,isolated,alarmFocus?.target.entityUid===uid?alarmFocus.target.entityRevision:undefined):undefined,[inspecting,modelViewRequest,displayOpened,boundInstance,representation,equipment,uid,locationAttempt,isolated,alarmFocus]);
  const componentFocus=useMemo(()=>!inspecting||modelViewRequest?undefined:location.loading?quickFocus:location.value?.status==='located'&&location.value.worldBounds?{token:locationAttempt,instanceId:location.value.sceneModelInstanceId!,bounds:location.value.worldBounds,componentKeys:location.value.componentKeys,isolate:isolated}:undefined,[inspecting,modelViewRequest,location.loading,quickFocus,location.value,locationAttempt,isolated]);

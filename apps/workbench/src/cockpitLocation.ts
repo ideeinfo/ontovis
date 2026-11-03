@@ -2,8 +2,27 @@ import type {SceneLocation,SceneLocationRequest,SceneObjectContext} from './scen
 import type {SceneModelInstance,SceneOpen} from './sceneTypes';
 import type {SceneComponentPick} from './sceneComponentPick';
 import {componentFocusKey} from './sceneComponentFocus.ts';
-import {ApiError} from './api.ts';
+import {ApiError,type WorkbenchApi} from './api.ts';
 import type {SceneApi} from './sceneApi';
+
+/** Only cockpit read projections use this recovery; write clients never retry here. */
+export async function retryCockpitRead<T>(api:Pick<WorkbenchApi,'epoch'|'revision'>,read:()=>Promise<T>,signal:AbortSignal):Promise<T>{
+ const epoch=api.epoch,revision=api.revision,deadline=Date.now()+12000,delays=[1000,3000,6000];
+ const guard=()=>{signal.throwIfAborted();if(api.epoch!==epoch||api.revision!==revision)throw new DOMException('Selection or session changed','AbortError');};
+ for(let attempt=0;;attempt++){
+  guard();
+  try{const value=await read();guard();return value;}
+  catch(error){
+   guard();const delay=delays[attempt];
+   if(!(error instanceof ApiError)||error.code!=='SOURCE_UNAVAILABLE'||![502,503,504].includes(error.status)||delay===undefined||Date.now()+delay>deadline)throw error;
+   await new Promise<void>((resolve,reject)=>{
+    const stop=()=>{clearTimeout(timer);reject(new DOMException('Cancelled','AbortError'));};
+    const timer=setTimeout(()=>{signal.removeEventListener('abort',stop);resolve();},delay);
+    signal.addEventListener('abort',stop,{once:true});
+   });
+  }
+ }
+}
 
 export async function readCockpitLocation(client:Pick<SceneApi,'objectContext'|'locate'>,request:SceneLocationRequest,signal:AbortSignal,expectedEntityRevision?:string){
  const [context,value]=await Promise.all([client.objectContext(request.selectedObjectRef.entityUid,undefined,signal),client.locate(request,signal)]);

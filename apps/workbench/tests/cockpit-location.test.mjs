@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {cockpitInspectionScene,cockpitLocationCurrent,cockpitPickedObject,cockpitParentPath,readCockpitLocation} from '../src/cockpitLocation.ts';
+import {cockpitInspectionScene,cockpitLocationCurrent,cockpitPickedObject,cockpitParentPath,readCockpitLocation,retryCockpitRead} from '../src/cockpitLocation.ts';
+import {ApiError} from '../src/api.ts';
 import {sceneLoadingPlan,modelLoadingKey,SceneLoadingTracker} from '../src/sceneLoading.ts';
 const ref={entityUid:'part',projectCode:'project',ontobaseConnectionId:'source'};
 const request={sceneId:'scene',sceneRevision:'r1',contextEpoch:'epoch',selectedObjectRef:ref,representationChoice:{sceneModelInstanceId:'instance',modelVersionId:'model'}};
@@ -95,4 +96,52 @@ test('loading plan accounts for the inspected detail and the other appearances, 
  tracker.done(modelLoadingKey(modelRef));assert.equal(tracker.state().stage,'display');
  tracker.drawn();assert.equal(tracker.state().stage,'complete');
  assert.equal(sceneLoadingPlan(source.snapshot,source.resourceRefs).length,1);
+});
+
+const settle=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
+test('cockpit read recovers transient source failures after bounded waits',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});let calls=0;const api={epoch:1,revision:'r1'};
+ const pending=retryCockpitRead(api,async()=>{calls++;if(calls<3)throw new ApiError(calls===1?502:503,'SOURCE_UNAVAILABLE');return 'current';},new AbortController().signal);
+ await settle();assert.equal(calls,1);t.mock.timers.tick(999);await settle();assert.equal(calls,1);
+ t.mock.timers.tick(1);await settle();assert.equal(calls,2);t.mock.timers.tick(3000);await settle();
+ assert.equal(await pending,'current');assert.equal(calls,3);
+});
+test('persistent cockpit read failure stops after three retries',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});let calls=0;
+ const pending=retryCockpitRead({epoch:1,revision:'r1'},async()=>{calls++;throw new ApiError(503,'SOURCE_UNAVAILABLE');},new AbortController().signal);
+ const failure=assert.rejects(pending,{status:503,code:'SOURCE_UNAVAILABLE'});
+ await settle();for(const delay of [1000,3000,6000]){t.mock.timers.tick(delay);await settle();}
+ await failure;t.mock.timers.tick(60000);await settle();assert.equal(calls,4);
+});
+test('permission, version, invalid payload and non-transient errors never retry',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});
+ for(const [status,code] of [[401,'SESSION_EXPIRED'],[403,'FORBIDDEN'],[409,'ENGINEERING_CHANGED'],[422,'INVALID_REQUEST'],[500,'SOURCE_UNAVAILABLE'],[502,'RESOURCE_CHANGED']]){
+  let calls=0;const error=new ApiError(status,code);
+  await assert.rejects(retryCockpitRead({epoch:1,revision:'r1'},async()=>{calls++;throw error;},new AbortController().signal),e=>e===error);
+  t.mock.timers.tick(60000);await settle();assert.equal(calls,1);
+ }
+});
+test('leaving an equipment selection cancels scheduled recovery without another read',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});const abort=new AbortController();let calls=0;
+ const pending=retryCockpitRead({epoch:1,revision:'r1'},async()=>{calls++;throw new ApiError(503,'SOURCE_UNAVAILABLE');},abort.signal);
+ const failure=assert.rejects(pending,{name:'AbortError'});await settle();abort.abort();await failure;
+ t.mock.timers.tick(60000);await settle();assert.equal(calls,1);
+});
+test('a project or login change cannot dispatch an old scheduled read',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});
+ for(const change of [api=>api.epoch++,api=>api.revision='r2']){
+  const api={epoch:1,revision:'r1'};let calls=0;
+  const pending=retryCockpitRead(api,async()=>{calls++;throw new ApiError(503,'SOURCE_UNAVAILABLE');},new AbortController().signal);
+  const failure=assert.rejects(pending,{name:'AbortError'});await settle();change(api);t.mock.timers.tick(1000);await settle();await failure;assert.equal(calls,1);
+ }
+});
+test('a late successful reply cannot cross the current login or project scope',async()=>{
+ const api={epoch:1,revision:'r1'};let finish;
+ const pending=retryCockpitRead(api,()=>new Promise(resolve=>finish=resolve),new AbortController().signal);
+ const failure=assert.rejects(pending,{name:'AbortError'});api.epoch++;finish('old');await failure;
+});
+test('a slow failed request consumes the recovery window instead of starting more long reads',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});let reject,calls=0;
+ const pending=retryCockpitRead({epoch:1,revision:'r1'},()=>{calls++;return new Promise((resolve,fail)=>reject=fail);},new AbortController().signal);
+ const failure=assert.rejects(pending,{status:504});t.mock.timers.tick(13000);reject(new ApiError(504,'SOURCE_UNAVAILABLE'));await failure;assert.equal(calls,1);
 });
