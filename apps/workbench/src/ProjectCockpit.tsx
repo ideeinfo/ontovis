@@ -189,11 +189,8 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  const sceneAlarmCount=!replay.rows||replay.error||alarmTargets.loading||alarmTargets.error?'—':sceneAlarmRows.length;
  const spatialAlarms=useMemo(()=>{
   if(spaceNavigation||!opened||(view!=='scene'&&view!=='device'))return [];
-  return cockpitAlarmLabels(alarmTargets.rows,opened.sceneId,view==='device'?instanceId:null,en,alarmFocus?.selection).flatMap(label=>{
-   if(label.level==='asset')return [label];
-   const focus=cockpitQuickFocus(displayOpened,boundInstance,representation?.model||null,equipment?.record,label.target.entityUid,0,false,label.target.entityRevision);
-   return focus?.componentKeys?[{...label,componentKeys:focus.componentKeys}]:[];
-  });
+  return cockpitAlarmLabels(alarmTargets.rows,opened.sceneId,view==='device'?instanceId:null,en,alarmFocus?.selection,
+   target=>cockpitQuickFocus(displayOpened,boundInstance,representation?.model||null,equipment?.record,target.entityUid,0,false,target.entityRevision)?.componentKeys);
  },[opened,displayOpened,view,instanceId,en,alarmTargets.rows,alarmFocus,boundInstance,representation,equipment,spaceNavigation]);
  const focusedSpatialLabel=!!alarmFocus&&spatialAlarms.some(label=>label.level==='component'&&label.target.entityUid===alarmFocus.target.entityUid);
  const pending=t('正在读取…','Loading…');
