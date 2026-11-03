@@ -151,3 +151,30 @@ test('a changed terminal receipt remains changed and never resumes polling or sh
  const stop=watchAssistantRun({status:async()=>{reads++;return {runId:'saved',state:'changed',result:null};}},{runId:'saved',state:'model'},abort.signal,r=>updates.push(r),()=>assert.fail());
  t.mock.timers.tick(500);await settle();t.mock.timers.tick(60000);await settle();assert.equal(reads,1);assert.equal(updates[0].state,'changed');assert.equal(updates[0].result,null);stop();
 });
+
+test('model outcomes have distinct actionable messages without changing the selected service',()=>{
+ const codes=['ASSISTANT_MODEL_REQUEST_REJECTED','ASSISTANT_MODEL_AUTH_FAILED','ASSISTANT_MODEL_ACCESS_DENIED','ASSISTANT_MODEL_RATE_LIMITED','ASSISTANT_MODEL_QUOTA_EXCEEDED','ASSISTANT_MODEL_UPSTREAM_ERROR','ASSISTANT_MODEL_CONNECTION_FAILED','ASSISTANT_MODEL_TIMEOUT','ASSISTANT_OUTPUT_INCOMPLETE','ASSISTANT_OUTPUT_REFUSED','ASSISTANT_OUTPUT_EMPTY'];
+ for(const en of [false,true]){
+  const messages=codes.map(code=>assistantMessage(code,en));
+  assert.equal(new Set(messages).size,codes.length);
+  assert.ok(messages.every((message,index)=>message!==codes[index]));
+ }
+ assert.match(assistantMessage('ASSISTANT_MODEL_UNAVAILABLE'),/旧回执未保留具体原因/);
+});
+test('a failed model step never appears as reference validation complete',async()=>{
+ const {assistantRunPhase}=await import('../src/assistantApi.ts');
+ assert.equal(assistantRunPhase({state:'failed',error:'ASSISTANT_MODEL_UPSTREAM_ERROR'}),'model');
+ assert.equal(assistantRunPhase({state:'failed',error:'ASSISTANT_OUTPUT_INVALID'}),'validating');
+ assert.equal(assistantRunPhase({state:'failed',error:'ASSISTANT_NO_EVIDENCE'}),'reading');
+ assert.equal(assistantRunPhase({state:'failed',error:'ASSISTANT_TIMEOUT'}),null);
+ assert.equal(assistantRunPhase({state:'changed',error:'SOURCE_CHANGED'}),null);
+ assert.equal(assistantRunPhase({state:'complete',result:null}),null);
+ assert.equal(assistantRunPhase({state:'complete',result:{answer:{}}}),'complete');
+});
+test('all selected evidence types describe their actual contribution and metadata limits',async()=>{
+ const {materialRoles,sourceLabels}=await import('../src/assistantApi.ts');
+ assert.deepEqual(Object.keys(materialRoles).sort(),Object.keys(sourceLabels).sort());
+ assert.match(materialRoles.drawing[0],/未读取图面/);assert.match(materialRoles.photo[0],/未读取照片像素/);
+ assert.match(materialRoles.object[0],/候选接线须复核/);assert.match(materialRoles.work_order[0],/未登记不代表未执行/);
+ assert.ok(Object.values(materialRoles).every(row=>row.length===2&&row.every(Boolean)));
+});
