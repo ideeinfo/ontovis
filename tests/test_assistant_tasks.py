@@ -115,3 +115,18 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(2,len(calls));self.assertEqual([],calls[0]['evidence']);self.assertEqual(20,result['result']['usage']['total_tokens'])
         self.assertEqual(initial['runId'],runtime.start(dict(project='Demo-PDS',owner=self.actor,sid='s'),b,runtime.store.policy('Demo-PDS'),
             dict(serviceRevision='a'*64),None,None,None)['runId']);self.assertEqual(2,len(calls))
+
+        from tests.test_assistant import Reader
+        reader=Reader();reader.orders=self.orders;reader.reader=self.reader.reader
+        fixed=[(dict(evidenceRefId=str(uuid4()),sourceKind='alarm',sourceRevision='a'*64),{}) for _ in range(8)]
+        second={**b,'requestId':str(uuid4()),'analysisSessionId':str(uuid4()),'evidenceRefIds':[r['evidenceRefId'] for r,_ in fixed]}
+        started=runtime.start(dict(project='Demo-PDS',owner=self.actor,sid='s'),second,runtime.store.policy('Demo-PDS'),
+            dict(serviceRevision='a'*64,accessRevision='g',taskId='analysis',settings={}),lambda _:(fixed,reader),lambda *_:None,source)
+        deadline=time.monotonic()+3
+        while time.monotonic()<deadline:
+            result=runtime.store.public(runtime.store.run('Demo-PDS',self.actor,started['runId']))
+            if result['state'] not in ('reading','model','validating'):break
+            time.sleep(.01)
+        self.assertEqual('partial',result['state'],result)
+        limited=[t for t in result['result']['task']['trace'] if t['state']=='budget_limited']
+        self.assertEqual(3,limited[0]['count']);self.assertEqual(8,result['result']['task']['reads'])

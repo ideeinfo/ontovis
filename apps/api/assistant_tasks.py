@@ -200,9 +200,13 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
                 tools.trace.append(dict(tool=q['tool'],state='unavailable',reason=error.code))
         # Project tools get the read budget first; selected cards supply remaining analysis context.
-        for ref,descriptor in fixed:
-            if tools.reads>=tools.limit or len(tools.sources)>=8:break
-            if ref['sourceKind'] not in tools.allowed:continue
+        for index,(ref,descriptor) in enumerate(fixed):
+            if tools.reads>=tools.limit or len(tools.sources)>=8:
+                tools.trace.append(dict(tool='selected_material',state='budget_limited',count=len(fixed)-index,reason='ASSISTANT_READ_LIMIT'))
+                break
+            if ref['sourceKind'] not in tools.allowed:
+                tools.trace.append(dict(tool='selected_material',state='policy_excluded',count=1,reason='ASSISTANT_TOOL_NOT_ALLOWED'))
+                continue
             try:
                 from .assistant_graph import material_summary
                 material=tools.read(lambda:material_summary(reader,ref['sourceKind'],descriptor,job.private))
@@ -218,7 +222,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             answer=validate_answer(model('answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'],{s['key'] for s in evidence})
         else:answer=dict(observations=[],hypotheses=[],gaps=[dict(text='本次未取得可引用的项目资料。请查看检索过程中的范围或服务状态。',refs=[])],nextSteps=[])
         guard(True)
-        result=dict(protocol=PROTOCOL,answer=answer,usage=usage,modelCalls=calls,engineeringConfirmation=False,partial=any(t['state']=='unavailable' for t in tools.trace),
+        result=dict(protocol=PROTOCOL,answer=answer,usage=usage,modelCalls=calls,engineeringConfirmation=False,partial=any(t['state']!='complete' for t in tools.trace),
             model=dict(taskId=service.get('taskId','analysis'),provider=service.get('provider'),modelId=service.get('modelId')),
             task=dict(mode=body['mode'],baseDigest=base,plan=plan,results=tools.results,graphs=tools.graphs,trace=tools.trace,
                 reads=tools.reads,readLimit=tools.limit,receipts=[],execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query'))
