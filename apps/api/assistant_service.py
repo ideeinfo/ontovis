@@ -68,6 +68,9 @@ class AssistantRuntime:
         return self.store.public(record)
 
     def _run(self,record,job,body,policy,service,prepare,authorize,source_call):
+        if body.get('protocol')=='ontovis-engineering-tasks-v1':
+            from .assistant_tasks import run
+            return run(self,record,job,body,policy,service,prepare,authorize,source_call)
         run_id=record['id'];deadline=time.monotonic()+policy['policy']['seconds'];progress=[];summaries=[]
         def guard(force=False):
             require(not job.cancelled.is_set(),job.stop_code,409)
@@ -139,7 +142,7 @@ class AssistantRuntime:
 def request(sessions,sid,path,payload):
     action=path.removeprefix('/api/workbench/assistant/')
     require(action in ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation',
-                       'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue'))
+                       'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue','task-start','task-prepare','task-ack','task-page'))
     row=sessions.current(sid,authenticated=True,touch=action not in ('policy','status'))
     require(payload.get('expectedSessionRevision')==row.revision,'SESSION_CHANGED',409)
     project=sessions._ref(payload.get('projectRef'));actor=identifier(row.subject_id)
@@ -251,7 +254,8 @@ def request(sessions,sid,path,payload):
                 for job in runtime.jobs.values():
                     if job.project==project:job.stop_code='ASSISTANT_POLICY_CHANGED';job.cancelled.set()
         return reply(result)
-    def prepare(guard):
+    def prepare(guard,input_body=None):
+        selected_body=input_body if input_body is not None else body
         require(sessions.analysis_store_id is not None,'ANALYSIS_NOT_ENABLED',503)
         require(sessions.analysis_slots.acquire(timeout=5),'ANALYSIS_BUSY',503)
         store=None
@@ -260,10 +264,14 @@ def request(sessions,sid,path,payload):
             from .analysis_evidence import AnalysisEvidence
             store=AnalysisDrafts(sessions.analysis_database_url,sessions.connection_id,project)
             require(store.store_id==sessions.analysis_store_id,'ANALYSIS_STORE_SCOPE_MISMATCH',409)
-            detail=store.detail(actor,body['analysisSessionId'],lambda:guard(),revision=body['expectedAnalysisRevision'])
-            require(detail.get('lifecycle')=='active','ANALYSIS_TRASHED',409)
-            evidence=AnalysisEvidence(store)
-            fixed=[evidence.descriptor(actor,{'analysisSessionId':body['analysisSessionId'],'evidenceRefId':e},lambda:guard()) for e in body['evidenceRefIds']]
+            if selected_body.get('protocol')=='ontovis-engineering-tasks-v1' and selected_body['expectedAnalysisRevision']==0:
+                require(not selected_body['evidenceRefIds'])
+                fixed=[]
+            else:
+                detail=store.detail(actor,selected_body['analysisSessionId'],lambda:guard(),revision=selected_body['expectedAnalysisRevision'])
+                require(detail.get('lifecycle')=='active','ANALYSIS_TRASHED',409)
+                evidence=AnalysisEvidence(store)
+                fixed=[evidence.descriptor(actor,{'analysisSessionId':selected_body['analysisSessionId'],'evidenceRefId':e},lambda:guard()) for e in selected_body['evidenceRefIds']]
         finally:
             if store:store.close()
             sessions.analysis_slots.release()
@@ -276,6 +284,9 @@ def request(sessions,sid,path,payload):
         reader=AnalysisSourceReader(SceneEngineeringReader(row.authority,sessions.connection_id,project,guard),
             sessions.shared.project_models,orders,guard,actor,scene_library=local.library)
         return fixed,reader
+    if action in ('task-start','task-prepare','task-ack','task-page'):
+        from .assistant_task_api import handle
+        return reply(handle(action,body,sessions,row,sid,project,actor,access,runtime,service,prepare,authorize,prefix))
     if action in ('summary','start','graph'):
         common={'analysisSessionId','expectedAnalysisRevision','evidenceRefIds'}
         start=common|{'requestId','question','expectedPolicyRevision','expectedAccessRevision','expectedServiceRevision'}
@@ -330,7 +341,7 @@ def request(sessions,sid,path,payload):
         return reply(runtime.start({'project':project,'owner':actor,'sid':sid,'private':(project,access.get('projectName'))},body,policy,selected,prepare,authorize,invoke))
     if action=='conversations':
         require(set(body)=={'analysisSessionId','expectedAnalysisRevision'})
-        prepare_body=body;body={**body,'evidenceRefIds':[]}
+        prepare_body=body;body={**body,'evidenceRefIds':[],**({'protocol':'ontovis-engineering-tasks-v1'} if body['expectedAnalysisRevision']==0 else {})}
         try:prepare(authorize)
         finally:body=prepare_body
         authorize(True)
@@ -339,6 +350,15 @@ def request(sessions,sid,path,payload):
     validation_cache={};read_count=[0]
     def visible(record):
         nonlocal body
+        if json.loads(record['input_json']).get('protocol')=='ontovis-engineering-tasks-v1':
+            original=body;body=json.loads(record['input_json'])
+            try:
+                # Never trust a stored run as an access grant. Recheck live ownership/lifecycle on every read.
+                prepare(authorize)
+                return runtime.store.public(record)
+            except PreviewError as error:
+                return {**runtime.store.public(record,hide=True),'state':'changed','error':error.code}
+            finally:body=original
         if record['state'] not in ('complete','partial'):
             # Even a failed turn belongs to a live, authorized analysis revision.
             original=body;body={**json.loads(record['input_json']),'evidenceRefIds':[]}

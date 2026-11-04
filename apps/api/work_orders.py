@@ -152,6 +152,25 @@ class WorkOrders:
             return {'items':[self._public(row) for row in rows[:limit]],'snapshotRevision':snapshot,
                 'nextCursor':start+limit if len(rows)>limit else None}
 
+    def assistant_search(self, body):
+        """Project search applies exact filters before pagination, independent of Canvas."""
+        require(set(body)=={'q','faultCode','cursor','limit','snapshotRevision'})
+        q=text(body['q'],200,empty=True);fault=text(body['faultCode'],100,empty=True)
+        start,limit=body['cursor'],body['limit']
+        require(type(start) is int and 0<=start<=10000 and type(limit) is int and 1<=limit<=12)
+        with self.library.connect() as db:
+            snapshot=self._snapshot(db)
+            if start or body['snapshotRevision'] is not None:
+                require(body['snapshotRevision']==snapshot,'WORK_ORDER_CHANGED',409)
+            phrase='%'+q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
+            where="(?='' or fault_code=?) and (title like ? escape '\\' or order_id like ? escape '\\')"
+            args=(fault,fault,phrase,phrase)
+            total=db.execute('select count(*) from work_orders where '+where,args).fetchone()[0]
+            rows=db.execute('select * from work_orders where '+where+' order by updated_at desc,order_id limit ? offset ?',
+                            (*args,limit,start)).fetchall()
+            return dict(items=[self._public(r) for r in rows],total=total,
+                        nextCursor=start+limit if start+limit<total else None,snapshotRevision=snapshot)
+
     def _detail(self, db, identifier):
         row = db.execute('select * from work_orders where order_id=?', (identifier,)).fetchone()
         require(row is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)

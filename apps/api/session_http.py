@@ -215,7 +215,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                                   '/link-work-order', '/simulation/catalogue', '/simulation/detail', '/simulation/qualify'))
             assistant_paths=tuple('/api/workbench/assistant/'+action for action in
                 ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation',
-                 'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue'))
+                 'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue','task-start','task-prepare','task-ack','task-page'))
             weather_paths=tuple('/api/workbench/weather/'+action for action in ('config','save','test','current'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
@@ -262,7 +262,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             metadata_save = parts.path == '/api/workbench/resources/model/metadata/save'
             limit = (MAX_SCENE_BYTES if large_scene else MAX_METADATA_REQUEST_BYTES if metadata_save else
                      270336 if parts.path in ('/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/copy',
-                                             '/api/workbench/analysis-sessions/import-history', '/api/workbench/analysis-sessions/evidence/register-batch') else
+                                             '/api/workbench/analysis-sessions/import-history', '/api/workbench/analysis-sessions/evidence/register-batch',
+                                             '/api/workbench/assistant/task-start','/api/workbench/assistant/task-prepare','/api/workbench/assistant/task-ack') else
                      32768 if parts.path in (*weather_paths, '/api/workbench/work-orders/action', '/api/workbench/assistant/work-order-apply') else
                      16384 if parts.path in (SIMULATION_STREAM_PATH, *analysis_paths, *assistant_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *equipment_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:

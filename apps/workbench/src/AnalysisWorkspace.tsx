@@ -13,6 +13,7 @@ import type {SimulatedTrend} from './simulatedAlarms';
 import './analysisMaterials.css';
 import {noteSections,readNote,writeNote} from './analysisNotes';
 import {applyCanvasAction} from './analysisActions';
+import {checkedTaskSnapshot,type PreparedTask} from './assistantTasks';
 import {AssistantPanel} from './AssistantPanel';
 import {AnalysisTimeWindowForm} from './AnalysisTrendTimeForm';
 import {intersectTimeWindows,timeWindowLabel,timeZoneLabel,type TimeWindow} from './analysisTimeWindow';
@@ -156,7 +157,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
       const rect=node.getBoundingClientRect(),delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?node.clientHeight:1);setDraft({...value,viewport:zoomAt(value.viewport,value.viewport.zoom*Math.exp(-delta*.0015),event.clientX-rect.left,event.clientY-rect.top)});};
     node.addEventListener('wheel',wheel,{passive:false,capture:true});return()=>node.removeEventListener('wheel',wheel,true);
   },[!!draft,busy,uncertain]);
-  function apply(value:CanvasSnapshot,remember=true){if(!editable)return;if(remember&&draft){setUndo(items=>[...items.slice(-19),draft]);setRedo([]);}setDraft(value);setNotice('');}
+  function apply(value:CanvasSnapshot,remember=true){if(!editable)return;if(remember&&draft){setUndo(items=>[...items.slice(-19),draft]);setRedo([]);}current.current=value;setDraft(value);setNotice('');}
   function adopt(value:Detail){setDraft(value.snapshot);setReceipt(value);setSaved(JSON.stringify(value.snapshot));setSelected(value.snapshot.cards[0]?.id||'');setUndo([]);setRedo([]);setMulti([]);setExpanded('');setError(null);setNotice('');setLifecycleNotice('');setUncertain(false);pending.current=null;}
   function change(action:()=>void){if(dirty)setLeave(()=>action);else action();}
   async function open(id:string){
@@ -166,13 +167,13 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     catch(value){if(!abort.signal.aborted)failure(value);}finally{if(alive.current&&!abort.signal.aborted)setBusy(false);}
   }
   function fresh(){if(!api.project)return;setFixed(false);setDraft({...blankAnalysisDraft(api.project),schemaVersion:2});setReceipt(null);setSaved('');setSelected('');setUndo([]);setRedo([]);setError(null);setNotice('');pending.current=null;setUncertain(false);}
-  async function commit(copy=false,restore?:Detail):Promise<boolean>{
+  async function commit(copy=false,restore?:Detail,assistantOverride?:{snapshot:CanvasSnapshot;receipt:DraftReceipt}):Promise<boolean>{
     if(busy||!draft||!api.project||!writable||fixed||archived||lifecycleUnknown)return false;
     let task=pending.current;
     if(!uncertain){
-      const value=restore?.snapshot??(copy?{...draft,title:draft.title.slice(0,110)+t(' · 副本',' · Copy')}:draft);
+      const value=assistantOverride?.snapshot??restore?.snapshot??(copy?{...draft,title:draft.title.slice(0,110)+t(' · 副本',' · Copy')}:draft);
       const problems=draftProblems(value,api.project);if(problems.length){setError(new Error(en?'Please check the analysis content.':problems[0]));return false;}
-      task=copy&&receipt?{path:ROOT+'/copy',body:{analysisSessionId:receipt.analysisSessionId,requestId:crypto.randomUUID(),snapshot:structuredClone(value)},snapshot:structuredClone(value)}:pendingDraft(value,copy?null:receipt,crypto.randomUUID(),restore?.analysisRevision);pending.current=task;
+      task=copy&&receipt?{path:ROOT+'/copy',body:{analysisSessionId:receipt.analysisSessionId,requestId:crypto.randomUUID(),snapshot:structuredClone(value)},snapshot:structuredClone(value)}:pendingDraft(value,copy?null:(assistantOverride?.receipt??receipt),crypto.randomUUID(),restore?.analysisRevision);pending.current=task;
     }
     if(!task)return false;
     const abort=new AbortController();request.current=abort;setBusy(true);setError(null);
@@ -184,6 +185,15 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
       if(alive.current&&!abort.signal.aborted){const unknown=status(value)===0||status(value)>=500;setUncertain(unknown);if(!unknown)pending.current=null;failure(value);}
       return false;
     }finally{if(alive.current&&!abort.signal.aborted)setBusy(false);}
+  }
+  async function applyAssistantTask(prepared:PreparedTask,baseJson:string):Promise<number|null>{
+    const board=current.current;if(!board||!api.project||!editable||uncertain||lifecycleUnknown)throw new Error(t('当前画布不可编辑，修改未应用。','This canvas cannot be edited. No changes applied.'));
+    const next=checkedTaskSnapshot(board,prepared,api.project,baseJson);
+    apply(next);if(!receipt){setReceipt(prepared.analysis);setSaved(JSON.stringify(prepared.baseline));setReload(v=>v+1);}
+    const first=prepared.receipts.find(r=>r.cardId);if(first?.cardId)setSelected(first.cardId);
+    setNotice(t('助手操作已加入草稿，可撤销。','Assistant actions applied to draft; undo is available.'));
+    if(prepared.wantsSave){const ok=await commit(false,undefined,{snapshot:next,receipt:prepared.analysis});return ok?lastCommitted.current?.analysisRevision??null:null;}
+    return null;
   }
   async function more(){if(!list?.nextCursor||loading)return;setLoading(true);const abort=new AbortController();request.current=abort;
     try{const next=await api.request<Listing>(ROOT,{q:filter,limit:25,cursor:list.nextCursor,lifecycle:trashView?'trashed':'active'},abort.signal);if(alive.current&&!abort.signal.aborted)setList({...next,items:[...list.items,...next.items]});}
@@ -435,7 +445,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           <Btn className="ac-save-view" disabled={!editable||!receipt} onClick={()=>void commit()}>{t('保存当前视图','Save current view')}</Btn>
           <span className="ad-hint">{t('中键拖动平移 · 滚轮缩放画布 · 拖标题移动 · 拖边角调整大小','Middle drag to pan · Wheel to zoom canvas · Drag title to move · Edges to resize')}</span>
         </div>
-        {assistantOpen&&<aside className="ad-inspector ad-assistant"><header><strong>{t('分析助手','Analysis assistant')}</strong><IconBtn label={t('关闭助手','Close assistant')} onClick={()=>setAssistantOpen(false)}><X size={16}/></IconBtn></header><AssistantPanel api={api} canTransfer={editable&&!dirty} preferredOrderId={draft.context.workOrderId} faultCode={draft.context.faultCode} onOpenOrder={onOpenWorkOrder} initialRunId={initialEntry&&'analysisSessionId' in initialEntry?initialEntry.assistantRunId:undefined} cards={draft.cards} receipt={receipt} en={en} canAddNote={editable&&draft.cards.length<50} onFocus={(card,anchor)=>{focusCard(card);if(anchor)openSource(card,anchor);}} onAddNote={text=>{if(!editable||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('助手整理 · 待人工核验','Assistant note · requires verification'),note:text,x:40+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:340,height:300,pinned:false}]});setSelected(id);}}/></aside>}
+        {assistantOpen&&<aside className="ad-inspector ad-assistant"><header><strong>{t('分析助手','Analysis assistant')}</strong><IconBtn label={t('关闭助手','Close assistant')} onClick={()=>setAssistantOpen(false)}><X size={16}/></IconBtn></header><AssistantPanel initialQuestion={initialEntry&&'assistantQuestion' in initialEntry?initialEntry.assistantQuestion:undefined} api={api} snapshot={draft} onApplyTask={editable?applyAssistantTask:undefined} canTransfer={editable&&!dirty} preferredOrderId={draft.context.workOrderId} faultCode={draft.context.faultCode} onOpenOrder={onOpenWorkOrder} initialRunId={initialEntry&&'analysisSessionId' in initialEntry?initialEntry.assistantRunId:undefined} cards={draft.cards} receipt={receipt} en={en} canAddNote={editable&&draft.cards.length<50} onFocus={(card,anchor)=>{focusCard(card);if(anchor)openSource(card,anchor);}} onAddNote={text=>{if(!editable||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('助手整理 · 待人工核验','Assistant note · requires verification'),note:text,x:40+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:340,height:300,pinned:false}]});setSelected(id);}}/></aside>}
         {right&&<aside className="ad-inspector"><header><strong>{t(selectedCard?'卡片详情':'分析范围',selectedCard?'Card details':'Analysis context')}</strong><IconBtn label={t('关闭详情','Close details')} onClick={()=>setRight(false)}><X size={16}/></IconBtn></header>{selectedCard?<>
           <label>{t('卡片名称','Card title')}<input maxLength={120} disabled={!editable||selectedCard.historical||!!selectedCard.source&&referenceState[selectedCard.source.id]!=='available'} value={label(selectedCard)} onChange={event=>apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,title:event.target.value}:card)})}/></label>
           {selectedCard.kind==='analysis'?<>{noteSections.map(([key,eng])=><label key={key}>{t(key,eng)}<textarea className="ac-note-section" maxLength={4000} disabled={!editable||selectedCard.historical} value={readNote(selectedCard.note||'')[key]} onChange={event=>{const note=writeNote({...readNote(selectedCard.note||''),[key]:event.target.value});if(note.length<=4000)apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,note}:card)});}}/></label>)}<small>{(selectedCard.note||'').length} / 4000</small>

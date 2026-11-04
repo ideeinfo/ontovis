@@ -3,6 +3,7 @@ import type {CanvasCard} from './analysisCanvas';
 import type {SourceAnchor} from './analysisSources';
 import type {DraftApi} from './AnalysisWorkspace';
 import type {LlmService,LlmTask} from './llmSettings';
+import type {EngineeringTask} from './assistantTasks';
 export const ASSISTANT_ROOT='/api/workbench/assistant';
 export const sourceLabels:Record<string,[string,string]>={object:['工程对象摘要','Object summary'],alarm:['模拟报警','Simulated alarm'],trend:['趋势汇总','Trend summary'],drawing:['图纸元数据','Drawing metadata'],photo:['照片定位元数据','Photo location metadata'],model:['模型绑定摘要','Model binding metadata'],document:['文档知识摘录','Document knowledge excerpt'],work_order:['历史工单摘要','Historical work order']};
 export const materialRoles:Record<string,[string,string]>={
@@ -33,19 +34,19 @@ export function defaultAssistantEvidence(cards:CanvasCard[]){
 export interface AssistantPolicy {enabled:boolean;serviceRef:string;allowedKinds:string[];reads:number;parallel:number;seconds:number}
 export interface AssistantPolicyView {revision:number;policy:AssistantPolicy;canManage:boolean;accessRevision:string;savedAt:string|null;
  service:LlmService;services?:Record<LlmTask,LlmService>;}
-export function assistantSendBlocker(state:{busy:boolean;active:boolean;pending:boolean;loadingHistory:boolean;focusedEarlier:boolean;taskMismatch:boolean;hasReceipt:boolean;view:AssistantPolicyView|null;policyError:unknown;service?:LlmService;selectedCount:number;question:string}){
+export function assistantSendBlocker(state:{busy:boolean;active:boolean;pending:boolean;loadingHistory:boolean;focusedEarlier:boolean;taskMismatch:boolean;hasReceipt:boolean;view:AssistantPolicyView|null;policyError:unknown;service?:LlmService;selectedCount:number;question:string;projectTools?:boolean}){
  if(state.busy)return 'ASSISTANT_WORKING';
  if(state.pending)return 'ASSISTANT_START_UNCERTAIN';
  if(state.active)return 'ASSISTANT_RUNNING';
  if(state.loadingHistory)return 'ASSISTANT_HISTORY_LOADING';
  if(state.focusedEarlier)return 'ASSISTANT_HISTORICAL_TURN';
  if(state.taskMismatch)return 'LLM_CONVERSATION_TASK_CHANGED';
- if(!state.hasReceipt)return 'ASSISTANT_SAVE_REQUIRED';
+ if(!state.hasReceipt&&!state.projectTools)return 'ASSISTANT_SAVE_REQUIRED';
  if(!state.view)return state.policyError?'ASSISTANT_POLICY_READ_FAILED':'ASSISTANT_POLICY_LOADING';
  if(!state.view.policy.enabled)return 'ASSISTANT_POLICY_DISABLED';
  if(!state.service?.enabled)return state.service?.reason||'ASSISTANT_SERVICE_UNAVAILABLE';
  if(!state.service.canRun)return state.service.reason||'ASSISTANT_RUN_FORBIDDEN';
- if(!state.selectedCount)return 'ASSISTANT_SELECTION_REQUIRED';
+ if(!state.selectedCount&&!state.projectTools)return 'ASSISTANT_SELECTION_REQUIRED';
  if(state.selectedCount>Math.min(state.view.policy.reads,state.service?.settings?.readLimit??8))return 'ASSISTANT_SELECTION_LIMIT';
  if(!state.question.trim())return 'ASSISTANT_QUESTION_REQUIRED';
  return null;
@@ -61,7 +62,7 @@ export interface AssistantSource {retrieval?:RetrievalTrace;key:string;kind:stri
 export interface AssistantRun {runId:string;state:string;version:number;analysisSessionId:string;analysisRevision:number;policyRevision:number;
  taskId?:LlmTask;
  question?:string;conversationId?:string|null;conversationVersion?:number;parentRunId?:string|null;
- progress:{key:string;state:string}[];sources:AssistantSource[];error:string|null;result:null|{answer:Record<'observations'|'hypotheses'|'gaps'|'nextSteps',{text:string;refs:string[]}[]>;model?:{taskId?:LlmTask;execution?:'ontobase'|'ontovis';provider?:string;modelId?:string};usage:Record<string,number>;modelCalls:number;engineeringConfirmation:false;partial:boolean;context?:{includedTurns:number;skippedTurns:{runId:string;reason:string}[]}};}
+ progress:{key:string;state:string}[];sources:AssistantSource[];error:string|null;result:null|{protocol?:string;task?:EngineeringTask;answer:Record<'observations'|'hypotheses'|'gaps'|'nextSteps',{text:string;refs:string[]}[]>;model?:{taskId?:LlmTask;execution?:'ontobase'|'ontovis';provider?:string;modelId?:string};usage:Record<string,number>;modelCalls:number;engineeringConfirmation:false;partial:boolean;context?:{includedTurns:number;skippedTurns:{runId:string;reason:string}[]}};}
 export interface AssistantConversation {conversationId:string;title:string;version:number;headRunId:string;analysisSessionId:string;analysisRevision:number;updatedAt:string}
 export interface AssistantConversationDetail extends AssistantConversation {items:AssistantRun[];hasEarlier:boolean}
 export interface EngineeringGraph {root:string;revision:string;truncated:boolean;gaps:string[];nodes:{id:string;kind:string;title:string;entityUid?:string;statement?:string;documentName?:string}[];
@@ -130,6 +131,11 @@ export function assistantMessage(error:unknown,en=false){
  if(modelErrors[code])return modelErrors[code][en?1:0];
  if(code==='LLM_CONVERSATION_TASK_CHANGED')return en?'This conversation uses a different task. Start a new conversation for this task.':'当前对话属于另一任务，请为此任务新建对话。';
  const outcomes:Record<string,[string,string]>={
+  ASSISTANT_QUERY_ONLY:['驾驶舱仅查询；请转后台执行画布操作。','Cockpit is query only. Open the workbench to edit the canvas.'],
+  ASSISTANT_DRAFT_CHANGED:['画布已变化，请重新发送操作指令；当前修改保留。','The canvas changed. Send a new instruction; edits are retained.'],
+  ASSISTANT_TARGET_AMBIGUOUS:['未找到唯一操作目标，请从检索结果选择资料，或明确资料卡名称。','The target is ambiguous. Select a result or specify the card.'],
+  ASSISTANT_FIXED_TREND_WINDOW:['已有趋势使用固定版本；请通过趋势时间工具重新读取，不能只改时间标记。','Existing trends are fixed evidence. Use the trend interval tool to read a new window.'],
+
   ASSISTANT_MODEL_UNAVAILABLE:['模型阶段未完成；旧回执未保留具体原因。可修改问题后重新发送。','The model step failed; this older receipt has no detailed cause. Edit the question before sending again.'],
   ASSISTANT_MODEL_REQUEST_REJECTED:['模型服务拒绝了请求，请在 AI 策略核对模型与参数。','The model service rejected this request. Check the model and parameters in AI policy.'],
   ASSISTANT_MODEL_AUTH_FAILED:['模型连接未通过认证，请在 OntoBase 检查连接。','Model authentication failed. Check the connection in OntoBase.'],

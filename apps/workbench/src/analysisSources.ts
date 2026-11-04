@@ -8,7 +8,7 @@ import type {SimulatedTrend,SimulatedDataset,SimulatedAlarm} from './simulatedAl
 import type {WorkOrderReferenceEntry} from './workOrderReferences';
 
 export const ANALYSIS_ROOT='/api/workbench/analysis-sessions';
-export type AnalysisEntry={projectOnly:true}|{entityUid:string;expectedEntityRevision:string;timeTo:string}|{datasetId:string;datasetRevision:string}|{orderId:string}|{analysisSessionId:string;analysisRevision:number;assistantRunId?:string;openLatest?:true}|{newDraft:true}|WorkOrderReferenceEntry;
+export type AnalysisEntry={projectOnly:true}|{entityUid:string;expectedEntityRevision:string;timeTo:string}|{datasetId:string;datasetRevision:string}|{orderId:string}|{analysisSessionId:string;analysisRevision:number;assistantRunId?:string;assistantQuestion?:string;openLatest?:true}|{newDraft:true}|WorkOrderReferenceEntry;
 export function analysisEntryRequest(entry:AnalysisEntry,requestId:string){
  if('newDraft'in entry)return null;
  if('analysisSessionId'in entry){const fixed=!('openLatest'in entry&&entry.openLatest);

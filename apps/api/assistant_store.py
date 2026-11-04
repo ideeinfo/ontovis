@@ -144,10 +144,13 @@ class AssistantStore:
         return {**row,**(dict(turn) if turn else {})}
 
     def conversations(self,project,owner,analysis,revision):
-        identifier(analysis);require(type(revision) is int and 1<=revision<=1000)
+        identifier(analysis);require(type(revision) is int and 0<=revision<=1000)
         with self.library.connect() as db:
             rows=db.execute('''select * from assistant_conversations where connection_id=? and project_code=? and owner=?
-                and analysis_id=? and analysis_revision=? order by updated_at desc,id desc limit 20''',
+                and analysis_id=? and (analysis_revision=? or exists (
+                    select 1 from assistant_runs r where r.id=head_run_id
+                    and json_extract(r.input_json,'$.protocol')='ontovis-engineering-tasks-v1'))
+                order by updated_at desc,id desc limit 20''',
                 (self.connection_id,project,owner,analysis,revision)).fetchall()
         return [self.conversation_public(dict(r)) for r in rows]
 
@@ -204,17 +207,20 @@ class AssistantStore:
                 head=db.execute('select * from assistant_conversations where id=? and connection_id=? and project_code=? and owner=?',
                     (conversation,self.connection_id,project,owner)).fetchone()
                 require(head is not None,'NOT_FOUND_OR_FORBIDDEN',404)
-                require(head['analysis_id']==body['analysisSessionId'] and head['analysis_revision']==body['expectedAnalysisRevision']
+                require(head['analysis_id']==body['analysisSessionId'] and (head['analysis_revision']==body['expectedAnalysisRevision']
+                    or body.get('protocol')=='ontovis-engineering-tasks-v1')
                     and head['version']==expected and head['head_run_id']==parent,'ASSISTANT_CONVERSATION_CHANGED',409)
                 previous=db.execute('select state,input_json from assistant_runs where id=?',(parent,)).fetchone()
                 require(previous is not None and previous['state'] not in ACTIVE,'ASSISTANT_BUSY',409)
                 require(json.loads(previous['input_json']).get('taskId','analysis')==body.get('taskId','analysis'),'LLM_CONVERSATION_TASK_CHANGED',409)
+                if body.get('protocol')=='ontovis-engineering-tasks-v1':
+                    require(json.loads(previous['input_json']).get('mode')==body['mode'],'ASSISTANT_QUERY_ONLY',403)
             db.execute('insert into assistant_runs values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (run_id,self.connection_id,project,owner,body['requestId'],fingerprint,body['analysisSessionId'],body['expectedAnalysisRevision'],
                  policy_revision,service_revision,'reading',1,stamp,stamp,encoded(body),'[]','[]',None,None))
             db.execute('insert into assistant_conversation_turns values(?,?,?,?)',(conversation,expected+1,run_id,parent))
-            db.execute('update assistant_conversations set head_run_id=?,version=?,updated_at=? where id=?',
-                (run_id,expected+1,stamp,conversation))
+            db.execute('update assistant_conversations set head_run_id=?,version=?,updated_at=?,analysis_revision=? where id=?',
+                (run_id,expected+1,stamp,body['expectedAnalysisRevision'],conversation))
         return self.run(project,owner,run_id),True
 
     def update(self, run_id, state, *, progress=None, sources=None, result=None, error=None):
@@ -223,6 +229,14 @@ class AssistantStore:
                 progress_json=coalesce(?,progress_json),sources_json=coalesce(?,sources_json),result_json=coalesce(?,result_json),error_code=? where id=?''',
                 (state,now(),None if progress is None else encoded(progress),None if sources is None else encoded(sources),
                  None if result is None else encoded(result),error,run_id))
+
+    def finish(self,run_id,state,result,progress,sources):
+        """A cancellation already accepted by the server wins over a late provider result."""
+        with self.library.connect() as db:
+            changed=db.execute('''update assistant_runs set state=?,version=version+1,updated_at=?,result_json=?,
+                progress_json=?,sources_json=?,error_code=null where id=? and state in ('reading','model','validating')''',
+                (state,now(),encoded(result),encoded(progress),encoded(sources),run_id)).rowcount
+        return changed==1
 
     @staticmethod
     def public(row, *, hide=False):

@@ -23,7 +23,7 @@ def work_order_summary(value, private):
     def chosen(rows, field, build, maximum):
         ranked = sorted(enumerate(rows, 1), key=lambda pair: (not bool(pair[1].get(field)), pair[0]))
         return [build(number, row) for number, row in ranked[:maximum]]
-    result = {'kind': 'work_order', 'faultCode': value.get('faultCode'), 'state': value.get('state'),
+    result = {'kind': 'work_order', 'orderId': value.get('orderId'), 'faultCode': value.get('faultCode'), 'state': value.get('state'),
               'revision': value.get('orderRevision'), 'engineeringConfirmation': False,
               'meaning': '固定模拟工单及人工记录，不是现场事实，不确认根因；pending仅指待登记，不能据此断言现场未执行。',
               'totalHypotheses': len(hypotheses), 'totalSteps': len(steps),
