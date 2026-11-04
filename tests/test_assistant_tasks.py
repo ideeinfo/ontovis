@@ -36,6 +36,17 @@ class TaskTests(unittest.TestCase):
         self.assertFalse(set(r['orderId'] for r in first['items'])&set(r['orderId'] for r in second['items']))
         self.assertEqual(0,self.search('130')['total'])
         with self.assertRaises(PreviewError):self.search(cursor=2,revision='changed')
+        row=first['items'][0]
+        one=self.orders.assistant_search(dict(q='',faultCode='13001',orderId=row['orderId'],cursor=0,limit=6,snapshotRevision=None))
+        self.assertEqual(1,one['total']);self.assertEqual(row['orderId'],one['items'][0]['orderId'])
+
+    def test_model_prose_does_not_narrow_an_exact_fault_or_order_filter(self):
+        tools=ProjectTools(self.reader,lambda:None,8,DEFAULT['allowedKinds'],())
+        tools.query(dict(tool='work_orders',query='查找本项目所有故障代码为13001的历史工单，仅限模拟记录，不限制历史时间，不确认相同根因。',faultCode='13001',orderId=''))
+        self.assertEqual(3,len(tools.results));self.assertEqual('',tools.trace[0]['filters']['query'])
+        selected=tools.results[0]['identifier'];other=ProjectTools(self.reader,lambda:None,8,DEFAULT['allowedKinds'],())
+        other.query(dict(tool='work_orders',query='只加入这一个编号，不确认同根因',faultCode='13001',orderId=selected))
+        self.assertEqual([selected],[r['identifier'] for r in other.results])
     def test_removed_card_still_found_fixed_identity_and_duplicate_are_preserved(self):
         tools=ProjectTools(self.reader,lambda:None,8,DEFAULT['allowedKinds'],())
         tools.query(dict(tool='work_orders',query='',faultCode='13001'))

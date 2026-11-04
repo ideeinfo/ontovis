@@ -60,7 +60,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
         trace=task['trace'][index];require(trace['tool']=='work_orders' and trace.get('nextCursor') is not None)
         _,reader=prepare(authorize,original)
         value=reader.orders.assistant_search(dict(q=trace['filters']['query'],faultCode=trace['filters']['faultCode'],
-            cursor=trace['nextCursor'],limit=6,snapshotRevision=trace['snapshotRevision']))
+            orderId=trace['filters'].get('orderId',''),cursor=trace['nextCursor'],limit=6,snapshotRevision=trace['snapshotRevision']))
         require(len(task['results'])+len(value['items'])<=50,'ASSISTANT_READ_LIMIT',409)
         for item in value['items']:
             task['results'].append(dict(key='R'+str(len(task['results'])+1),kind='work_order',title=item['title'],identifier=item['orderId'],

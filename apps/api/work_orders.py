@@ -154,8 +154,10 @@ class WorkOrders:
 
     def assistant_search(self, body):
         """Project search applies exact filters before pagination, independent of Canvas."""
-        require(set(body)=={'q','faultCode','cursor','limit','snapshotRevision'})
+        require({'q','faultCode','cursor','limit','snapshotRevision'}<=set(body)<=
+            {'q','faultCode','orderId','cursor','limit','snapshotRevision'})
         q=text(body['q'],200,empty=True);fault=text(body['faultCode'],100,empty=True)
+        order_id=text(body.get('orderId',''),100,empty=True)
         start,limit=body['cursor'],body['limit']
         require(type(start) is int and 0<=start<=10000 and type(limit) is int and 1<=limit<=12)
         with self.library.connect() as db:
@@ -163,8 +165,8 @@ class WorkOrders:
             if start or body['snapshotRevision'] is not None:
                 require(body['snapshotRevision']==snapshot,'WORK_ORDER_CHANGED',409)
             phrase='%'+q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-            where="(?='' or fault_code=?) and (title like ? escape '\\' or order_id like ? escape '\\')"
-            args=(fault,fault,phrase,phrase)
+            where="(?='' or fault_code=?) and (?='' or order_id=?) and (title like ? escape '\\' or order_id like ? escape '\\')"
+            args=(fault,fault,order_id,order_id,phrase,phrase)
             total=db.execute('select count(*) from work_orders where '+where,args).fetchone()[0]
             rows=db.execute('select * from work_orders where '+where+' order by updated_at desc,order_id limit ? offset ?',
                             (*args,limit,start)).fetchall()

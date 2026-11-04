@@ -28,8 +28,9 @@ def validate_plan(value):
         and type(value['actions']) is list and len(value['actions'])<=8,'ASSISTANT_OUTPUT_INVALID',502)
     require(value['intent']=='edit' or not value['actions'],'ASSISTANT_TOOL_NOT_ALLOWED',422)
     for q in value['queries']:
-        require(type(q) is dict and set(q)=={'tool','query','faultCode'} and q['tool'] in ('work_orders','objects','materials','graph','knowledge')
-            and all(type(q[k]) is str and len(q[k])<=200 for k in ('query','faultCode')),'ASSISTANT_TOOL_NOT_ALLOWED',422)
+        require(type(q) is dict and set(q) in ({'tool','query','faultCode'},{'tool','query','faultCode','orderId'}) and q['tool'] in ('work_orders','objects','materials','graph','knowledge')
+            and all(type(q[k]) is str and len(q[k])<=200 for k in ('query','faultCode'))
+            and type(q.get('orderId','')) is str and len(q.get('orderId',''))<=100,'ASSISTANT_TOOL_NOT_ALLOWED',422)
     for a in value['actions']:
         require(type(a) is dict and set(a)=={'kind','targets','text','x','y'} and a['kind'] in
             ('add_results','remove_cards','add_note','arrange','rename','save','set_window','add_relation','move_card','resize_card')
@@ -62,7 +63,10 @@ class ProjectTools:
         prefix=reader.reader.prefix
         if tool=='work_orders':
             require('work_order' in self.allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
-            result=self.read(lambda:reader.orders.assistant_search(dict(q=needle,faultCode=fault,cursor=0,limit=6,snapshotRevision=None)))
+            order_id=q.get('orderId','')
+            # An exact identity filter must not be narrowed by an LLM's prose restatement.
+            literal='' if fault or order_id else needle
+            result=self.read(lambda:reader.orders.assistant_search(dict(q=literal,faultCode=fault,orderId=order_id,cursor=0,limit=6,snapshotRevision=None)))
             rows=[]
             for item in result['items']:
                 row=dict(key='R'+str(len(self.results)+1),kind='work_order',title=item['title'],
@@ -71,7 +75,7 @@ class ProjectTools:
                     selector=dict(orderId=item['orderId'],expectedOrderRevision=item['orderRevision']))
                 self.results.append(row);rows.append(row)
             self.trace.append(dict(tool=tool,state='complete',count=len(rows),total=result['total'],
-                nextCursor=result['nextCursor'],snapshotRevision=result['snapshotRevision'],filters=q))
+                nextCursor=result['nextCursor'],snapshotRevision=result['snapshotRevision'],filters={**q,'query':literal,'orderId':order_id}))
             text=json.dumps(dict(kind='work_order',scope='项目工单库，不限画布；同码不代表同根因；尚未加入画布',
                 total=result['total'],truncated=result['nextCursor'] is not None,
                 items=[dict(key=r['key'],orderId=r['identifier'],revision=r['version'],faultCode=r['faultCode'],simulated=r['simulated']) for r in rows]),ensure_ascii=False,separators=(',',':'))
