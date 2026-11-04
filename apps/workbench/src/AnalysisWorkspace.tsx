@@ -189,8 +189,8 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   async function applyAssistantTask(prepared:PreparedTask,baseJson:string):Promise<number|null>{
     const board=current.current;if(!board||!api.project||!editable||uncertain||lifecycleUnknown)throw new Error(t('当前画布不可编辑，修改未应用。','This canvas cannot be edited. No changes applied.'));
     const next=checkedTaskSnapshot(board,prepared,api.project,baseJson);
-    apply(next);if(!receipt){setReceipt(prepared.analysis);setSaved(JSON.stringify(prepared.baseline));setReload(v=>v+1);}
-    const first=prepared.receipts.find(r=>r.cardId);if(first?.cardId)setSelected(first.cardId);
+    if(JSON.stringify(board)!==JSON.stringify(next))apply(next);if(!receipt){setReceipt(prepared.analysis);setSaved(JSON.stringify(prepared.baseline));setReload(v=>v+1);}
+    const first=prepared.receipts.find(r=>r.cardId),target=next.cards.find(card=>card.id===first?.cardId);if(target)focusCard(target);
     setNotice(t('助手操作已加入草稿，可撤销。','Assistant actions applied to draft; undo is available.'));
     if(prepared.wantsSave){const ok=await commit(false,undefined,{snapshot:next,receipt:prepared.analysis});return ok?lastCommitted.current?.analysisRevision??null:null;}
     return null;

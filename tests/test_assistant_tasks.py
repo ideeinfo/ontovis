@@ -87,6 +87,40 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(4,tools.reads);self.assertIn('检查',tools.sources[-1]['summary'])
         edge=tools.graphs[-1]['graph']['relations'][0]
         self.assertEqual(49,edge['provenance']['pageNumber']);self.assertEqual('release/a',edge['provenance']['recordId'])
+        graph['next_cursor']=1
+        paged=ProjectTools(reader,lambda:None,8,['document'],())
+        with patch('apps.api.fixed_documents.FixedDocuments.metadata',return_value=dict(sourceSha256='a'*64)),\
+             patch('apps.api.analysis_preview.node_evidence',return_value=dict(items=[dict(selector=dict(page=49))])),\
+             patch('apps.api.assistant_knowledge.read_neighborhood',return_value=response()):
+            paged.query(dict(tool='knowledge',query='',faultCode='13002'))
+        self.assertEqual(2,len(paged.graphs));self.assertEqual(1,paged.trace[0]['nextCursor'])
+        self.assertIn('其他分页未读取',paged.trace[-1]['scope'])
+
+    def test_graph_resolves_exact_project_identifier_before_fuzzy_children(self):
+        from urllib.parse import parse_qs,urlsplit
+        from tests.test_assistant_graph import graph
+        row=dict(entityUid='root',entityRevision='i:1',displayName='柜体',identifiers=[dict(value='=WEC+CN1',role='primary',
+            status='accepted',scheme='RDS',scopeType='project',scopeKey='P')])
+        calls=[]
+        def request(method,path):
+            calls.append(parse_qs(urlsplit(path).query))
+            return dict(projectCode='P',items=[row],nextCursor=None)
+        source=SimpleNamespace(prefix='/api/v1/projects/P',project_code='P',_request=request,
+            context_for_object=lambda *_:dict(item=row,context=None))
+        tools=ProjectTools(SimpleNamespace(reader=source),lambda:None,8,['object'],())
+        with patch('apps.api.assistant_graph.read_graph',return_value=graph()):
+            tools.query(dict(tool='graph',query='=WEC+CN1',faultCode=''))
+        self.assertEqual([{'primaryIdentifier':['=WEC+CN1'],'limit':['6']}],calls)
+        self.assertEqual(3,tools.reads);self.assertEqual('engineering',tools.graphs[0]['kind'])
+        self.assertEqual('primary_identifier',tools.trace[0]['match'])
+        calls.clear()
+        source._request=lambda method,path: calls.append(parse_qs(urlsplit(path).query)) or dict(projectCode='P',
+            items=[] if 'primaryIdentifier=' in path else [row,row],nextCursor=None)
+        fallback=ProjectTools(SimpleNamespace(reader=source),lambda:None,8,['object'],())
+        fallback.query(dict(tool='graph',query='柜体',faultCode=''))
+        self.assertEqual(2,len(calls));self.assertEqual(['柜体'],calls[1]['q']);self.assertEqual([],fallback.graphs)
+        source._request=lambda *_:dict(projectCode='other',items=[row],nextCursor=None)
+        with self.assertRaises(PreviewError):fallback.query(dict(tool='objects',query='=WEC+CN1',faultCode=''))
     def test_operation_receipt_replays_and_rejects_different_ack(self):
         run=str(uuid4());self.assertIsNone(load(self.library,run,'s'))
         retain(self.library,run,'s','base',dict(snapshot=board()))

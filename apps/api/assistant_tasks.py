@@ -88,8 +88,22 @@ class ProjectTools:
                 self.source('work_order',work_order_summary(detail,self.private),projectOrderId=item['orderId'],sourceRevision=str(item['orderRevision']))
         elif tool in ('objects','graph'):
             require('object' in self.allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
-            value=self.read(lambda:reader.reader._request('GET',prefix+'/objects?'+urlencode(dict(q=needle,limit=6))))
-            items=value['items'];self.trace.append(dict(tool='objects',state='complete',count=len(items),nextCursor=value.get('nextCursor'),filters=q))
+            from .analysis_source_reader import matches_project_identifier
+            def lookup(params):
+                value=self.read(lambda:reader.reader._request('GET',prefix+'/objects?'+urlencode({**params,'limit':6})))
+                require(value.get('projectCode')==reader.reader.project_code and type(value.get('items')) is list
+                    and len(value['items'])<=6,'SOURCE_UNAVAILABLE',502)
+                return value
+            identifier=needle.strip()
+            value=lookup(dict(primaryIdentifier=identifier)) if identifier else lookup(dict(q=''))
+            exact=bool(identifier and value['items'])
+            if exact:
+                require(all(matches_project_identifier(item,identifier,reader.reader.project_code) for item in value['items']),
+                    'SOURCE_CHANGED',409)
+            elif identifier:
+                value=lookup(dict(q=needle))
+            items=value['items'];self.trace.append(dict(tool='objects',state='complete',count=len(items),nextCursor=value.get('nextCursor'),
+                match='primary_identifier' if exact else 'name_or_identifier',filters=q))
             for item in items:
                 self.results.append(dict(key='R'+str(len(self.results)+1),kind='object',title=item['displayName'],
                     identifier=item['entityUid'],version=item['entityRevision'],reason='项目名称或位号匹配，不确认安装身份',simulated=False,
@@ -135,7 +149,9 @@ class ProjectTools:
             self.trace.append(dict(tool=tool,state='complete',count=len(value['nodes']),nextCursor=value.get('next_cursor'),filters=q))
             roots=[node for node in value['nodes'] if node.get('source') and node['kind']!='KnowledgeAssociation'
                    and (not fault or literal(node,'fault_code')==fault)]
-            if len(roots)==1 and value.get('next_cursor') is None and self.limit-self.reads>=3:
+            # Project pages are independent source topics. Reading one explicit fixed
+            # release does not require claiming that the whole project has one match.
+            if len(roots)==1 and self.limit-self.reads>=3:
                 from .fixed_documents import FixedDocuments
                 from .analysis_preview import node_evidence
                 from .assistant_knowledge import read_neighborhood,summary
@@ -156,7 +172,8 @@ class ProjectTools:
                     edges.append(dict(id=edge['id'],source=edge['source'],target=edge['target'],type=edge['predicate'],status='document_rule',
                         provenance=dict(recordId=source['release_id']+'/'+edge['id'],recordRevision=digest(graph),**(dict(pageNumber=min(edge_pages)) if edge_pages else {}))))
                 self.graphs.append(dict(kind='knowledge',graph={**graph,'relations':edges}))
-                self.trace.append(dict(tool='fixed_manual_neighborhood',state='complete',count=len(edges),truncated=graph['truncated']))
+                self.trace.append(dict(tool='fixed_manual_neighborhood',state='complete',count=len(edges),truncated=graph['truncated'],
+                    releaseId=source['release_id'],scope='本页匹配的固定发布版邻域；项目其他分页未读取' if value.get('next_cursor') is not None else '匹配的固定发布版邻域'))
 
 
 def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
@@ -222,7 +239,8 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             answer=validate_answer(model('answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'],{s['key'] for s in evidence})
         else:answer=dict(observations=[],hypotheses=[],gaps=[dict(text='本次未取得可引用的项目资料。请查看检索过程中的范围或服务状态。',refs=[])],nextSteps=[])
         guard(True)
-        result=dict(protocol=PROTOCOL,answer=answer,usage=usage,modelCalls=calls,engineeringConfirmation=False,partial=any(t['state']!='complete' for t in tools.trace),
+        result=dict(protocol=PROTOCOL,answer=answer,usage=usage,modelCalls=calls,engineeringConfirmation=False,
+            partial=any(t['state']!='complete' or t.get('truncated') or t.get('nextCursor') is not None for t in tools.trace),
             model=dict(taskId=service.get('taskId','analysis'),provider=service.get('provider'),modelId=service.get('modelId')),
             task=dict(mode=body['mode'],baseDigest=base,plan=plan,results=tools.results,graphs=tools.graphs,trace=tools.trace,
                 reads=tools.reads,readLimit=tools.limit,receipts=[],execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query'))

@@ -109,3 +109,5 @@
 .as-read-source{margin:8px 0;padding:8px;border:1px solid var(--borderSubtle);border-radius:5px}.as-read-source>summary{font-size:11px;color:var(--textSecondary);cursor:pointer}.as-read-source pre{white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;font-size:11px;line-height:1.7;max-height:240px;overflow:auto;padding:8px;background:var(--background)}
 
 .as-scope-heading{display:flex;justify-content:space-between;gap:12px;flex:none;padding:8px 16px 0;font-size:11px;line-height:1.6;color:var(--textSecondary)}
+
+.as-run-outcome{padding:10px 12px;margin:8px 0;background:var(--selected);border-left:3px solid var(--primary);border-radius:5px}.as-run-outcome>strong{font-size:13px;display:block}.as-run-outcome>small{display:block;font-size:11px;line-height:1.6;color:var(--textSecondary);margin-top:5px}.as-live-answer{display:contents}.as-live-answer>summary{display:none}.as-executed-answer>summary{font-size:11px;color:var(--textSecondary);cursor:pointer;padding:8px 0}
