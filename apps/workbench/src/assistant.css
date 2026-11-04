@@ -107,3 +107,5 @@
 .as-task-trace,.as-task-graph{padding-top:10px;border-top:1px solid var(--borderSubtle);font-size:11px}.as-task-trace>summary,.as-task-graph>summary{cursor:pointer;color:var(--textSecondary)}
 .as-task-trace>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0}.as-task-graph article{padding:8px 0;border-bottom:1px solid var(--borderSubtle);overflow-wrap:anywhere}.as-task-graph article>strong{font-size:12px;line-height:1.6}
 .as-read-source{margin:8px 0;padding:8px;border:1px solid var(--borderSubtle);border-radius:5px}.as-read-source>summary{font-size:11px;color:var(--textSecondary);cursor:pointer}.as-read-source pre{white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;font-size:11px;line-height:1.7;max-height:240px;overflow:auto;padding:8px;background:var(--background)}
+
+.as-scope-heading{display:flex;justify-content:space-between;gap:12px;flex:none;padding:8px 16px 0;font-size:11px;line-height:1.6;color:var(--textSecondary)}

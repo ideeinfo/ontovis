@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkedTaskSnapshot,snapshotDigest} from '../src/assistantTasks.ts';
+import {checkedTaskSnapshot,snapshotDigest,canApplyFreshTask} from '../src/assistantTasks.ts';
 import {assistantSendBlocker} from '../src/assistantApi.ts';
 import {blankAnalysisDraft} from '../src/analysisDraftState.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'Demo-PDS'};
@@ -17,4 +17,15 @@ test('draft changes, cross-project patches and repeated application cannot overw
  assert.throws(()=>checkedTaskSnapshot({...original,title:'User edit'},prepared,scope,raw),/画布已变化/);
  assert.throws(()=>checkedTaskSnapshot(original,{...prepared,snapshot:{...prepared.snapshot,projectCode:'other'}},scope,raw));
  assert.throws(()=>checkedTaskSnapshot(original,{...prepared,alreadyApplied:true},scope,raw),/未重复/);
+});
+test('only a newly requested unambiguous draft edit applies directly; history, queries and wider saves wait',()=>{
+ const task={mode:'workbench',plan:{intent:'edit',actions:[{kind:'add_results',targets:['ORDER-A']}]},receipts:[],trace:[]};
+ assert.equal(canApplyFreshTask(task,true,true),true);
+ assert.equal(canApplyFreshTask(task,false,false),false);
+ assert.equal(canApplyFreshTask({...task,mode:'cockpit_query'},true,false),false);
+ assert.equal(canApplyFreshTask({...task,plan:{intent:'query',actions:[]}},true,false),false);
+ assert.equal(canApplyFreshTask({...task,receipts:[{operationId:'already-applied'}]},true,false),false);
+ const saving={...task,plan:{intent:'edit',actions:[{kind:'save',targets:[]}]}};
+ assert.equal(canApplyFreshTask(saving,true,true),false);assert.equal(canApplyFreshTask(saving,true,false),true);
+ assert.equal(canApplyFreshTask({...task,plan:{intent:'edit',actions:[{kind:'add_results',targets:[]}]},trace:[{nextCursor:6}]},true,false),false);
 });

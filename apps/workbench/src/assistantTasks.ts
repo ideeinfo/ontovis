@@ -16,3 +16,9 @@ export function checkedTaskSnapshot(current:CanvasSnapshot,prepared:PreparedTask
  return structuredClone(prepared.snapshot);
 }
 export const taskActionNames:Record<string,[string,string]>={add_results:['加入检索资料','Add results'],remove_cards:['删除资料卡','Remove cards'],add_note:['添加待核验笔记','Add note'],arrange:['整理布局','Arrange'],rename:['修改画布名称','Rename'],save:['保存画布','Save'],set_window:['调整趋势时间','Change trend window'],add_relation:['添加假设关联','Add hypothesis relation'],move_card:['移动资料卡','Move card'],resize_card:['调整资料卡大小','Resize card']};
+export function canApplyFreshTask(task:EngineeringTask|undefined,fresh:boolean,hasUnsaved:boolean){
+ if(!fresh||!task||task.mode!=='workbench'||task.plan.intent!=='edit'||!task.plan.actions.length||task.receipts.length)return false;
+ if(hasUnsaved&&task.plan.actions.some(a=>a.kind==='save'))return false;
+ if(task.trace.some(t=>t.nextCursor!=null)&&task.plan.actions.some(a=>a.kind==='add_results'&&!a.targets.length))return false;
+ return true;
+}
