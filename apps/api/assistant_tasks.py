@@ -203,7 +203,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 from .assistant_graph import material_summary
                 material=tools.read(lambda:material_summary(reader,ref['sourceKind'],descriptor,job.private))
                 tools.source(ref['sourceKind'],material['summary'],sourceRevision=ref['sourceRevision'],
-                    fixedEvidenceRefId=ref['evidenceRefId'],descriptor=descriptor,**{k:v for k,v in material.items() if k!='summary'})
+                    evidenceRefId=ref['evidenceRefId'],descriptor=descriptor,**{k:v for k,v in material.items() if k!='summary'})
             except PreviewError as error:
                 if error.status in (401,403):raise
                 tools.trace.append(dict(tool='selected_material',state='unavailable',reason=error.code))
