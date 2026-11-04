@@ -27,6 +27,18 @@ def location_for(path):
 
 
 class WorkbenchDeploymentTests(unittest.TestCase):
+    def test_project_task_routes_accept_bounded_drafts_and_keep_the_proxy_allowlist(self):
+        for action in ('task-start','task-prepare','task-ack'):
+            root='/api/workbench/assistant/'+action
+            body=location_for(root)
+            self.assertIn('client_max_body_size 264k;',body)
+            self.assertIn('proxy_read_timeout 120s;',body)
+            for suffix in ('/','/extra'):
+                with self.assertRaises(AssertionError):location_for(root+suffix)
+        self.assertIn('client_max_body_size 16k;',location_for('/api/workbench/assistant/task-page'))
+        for action in ('task-execute-sql','task-proxy','task-confirm-engineering'):
+            with self.assertRaises(AssertionError):location_for('/api/workbench/assistant/'+action)
+
     def test_assistant_routes_are_explicit_bounded_and_do_not_publish_arbitrary_tools(self):
         for action in ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation','work-order-preview'):
             root='/api/workbench/assistant/'+action
