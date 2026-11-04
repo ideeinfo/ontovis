@@ -1,8 +1,13 @@
 import {cloudDefaults,environmentPreset,type SceneEnvironmentV1} from './sceneEnvironment.ts';
 import {nightPresentation,weatherEnvironment} from './weatherEnvironment.ts';
 import type {WeatherView} from './weather';
+import type {SceneModelInstance} from './sceneTypes';
 export type CockpitLight='scene'|'day'|'dusk'|'night';
 export type CockpitWeather='forecast'|'off'|'clear'|'cloud'|'rain'|'snow'|'fog';
+/** Component isolation changes the selected model's appearance, never the surrounding scene. */
+export function cockpitInstanceVisibility(instances:readonly SceneModelInstance[],devicesVisible:boolean,personal:Record<string,boolean>):Record<string,boolean>{
+ return devicesVisible?personal:Object.fromEntries(instances.map(item=>[item.sceneModelInstanceId,false]));
+}
 export function pageWindow(total:number,page:number,size:number){
  const count=Math.max(1,Math.floor(size)||1),pages=Math.max(1,Math.ceil(total/count)),current=Math.max(0,Math.min(pages-1,Math.floor(page)||0));
  return {page:current,pages,start:current*count,end:Math.min(total,(current+1)*count)};

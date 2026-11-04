@@ -27,7 +27,7 @@ import './cockpitSpace.css';
 import {motionProfile,type MotionStatus} from './simulatedMotion';
 import {useCockpitSimulation} from './useCockpitSimulation';
 import {WeatherCard} from './WeatherCard';
-import {presentationEnvironment,type CockpitLight,type CockpitWeather} from './cockpitDisplayState';
+import {cockpitInstanceVisibility,presentationEnvironment,type CockpitLight,type CockpitWeather} from './cockpitDisplayState';
 import {PageDeck,DisplaySwitch,CockpitWeatherSummary} from './CockpitPanels';
 import {CockpitAlarmSummary,CockpitAlarmCard,useCockpitAlarms} from './CockpitAlarmSummary';
 import {replayAlarm,type ReplaySelection} from './cockpitAlarms';
@@ -140,7 +140,7 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  useEffect(()=>{if(row?.error||missingScene)setSpaceNavigation(current=>current?.sceneId===sceneId?{...current,phase:'failed'}:current);},[row?.error,missingScene,sceneId]);
  useEffect(()=>{if(!active){pendingAlarm.current=null;setAlarmFocus(null);setSpaceNavigation(null);setGlobeFlight(null);setFocusedScene(null);++navigationSerial.current;}},[active]);
  const weatherPreview=useMemo(()=>presentationEnvironment(opened?.snapshot.environment,weather.usable?weather.value:null,lighting,weatherMode),[weather.usable,weatherMode,lighting,weather.value,opened?.snapshot.environment]);
- const visibleInstances=useMemo(()=>!devicesVisible?Object.fromEntries(opened?.snapshot.instances.map(item=>[item.sceneModelInstanceId,false])||[]):isolated&&componentFocus?Object.fromEntries(opened?.snapshot.instances.map(item=>[item.sceneModelInstanceId,item.sceneModelInstanceId===componentFocus.instanceId&&(personal[item.sceneModelInstanceId]??item.visible)])||[]):personal,[devicesVisible,personal,opened,isolated,componentFocus]);
+ const visibleInstances=useMemo(()=>cockpitInstanceVisibility(opened?.snapshot.instances||[],devicesVisible,personal),[devicesVisible,personal,opened]);
  const simulation=useCockpitSimulation(displayOpened,active&&(view==='scene'||view==='device'||!!spaceNavigation),paused,visibleInstances,modelViewRequest?selected?.sceneModelInstanceId??null:null);
  const simulationReady=Object.values(motionStatus).filter(status=>status==='ready').length;
  const selectedMotionText=!motionProfile(effectiveMotionRef?.sha256??'')?t('静态预设','Static preset'):modelViewRequest?t('模拟 · 查看暂停','SIM · inspection paused'):paused||!simulation.running||simulation.reduced?t('模拟 · 已暂停','SIM · paused'):simulation.preset==='stopped'?t('模拟 · 停机','SIM · stationary'):motionStatus[instanceId??'']==='ready'?t('模拟 · 运行中','SIM · running'):motionStatus[instanceId??'']==='unavailable'?t('模拟 · 不可用','SIM · unavailable'):t('模拟 · 准备中','SIM · loading');

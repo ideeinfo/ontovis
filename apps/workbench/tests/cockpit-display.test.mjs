@@ -1,7 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {deckCapacity,pageWindow,presentationEnvironment} from '../src/cockpitDisplayState.ts';
+import {cockpitInstanceVisibility,deckCapacity,pageWindow,presentationEnvironment} from '../src/cockpitDisplayState.ts';
 import {environmentPreset} from '../src/sceneEnvironment.ts';
+import {prepareComponentFocus} from '../src/sceneComponentFocus.ts';
+
+test('alarm component isolation preserves every other visible scene instance and explicit visibility choices',()=>{
+ const instances=Array.from({length:15},(_,index)=>({sceneModelInstanceId:`instance-${index}`,modelVersionId:index===0?'detail':'appearance',visible:index!==13,
+  placement:{position:{mode:'local',xM:index*100,zM:0},height:{mode:'local_relative',relativeHeightM:0},headingDeg:0},rootBinding:null,componentBindings:[]}));
+ const personal={'instance-12':false,'instance-14':false},before=structuredClone({instances,personal});
+ const visibility=cockpitInstanceVisibility(instances,true,personal),state={snapshot:{instances,coordinateFrame:{mode:'local_plane',frameRevision:'frame',origin:[0,0,0],unit:'m',axes:'X_EAST_Y_UP_Z_SOUTH'},terrain:null},
+  selectedId:'instance-0',personalVisibility:visibility,previewActive:false,modelRefs:[{modelVersionId:'detail',modelAssetId:'asset',contentRevision:'content',sha256:'a'.repeat(64)}]};
+ const request={token:1,instanceId:'instance-0',bounds:[[0,0,0],[2,3,4]],componentKeys:['cabinet'],isolate:true};
+ assert.equal(prepareComponentFocus(request,state)?.isolate,true);
+ assert.deepEqual(instances.filter(item=>visibility[item.sceneModelInstanceId]??item.visible).map(item=>item.sceneModelInstanceId),Array.from({length:12},(_,index)=>`instance-${index}`));
+ assert.equal(prepareComponentFocus({...request,isolate:false},state)?.isolate,false);
+ assert.deepEqual({instances,personal},before);
+});
+
+test('device layer can hide the whole scene and restore saved and personal visibility without changing either',()=>{
+ const instances=[{sceneModelInstanceId:'visible',visible:true},{sceneModelInstanceId:'hidden',visible:false},{sceneModelInstanceId:'personal',visible:true}];
+ const personal={personal:false},before=structuredClone({instances,personal});
+ assert.deepEqual(cockpitInstanceVisibility(instances,false,personal),{visible:false,hidden:false,personal:false});
+ const restored=cockpitInstanceVisibility(instances,true,personal);
+ assert.deepEqual(instances.map(item=>restored[item.sceneModelInstanceId]??item.visible),[true,false,false]);
+ assert.deepEqual(cockpitInstanceVisibility([],false,personal),{});
+ assert.deepEqual({instances,personal},before);
+});
+
 test('Presentation minimum rows fit within the measured deck and retain every page item',()=>{
  for(const minimum of [3,5])for(const height of [210,300,480]){
   const value=deckCapacity(height,124,minimum);assert.ok(value.count>=minimum);assert.ok(value.rowHeight*value.count<=height-42+.00001);
