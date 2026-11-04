@@ -110,8 +110,10 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   useEffect(()=>{
     if(!initialEntry)return;
     if('newDraft' in initialEntry){fresh();setMaterialsOpen(false);return;}
-    const abort=new AbortController();request.current=abort;setBusy(true);setError(null);setMaterialsOpen(true);
-    const opening=analysisEntryRequest(initialEntry,startId.current)!,isFixed=opening.fixed;setFixed(isFixed);if('analysisSessionId' in initialEntry&&initialEntry.assistantRunId)setAssistantOpen(true);
+    const abort=new AbortController();request.current=abort;setBusy(true);setError(null);
+    const openAssistant='analysisSessionId' in initialEntry&&!!(initialEntry.assistantRunId||('assistantQuestion' in initialEntry&&initialEntry.assistantQuestion));
+    setAssistantOpen(openAssistant);setMaterialsOpen(!openAssistant);setRight(false);
+    const opening=analysisEntryRequest(initialEntry,startId.current)!,isFixed=opening.fixed;setFixed(isFixed);
     void api.request<Detail&{resumed:boolean;historyImported:boolean;missingHistorySources?:unknown[]}>(opening.path,opening.body,abort.signal)
       .then(value=>{if(!abort.signal.aborted){adopt(value);setNotice(isFixed?t('工单关联版本 · 只读查看','Linked revision · read only'):value.historyImported?t('已调入历史参考，本次记录独立保存','History loaded; current investigation is independent'):value.resumed?t('已继续本次分析','Resumed analysis'):'');}})
       .catch(value=>{if(!abort.signal.aborted)failure(value);}).finally(()=>{if(!abort.signal.aborted)setBusy(false);});
