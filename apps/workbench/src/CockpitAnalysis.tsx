@@ -1,5 +1,5 @@
 import {lazy,Suspense,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,type CSSProperties,type KeyboardEvent as ReactKeyboardEvent,type PointerEvent as ReactPointerEvent} from 'react';
-import {ArrowUpRight,BookOpen,Box,CheckCheck,ChevronDown,ChevronLeft,ChevronRight,ChevronUp,FileText,GitBranch,GripVertical,Hand,Image,LayoutDashboard,Maximize2,Plus,RefreshCw,RotateCcw,Sparkles,StickyNote,TriangleAlert,TrendingUp,X,ZoomIn,ZoomOut} from 'lucide-react';
+import {ArrowUpRight,BookOpen,Box,CheckCheck,ChevronLeft,ChevronRight,FileText,GitBranch,GripVertical,Hand,Image,LayoutDashboard,Maximize2,Plus,RefreshCw,RotateCcw,Sparkles,StickyNote,TriangleAlert,TrendingUp,ZoomIn,ZoomOut} from 'lucide-react';
 import {cancelled,failureMessage,type WorkbenchApi} from './api';
 import {Btn,IconBtn,Modal} from './Primitives';
 import {AnalysisSourceCard,materialNames} from './AnalysisSourceCard';
@@ -8,7 +8,8 @@ import {useSourceRelations} from './AnalysisSourceRelations';
 import {cockpitRelationGraph,cockpitRelationLabels,cockpitRelationRoute,type CockpitRelation} from './cockpitRelationGraph';
 import type {CanvasCard,Viewport} from './analysisCanvas';
 import {COCKPIT_CANVAS_MIN_ZOOM,COCKPIT_CANVAS_MAX_ZOOM,cockpitAnalysisLayout,cockpitCardMove,cockpitCanvasFit,cockpitCanvasZoom,cockpitCanvasPan,cockpitCanvasFocus,cockpitCanvasReveal,cockpitCanvasWheel,type CockpitCardPositions} from './cockpitAnalysisCanvas';
-import type {AssistantRun} from './assistantApi';
+import {assistantSourceAnchor,type AssistantRun} from './assistantApi';
+import {CockpitAnalysisRecord,type CockpitRecordReference} from './CockpitAnalysisRecord';
 import {PageDeck} from './CockpitPanels';
 import {cockpitAnalysisDetail,cockpitAnalysisHistorical,cockpitAnalysisIndex,cockpitAnalysisTurns,cockpitNoteRecords,type CockpitAnalysisDetail,type CockpitFault} from './cockpitAnalysisState';
 import './analysisMaterials.css';
@@ -20,9 +21,9 @@ const AssistantPanel=lazy(()=>import('./AssistantPanel').then(module=>({default:
 type Index=Awaited<ReturnType<typeof cockpitAnalysisIndex>>;
 type Props={api:WorkbenchApi;active:boolean;en:boolean;entry:AnalysisEntry|null;faults:CockpitFault[];onChooseFault:(entry:AnalysisEntry)=>void;onBackend:(entry:AnalysisEntry)=>void};
 export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBackend}:Props){
- const t=(zh:string,eng:string)=>en?eng:zh,board=useRef<HTMLDivElement>(null),world=useRef<HTMLDivElement>(null),workspace=useRef<HTMLElement>(null),queryPanel=useRef<HTMLElement>(null);
- const [queryOpen,setQueryOpen]=useState(false),[queryPosition,setQueryPosition]=useState<{x:number;y:number}|null>(null),[recordAttempt,setRecordAttempt]=useState(0);
- const queryDrag=useRef<{x:number;y:number;left:number;top:number}|null>(null);
+ const t=(zh:string,eng:string)=>en?eng:zh,board=useRef<HTMLDivElement>(null),world=useRef<HTMLDivElement>(null),workspace=useRef<HTMLElement>(null);
+ const [assistantTab,setAssistantTab]=useState<'chat'|'record'>('chat'),[recordAttempt,setRecordAttempt]=useState(0);
+ const returnToRecord=useRef(false);
  const [index,setIndex]=useState<Index|null>(null),[selected,setSelected]=useState(''),[detail,setDetail]=useState<CockpitAnalysisDetail|null>(null);
  const [loading,setLoading]=useState(false),[error,setError]=useState<unknown>(null),[attempt,setAttempt]=useState(0);
  const [focused,setFocused]=useState(''),[expanded,setExpanded]=useState<CanvasCard|null>(null),[anchor,setAnchor]=useState<SourceAnchor|null>(null);
@@ -38,7 +39,7 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
  const [turns,setTurns]=useState<AssistantRun[]|null>(null),[turnError,setTurnError]=useState(false),[turnIndex,setTurnIndex]=useState(0),[recordOpen,setRecordOpen]=useState(false);
  const key=JSON.stringify(entry);
  useEffect(()=>{
-  setIndex(null);setSelected('');setDetail(null);setExpanded(null);setError(null);setQueryOpen(false);setQueryPosition(null);
+  setIndex(null);setSelected('');setDetail(null);setExpanded(null);setError(null);setAssistantTab('chat');returnToRecord.current=false;
   if(!active)return;const abort=new AbortController();setLoading(true);
   void cockpitAnalysisIndex(api,entry,abort.signal).then(value=>{if(!abort.signal.aborted){setIndex(value);setSelected(value.items[0]?.analysisSessionId||'');}})
    .catch(value=>{if(!abort.signal.aborted&&!cancelled(value))setError(value);}).finally(()=>{if(!abort.signal.aborted)setLoading(false);});
@@ -49,7 +50,7 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
  const candidate=index?.items.find(item=>item.analysisSessionId===selected);
  useEffect(()=>{
   endCardDrag(true);endPan(true);setCardPositions({});setFrontCard('');setHand(false);autoFit.current=true;
-  setDetail(null);setExpanded(null);setRelation(null);setQueryOpen(false);setFocused('');setAvailability({});setError(null);
+  setDetail(null);setExpanded(null);setRelation(null);setAssistantTab('chat');setFocused('');setAvailability({});setError(null);
   if(!active||!index||!candidate)return;const abort=new AbortController();setLoading(true);
   const initial=index.initial,request=initial?.analysisSessionId===candidate.analysisSessionId&&initial.analysisRevision===candidate.analysisRevision?Promise.resolve(initial):cockpitAnalysisDetail(api,candidate,abort.signal,fault?.faultCode);
   void request.then(value=>{if(!abort.signal.aborted)setDetail(value);}).catch(value=>{if(!abort.signal.aborted&&!cancelled(value))setError(value);}).finally(()=>{if(!abort.signal.aborted)setLoading(false);});
@@ -108,7 +109,9 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
   autoFit.current=false;setViewport(current=>({...current,x:boardSize.width/2-point.x*current.zoom,y:boardSize.height/2-point.y*current.zoom}));
  }
 
- function closeQuery(){setQueryOpen(false);setRecordAttempt(value=>value+1);}
+ function openChat(){setAssistantTab('chat');requestAnimationFrame(()=>workspace.current?.querySelector<HTMLTextAreaElement>('.pa-chat-panel textarea')?.focus());}
+ function showRecords(){setAssistantTab('record');setRecordAttempt(value=>value+1);}
+ function closeExpanded(){setExpanded(null);setAnchor(null);if(returnToRecord.current){returnToRecord.current=false;setRecordOpen(true);}}
  function dragCard(event:ReactPointerEvent<HTMLElement>,card:CanvasCard){
   if(event.button!==0||!event.isPrimary||(event.target as Element).closest('button:not(.pa-card-grip)'))return;
   const rect=world.current?.getBoundingClientRect();if(!rect?.width||!rect.height)return;
@@ -153,13 +156,12 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
   if(delta){event.preventDefault();autoFit.current=false;setViewport(current=>cockpitCanvasPan(current,delta));}
  }
 
- function dragQuery(event:ReactPointerEvent<HTMLElement>){if(event.button!==0||(event.target as HTMLElement).closest('button'))return;const panel=queryPanel.current;if(!panel)return;queryDrag.current={x:event.clientX,y:event.clientY,left:panel.offsetLeft,top:panel.offsetTop};event.currentTarget.setPointerCapture(event.pointerId);}
- function moveQuery(event:ReactPointerEvent<HTMLElement>){const drag=queryDrag.current,panel=queryPanel.current,parent=workspace.current;if(!drag||!panel||!parent)return;setQueryPosition({x:Math.max(8,Math.min(parent.clientWidth-panel.offsetWidth-8,drag.left+event.clientX-drag.x)),y:Math.max(8,Math.min(parent.clientHeight-panel.offsetHeight-8,drag.top+event.clientY-drag.y))});}
- function endQueryDrag(){queryDrag.current=null;}
  function edit(){if(detail)onBackend({analysisSessionId:detail.analysisSessionId,analysisRevision:detail.analysisRevision,openLatest:true});}
  const run=turns?.[turnIndex],answer=run?.result&&['complete','partial'].includes(run.state)?run.result.answer:null;
  const noteCards=detail?.snapshot.cards.filter(card=>card.kind==='analysis'&&card.note?.trim())||[];
- const groups=answer?Object.entries({observations:t('观察','Observations'),hypotheses:t('可能原因 · 待验证','Possible causes · unverified'),gaps:t('证据缺口','Evidence gaps'),nextSteps:t('下一步核验','Next checks')}).flatMap(([id,title])=>answer[id as keyof typeof answer].length?[{id,title,rows:answer[id as keyof typeof answer]}]:[]):cockpitNoteRecords(noteCards,en);
+ const groups=answer?Object.entries({observations:t('已知情况','Known information'),hypotheses:t('待验证假设','Hypotheses to check'),gaps:t('资料缺口','Evidence gaps'),nextSteps:t('建议核查','Suggested checks')}).flatMap(([id,title])=>answer[id as keyof typeof answer].length?[{id,title,rows:answer[id as keyof typeof answer]}]:[]):cockpitNoteRecords(noteCards,en);
+ const recordReferences=Object.fromEntries((run?.sources??[]).map(source=>{const card=detail?.snapshot.cards.find(item=>item.source?.id===source.evidenceRefId);return [source.key,{title:card?.title??source.key,available:!!card&&source.availability==='available'} satisfies CockpitRecordReference];}));
+ function openRecordReference(key:string){const source=run?.sources.find(item=>item.key===key),card=detail?.snapshot.cards.find(item=>item.source?.id===source?.evidenceRefId);if(!source||!card||source.availability!=='available')return;setRecordOpen(false);returnToRecord.current=true;focusCard(card);setAnchor(assistantSourceAnchor(source));setExpanded(card);}
  const faultValue=fault?JSON.stringify([fault.datasetId,fault.datasetRevision]):entry&&'datasetId'in entry?JSON.stringify([entry.datasetId,entry.datasetRevision]):'';
  const historical=detail&&cockpitAnalysisHistorical(detail,index?.entry||null);
  const message=error instanceof Error&&error.message==='ANALYSIS_CONTEXT_MISMATCH'?t('画布与当前故障不匹配，请重新选择。','The canvas does not match this fault. Choose again.'):error instanceof Error&&error.message==='ANALYSIS_CHANGED'?t('画布版本已变化，请重新读取。','The canvas revision changed. Reload it.'):failureMessage(error,en?'en':'zh');
@@ -183,22 +185,22 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
      </article>;})}
     </div></div><footer className="pa-board-footer"><small title={t('实线：登记关系 · 虚线：候选或人工关联 · 经对象：关联链','Solid: recorded · Dashed: candidate or manual · Via object: relationship path')}>{sourceRelations.error?<button onClick={sourceRelations.retry}>{t('关系读取失败，重试','Retry relationships')}</button>:sourceRelations.loading?t('正在读取关系…','Loading relationships…'):t('实线：登记关系 · 虚线：候选/人工 · 经对象：关联链','Solid: recorded · Dashed: candidate/manual · Via object: path')}</small><button className="pa-layout-reset" disabled={!Object.keys(cardPositions).length} onClick={resetLayout}><RotateCcw size={13}/>{t('恢复布局','Reset layout')}</button><span>{layout.total} {t('张卡片','cards')}</span><div className="pa-canvas-tools" role="group" aria-label={t('画布视图','Canvas view')}><IconBtn label={t('平移画布','Pan canvas')} aria-pressed={hand} onClick={()=>setHand(value=>!value)}><Hand size={15}/></IconBtn><IconBtn label={t('缩小画布','Zoom out canvas')} disabled={viewport.zoom<=COCKPIT_CANVAS_MIN_ZOOM} onClick={()=>zoomCanvas(viewport.zoom*.8)}><ZoomOut size={15}/></IconBtn><button className="pa-zoom-value" aria-label={t('画布原尺寸100%','Canvas actual size 100%')} title={t('恢复100%','Reset to 100%')} onClick={()=>zoomCanvas(1)}>{Math.round(viewport.zoom*100)}%</button><IconBtn label={t('放大画布','Zoom in canvas')} disabled={viewport.zoom>=COCKPIT_CANVAS_MAX_ZOOM} onClick={()=>zoomCanvas(viewport.zoom*1.25)}><ZoomIn size={15}/></IconBtn><IconBtn label={t('适应全部资料','Fit all evidence')} onClick={fitCanvas}><Maximize2 size={15}/></IconBtn></div></footer>
    </main>
-   <aside className="pa-record pc-panel"><header><Sparkles size={22}/><h2>{t('工程助手','Engineering assistant')}</h2><small>{t('已保存记录','Saved record')}</small></header>
+   <aside className="pa-record pa-assistant pc-panel" aria-label={t('工程助手','Engineering assistant')}><header><Sparkles size={20}/><h2>{t('工程助手','Engineering assistant')}</h2><small>{t('基于当前资料','Current materials')}</small></header>
+    <div className="pa-assistant-tabs" role="tablist" aria-label={t('工程助手视图','Engineering assistant view')}><button type="button" id="pa-chat-tab" role="tab" aria-selected={assistantTab==='chat'} aria-controls="pa-chat-panel" onClick={openChat}>{t('问答','Chat')}</button><button type="button" id="pa-record-tab" role="tab" aria-selected={assistantTab==='record'} aria-controls="pa-record-panel" onClick={showRecords}>{t('记录','Records')}</button></div>
+    <div id="pa-chat-panel" role="tabpanel" aria-labelledby="pa-chat-tab" className="pa-chat-panel ad-inspector ad-assistant" hidden={assistantTab!=='chat'}><Suspense fallback={<p role="status">{t('正在打开助手…','Opening assistant…')}</p>}><AssistantPanel queryOnly api={api} cards={detail.snapshot.cards} receipt={detail} en={en} canAddNote={false} canTransfer={false} onFocus={focusCard} onAddNote={ignore}/></Suspense></div>
+    <div id="pa-record-panel" role="tabpanel" aria-labelledby="pa-record-tab" className="pa-saved-panel" hidden={assistantTab!=='record'}>
     {turns&&turns.length>1&&<div className="pa-turns"><button aria-label={t('上一轮分析','Previous analysis turn')} disabled={turnIndex===0} onClick={()=>setTurnIndex(turnIndex-1)}><ChevronLeft size={15}/></button><span>{t('第','Turn ')}{(run?.conversationVersion||turnIndex+1)}{t('轮','')}</span><button aria-label={t('下一轮分析','Next analysis turn')} disabled={turnIndex+1===turns.length} onClick={()=>setTurnIndex(turnIndex+1)}><ChevronRight size={15}/></button></div>}
     {run?.question&&<div className="pa-question"><Sparkles size={18}/><p>{run.question}</p></div>}
     {turns===null?<p className="pa-record-state" role="status">{t('正在读取分析记录…','Loading analysis record…')}</p>:turnError?<p className="pa-record-state" role="status">{t('已保存的助手记录暂不可用。','The saved assistant record is unavailable.')}</p>:run&&!answer?<p className="pa-record-state" role="status">{t('此轮暂无可展示回答，来源或状态可能已变化。','This turn has no displayable answer; its sources or state may have changed.')}</p>:!groups.length?<div className="pa-record-empty"><Sparkles size={36}/><p>{t('暂无已保存的分析记录','No saved analysis record')}</p></div>:null}
-    {!!groups.length&&<PageDeck key={detail.analysisSessionId+':'+detail.analysisRevision+':'+turnIndex} en={en} label={t('已保存分析记录','Saved analysis record')} items={groups} rowHeight={160} minimumRows={1} render={group=><section className="pa-answer" data-kind={group.id}><h3>{group.id==='hypotheses'?<TriangleAlert size={17}/>:<CheckCheck size={17}/>}<span>{group.title}</span></h3>{group.rows.slice(0,2).map((row,i)=><p key={i}>{row.text}<span>{row.refs.map(ref=>{const source=run?.sources.find(item=>item.key===ref),card=detail.snapshot.cards.find(item=>item.source?.id===source?.evidenceRefId);return <button key={ref} disabled={!card} onClick={()=>card&&focusCard(card)}>{ref}</button>;})}</span></p>)}</section>}/>}
-    <button className="pa-record-more" onClick={()=>setRecordOpen(true)}>{t('查看完整记录','View full record')}<Maximize2 size={14}/></button><button className="pa-edit-action" onClick={edit}><ArrowUpRight size={17}/>{t('在后台继续分析','Continue in workbench')}</button>
+    {!!groups.length&&<PageDeck key={detail.analysisSessionId+':'+detail.analysisRevision+':'+turnIndex} en={en} label={t('已保存分析记录','Saved analysis record')} items={groups} rowHeight={160} minimumRows={1} render={group=><section key={group.id} className="pa-answer" data-kind={group.id}><h3>{group.id==='hypotheses'?<TriangleAlert size={17}/>:<CheckCheck size={17}/>}<span>{group.title}</span></h3>{group.rows.slice(0,2).map((row,i)=><p key={i}>{row.text}<span>{row.refs.map(ref=>{const source=run?.sources.find(item=>item.key===ref),card=detail.snapshot.cards.find(item=>item.source?.id===source?.evidenceRefId);return <button key={ref} disabled={!card} onClick={()=>card&&focusCard(card)}>{ref}</button>;})}</span></p>)}</section>}/>}
+    <button className="pa-record-more" disabled={turns===null} onClick={()=>setRecordOpen(true)}>{t('查看完整记录','View full record')}<Maximize2 size={14}/></button><button className="pa-edit-action" onClick={openChat}><Sparkles size={17}/>{t('基于当前资料提问','Ask about these materials')}</button>
+    </div>
    </aside>
   </div>:null}
   {relation&&<Modal className="pa-relation-dialog" title={t('资料关系','Evidence relationship')} description={relation.label} onClose={()=>setRelation(null)}><div className="pa-relation-chain">{[relation.from,...relation.via,relation.to].map((card,i)=><span key={card.id}>{i>0&&<ChevronRight size={15}/>}<button onClick={()=>{setRelation(null);focusCard(card);openCard(card);}}>{card.title}</button></span>)}</div>{relation.via.length>0&&<p>{t('经已登记对象关系连接，属于间接关联。','Connected through recorded object relationships; this is an indirect association.')}</p>}{relation.steps.map(step=><section key={step.id}><strong>{step.label}{step.origin==='candidate'?' · '+t('候选','Candidate'):''}</strong><small>{step.from.title} → {step.to.title}</small><p>{step.reason}</p></section>)}{!relation.steps.length&&<p>{relation.reason}</p>}<Btn onClick={()=>{setRelation(null);focusCard(relation.to);setExpanded(relation.to);setAnchor(relation.anchor);}}><ArrowUpRight size={15}/>{t('展开并定位','Open at location')}</Btn></Modal>}
-  {expanded&&<Modal className="pa-expanded" title={expanded.title} description={t('固定来源 · 查看','Fixed source · View')} onClose={()=>{setExpanded(null);setAnchor(null);}}>{content(expanded,true)}</Modal>}
-  {recordOpen&&detail&&<Modal className="pa-record-dialog" title={t('分析记录与范围','Analysis record and scope')} description={detail.snapshot.title+' · r'+detail.analysisRevision} onClose={()=>setRecordOpen(false)}><p>{candidate?.reason}</p><p>{detail.snapshot.context.timeFrom} — {detail.snapshot.context.timeTo} · {detail.snapshot.context.timezone}</p>{run?.question&&<h3>{run.question}</h3>}{groups.map((group,groupIndex)=><section key={group.id+':'+groupIndex}><h3>{group.title}</h3>{group.rows.map((row,i)=><p key={i}>{row.text}</p>)}</section>)}{!groups.length&&<p>{t('暂无可展示的已保存记录。','No saved record is available to display.')}</p>}<Btn onClick={edit}><ArrowUpRight size={15}/>{t('在后台继续分析','Continue in workbench')}</Btn></Modal>}
-  {detail&&<button className="pa-query-launch" aria-expanded={queryOpen} aria-controls="pa-floating-query" onClick={()=>queryOpen?closeQuery():setQueryOpen(true)}><Sparkles size={21}/><span>{t('向助手查询当前故障…','Ask about this fault…')}</span><ArrowUpRight size={17}/></button>}
-  {queryOpen&&detail&&<aside id="pa-floating-query" ref={queryPanel} className="pa-query ad-inspector ad-assistant" role="dialog" aria-modal="false" aria-labelledby="pa-query-heading" style={queryPosition?{left:queryPosition.x,top:queryPosition.y,right:'auto',bottom:'auto'}:undefined} onKeyDown={event=>{if(event.key==='Escape'){event.stopPropagation();closeQuery();}}}>
-   <header onPointerDown={dragQuery} onPointerMove={moveQuery} onPointerUp={endQueryDrag} onPointerCancel={endQueryDrag}><Sparkles size={19}/><div><h2 id="pa-query-heading">{t('查询助手','Query assistant')}</h2><small>{detail.snapshot.title} · r{detail.analysisRevision}</small></div><IconBtn label={t('关闭查询助手','Close query assistant')} onClick={closeQuery}><X size={16}/></IconBtn></header>
-   <div className="pa-query-body"><Suspense fallback={<p role="status">{t('正在打开助手…','Opening assistant…')}</p>}><AssistantPanel queryOnly api={api} cards={detail.snapshot.cards} receipt={detail} en={en} canAddNote={false} canTransfer={false} onFocus={focusCard} onAddNote={ignore}/></Suspense></div>
-  </aside>}
+  {expanded&&<Modal className="pa-expanded" title={expanded.title} description={t('固定来源 · 查看','Fixed source · View')} onClose={closeExpanded}>{content(expanded,true)}</Modal>}
+  {detail&&<CockpitAnalysisRecord open={recordOpen} detail={detail} reason={candidate?.reason} run={answer?run:undefined} groups={groups} references={recordReferences} en={en} onReference={openRecordReference} onClose={()=>setRecordOpen(false)} onAsk={()=>{setRecordOpen(false);openChat();}} onEdit={edit}/>}
+
  </section>;
 }
 function InfoLabel({en}:{en:boolean}){return <><GitBranch size={13}/>{en?'Record & scope':'记录与范围'}<ChevronRight size={12}/></>;}

@@ -55,6 +55,8 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
    }
    if(!value.items.length)return;const detail=await service.conversation(value.items[0].conversationId,undefined,abort.signal);
    if(abort.signal.aborted||current.current!==key||historyGeneration.current!==generation)return;
+   // Saved analysis remains in Records; a query starts with its own conversation.
+   if(queryOnly&&detail.items.at(-1)?.taskId!=='query')return;
    if(!queryOnly)setTaskId(detail.items.at(-1)?.taskId??'analysis');setConversation(detail);setTurns(detail.items);setRun(detail.items.at(-1)??null);setHasEarlier(detail.hasEarlier);
   }).catch(e=>{if(!abort.signal.aborted&&!cancelled(e)&&historyGeneration.current===generation)setError(e);}).finally(()=>{if(!abort.signal.aborted&&current.current===key&&historyGeneration.current===generation)setLoadingHistory(false);});
   return()=>abort.abort();
