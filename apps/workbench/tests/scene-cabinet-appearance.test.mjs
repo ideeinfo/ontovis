@@ -17,8 +17,9 @@ function fixture(id='instance-A',material=new THREE.MeshStandardMaterial({color:
   const cabinet=mesh('source-cabinet',{ontoVisComponentKey:'CT',ontoVisNodeIndex:1});
   const proxy=mesh('proxy-cabinet',{ontoVisComponentKey:'CN',ontoVisProxySchematic:true});
   const shell=mesh('source-shell',{ontoVisNodeIndex:10,component:'tower'});
+  const blade=mesh('source-blade',{ontoVisNodeIndex:145,component:'blade'});
   const interior=mesh('source-interior',{ontoVisNodeIndex:11,component:'generator'});
-  return {root,geometry,material,cabinet,proxy,shell,interior,effect:new SceneCabinetAppearance(root,version())};
+  return {root,geometry,material,cabinet,proxy,shell,blade,interior,effect:new SceneCabinetAppearance(root,version())};
 }
 const disposed=value=>{
   const state={count:0};value.addEventListener('dispose',()=>state.count++);return state;
@@ -215,14 +216,16 @@ test('alarm anchors follow current source/proxy meshes without changing the acti
  f.effect.dispose();assert.ok(f.effect.componentBounds(['CT']).isEmpty());
 });
 
-test('solid shell mode (fadeShell=false) keeps shell materials solid while highlighting the selected component',()=>{
+test('solid shell mode (fadeShell=false) keeps shell materials and blade assemblies solid while highlighting the selected component',()=>{
  const f=fixture();
  f.effect.apply(['CT'],theme,false,false);
  assert.equal(f.shell.material,f.material);
+ assert.equal(f.blade.material,f.material);
  assert.notEqual(f.cabinet.material,f.material);
  assert.equal(f.cabinet.material.emissive.getHex(),new THREE.Color(theme).getHex());
  f.effect.apply(['CT'],theme,true,false);
  assert.equal(f.shell.material,f.material);
+ assert.equal(f.blade.material,f.material);
  assert.notEqual(f.interior.material,f.material);
  assert.equal(f.interior.material.opacity,.5);
  f.effect.dispose();

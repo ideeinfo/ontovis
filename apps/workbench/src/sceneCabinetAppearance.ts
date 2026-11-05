@@ -4,6 +4,18 @@ import type {ProjectModelVersion} from './resourceTypes';
 type MaterialChange={mesh:THREE.Mesh;original:THREE.Material|THREE.Material[]};
 const sourceIndex=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
 const shells=new Set(['tower','nacelle','rotor_cover']);
+const exteriorComponents=new Set([
+  'tower','nacelle','rotor_cover','blade','blade_assembly','rotor','rotorAssembly','hub'
+]);
+
+export function isExteriorMesh(mesh:THREE.Mesh):boolean {
+  const comp=String(mesh.userData?.component??'');
+  if(exteriorComponents.has(comp))return true;
+  const nodeIdx=mesh.userData?.ontoVisNodeIndex;
+  if(sourceIndex(nodeIdx)&&(nodeIdx===2||(nodeIdx>=143&&nodeIdx<=175)))return true;
+  if(/tower|nacelle|shell|housing|cover|case|hood|canopy|cowl|blade|rotor|hub|spinner|impeller/i.test(mesh.name))return true;
+  return false;
+}
 
 /** Temporary cabinet display for an instance clone. Shared cache materials stay untouched. */
 export class SceneCabinetAppearance {
@@ -43,9 +55,9 @@ export class SceneCabinetAppearance {
       const original=mesh.material,faded=new Set<THREE.Material>(),highlight=selected.has(mesh);
       let changed=false;
       const copy=(material:THREE.Material)=>{
-        const isShell=shells.has(mesh.userData.component);
-        if(!highlight&&isShell&&!fadeShell)return material;
-        const role=highlight?'highlight':isolate?(isShell?'shell':'interior'):'enclosing';
+        const isExterior=isExteriorMesh(mesh);
+        if(!highlight&&isExterior&&!fadeShell)return material;
+        const role=highlight?'highlight':isolate?(isExterior?'shell':'interior'):'enclosing';
         const cached=copies.get(material)?.get(role);if(cached){changed=true;if(!highlight)faded.add(cached);return cached;}
         const own=(value:THREE.Material)=>{
           changed=true;
@@ -53,7 +65,7 @@ export class SceneCabinetAppearance {
           this.owned.add(value);if(!highlight)faded.add(value);return value;
         };
         // Keep the surrounding assembly readable, including mesh parents of the selection.
-        if(isolate&&!highlight){const value=material.clone();value.transparent=true;value.opacity=material.opacity*(isShell?.32:.5);value.depthWrite=false;return own(value);}
+        if(isolate&&!highlight){const value=material.clone();value.transparent=true;value.opacity=material.opacity*(isExterior?.32:.5);value.depthWrite=false;return own(value);}
         if(!(material instanceof THREE.MeshStandardMaterial))return material;
         const value=material.clone();
         if(highlight){value.emissive.set(color);value.emissiveIntensity=.25;}
