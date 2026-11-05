@@ -1,7 +1,7 @@
-.pc-globe-view{position:absolute;inset:0;background:radial-gradient(ellipse at 65% 45%,#24454f 0,#12272e 52%,#07161e 100%);overflow:hidden}.pc-root[data-theme=light] .pc-globe-view{background:radial-gradient(ellipse at 65% 40%,#f1f6ef 0,#d7e3db 60%,#b5c9c3 100%)}.pc-globe-render{position:absolute;inset:-4% -12% -4% 15%}.pc-globe-render canvas{display:block;width:100%;height:100%;touch-action:none}
+.pc-globe-view{position:absolute;inset:0;background:radial-gradient(ellipse at 65% 45%,#24454f 0,#12272e 52%,#07161e 100%);overflow:hidden}.pc-root[data-theme=light] .pc-globe-view{background:radial-gradient(ellipse at 65% 40%,#f1f6ef 0,#d7e3db 60%,#b5c9c3 100%)}.pc-globe-render{position:absolute;inset:-4% -18% -4% -6%}.pc-globe-render canvas{display:block;width:100%;height:100%;touch-action:none}
 .pc-globe-pin{position:absolute;z-index:2;transform:translate(-14px,-50%);display:flex;gap:7px;align-items:center;filter:drop-shadow(0 3px 8px rgba(4,26,29,.7));font-size:11px!important;max-width:210px;color:white!important}
 .pc-globe-pin:hover,.pc-globe-pin.selected{z-index:5}
-.pc-globe-pin-icon{position:relative;width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex:none}
+.pc-globe-pin-icon{position:relative;width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex:none;background:transparent;border:none;padding:0;box-shadow:none}
 .pc-globe-pin-icon i{position:absolute;inset:0;display:block;border:2px solid #52c4a4;background:radial-gradient(circle at 35% 35%,#2a6152,#14352b);border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 0 10px rgba(82,196,164,.45),inset 0 0 6px rgba(82,196,164,.25);transition:all .25s ease}
 .pc-globe-pin-icon svg{position:relative;z-index:1;color:#eafaf4;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));margin-top:-1px;transition:all .25s ease}
 .pc-globe-pin:hover .pc-globe-pin-icon i{border-color:#7afad1;box-shadow:0 0 16px rgba(122,250,209,.75)}
@@ -9,9 +9,9 @@
 .pc-globe-pin.selected .pc-globe-pin-icon i{border-color:#ffaa47;background:radial-gradient(circle at 35% 35%,#d47317,#7a3d00);box-shadow:0 0 18px rgba(255,121,13,.8),0 0 4px #ff790d}
 .pc-globe-pin.selected .pc-globe-pin-icon svg{color:#fff9ed;filter:drop-shadow(0 1px 3px rgba(0,0,0,.8));transform:scale(1.1)}
 .pc-globe-pin b{position:absolute;right:-5px;top:-5px;z-index:2;min-width:17px;height:17px;padding:0 3px;border-radius:9px;background:linear-gradient(135deg,#ff9c38,#e66a00);color:#fff;border:1.5px solid #07161e;text-align:center;line-height:14px;font-size:9px;font-weight:700;pointer-events:none;box-shadow:0 2px 5px rgba(0,0,0,.6)}
-.pc-globe-pin span{text-align:left;overflow-wrap:anywhere;background:rgba(20,47,53,.85);border:1px solid rgba(184,211,205,.4);border-radius:7px;padding:4px 9px;max-width:165px;backdrop-filter:blur(8px);transition:all .2s ease;box-shadow:0 2px 8px rgba(0,0,0,.3);font-size:11px}
-.pc-globe-pin:hover span{border-color:#7afad1;background:rgba(24,59,66,.92)}
-.pc-globe-pin.selected span{border-color:#ffaa47;background:rgba(43,29,20,.92);box-shadow:0 0 12px rgba(255,121,13,.35)}
+.pc-globe-pin .pc-globe-pin-label{text-align:left;overflow-wrap:anywhere;background:rgba(20,47,53,.85);border:1px solid rgba(184,211,205,.4);border-radius:7px;padding:4px 9px;max-width:165px;backdrop-filter:blur(8px);transition:all .2s ease;box-shadow:0 2px 8px rgba(0,0,0,.3);font-size:11px}
+.pc-globe-pin:hover .pc-globe-pin-label{border-color:#7afad1;background:rgba(24,59,66,.92)}
+.pc-globe-pin.selected .pc-globe-pin-label{border-color:#ffaa47;background:rgba(43,29,20,.92);box-shadow:0 0 12px rgba(255,121,13,.35)}
 
 .pc-globe-home{position:absolute;bottom:26px;right:30px;z-index:4;border:1px solid var(--pc-border)!important;background:var(--pc-panel)!important;border-radius:8px;padding:10px!important}.pc-globe-credit{position:absolute;bottom:20px;left:calc(50% - 120px);display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--pc-muted);background:var(--pc-panel);border:1px solid var(--pc-border);border-radius:7px;padding:7px 11px;max-width:45%;z-index:3}.pc-globe-credit a{color:inherit}
 

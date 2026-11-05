@@ -119,7 +119,7 @@ export function CockpitGlobe({points,active,en,light,flight,focusTarget,onSelect
     <WindTurbineIcon size={16}/>
     {group.points.length>1&&<b>{group.points.length}</b>}
    </span>
-   {group.points.length===1?<span>{group.points[0].name}</span>:group.coincident?<span>{group.points[0].name} +{group.points.length-1}</span>:null}
+   {group.points.length===1?<span className="pc-globe-pin-label">{group.points[0].name}</span>:group.coincident?<span className="pc-globe-pin-label">{group.points[0].name} +{group.points.length-1}</span>:null}
   </button>)}
   {selectedGroup&&<aside className="pc-globe-choice" aria-label={en?'Scene reference points':'场景参考点'}>
    <header>
@@ -127,7 +127,7 @@ export function CockpitGlobe({points,active,en,light,flight,focusTarget,onSelect
      <strong>{en?'Scene reference points':'场景参考点'}</strong>
      <small>{selectedGroup.coincident?(en?'Same reference coordinates · accuracy unverified':'同参考坐标场景 · 位置精度未核实'):(en?'Location accuracy unverified':'位置精度未核实')}</small>
     </div>
-    <button className="pc-globe-choice-close" aria-label={en?'Close reference points':'关闭参考点'} onClick={()=>{setSelected('');setSelectedScene('');onSelectScene?.('');}}><X size={15}/></button>
+    <button className="pc-globe-choice-close" aria-label={en?'Close panel':'关闭'} onClick={()=>{setSelected('');setSelectedScene('');onSelectScene?.('');}}><X size={15}/></button>
    </header>
    <div className="pc-globe-choice-list">
     {selectedGroup.points.map(point=><button key={point.sceneId} className="pc-globe-choice-item" onClick={()=>onOpen(point.sceneId)} aria-label={`${en?'Enter':'进入场景'} ${point.name}`}>
