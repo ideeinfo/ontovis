@@ -270,7 +270,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const syncModelView=()=>{
       const state=current.current,request=state.modelView,entry=request?entries.get(request.instanceId):undefined;
       if(!request||!entry?.root.visible||state.active===false||document.hidden||state.editing||state.previewModel){clearModelView();modelViewStatus('loading');return;}
-      simulated.clear(request.instanceId);
+      if(request.mode==='exploded')simulated.clear(request.instanceId);
       if(inspection&&(inspection.entry!==entry||!inspection.driver.matches(request)))clearModelView();
       if(!inspection){const driver=SceneModelView.create(entry.root,entry.version,request);if(!driver){clearModelView();modelViewStatus('unavailable');return;}
         if(!inspectionView||inspectionView.instanceId!==request.instanceId)inspectionView={instanceId:request.instanceId,view:view(camera,orbit)};
@@ -281,7 +281,7 @@ export function SceneViewport(props:SceneViewportProps) {
     const syncMotion=()=>{
       const state=current.current;
       if(state.active===false||document.hidden||state.editing||state.previewModel){clearMotion();motionStatus({});return;}
-      const requests=(state.simulatedMotions??[]).filter(r=>r.instanceId!==state.modelView?.instanceId);
+      const requests=(state.simulatedMotions??[]).filter(r=>state.modelView?.mode==='exploded'?r.instanceId!==state.modelView.instanceId:true);
       motionStatus(simulated.sync(entries,requests,performance.now()));
     };
     const alarmBox=new THREE.Box3Helper(new THREE.Box3(),0xb8792c);alarmBox.visible=false;scene.add(alarmBox);

@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import {modelSimulation,simulationRequests} from '../src/cockpitSimulation.ts';
 import {SceneMotion,SceneMotionBatch} from '../src/sceneMotion.ts';
 import {SceneCabinetAppearance} from '../src/sceneCabinetAppearance.ts';
+import {SceneModelView} from '../src/sceneModelView.ts';
 import {componentFocusView} from '../src/sceneComponentFocus.ts';
 import {MOTION_MERGED_SHA,motionProfile} from '../src/simulatedMotion.ts';
 import {fixture,node,snapshot} from './helpers/fixed-model.mjs';
@@ -97,4 +98,33 @@ test('isolating a mapped component keeps rotor motion and frames its actual simu
  assert.ok(new THREE.Vector3(...view.target).distanceTo(box.getCenter(new THREE.Vector3()))<1e-10);
  assert.deepEqual(snapshot(f.resource.scene),source);assert.deepEqual(snapshot(f.b),other);
  appearance.dispose();batch.clear();mesh.position.fromArray(before.find(item=>item.uuid===mesh.uuid).position);assert.deepEqual(snapshot(f.a),before);f.cache.dispose();
+});
+
+test('running motion allows concurrent xray model view and retains rotor rotation; exploded clears motion',async()=>{
+ const f=await fixture(true),batch=new SceneMotionBatch();
+ const request={...f.request,axes:false,initialYaw:0};
+ const entries=new Map([['a',{root:f.a,version:f.adapted}]]);
+ assert.deepEqual(batch.sync(entries,[request],f.now),{a:'ready'});
+ batch.step(f.now);
+ const rotorStart=node(f.a,2).quaternion.clone();
+
+ // 1. 创建 xray ModelView
+ const xrayReq={instanceId:'a',modelVersionId:f.adapted.modelVersionId,contentRevision:f.adapted.contentRevision,sha256:f.adapted.sha256,mode:'xray'};
+ const xrayView=SceneModelView.create(f.a,f.adapted,xrayReq);
+ assert.ok(xrayView,'xray SceneModelView must be created even when motion is running');
+
+ // 验证叶片继续旋转
+ batch.step(f.now+100);
+ assert.ok(!node(f.a,2).quaternion.equals(rotorStart),'rotor must continue rotating in xray mode');
+
+ // 2. 清理 xray
+ xrayView.dispose();
+
+ // 3. 进入 exploded 模式前 clear 运动，验证层级完全复位且 exploded 成功创建
+ batch.clear('a');
+ const explodedReq={instanceId:'a',modelVersionId:f.adapted.modelVersionId,contentRevision:f.adapted.contentRevision,sha256:f.adapted.sha256,mode:'exploded'};
+ const explodedView=SceneModelView.create(f.a,f.adapted,explodedReq);
+ assert.ok(explodedView,'exploded SceneModelView creates after motion cleared');
+ explodedView.dispose();
+ f.cache.dispose();
 });

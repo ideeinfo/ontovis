@@ -39,8 +39,11 @@ export class SceneModelView {
     if(version.sha256===MOTION_MERGED_SHA){
       const nodes=new Map<number,THREE.Object3D>();let duplicate=false;
       root.traverse(node=>{const source=modelSourceNode(node);if(source){if(nodes.has(source.index))duplicate=true;nodes.set(source.index,node);}});
-      if(duplicate||nodes.size!==184||nodes.get(1)?.parent!==nodes.get(0)||nodes.get(2)?.parent!==nodes.get(0))return null;
-      for(let i=3;i<184;i++)if(nodes.get(i)?.parent!==nodes.get(i>=143&&i<=175?2:1))return null;
+      if(duplicate||nodes.size!==184)return null;
+      if(request.mode==='exploded'){
+        if(nodes.get(1)?.parent!==nodes.get(0)||nodes.get(2)?.parent!==nodes.get(0))return null;
+        for(let i=3;i<184;i++)if(nodes.get(i)?.parent!==nodes.get(i>=143&&i<=175?2:1))return null;
+      }
       return new SceneModelView(root,version,request,nodes);
     }
 
