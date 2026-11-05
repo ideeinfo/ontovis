@@ -5,7 +5,7 @@ import type {ImageView} from './analysisCanvas';
 import {clampPhotoZoom,MAX_PHOTO_ZOOM,MIN_PHOTO_ZOOM,photoBoxes,photoFitZoom,photoFocusScroll,photoFocusZoom,photoRestoreZoom,photoWheelZoom,photoZoomScroll} from './workOrderPhoto';
 import './workOrders.css';
 
-export function WorkOrderPhotoViewport({image,selector,label,regionLabel,en,onError,embedded=false,initialView,onViewChange,decodedImage,regions=[],onRegion,focusFraction=.09,focusZoom=1.5}:{image:string;selector:PhotoSelector|null;label:string;regionLabel?:string;en:boolean;onError:()=>void;embedded?:boolean;initialView?:ImageView;onViewChange?:(value:ImageView)=>void;decodedImage?:HTMLImageElement;regions?:{id:string;title:string;bbox:{x:number;y:number;width:number;height:number}}[];onRegion?:(id:string)=>void;focusFraction?:number;focusZoom?:number|null}){
+export function WorkOrderPhotoViewport({image,selector,label,regionLabel,en,onError,embedded=false,initialView,onViewChange,decodedImage,regions=[],onRegion,focusFraction=.09,focusZoom=1.5,isPort=false,connectionPath=null}:{image:string;selector:PhotoSelector|null;label:string;regionLabel?:string;en:boolean;onError:()=>void;embedded?:boolean;initialView?:ImageView;onViewChange?:(value:ImageView)=>void;decodedImage?:HTMLImageElement;regions?:{id:string;title:string;bbox:{x:number;y:number;width:number;height:number}}[];onRegion?:(id:string)=>void;focusFraction?:number;focusZoom?:number|null;isPort?:boolean;connectionPath?:Array<{x:number;y:number}>|null}){
   const viewer=useRef<HTMLDivElement>(null);
   const [size,setSize]=useState({width:600,height:500}),[natural,setNatural]=useState({width:0,height:0});
   const [zoom,setZoom]=useState(1),[panning,setPanning]=useState(false);
@@ -99,9 +99,29 @@ export function WorkOrderPhotoViewport({image,selector,label,regionLabel,en,onEr
       onKeyDown={event=>{if(['+','=','-'].includes(event.key)){event.preventDefault();applyZoom(clampPhotoZoom(zoom*(event.key==='-'?1/1.3:1.3)));}else if(event.key==='Escape')cancelPan();}}>
       <div className="wo-photo-stage"><div className="wo-photo-frame" style={{width:base.width*zoom,height:base.height*zoom,visibility:natural.width?'visible':'hidden'}}>
         <img src={image} alt={label} draggable={false} onLoad={event=>setNatural({width:event.currentTarget.naturalWidth,height:event.currentTarget.naturalHeight})} onError={onError}/>
-        {regions.map(region=><button key={region.id} type="button" className="ac-drawing-hotspot" aria-label={region.title} title={region.title}
-          onPointerDown={event=>event.stopPropagation()} onClick={()=>onRegion?.(region.id)} style={{left:`${region.bbox.x*100}%`,top:`${region.bbox.y*100}%`,width:`${region.bbox.width*100}%`,height:`${region.bbox.height*100}%`}}/>)}
-        {boxes.map((region,index)=><span key={index} className="wo-photo-region" style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${region.width*100}%`,height:`${region.height*100}%`}}>{regionLabel&&<span>{regionLabel}</span>}</span>)}
+        {connectionPath&&connectionPath.length>=2&&<svg className="wo-photo-wire-svg" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',zIndex:3}}>
+          <polyline points={connectionPath.map(p=>`${p.x*1000},${p.y*1000}`).join(' ')} className="wo-photo-wire-line"/>
+          <circle cx={connectionPath[0].x*1000} cy={connectionPath[0].y*1000} r="5" className="wo-photo-wire-endpoint"/>
+          <circle cx={connectionPath[connectionPath.length-1].x*1000} cy={connectionPath[connectionPath.length-1].y*1000} r="5" className="wo-photo-wire-endpoint"/>
+        </svg>}
+        {regions.map(region=>{
+          const cx=(region.bbox.x+region.bbox.width/2)*100,cy=(region.bbox.y+region.bbox.height/2)*100;
+          return isPort?(
+            <button key={region.id} type="button" className="ac-drawing-port-point" aria-label={region.title} title={region.title}
+              onPointerDown={event=>event.stopPropagation()} onClick={()=>onRegion?.(region.id)} style={{left:`${cx}%`,top:`${cy}%`}}/>
+          ):(
+            <button key={region.id} type="button" className="ac-drawing-hotspot" aria-label={region.title} title={region.title}
+              onPointerDown={event=>event.stopPropagation()} onClick={()=>onRegion?.(region.id)} style={{left:`${region.bbox.x*100}%`,top:`${region.bbox.y*100}%`,width:`${region.bbox.width*100}%`,height:`${region.bbox.height*100}%`}}/>
+          );
+        })}
+        {boxes.map((region,index)=>{
+          const cx=(region.x+region.width/2)*100,cy=(region.y+region.height/2)*100;
+          return isPort?(
+            <span key={index} className="wo-photo-port-selected" style={{left:`${cx}%`,top:`${cy}%`}}>{regionLabel&&<span>{regionLabel}</span>}</span>
+          ):(
+            <span key={index} className="wo-photo-region" style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${region.width*100}%`,height:`${region.height*100}%`}}>{regionLabel&&<span>{regionLabel}</span>}</span>
+          );
+        })}
       </div></div>
     </div>
   </>;

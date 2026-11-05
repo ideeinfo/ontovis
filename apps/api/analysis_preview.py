@@ -155,18 +155,47 @@ def drawing_preview(reader, descriptor, options):
         records = reader.reader._request('GET', path + '/result-relation-imports/' + batch['id'] + '/records?' + urlencode({'kind': kind, 'limit': 200, 'after': cursor}))
         current = records.get('source_state') == 'current' and records.get('drawing_revision') == revision
         owners = {}
-        if section == 'ports' and current:
-            locations = reader.reader._request('GET', path + '/object-locations')['items']
-            needed = {item['document'].get('source_instance_id') for item in records['items']}
-            locations = [loc for loc in locations if loc.get('text_span', {}).get('source_instance_id') in needed
-                or loc.get('entity_properties', {}).get('result_import', {}).get('source_instance_id') in needed]
+        port_labels = {}
+        if current and section in ('ports', 'connections'):
+            try:
+                locations = reader.reader._request('GET', path + '/object-locations')['items']
+            except Exception:
+                locations = []
             location_import_revisions(reader, drawing['drawing_uid'], locations, import_revisions)
             for loc in locations:
                 imported = loc.get('entity_properties', {}).get('result_import', {})
                 owner_id = loc.get('text_span', {}).get('source_instance_id') or imported.get('source_instance_id')
                 if owner_id and location_revision(loc, import_revisions) == revision:
-                    # An ambiguous source instance cannot identify a port owner.
                     owners[owner_id] = None if owner_id in owners else loc
+
+            if section == 'connections':
+                try:
+                    p_batches = reader.reader._request('GET', path + '/result-relation-imports?' + urlencode({'kind': 'ports', 'newest_first': 'true', 'limit': 1}))
+                    if p_batches.get('items'):
+                        p_batch_id = p_batches['items'][0]['id']
+                        p_records = reader.reader._request('GET', path + '/result-relation-imports/' + p_batch_id + '/records?' + urlencode({'kind': 'ports', 'limit': 200}))
+                        for p_wrap in p_records.get('items', []):
+                            p_row = p_wrap.get('document', {})
+                            p_id = p_row.get('source_port_id')
+                            if not p_id:
+                                continue
+                            p_owner_id = p_row.get('source_instance_id')
+                            p_owner_row = owners.get(p_owner_id)
+                            if p_row.get('owner_resolution', {}).get('state') not in (None, 'resolved'):
+                                p_owner_row = None
+                            p_owner = (p_owner_row.get('display_name') or p_owner_row.get('rds_designation')) if p_owner_row else None
+                            p_lbl = p_row.get('label')
+                            if p_owner and p_lbl:
+                                port_labels[p_id] = f"{p_owner}:{p_lbl}"
+                            elif p_owner:
+                                port_labels[p_id] = p_owner
+                            elif p_lbl:
+                                port_labels[p_id] = f"端口 {p_lbl}"
+                            else:
+                                port_labels[p_id] = p_id.split('/')[-1] if '/' in p_id else p_id
+                except Exception:
+                    pass
+
         result['nextCursor'] = records.get('next_after')
         if not current:
             result['gaps'].append('此批关系对应另一图纸版本，保留文字，未叠加到当前图面。')
@@ -202,10 +231,55 @@ def drawing_preview(reader, descriptor, options):
                 if current and target.get('status') == 'bound' and target.get('drawing_uid') and target.get('drawing_revision'):
                     item['selector'] = {'drawingUid': target['drawing_uid'], 'expectedContentSha256': target['drawing_revision']}
             else:
-                item = {'id': row['source_connection_id'], 'title': row.get('relationship_type_text') or '连接',
-                        'bbox': None, 'state': row.get('review_state'), 'properties': {
-                            '起点': row.get('endpoint_a', {}).get('source_id'), '终点': row.get('endpoint_b', {}).get('source_id'),
-                            '连接类型': row.get('relationship_type_text')}}
+                ep_a = row.get('endpoint_a') or {}
+                ep_b = row.get('endpoint_b') or {}
+                source_a = ep_a.get('source_id') or ''
+                source_b = ep_b.get('source_id') or ''
+                label_a = port_labels.get(source_a) or (source_a.split('/')[-1] if '/' in source_a else source_a) or '端点 A'
+                label_b = port_labels.get(source_b) or (source_b.split('/')[-1] if '/' in source_b else source_b) or '端点 B'
+                title = f"{label_a} ↔ {label_b}"
+                conn_id = row.get('source_connection_id') or 'connection'
+                conn_code = conn_id.split('/')[-1] if '/' in conn_id else conn_id
+                rel_type = row.get('relationship_type_text') or '导线连接'
+                identifier = f"{conn_code} · {rel_type}"
+
+                path_obj = row.get('path') or {}
+                raw_points = path_obj.get('points') if isinstance(path_obj, dict) else None
+                valid_points = []
+                if isinstance(raw_points, list):
+                    for pt in raw_points:
+                        if isinstance(pt, dict) and all(type(pt.get(k)) in (int, float) and 0 <= pt[k] <= 1 for k in ('x', 'y')):
+                            valid_points.append({'x': round(float(pt['x']), 6), 'y': round(float(pt['y']), 6)})
+
+                if current and path_obj.get('state') == 'located' and len(valid_points) >= 2:
+                    xs = [p['x'] for p in valid_points]
+                    ys = [p['y'] for p in valid_points]
+                    min_x, max_x = min(xs), max(xs)
+                    min_y, max_y = min(ys), max(ys)
+                    pad_x = max(0.015, (max_x - min_x) * 0.1)
+                    pad_y = max(0.015, (max_y - min_y) * 0.1)
+                    bx = max(0.0, min_x - pad_x)
+                    by = max(0.0, min_y - pad_y)
+                    bw = min(1.0 - bx, (max_x - min_x) + pad_x * 2)
+                    bh = min(1.0 - by, (max_y - min_y) + pad_y * 2)
+                    box = {'x': round(bx, 6), 'y': round(by, 6), 'width': round(bw, 6), 'height': round(bh, 6)}
+
+                item = {
+                    'id': conn_id,
+                    'title': title,
+                    'identifier': identifier,
+                    'bbox': box,
+                    'pathPoints': valid_points if valid_points else None,
+                    'state': row.get('review_state'),
+                    'properties': {
+                        '起点': label_a,
+                        '终点': label_b,
+                        '连接编号': conn_code,
+                        '连接类型': rel_type,
+                        '语义类别': row.get('relationship_semantics'),
+                        '折线节点数': len(valid_points) if valid_points else 0,
+                    }
+                }
             result[section].append(item)
     return result
 

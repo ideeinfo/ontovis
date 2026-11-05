@@ -73,6 +73,8 @@ class SourceViewerTests(TestCase):
             row={'source_reference_id':'cross-page','target_label':'/22.4','normalized_bbox':self.location['bbox'],
                 'target':{'status':'bound','drawing_uid':'project:next','drawing_revision':self.sha,'drawing_name':'Next drawing','basis':'printed page reference'},'relationship_semantics':'document_reference'}
             if kind=='ports':row={'source_port_id':'P1','source_instance_id':'instance-1','owner_resolution':{'state':self.owner_resolution},'position':{'state':'located','normalized':{'x':.4,'y':.5}},'label':'1'}
+            if kind=='connections':
+                row={'source_connection_id':'doc/CONN-0001','endpoint_a':{'kind':'port','source_id':'P1'},'endpoint_b':{'kind':'port','source_id':'P2'},'relationship_type_text':'导线连接','path':{'state':'located','points':[{'x':.2,'y':.3},{'x':.4,'y':.5}]}}
             return {'source_state':'current' if self.current else 'stale','drawing_revision':self.sha,'next_after':None,'items':[{'document':row}]}
         if '/drawings/' in path:return {'drawing_uid':'project:drawing-1','project_code':self.project,'drawing_name':'Source drawing'}
         raise AssertionError(path)
@@ -85,6 +87,20 @@ class SourceViewerTests(TestCase):
         self.assertIsNone(drawing_preview(self.reader,self.drawing,{})['objects'][0]['bbox'])
         self.current=False
         self.assertIsNone(drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]['bbox'])
+
+    def test_drawing_connections_resolve_labels_and_compute_bbox(self):
+        result = drawing_preview(self.reader, self.drawing, {'section': 'connections'})
+        conns = result['connections']
+        self.assertEqual(len(conns), 1)
+        c = conns[0]
+        self.assertEqual(c['id'], 'doc/CONN-0001')
+        self.assertIn('↔', c['title'])
+        self.assertEqual(c['identifier'], 'CONN-0001 · 导线连接')
+        self.assertIsNotNone(c['bbox'])
+        self.assertAlmostEqual(c['bbox']['x'], 0.18, places=3)
+        self.assertAlmostEqual(c['bbox']['y'], 0.28, places=3)
+        self.assertEqual(len(c['pathPoints']), 2)
+        self.assertEqual(c['properties']['连接编号'], 'CONN-0001')
 
     def test_cross_page_reference_is_document_reference_not_electrical_connectivity(self):
         row=drawing_preview(self.reader,self.drawing,{'section':'references'})['references'][0]

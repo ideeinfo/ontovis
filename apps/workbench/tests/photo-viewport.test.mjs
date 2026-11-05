@@ -7,7 +7,7 @@ import * as geometry from '../src/workOrderPhoto.ts';
 
 // Exercise the production component's buttons, wheel listener and resize effects.
 // The viewport supplies browser geometry; React hooks run until updates settle.
-function mount({embedded=false,initialView,natural=[1962,4096],selector=null,regionLabel,focusZoom}={}){
+function mount({embedded=false,initialView,natural=[1962,4096],selector=null,regionLabel,focusZoom,isPort=false,connectionPath=null,regions=[]}={}){
   const states=[],refs=[],layouts=[],effects=[],reports=[];
   let si,ri,li,ei,dirty,tree,observer;
   const viewport={clientWidth:1066,clientHeight:432,scrollLeft:0,scrollTop:0,listeners:new Map(),
@@ -30,7 +30,7 @@ function mount({embedded=false,initialView,natural=[1962,4096],selector=null,reg
   const exports={};new Function('require','exports',compiled)(name=>dependencies[name]??require(name),exports);
   const savedObserver=globalThis.ResizeObserver;
   globalThis.ResizeObserver=class{constructor(callback){observer=callback;}observe(){observer();}disconnect(){}};
-  const props={embedded,initialView,selector,regionLabel,focusZoom,image:'blob:synthetic-photo',label:'synthetic photo',en:false,onError:()=>assert.fail('unexpected image error'),onViewChange:value=>reports.push(value)};
+  const props={embedded,initialView,selector,regionLabel,focusZoom,isPort,connectionPath,regions,image:'blob:synthetic-photo',label:'synthetic photo',en:false,onError:()=>assert.fail('unexpected image error'),onViewChange:value=>reports.push(value)};
   const nodes=()=>{const result=[];function walk(node){if(!node||typeof node!=='object')return;
     if(Array.isArray(node)){node.forEach(walk);return;}result.push(node);walk(node.props?.children);
   }walk(tree);return result;};
@@ -43,6 +43,10 @@ function mount({embedded=false,initialView,natural=[1962,4096],selector=null,reg
   const find=(tag,predicate=()=>true)=>nodes().find(node=>node.type===tag&&predicate(node.props));
   return {reports,viewport,
     annotations:()=>nodes().filter(node=>node.props?.className==='wo-photo-region').map(node=>({box:node.props.style,label:node.props.children?.props?.children})),
+    portPoints:()=>nodes().filter(node=>node.props?.className==='ac-drawing-port-point').map(node=>({style:node.props.style,title:node.props.title})),
+    portSelected:()=>nodes().filter(node=>node.props?.className==='wo-photo-port-selected').map(node=>({style:node.props.style})),
+    wirePolyline:()=>find('polyline'),
+    wireEndpoints:()=>nodes().filter(node=>node.type==='circle'),
     frame:()=>find('div',p=>p.className==='wo-photo-frame').props.style,
     output:()=>find('output').props.children,
     click(label){const text=value=>Array.isArray(value)?value.map(text).join(''):typeof value==='string'?value:'';
@@ -119,5 +123,33 @@ test('drawing annotation retains adaptive focus when fixed photo magnification i
     const focus=view.frame().height;view.click('100%（1:1）');view.click('照片放大');view.resize(1051,417);
     assert.equal(view.output(),'130%');view.click('定位标注');assert.ok(view.frame().height<4096*1.3&&view.frame().height>0);
     assert.notEqual(view.frame().height,focus,'explicit focus uses the current viewport');
+  }finally{view.destroy();}
+});
+
+test('ports render as green circular points with centered coordinates and pulse selected ring',()=>{
+  const selector={kind:'image_bbox',coordinateSpace:'oriented_display_normalized',bbox:{x:.495,y:.485,width:.01,height:.01}};
+  const regions=[{id:'p-1',title:'端口 3',bbox:{x:.495,y:.485,width:.01,height:.01}}];
+  const view=mount({selector,isPort:true,regions});try{
+    const points=view.portPoints();
+    assert.equal(points.length,1);
+    assert.equal(points[0].title,'端口 3');
+    assert.equal(points[0].style.left,'50%');
+    assert.equal(points[0].style.top,'49%');
+    const selected=view.portSelected();
+    assert.equal(selected.length,1);
+    assert.equal(selected[0].style.left,'50%');
+    assert.equal(selected[0].style.top,'49%');
+    assert.equal(view.annotations().length,0);
+  }finally{view.destroy();}
+});
+
+test('connection wires render svg polylines with endpoints',()=>{
+  const path=[{x:.15,y:.42},{x:.15,y:.63},{x:.25,y:.63}];
+  const view=mount({connectionPath:path});try{
+    const line=view.wirePolyline();
+    assert.ok(line);
+    assert.equal(line.props.points,'150,420 150,630 250,630');
+    const endpoints=view.wireEndpoints();
+    assert.equal(endpoints.length,2);
   }finally{view.destroy();}
 });
