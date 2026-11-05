@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {sceneInformationSnapshot,prepareSceneInformationSave} from '../src/sceneInformation.ts';
+import {sceneInformationSnapshot,prepareSceneInformationSave,onlySceneInformationChanged} from '../src/sceneInformation.ts';
 import {ApiError} from '../src/api.ts';
 
 const snapshot=()=>({displayName:'Original',description:'Original description',coordinateFrame:{mode:'local_plane',frameRevision:'frame:1',origin:[0,0,0],unit:'m',axes:'X_EAST_Y_UP_Z_SOUTH'},terrain:null,instances:[],initialView:{eye:[80,60,90],target:[0,15,0]},defaults:{background:'sky',lighting:'dusk',terrainMaterial:'solid'}});
@@ -35,4 +35,13 @@ test('read-only, stale revisions, concurrent updates and revoked write access ne
 test('direct metadata editing cannot silently approve changed engineering bindings',async()=>{
  const requirement={ref:{ontobaseConnectionId:'source',projectCode:'project',entityUid:'entity'},expectedEntityRevision:'entity:2',installationContextId:'context',expectedHierarchyRevision:'hierarchy:1'};
  await assert.rejects(()=>prepareSceneInformationSave({check:async()=>({...checked(),reviewedEngineering:[requirement]})},opened(),{name:'Name',description:''},'req'),e=>e.code==='ENGINEERING_CHANGED');
+});
+test('information-only capability keeps the old engineering basis and bypasses no full-scene edit',async()=>{
+ const original=opened();original.capabilities.sceneInfoOnlyWriteVersion=1;
+ const request=await prepareSceneInformationSave({check:async()=>{throw new Error('No engineering approval for name-only edits');}},original,{name:'本源',description:'保留来源'},'request');
+ assert.equal(request.informationOnly,true);assert.deepEqual(request.reviewedEngineering,[]);assert.deepEqual(request.rootBindingChanges,[]);
+ assert.equal(onlySceneInformationChanged(original.snapshot,request.snapshot),true);
+ for(const change of [next=>next.initialView.eye[0]++,next=>next.instances.push({id:'unexpected'}),next=>next.defaults.background='other']){
+  const next=structuredClone(request.snapshot);change(next);assert.equal(onlySceneInformationChanged(original.snapshot,next),false);
+ }
 });

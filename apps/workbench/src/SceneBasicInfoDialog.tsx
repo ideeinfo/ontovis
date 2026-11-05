@@ -4,6 +4,7 @@ import {Btn,Modal} from './Primitives';
 import type {SceneApi} from './sceneApi';
 import type {SceneOpen,SceneSaveRequest} from './sceneTypes';
 import {prepareSceneInformationSave} from './sceneInformation';
+import {SceneEngineeringStateError} from './sceneEngineeringState';
 import {SceneThumbnailField} from './SceneThumbnail';
 
 export function SceneBasicInfoDialog({client,sceneId,projectName,locale,onClose,onSaved}:{
@@ -39,7 +40,8 @@ export function SceneBasicInfoDialog({client,sceneId,projectName,locale,onClose,
       }
       if(alive.current&&!abort.signal.aborted){pending.current=null;setUnknown(false);onSaved();}
     }catch(value){if(alive.current&&!abort.signal.aborted&&!cancelled(value)){
-      const uncertain=submitted&&(!(value instanceof ApiError)||value.status>=500);setUnknown(uncertain);if(!uncertain)pending.current=null;setError(value);
+      const error=value instanceof SceneEngineeringStateError?new ApiError(value.code==='ENGINEERING_CHANGED'?409:422,value.code):value;
+      const uncertain=submitted&&(!(error instanceof ApiError)||error.status>=500);setUnknown(uncertain);if(!uncertain)pending.current=null;setError(error);
     }}finally{saving.current=false;if(alive.current&&!abort.signal.aborted)setBusy(false);}
   }
   return <Modal title={t('场景基本信息','Scene basic information')} description={t('编辑名称、说明或场景缩略图后保存。','Edit and save the name, description, or scene thumbnail.')} onClose={()=>{if(!busy)onClose();}}>

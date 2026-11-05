@@ -132,6 +132,7 @@ export interface HeightProvenance {
   previousTerrainRef?: unknown; previousAnchorHeight?: unknown;
 }
 export interface SceneCapabilities {
+  sceneInfoOnlyWriteVersion?:1;
   sceneLifecycleWriteVersion?:1;
   environmentSchemaVersions?:number[];waterModes?:string[];surroundingBackgroundModes?:string[];cloudModes?:string[];
   storageScope: SceneScope; supportsGeographic: boolean; supportsEngineeringBindings: boolean;
@@ -186,6 +187,7 @@ export interface SceneOpen extends SceneResponse {
 export interface SceneHead extends SceneResponse {sceneId: string; headRevision: string; updateAvailable: boolean}
 export interface SpatialChange {kind: 'anchor' | 'model' | 'terrain'; receipt: string}
 export interface SceneSaveRequest {
+  informationOnly?:true;
   expectedLifecycleRevision?:number;
   environmentWriteVersion?:1;sceneInfoWriteVersion?:1;
   sceneId: string; expectedSceneRevision: string; clientRequestId: string; snapshot: EditableSceneSnapshot;

@@ -487,7 +487,7 @@ class SceneLibrary:
         return {'storageScope': 'project_scenes' if engineering else 'projected_site_unbound' if geographic else 'local_plane_unbound', 'supportsGeographic': geographic,
                 'supportsEngineeringBindings': engineering, 'maxInstances': MAX_INSTANCES,
                 'environmentSchemaVersions': [1], 'waterModes': ['normal-waves'], 'surroundingBackgroundModes': ['auto', 'off'], 'cloudModes': ['procedural-cumulus-v1'], 'sceneInfoWriteVersion': 1,
-                'sceneLifecycleWriteVersion': 1,
+                'sceneLifecycleWriteVersion': 1, 'sceneInfoOnlyWriteVersion': 1,
                 'maxSnapshotBytes': MAX_SCENE_BYTES, 'maxCheckJsonBytes': MAX_SCENE_BYTES}
 
     @staticmethod
@@ -1270,6 +1270,52 @@ class SceneLibrary:
                 'validation': spatial['validation'], 'heightProvenance': spatial['heightProvenance'],
                 'resourceRefs': manifest, 'spatialChange': {'kind': 'anchor', 'receipt': receipt} if is_anchor else None}, facts)
 
+    def _save_information(self, body, snapshot, actor, scene_id, request_id, digest, authorize):
+        """A label edit retains the saved engineering basis; it never reviews it."""
+        with self.model_lock or nullcontext(), self.library.connect() as db:
+            db.execute('begin immediate')
+            prior = self._prior(db, actor, 'save', request_id, digest)
+            if prior is not None:
+                self._scope(db, scene_id); authorize()
+                return prior
+            scene = self._scope(db, scene_id)
+            _require(scene['head_revision'] == body['expectedSceneRevision'], 'SCENE_CHANGED', 409)
+            self._expected_lifecycle(body, scene)
+            previous = self._revision(db, scene_id, scene['head_revision'])
+            original = json.loads(previous['snapshot'])
+            environment_write(body, original); _information_write(body, original)
+            _require({k:v for k,v in snapshot.items() if k not in ('displayName','description')} ==
+                     {k:v for k,v in original.items() if k not in ('displayName','description')},
+                     'SCENE_INFORMATION_SCOPE', 422)
+            revision, now = 'scene:' + str(uuid4()), datetime.now(timezone.utc).isoformat()
+            db.execute('insert into scene_revisions values(?,?,?,?,?)',
+                       (revision, scene_id, _json(snapshot), previous['resource_refs'], now))
+            # Copy retained references exactly, including historical configuration
+            # adoption. Resolving them again could silently adopt a newer version.
+            for table,revision_column in (('scene_resource_uses','revision'),('scene_spatial_validations','revision'),
+                    ('scene_terrain_uses','revision'),('scene_imagery_uses','revision'),
+                    ('scene_equipment_configuration_uses','scene_revision')):
+                columns = [row['name'] for row in db.execute('pragma table_info('+table+')')]
+                if not columns or not db.execute('select 1 from '+table+' where '+revision_column+'=?',(previous['revision'],)).fetchone(): continue
+                names = ','.join(columns)
+                values = ','.join('?' if name==revision_column else name for name in columns)
+                db.execute('insert into '+table+'('+names+') select '+values+' from '+table+' where '+revision_column+'=?',
+                           (revision, previous['revision']))
+            db.execute('update scenes set display_name=?,head_revision=?,updated_at=? where id=?',
+                       (snapshot['displayName'],revision,now,scene_id))
+            spatial = db.execute('select validation,height_provenance from scene_spatial_validations where revision=?',
+                                 (revision,)).fetchone()
+            result = dict(sceneId=scene_id,sceneRevision=revision,headRevision=revision,savedAt=now,
+                          validation=json.loads(spatial['validation']))
+            if snapshot['coordinateFrame']['mode']=='projected_site':
+                result.update(heightProvenance=json.loads(spatial['height_provenance']),terrainRefs=[
+                    dict(terrainVersionId=row['terrain_version_id'],contentRevision=row['content_revision'],
+                         sha256=row['source_sha256'],reportSha256=row['report_sha256'])
+                    for row in db.execute('select * from scene_terrain_uses where revision=? order by terrain_version_id',(revision,))])
+            self._finish(db,actor,'save',request_id,digest,result)
+            authorize()
+        return result
+
     def save(self, body, actor, authorize: Authorize, validate_resources: ValidateResources,
              validate_engineering: ValidateEngineering, *, validate_geometry=None, access_revision=None,
              terrain_replacement=None, model_details=None, engineering_check: EngineeringCheck | None = None):
@@ -1277,7 +1323,11 @@ class SceneLibrary:
         authorize(); _json(body)
         required = {'sceneId', 'expectedSceneRevision', 'clientRequestId', 'snapshot',
                     'reviewedEngineering', 'rootBindingChanges'}
-        _require(type(body) is dict and required <= set(body) <= required | {'spatialChange','environmentWriteVersion','sceneInfoWriteVersion','expectedLifecycleRevision'})
+        _require(type(body) is dict and required <= set(body) <= required | {'spatialChange','environmentWriteVersion','sceneInfoWriteVersion','expectedLifecycleRevision','informationOnly'})
+        if 'informationOnly' in body:
+            _require(body['informationOnly'] is True and body['reviewedEngineering']==[] and body['rootBindingChanges']==[]
+                     and body.get('spatialChange') is None, 'SCENE_INFORMATION_SCOPE', 422)
+            _require(body.get('sceneInfoWriteVersion')==1, 'SCENE_INFO_WRITE_VERSION_REQUIRED', 409)
         actor, request_id, scene_id = _text(actor), _uuid(body['clientRequestId']), _uuid(body['sceneId'])
         base_revision = _text(body['expectedSceneRevision'])
         if not callable(engineering_check):
@@ -1298,6 +1348,8 @@ class SceneLibrary:
         if change is None:
             business.pop('spatialChange', None)
         digest = _digest(business)
+        if body.get('informationOnly') is True:
+            return self._save_information(body,snapshot,actor,scene_id,request_id,digest,authorize)
         # Read/replay and collect the old fixed state without holding a write lock.
         with self.library.connect() as db:
             db.execute('begin')

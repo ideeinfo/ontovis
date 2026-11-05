@@ -140,6 +140,22 @@ class SceneBindingsHttpTests(unittest.TestCase):
             return {name: db.execute('select count(*) from '+name).fetchone()[0]
                 for name in ('scene_revisions', 'scene_audit', 'scene_requests', 'scene_resource_uses', 'scene_spatial_validations')}
 
+    def test_information_only_rename_retains_changed_binding_basis_and_full_save_protection(self):
+        scene,_=self.bound_scene()
+        self.authority().engineering.contexts[engineering.CTX]['hierarchyRevision']=engineering.CTX+':8'
+        opened=self.open_ok(scene)
+        self.assertTrue(opened['validation']['bindingIssues'])
+        snapshot=copy.deepcopy(opened['snapshot']);snapshot['displayName']='本源设备场景'
+        body=dict(sceneId=scene['sceneId'],expectedSceneRevision=scene['sceneRevision'],expectedLifecycleRevision=0,
+                  clientRequestId=str(uuid4()),snapshot=snapshot,reviewedEngineering=[],rootBindingChanges=[],
+                  informationOnly=True,sceneInfoWriteVersion=1,environmentWriteVersion=1)
+        status,saved,_=self.request(SCENES+'/save',body);self.assertEqual(200,status,saved)
+        current=self.open_ok(scene)
+        self.assertEqual(snapshot,current['snapshot']);self.assertTrue(current['validation']['bindingIssues'])
+        self.assertEqual(scene['snapshot'],self.open_ok(scene,scene['sceneRevision'])['snapshot'])
+        full={**body,'expectedSceneRevision':saved['sceneRevision'],'clientRequestId':str(uuid4())};full.pop('informationOnly')
+        self.expect(self.request(SCENES+'/save',full),409,'ENGINEERING_CHANGED')
+
     def test_two_instances_share_resource_but_keep_distinct_current_and_retained_bindings(self):
         scene, root_revision = self.bound_scene()
         self.assertIsNone(self.sessions.model)

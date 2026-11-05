@@ -270,6 +270,8 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     PROJECT_SCOPE_MISMATCH:['项目范围不一致，请返回项目目录重新选择。','The project scope changed. Select the project again.'],
     WORKSPACE_SCOPE_INVALID:['项目存储归属需要核对，当前已停止写入。','The project storage scope requires review. Writes are blocked.'],
     SCENE_INFO_WRITE_VERSION_REQUIRED:['请刷新新版工作台，完整保留场景说明后再保存。','Reload the workbench to preserve the scene description before saving.'],
+    SCENE_INFORMATION_SCOPE:['仅基本信息保存不能包含布局、模型或绑定修改，请回到场景分别处理。当前输入已保留。','Information-only saves cannot include layout, model or binding edits. Your input is retained; handle those changes in the scene.'],
+    ENGINEERING_CHANGED:['工程关联已变化，当前修改未保存。请在场景中核对关联后再保存。','Engineering references changed. Your edits are retained; review the references in the scene before saving.'],
     LEGACY_SCENE_ENTRY_UNAVAILABLE:['原模型对应的场景暂不可用，请重新读取。','The scene for this legacy model is unavailable. Reload it.'],
     INVALID_MODEL:['模型结构不完整或已损坏，请检查文件。','The model is incomplete or damaged. Check the file.'],
     UNSUPPORTED_MODEL:['仅支持自包含静态 GLB，当前模型含未支持的资源或扩展。','Only self-contained static GLB is supported. This model uses unsupported resources or extensions.'],

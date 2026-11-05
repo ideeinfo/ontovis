@@ -4,7 +4,7 @@ import {SceneLoadingProgress} from './SceneLoadingProgress';
 import {SceneEnvironmentPanel} from './SceneEnvironmentPanel';
 import {SceneBasicInfoDialog} from './SceneBasicInfoDialog';
 import {SceneThumbnailField} from './SceneThumbnail';
-import {sceneInformationSnapshot} from './sceneInformation';
+import {sceneInformationSnapshot,onlySceneInformationChanged} from './sceneInformation';
 import {sceneWithEnvironment} from './sceneEnvironmentEditing';
 import {waterSurfaceSupported} from './sceneEnvironment';
 import {sceneResourceGroups} from './sceneResourceGroups';
@@ -372,19 +372,20 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     try{
       // An unconfirmed write must replay its frozen body, even if the camera has since moved.
       if(!saveUnknown||!saveRequest.current){
-        const proposed=override?.proposedSnapshot||sceneSnapshotWithView(editedSnapshot||draft,cameraControl.current?.getView()||liveView.current);
-        const checked=override||(!isLocalScene(proposed)||base.capabilities.supportsEngineeringBindings?await client.check({kind:'validate',sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,snapshot:proposed},abort.signal):null);
+        const informationOnly=!!editedSnapshot&&base.capabilities.sceneInfoOnlyWriteVersion===1&&!reviewDirty&&onlySceneInformationChanged(base.snapshot,editedSnapshot);
+        const proposed=override?.proposedSnapshot||(informationOnly?editedSnapshot!:sceneSnapshotWithView(editedSnapshot||draft,cameraControl.current?.getView()||liveView.current));
+        const checked=override||(!informationOnly&&(!isLocalScene(proposed)||base.capabilities.supportsEngineeringBindings)?await client.check({kind:'validate',sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,snapshot:proposed},abort.signal):null);
         if(checked){syncWrite(checked);if(!checked.capabilities.canWrite)throw new ApiError(403,'SCENE_WRITE_FORBIDDEN');}
         const requiredChanges=checked?.rootBindingChanges||[];
         try{rootChangesForSave(requiredChanges,approvedRoots.current);}catch{setBindingReview(checked);setModal('bindingReview');return false;}
         const reviewed=reviewedForSave(checked?.reviewedEngineering||[],acceptedEngineering.current);
-        saveRequest.current={body:{sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,expectedLifecycleRevision:base.lifecycleRevision??0,clientRequestId:crypto.randomUUID(),snapshot:cloneSnapshot(checked?.proposedSnapshot||proposed),
+        saveRequest.current={body:{sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,expectedLifecycleRevision:base.lifecycleRevision??0,clientRequestId:crypto.randomUUID(),snapshot:cloneSnapshot(checked?.proposedSnapshot||proposed),...(informationOnly?{informationOnly:true as const}:{}),
           reviewedEngineering:reviewed,rootBindingChanges:rootChangesForSave(requiredChanges,approvedRoots.current),...(checked?.spatialChange?{spatialChange:checked.spatialChange}:{})},models:checked?.resourceRefs.models||refs,terrain:override?.spatialChange&&override.spatialChange.kind!=='model'?candidate:terrain};
       }
       const attempt=saveRequest.current;submitted=true;
       const value=await client.save(attempt.body,abort.signal),canonical=attempt.body.snapshot;
       if(!mounted.current||token!==sequence.current)return false;
-      const known:SceneOpen={...base,...value,snapshot:cloneSnapshot(canonical),resourceRefs:attempt.models,
+      const known:SceneOpen={...base,...value,validation:attempt.body.informationOnly?base.validation:value.validation,snapshot:cloneSnapshot(canonical),resourceRefs:attempt.models,
         terrainRefs:value.terrainRefs||[],sceneRevision:value.sceneRevision,headRevision:value.headRevision};
       if(analysis&&!override&&analysis.ticket===objectIntent.current&&latestIdentity.current===selectionIdentity&&
         JSON.stringify([base.snapshot.coordinateFrame,base.snapshot.instances])===JSON.stringify([canonical.coordinateFrame,canonical.instances])){
@@ -392,7 +393,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
       }
       setBase(known);setHistory(sceneHistory(canonical));setTerrain(attempt.terrain);setAnchorResult(null);setCandidate(null);setModal(null);setUpdate(false);setPending(null);setSaveUnknown(false);saveRequest.current=null;
       setViewDirty(editing&&sceneViewChanged(canonical.initialView,liveView.current));
-      acceptedEngineering.current=engineeringReviews(value.validation);approvedRoots.current=[];setReviewDirty(false);setBindingReview(null);setLocation(null);setComponentFocus(undefined);
+      acceptedEngineering.current=engineeringReviews(known.validation);approvedRoots.current=[];setReviewDirty(false);setBindingReview(null);setLocation(null);setComponentFocus(undefined);
       if(override)setEditing(true);return true;
     }catch(value){if(submitted&&(!(value instanceof ApiError)||value.status>=500))setSaveUnknown(true);
       if(submitted&&value instanceof ApiError&&value.status<500){setSaveUnknown(false);saveRequest.current=null;}

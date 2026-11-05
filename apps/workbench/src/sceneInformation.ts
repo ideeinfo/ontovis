@@ -4,6 +4,10 @@ import {engineeringReviews,reviewedForSave,rootChangesForSave} from './sceneEngi
 import type {EditableSceneSnapshot,SceneOpen,SceneSaveRequest} from './sceneTypes';
 
 export interface SceneInformation {name:string;description:string}
+export function onlySceneInformationChanged(before:EditableSceneSnapshot,after:EditableSceneSnapshot):boolean {
+  const fields=(value:EditableSceneSnapshot)=>Object.fromEntries(Object.entries(value).filter(([key])=>!['displayName','description'].includes(key)));
+  return JSON.stringify(fields(before))===JSON.stringify(fields(after));
+}
 export function sceneInformationSnapshot(snapshot:EditableSceneSnapshot,info:SceneInformation):EditableSceneSnapshot {
   const name=info.name.trim();
   if(!name||Array.from(name).length>200||Array.from(info.description).length>2000||/[\u0000-\u001f]/u.test(name)||/[\u0000-\u0009\u000b-\u001f]/u.test(info.description))throw new ApiError(422,'INVALID_REQUEST');
@@ -16,6 +20,9 @@ export async function prepareSceneInformationSave(client:Pick<SceneApi,'check'>,
   if(!opened.capabilities.canWrite)throw new ApiError(403,'SCENE_WRITE_FORBIDDEN');
   if(opened.sceneRevision!==opened.headRevision)throw new ApiError(409,'SCENE_CHANGED');
   const snapshot=sceneInformationSnapshot(opened.snapshot,info);
+  if(opened.capabilities.sceneInfoOnlyWriteVersion===1)return {
+    sceneId:opened.sceneId,expectedSceneRevision:opened.sceneRevision,expectedLifecycleRevision:opened.lifecycleRevision??0,
+    clientRequestId:requestId,snapshot,reviewedEngineering:[],rootBindingChanges:[],informationOnly:true};
   const checked=await client.check({kind:'validate',sceneId:opened.sceneId,expectedSceneRevision:opened.sceneRevision,snapshot},signal);
   if(!checked.capabilities.canWrite)throw new ApiError(403,'SCENE_WRITE_FORBIDDEN');
   return {sceneId:opened.sceneId,expectedSceneRevision:opened.sceneRevision,expectedLifecycleRevision:opened.lifecycleRevision??0,
