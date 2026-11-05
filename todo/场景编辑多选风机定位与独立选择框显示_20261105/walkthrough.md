@@ -39,3 +39,19 @@
    - 前端发布至测试服务器 `/data/ontovis/workbench-releases/9ef59062c4875ac320ffeba9cc40cee22df013e4/public`，并原子切换当前软链接 `/data/ontovis/workbench-current`；
    - 健康检查验证：`curl -k -s https://vis.ontobase.ai/health` 返回 `200 OK`，状态正常；
    - 页面访问验证：`curl -k -s -I https://vis.ontobase.ai/` 返回 `HTTP/2 200`。
+
+
+---
+
+## 4. 多选定位框深度擦除与矩阵更新补充修复
+
+### 4.1 根因分析
+- 用户反馈：“看到了定位效果，但还是只能在选择一个风机时显示定位框”。
+- 经过在 Node.js 和 WebGL 渲染管线深度分析，发现了导致多选定位框在画面上消失的根本原因：
+  1. **深度覆盖擦除**：单选定位框 `selectedBox` 使用的是 Three.js 默认的 `depthTest = true, depthWrite = true`，当它与不透明地形 mesh 一同渲染时，由于高于地面，深度测试能正常通过并稳定显示；而多选 `SceneModelSelectionBoxes` 中强制设置了 `depthTest = false, depthWrite = false` 且 `transparent = false`，由于其留在不透明渲染队列中，后续渲染的不透明地形网格会无条件将颜色和深度写入 FrameBuffer，导致画出的线框被地形 100% 抹除覆盖；
+  2. **矩阵更新缺失**：在 `SceneViewport.tsx` 的渲染动画循环中，修改 `helper.box.setFromObject(entry.root)` 之后未调用 `helper.updateMatrixWorld(true)`，导致 `Box3Helper` 的位置和缩放未能从包围盒同步到世界矩阵。
+
+### 4.2 修复与验证
+- 移除多选框的 `depthTest = false, depthWrite = false` 覆盖，与单选定位框 `selectedBox` 保持 100% 一致的标准深度测试特性，杜绝地形擦除；
+- 在渲染循环与 `highlight` 之后，显式对各 helper 调用 `helper.updateMatrixWorld(true)`，保证每帧位置与尺寸精确贴合旋转中的风机；
+- 770+ 项单元测试全部通过，前端发布至服务器（Commit: `117179e9b4b59821b5ba049757462ee0876f2b7e`），`curl -k -s https://vis.ontobase.ai/health` 验证通过。
