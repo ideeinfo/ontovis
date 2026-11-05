@@ -144,3 +144,13 @@ test('isolation toggles keep the current camera while a new component or source 
  assert.equal(sameComponentFocusView(a,{...a,isolate:true}),true);
  for(const b of [{...a,token:2},{...a,sourceKey:'changed'},{...a,componentKeys:['CN1']},{...a,bounds:[[20,30,40],[24,34,44]]},null])assert.equal(sameComponentFocusView(a,b),false);
 });
+
+test('presentation focus maintains at least 22 meters context distance for small components to frame the nacelle',()=>{
+ const smallCabinetBounds=[[-0.5,89.5,-0.4],[0.5,91.5,0.4]];
+ const view={eye:[10,95,15],target:[0,90,0]};
+ const destination=componentFocusView(smallCabinetBounds,view,42,16/9,true);
+ assert.ok(destination);
+ const distance=new THREE.Vector3(...destination.eye).distanceTo(new THREE.Vector3(...destination.target));
+ assert.ok(distance>=22-1e-6,'presentation focus distance must be at least 22m to frame the full nacelle');
+});
+

@@ -214,3 +214,16 @@ test('alarm anchors follow current source/proxy meshes without changing the acti
  assert.ok(f.effect.componentBounds(['missing']).isEmpty());assert.ok(f.effect.componentBounds(['CT','CT']).isEmpty());
  f.effect.dispose();assert.ok(f.effect.componentBounds(['CT']).isEmpty());
 });
+
+test('solid shell mode (fadeShell=false) keeps shell materials solid while highlighting the selected component',()=>{
+ const f=fixture();
+ f.effect.apply(['CT'],theme,false,false);
+ assert.equal(f.shell.material,f.material);
+ assert.notEqual(f.cabinet.material,f.material);
+ assert.equal(f.cabinet.material.emissive.getHex(),new THREE.Color(theme).getHex());
+ f.effect.apply(['CT'],theme,true,false);
+ assert.equal(f.shell.material,f.material);
+ assert.notEqual(f.interior.material,f.material);
+ assert.equal(f.interior.material.opacity,.5);
+ f.effect.dispose();
+});

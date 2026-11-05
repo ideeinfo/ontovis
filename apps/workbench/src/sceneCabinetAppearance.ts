@@ -16,14 +16,14 @@ export class SceneCabinetAppearance {
   private activeKey:string|null=null;
   private disposed=false;
   constructor(root:THREE.Group,version:Pick<ProjectModelVersion,'modelVersionId'|'components'>){this.root=root;this.version=version;}
-  apply(componentKeys:readonly string[],color:string,isolate=false){
+  apply(componentKeys:readonly string[],color:string,isolate=false,fadeShell=true){
     if(this.disposed)return;
     const id=this.root.userData.sceneModelInstanceId,version=this.version.modelVersionId;
     const keys=new Set(componentKeys),components=this.version.components;
     if(!this.root.visible||typeof id!=='string'||!id||this.root.userData.ontoVisModelVersionId!==version||
       !keys.size||keys.size!==componentKeys.length||[...keys].some(key=>typeof key!=='string'||!key||
         components.filter(component=>component.componentKey===key).length!==1)){this.restore();return;}
-    const key=JSON.stringify([[...keys].sort(),color,isolate]);if(key===this.activeKey)return;
+    const key=JSON.stringify([[...keys].sort(),color,isolate,fadeShell]);if(key===this.activeKey)return;
     this.restore();
     const selected=new Set<THREE.Mesh>(),enclosing:THREE.Mesh[]=[],meshes:THREE.Mesh[]=[];
     this.root.traverse(node=>{
@@ -38,11 +38,14 @@ export class SceneCabinetAppearance {
     if(!selected.size)return;
     this.selected=[...selected];
     const copies=new Map<THREE.Material,Map<string,THREE.Material>>();
-    for(const mesh of isolate?meshes:new Set([...selected,...enclosing])){
+    const candidates=isolate?meshes:new Set([...selected,...(fadeShell?enclosing:[])]);
+    for(const mesh of candidates){
       const original=mesh.material,faded=new Set<THREE.Material>(),highlight=selected.has(mesh);
       let changed=false;
       const copy=(material:THREE.Material)=>{
-        const role=highlight?'highlight':isolate?(shells.has(mesh.userData.component)?'shell':'interior'):'enclosing';
+        const isShell=shells.has(mesh.userData.component);
+        if(!highlight&&isShell&&!fadeShell)return material;
+        const role=highlight?'highlight':isolate?(isShell?'shell':'interior'):'enclosing';
         const cached=copies.get(material)?.get(role);if(cached){changed=true;if(!highlight)faded.add(cached);return cached;}
         const own=(value:THREE.Material)=>{
           changed=true;
@@ -50,7 +53,7 @@ export class SceneCabinetAppearance {
           this.owned.add(value);if(!highlight)faded.add(value);return value;
         };
         // Keep the surrounding assembly readable, including mesh parents of the selection.
-        if(isolate&&!highlight){const value=material.clone();value.transparent=true;value.opacity=material.opacity*(shells.has(mesh.userData.component)?.32:.5);value.depthWrite=false;return own(value);}
+        if(isolate&&!highlight){const value=material.clone();value.transparent=true;value.opacity=material.opacity*(isShell?.32:.5);value.depthWrite=false;return own(value);}
         if(!(material instanceof THREE.MeshStandardMaterial))return material;
         const value=material.clone();
         if(highlight){value.emissive.set(color);value.emissiveIntensity=.25;}

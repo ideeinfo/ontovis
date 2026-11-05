@@ -1,6 +1,6 @@
 import type {Bounds3, EditableSceneSnapshot, ModelResourceRef, SceneView, Vector3} from './sceneTypes';
 
-export interface ComponentFocusRequest {token:number;instanceId:string;bounds:Bounds3;componentKeys?:string[];isolate?:boolean}
+export interface ComponentFocusRequest {token:number;instanceId:string;bounds:Bounds3;componentKeys?:string[];isolate?:boolean;fadeShell?:boolean}
 export interface ComponentFocusContext {
   snapshot:EditableSceneSnapshot;selectedId:string|null;modelRefs:readonly ModelResourceRef[];
   personalVisibility:Readonly<Record<string,boolean>>;previewActive:boolean;
@@ -18,7 +18,7 @@ export function componentFocusKey(request:ComponentFocusRequest|undefined):strin
   return request&&Number.isSafeInteger(request.token)&&request.token>=0&&typeof request.instanceId==='string'&&
     request.instanceId.length>0&&validBounds(request.bounds)&&(request.componentKeys===undefined||Array.isArray(request.componentKeys)&&
       request.componentKeys.every(key=>typeof key==='string'&&key.length>0&&key.length<=512)&&
-      new Set(request.componentKeys).size===request.componentKeys.length)&&(request.isolate===undefined||typeof request.isolate==='boolean')?JSON.stringify([request.token,request.instanceId,request.bounds,request.componentKeys??[],request.isolate??false]):null;
+      new Set(request.componentKeys).size===request.componentKeys.length)&&(request.isolate===undefined||typeof request.isolate==='boolean')?JSON.stringify([request.token,request.instanceId,request.bounds,request.componentKeys??[],request.isolate??false,request.fadeShell??true]):null;
 }
 /** Capture the exact fixed resource and placement before awaiting its shared GLB. */
 export function prepareComponentFocus(request:ComponentFocusRequest|undefined,context:ComponentFocusContext):ComponentFocusTarget|null {
@@ -50,7 +50,7 @@ export function componentFocusView(bounds:Bounds3,current:SceneView,fovDeg:numbe
   const target=bounds[0].map((number,index)=>number+(bounds[1][index]-number)/2) as Vector3;
   const radius=Math.hypot(...bounds[0].map((number,index)=>bounds[1][index]-number))/2;
   const halfVertical=fovDeg*Math.PI/360,halfHorizontal=Math.atan(Math.tan(halfVertical)*aspect);
-  const distance=Math.max(showContext?6:3,radius/Math.sin(Math.min(halfVertical,halfHorizontal))*(showContext?1.7:1.15));
+  const distance=Math.max(showContext?22:3,radius/Math.sin(Math.min(halfVertical,halfHorizontal))*(showContext?1.7:1.15));
   let direction=current.eye.map((number,index)=>number-current.target[index]);
   let length=Math.hypot(...direction);
   if(!Number.isFinite(length))return null;

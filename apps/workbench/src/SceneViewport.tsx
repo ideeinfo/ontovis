@@ -264,16 +264,18 @@ export function SceneViewport(props:SceneViewportProps) {
     let inspection:{entry:Entry;driver:SceneModelView}|null=null,inspectionView:{instanceId:string;view:SceneView}|null=null,lastModelViewStatus:ModelViewStatus='loading';
     const modelViewStatus=(status:ModelViewStatus)=>{if(status!==lastModelViewStatus){lastModelViewStatus=status;current.current.onModelViewStatus?.(status);}};
     const clearModelView=(restore=false)=>{inspection?.driver.dispose();inspection=null;
-      if(restore&&inspectionView){const saved=inspectionView;inspectionView=null;if(current.current.selectedId===saved.instanceId)moveView(saved.view);}
+      if(restore&&inspectionView&&!current.current.presentation){const saved=inspectionView;inspectionView=null;if(current.current.selectedId===saved.instanceId)moveView(saved.view);}
+      else inspectionView=null;
     };
     const syncModelView=()=>{
       const state=current.current,request=state.modelView,entry=request?entries.get(request.instanceId):undefined;
-      if(!request||!entry?.root.visible||state.active===false||document.hidden||state.editing||state.previewModel||state.componentFocus){clearModelView(true);modelViewStatus('loading');return;}
+      if(!request||!entry?.root.visible||state.active===false||document.hidden||state.editing||state.previewModel){clearModelView();modelViewStatus('loading');return;}
       simulated.clear(request.instanceId);
       if(inspection&&(inspection.entry!==entry||!inspection.driver.matches(request)))clearModelView();
-      if(!inspection){const driver=SceneModelView.create(entry.root,entry.version,request);if(!driver){clearModelView(true);modelViewStatus('unavailable');return;}
+      if(!inspection){const driver=SceneModelView.create(entry.root,entry.version,request);if(!driver){clearModelView();modelViewStatus('unavailable');return;}
         if(!inspectionView||inspectionView.instanceId!==request.instanceId)inspectionView={instanceId:request.instanceId,view:view(camera,orbit)};
-        inspection={entry,driver};const destination=selectedModelView(camera,driver.focusBounds(),camera.position.clone().sub(orbit.target));if(destination)moveView(destination);
+        inspection={entry,driver};
+        if(!state.componentFocus){const destination=selectedModelView(camera,driver.focusBounds(),camera.position.clone().sub(orbit.target));if(destination)moveView(destination);}
       }modelViewStatus('ready');
     };
     const syncMotion=()=>{
@@ -394,7 +396,7 @@ export function SceneViewport(props:SceneViewportProps) {
       if(componentTarget&&!componentFocusCurrent(componentTarget,state.componentFocus,focusContext()))clearComponentFocus();
       const entry=componentTarget?entries.get(componentTarget.instanceId):undefined;
       if(componentPending&&!resourcesLoading&&entry?.key===componentPending.modelKey&&entry.root.visible&&!preview){
-        entry.appearance.apply(componentPending.componentKeys??[],selectionColor(),componentPending.isolate);
+        entry.appearance.apply(componentPending.componentKeys??[],selectionColor(),componentPending.isolate,componentPending.fadeShell??true);
         const displayBox=entry.appearance.selectionBounds(),displayBounds=displayBox.isEmpty()?componentPending.bounds:[displayBox.min.toArray(),displayBox.max.toArray()] as [Vector3,Vector3];
         const destination=componentFocusView(displayBounds,view(camera,orbit),camera.fov,camera.aspect,!!state.presentation);
         if(destination){componentFocused=componentPending;moveView(state.presentation?terrainSafeView(destination,terrain):destination,true,true);}
@@ -408,7 +410,7 @@ export function SceneViewport(props:SceneViewportProps) {
       }
       const color=selectionColor();
       for(const value of entries.values()){
-        if(componentFocused&&value===entry&&componentBox.visible)value.appearance.apply(componentFocused.componentKeys??[],color,componentFocused.isolate);
+        if(componentFocused&&value===entry&&componentBox.visible)value.appearance.apply(componentFocused.componentKeys??[],color,componentFocused.isolate,componentFocused.fadeShell??true);
         else value.appearance.restore();
       }
       return componentTarget!==null;
