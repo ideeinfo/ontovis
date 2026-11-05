@@ -1,4 +1,4 @@
-import {Box3,Box3Helper,MathUtils,Raycaster,Vector3,type Object3D,type PerspectiveCamera} from 'three';
+import {Box3,Box3Helper,MathUtils,Raycaster,Vector3,type ColorRepresentation,type Object3D,type PerspectiveCamera} from 'three';
 import type {SceneView,Vector3 as SceneVector3} from './sceneTypes';
 
 /** Selected models define their own frame; a regional terrain must not dilute it. */
@@ -95,18 +95,30 @@ export class SceneModelSelectionBoxes {
     for(const material of Array.isArray(helper.material)?helper.material:[helper.material])material.dispose();
     this.helpers.delete(id);
   }
-  update(entries:ReadonlyMap<string,{root:Object3D}>,ids:string[]):void {
+  setColor(color:ColorRepresentation):void {
+    for(const helper of this.helpers.values()){
+      for(const material of Array.isArray(helper.material)?helper.material:[helper.material]){
+        if('color' in material && (material as any).color)(material as any).color.set(color);
+      }
+    }
+  }
+  update(entries:ReadonlyMap<string,{root:Object3D}>,ids:string[],color?:ColorRepresentation):void {
     const selected=new Set(ids);if(selected.size<=1)selected.clear();
     for(const [id,helper] of this.helpers)if(!selected.has(id)||!entries.get(id)?.root.visible){
       this.release(id,helper);
     }
+    const defaultColor=color??0x007e6d;
     for(const id of selected){
       const root=entries.get(id)?.root;if(!root?.visible)continue;
       let helper=this.helpers.get(id);
       if(!helper){
-        helper=new Box3Helper(new Box3(),0x38ad97);helper.renderOrder=1;
+        helper=new Box3Helper(new Box3(),defaultColor as any);helper.renderOrder=2;
         for(const material of Array.isArray(helper.material)?helper.material:[helper.material]){material.depthTest=false;material.depthWrite=false;}
         this.helpers.set(id,helper);this.parent.add(helper);
+      } else if(color!==undefined){
+        for(const material of Array.isArray(helper.material)?helper.material:[helper.material]){
+          if('color' in material && (material as any).color)(material as any).color.set(color);
+        }
       }
       root.updateWorldMatrix(true,true);helper.box.setFromObject(root);helper.updateMatrixWorld(true);
     }

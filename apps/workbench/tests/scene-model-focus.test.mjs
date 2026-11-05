@@ -42,11 +42,14 @@ test('degenerate camera direction and point bounds still produce a finite usable
 });
 test('multi-selection keeps an individual visible position box for each selected model',()=>{
   const scene=new Group(),entries=new Map([['a',model(-20,0,0)],['b',model(30,10,20)]]),selection=new SceneModelSelectionBoxes(scene);
-  selection.update(entries,['a','b']);assert.equal(selection.helpers.size,2);
+  selection.update(entries,['a','b'],'#ff790d');assert.equal(selection.helpers.size,2);
   for(const [id,helper] of selection.helpers){
     assert.deepEqual(helper.box,new Box3().setFromObject(entries.get(id).root));
     assert.equal(helper.material.depthTest,false);assert.equal(helper.material.depthWrite,false);
+    assert.equal(helper.renderOrder,2);assert.equal(helper.material.color.getHexString(),'ff790d');
   }
+  selection.setColor(0x007e6d);
+  assert.equal(selection.helpers.get('a').material.color.getHexString(),'007e6d');
   const first=selection.helpers.get('a');entries.get('a').root.position.x=40;selection.update(entries,['a','b']);
   assert.equal(selection.helpers.get('a'),first);assert.equal(first.box.getCenter(new Vector3()).x,40);
   selection.dispose();assert.equal(scene.children.length,0);

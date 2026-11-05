@@ -329,6 +329,10 @@ export function SceneViewport(props:SceneViewportProps) {
       if(dirtyFrame||tween||wave||simulated.size){
         const selected=current.current.selectedId;
         if(selected&&selectedBox.visible&&simulated.has(selected))selectedBox.box.setFromObject(entries.get(selected)!.root);
+        for(const [id,helper] of selectionBoxes.helpers){
+          const entry=entries.get(id);
+          if(entry&&entry.root.visible&&(simulated.has(id)||dirtyFrame||tween))helper.box.setFromObject(entry.root);
+        }
         const alarm=current.current.alarm,entry=alarm?entries.get(alarm.instanceId):undefined,marker=alarmMarker.current;
         const show=!!alarm&&!!entry&&entry.root.visible&&!current.current.previewModel;
         alarmBox.visible=show;
@@ -467,7 +471,7 @@ export function SceneViewport(props:SceneViewportProps) {
       const selectedEntries=ids.flatMap(id=>{const entry=entries.get(id);return entry?.root.visible?[entry]:[];});
       const componentActive=componentHighlight();
       selectedBox.visible=!state.presentation&&!componentActive&&selectedEntries.length===1&&!preview;
-      selectionBoxes.update(entries,state.presentation||componentActive||preview?[]:ids);
+      selectionBoxes.update(entries,state.presentation||componentActive||preview?[]:ids,selectionColor());
       if(selectedBox.visible){selectedBox.box.makeEmpty();for(const entry of selectedEntries){entry.root.updateMatrixWorld(true);selectedBox.box.union(new THREE.Box3().setFromObject(entry.root));}selectedBox.updateMatrixWorld(true);}
       previewSelection();
       request();
@@ -483,6 +487,7 @@ export function SceneViewport(props:SceneViewportProps) {
       const color=selectionColor();
       const material=selectedBox.material as THREE.LineBasicMaterial;material.color.set(color);
       (componentBox.material as THREE.LineBasicMaterial).color.set(color);
+      selectionBoxes.setColor(color);
       renderer.domElement.setAttribute('aria-label',sceneViewportMessage(state.locale,'view'));
       const dusk=state.snapshot.defaults.lighting==='dusk';
       sun.color.set(dusk?0xffca93:0xfff4df);sun.intensity=dusk?1.8:2.5;

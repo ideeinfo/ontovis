@@ -490,11 +490,25 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     retainObject.current=false;
     if(internal)returnInternal();
     objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setObject(null);setObjectLoading(false);setLocation(null);setComponentFocus(undefined);setPickedComponent(null);setLocating(false);
-    cancelPlacement();setSelected(id);setPreview(null);setSide(null);
-    if(id&&!editing)setPersonal(previous=>({...previous,[id]:true}));
-    if(locate&&ids.length<=1)setFocus({token:Date.now(),instanceId:id});
+    cancelPlacement();
+    const nextSelected=id&&ids.includes(id)?id:(ids[ids.length-1]??null);
+    setSelected(nextSelected);setPreview(null);setSide(null);
+    if(nextSelected&&!editing)setPersonal(previous=>({...previous,[nextSelected]:true}));
+    if(locate){
+      if(ids.length===1)setFocus({token:Date.now(),instanceId:ids[0]});
+      else if(ids.length>1)setFocus({token:Date.now(),instanceId:null,instanceIds:[...ids]});
+    }
   }
-  function selectMany(ids:string[]){if(routePlaying)return;selectInstance(ids[0]??null);setSelection(ids);}
+  function selectMany(ids:string[],locate=true){
+    if(routePlaying)return;
+    const nextSelected=ids[0]??null;
+    selectInstance(nextSelected,false);
+    setSelection(ids);
+    if(locate){
+      if(ids.length===1)setFocus({token:Date.now(),instanceId:ids[0]});
+      else if(ids.length>1)setFocus({token:Date.now(),instanceId:null,instanceIds:[...ids]});
+    }
+  }
   function loadSelected(){
     if(!selectedIds.length||busy||routePlaying||anchorResult)return;
     selectMany(selectedIds);
@@ -625,7 +639,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
               const toggleVisibility=()=>toggleInstanceVisibility(item);
               const actions:ListAction[]=[{id:'focus',label:t('locate'),icon:<Focus/>,disabled:routePlaying,onSelect:()=>selectInstance(item.sceneModelInstanceId,true,false)},
                 {id:'visibility',label:visible?t('hide'):t('show'),icon:visible?<Eye/>:<EyeOff/>,disabled:busy||!!anchorResult,onSelect:toggleVisibility}];
-              return <RowContext key={item.sceneModelInstanceId} name={item.displayName} actions={actions}><div className={`sw-content-row ${selectedIds.includes(item.sceneModelInstanceId)?'selected':''}`}><input className="so-select" type="checkbox" aria-label={`${ot('selectInstance')} ${item.displayName}`} checked={selectedIds.includes(item.sceneModelInstanceId)} disabled={routePlaying||busy||!!anchorResult} onChange={()=>selectInstance(item.sceneModelInstanceId,false,true)}/><button type="button" className="sw-content-name" disabled={routePlaying} onClick={event=>selectInstance(item.sceneModelInstanceId,true,event.shiftKey)}>{item.displayName}</button>{item.positionLocked&&<LockKeyhole size={12} aria-label={t('locked')}/>}<IconBtn label={visible?t('hide'):t('show')} disabled={busy||!!anchorResult} onClick={toggleVisibility}>{visible?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn></div></RowContext>;
+              return <RowContext key={item.sceneModelInstanceId} name={item.displayName} actions={actions}><div className={`sw-content-row ${selectedIds.includes(item.sceneModelInstanceId)?'selected':''}`}><input className="so-select" type="checkbox" aria-label={`${ot('selectInstance')} ${item.displayName}`} checked={selectedIds.includes(item.sceneModelInstanceId)} disabled={routePlaying||busy||!!anchorResult} onChange={()=>selectInstance(item.sceneModelInstanceId,true,true)}/><button type="button" className="sw-content-name" disabled={routePlaying} onClick={event=>selectInstance(item.sceneModelInstanceId,true,event.shiftKey)}>{item.displayName}</button>{item.positionLocked&&<LockKeyhole size={12} aria-label={t('locked')}/>}<IconBtn label={visible?t('hide'):t('show')} disabled={busy||!!anchorResult} onClick={toggleVisibility}>{visible?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn></div></RowContext>;
             })}</section>)}</details>;})}
           {Object.keys(personal).length>0&&<Btn onClick={()=>setPersonal({})}>{t('resetVisibility')}</Btn>}</div>}
       </aside><div className="sw-viewport"><div className="so-bar"><span>{ot('selected')} {selectedIds.length}</span><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('batch')}>{ot('batch')}</button><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('routesTab')}>{ot('routesTab')}</button></div>{preview&&<div className="sw-preview-tools"><ModelPreviewTools inspection={inspection}/></div>}<Suspense fallback={<SceneLoadingProgress locale={locale} phase="viewer"/>}><SceneViewport active={!suspended} alarm={sceneAlarm} onAlarmFocus={()=>sceneAlarm&&selectInstance(sceneAlarm.instanceId,true)} api={api} snapshot={snapshot} preparationKey={JSON.stringify([base.sceneId,base.sceneRevision,metadataAttempt])} preparationError={metadataErrors.terrain||metadataErrors.imagery} onRetryPreparation={()=>{setError(null);setMetadataAttempt(value=>value+1);}} modelRefs={refs} terrainVersion={viewTerrain} selectedId={selected} selectedIds={selectedIds} gridSnap={snap.grid} cameraControl={cameraControl} onCameraInteraction={()=>routeControl.current?.manual()} editing={editable&&!internal} disabled={busy} personalVisibility={componentFocus?{...personal,[componentFocus.instanceId]:true}:personal} terrainVisible={terrainVisible} imageryVersion={imageryVersion} imageryVisible={editing?!!snapshot?.imagery?.visible:imageryVisible} pendingPlacement={!!pending||!!pendingTurbine} placementModel={pending?.kind==='model'?pending.model:null} previewModel={preview} previewSelection={inspection.selection} onPreviewStructure={inspection.ready} onPreviewPick={(identity,id)=>{inspection.pick(identity,id);if(id)setSide('right');}} viewCommand={viewCommand} focusRequest={focus} componentFocus={componentFocus} componentPickingInstanceId={internal&&editable?current?.sceneModelInstanceId:null} onComponentPick={pickComponent}
