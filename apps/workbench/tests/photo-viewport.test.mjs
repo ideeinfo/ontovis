@@ -53,6 +53,7 @@ function mount({embedded=false,initialView,natural=[1962,4096],selector=null,reg
       const button=find('button',p=>p['aria-label']===label||text(p.children)===label);assert.ok(button,label);assert.equal(button.props.disabled,false);button.props.onClick();render();},
     resize(width,height){viewport.clientWidth=width;viewport.clientHeight=height;observer();render();},
     wheel(deltaY,deltaMode=0){let prevented=false,stopped=false;viewport.listeners.get('wheel')({deltaY,deltaMode,clientX:533,clientY:216,preventDefault(){prevented=true;},stopPropagation(){stopped=true;}});render();assert.ok(prevented&&stopped);},
+    update(nextProps){Object.assign(props,nextProps);render();},
     pan(dx,dy){const region=find('div',p=>p.role==='region').props;region.onPointerDown({button:0,pointerId:1,clientX:533,clientY:216,currentTarget:viewport,preventDefault(){}});render();
       const current=find('div',p=>p.role==='region').props;current.onPointerMove({pointerId:1,clientX:533+dx,clientY:216+dy,currentTarget:viewport});current.onPointerUp();render();},
     destroy(){for(const slot of [...layouts,...effects])slot.cleanup?.();globalThis.ResizeObserver=savedObserver;}
@@ -151,5 +152,29 @@ test('connection wires render svg polylines with endpoints',()=>{
     assert.equal(line.props.points,'150,420 150,630 250,630');
     const endpoints=view.wireEndpoints();
     assert.equal(endpoints.length,2);
+  }finally{view.destroy();}
+});
+
+test('critical scrollbar flutter does not trigger oscillation loop',()=>{
+  const selector={kind:'image_bbox',coordinateSpace:'oriented_display_normalized',bbox:{x:.2,y:.2,width:.4,height:.45}};
+  const view=mount({selector,focusZoom:null});
+  try{
+    for(let i=0;i<5;i++){
+      view.resize(1051,417);
+      view.resize(1066,432);
+    }
+    assert.ok(true);
+  }finally{view.destroy();}
+});
+
+test('large connection selection settles without flutter and maintains user zoom on switching',()=>{
+  const connA={kind:'image_bbox',coordinateSpace:'oriented_display_normalized',bbox:{x:.2,y:.3,width:.3,height:.4}};
+  const connB={kind:'image_bbox',coordinateSpace:'oriented_display_normalized',bbox:{x:.6,y:.2,width:.25,height:.35}};
+  const view=mount({selector:connA,focusZoom:null});
+  try{
+    view.click('照片放大');
+    const zoomBefore=view.output();
+    view.update({selector:connB});
+    assert.equal(view.output(),zoomBefore);
   }finally{view.destroy();}
 });

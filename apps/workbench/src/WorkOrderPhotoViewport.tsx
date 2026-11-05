@@ -40,10 +40,12 @@ export function WorkOrderPhotoViewport({image,selector,label,regionLabel,en,onEr
     zoomRef.current=next;setZoom(next);
     if(next===zoom){view.scrollTo(pending.current);pending.current=null;}report();
   }
-  function focusPhoto(){
+  function focusPhoto(targetBox=box){
     const view=viewer.current;if(!view||!natural.width)return;
-    cancelPan();restoring.current=null;const next=box&&focusZoom!==null?clampPhotoZoom(focusZoom):photoFocusZoom(box,size.width,size.height,natural.width,natural.height,focusFraction);
-    pending.current=photoFocusScroll(box,base.width*next,base.height*next,view.clientWidth,view.clientHeight);
+    cancelPan();restoring.current=null;
+    const vpWidth=view.clientWidth||size.width,vpHeight=view.clientHeight||size.height;
+    const next=targetBox&&focusZoom!==null?clampPhotoZoom(focusZoom):photoFocusZoom(targetBox,vpWidth,vpHeight,natural.width,natural.height,focusFraction);
+    pending.current=photoFocusScroll(targetBox,base.width*next,base.height*next,vpWidth,vpHeight);
     zoomRef.current=next;setZoom(next);
     if(next===zoom){view.scrollTo(pending.current);pending.current=null;}
   }
@@ -51,16 +53,37 @@ export function WorkOrderPhotoViewport({image,selector,label,regionLabel,en,onEr
     const view=viewer.current;if(!view)return;
     const observer=new ResizeObserver(()=>{
       const width=view.clientWidth,height=view.clientHeight;
-      setSize(current=>current.width===width&&current.height===height?current:{width,height});
+      setSize(current=>{
+        if(current.width>0&&current.height>0&&Math.abs(current.width-width)<=24&&Math.abs(current.height-height)<=24)return current;
+        return current.width===width&&current.height===height?current:{width,height};
+      });
     });
     observer.observe(view);return()=>observer.disconnect();
   },[]);
+  const didInit=useRef(false);
   useLayoutEffect(()=>{if(initial.current&&natural.width){const value=initial.current;initial.current=undefined;
-    const next=photoRestoreZoom(value,size.width,size.height,natural.width,natural.height);
-    zoomRef.current=next;setZoom(next);restoring.current=value;
+    const vpWidth=viewer.current?.clientWidth||size.width,vpHeight=viewer.current?.clientHeight||size.height;
+    const next=photoRestoreZoom(value,vpWidth,vpHeight,natural.width,natural.height);
+    zoomRef.current=next;setZoom(next);restoring.current=value;didInit.current=true;
   // The loading placeholder and scrollbars change the usable viewport after
   // decoding. Finish automatic centering before preserving the user's view.
+  }else if(!didInit.current&&natural.width){didInit.current=true;focusPhoto();
   }else if(!changed.current&&!restoring.current)focusPhoto();},[natural.width,natural.height,size.width,size.height]);
+  const prevBox=useRef<typeof box>(box);
+  useLayoutEffect(()=>{
+    if(!natural.width||!didInit.current)return;
+    const prev=prevBox.current;prevBox.current=box;
+    const sameBox=prev===box||(!!prev&&!!box&&prev.x===box.x&&prev.y===box.y&&prev.width===box.width&&prev.height===box.height);
+    if(sameBox||!box)return;
+    const view=viewer.current;if(!view)return;
+    cancelPan();
+    if(changed.current||zoomRef.current>=photoFitZoom(view.clientWidth,view.clientHeight,natural.width,natural.height)*1.2){
+      const target=photoFocusScroll(box,base.width*zoomRef.current,base.height*zoomRef.current,view.clientWidth,view.clientHeight);
+      view.scrollTo({left:target.left,top:target.top,behavior:'smooth'});
+    }else{
+      focusPhoto(box);
+    }
+  },[box,natural.width,natural.height]);
   useLayoutEffect(()=>{const view=viewer.current,value=restoring.current;if(!view||zoomRef.current!==zoom)return;
     // Image dimensions settle after the viewer opens; restore against the final
     // frame rather than the temporary pre-scrollbar viewport.
