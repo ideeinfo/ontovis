@@ -1,0 +1,773 @@
+{
+  "schemaVersion": 1,
+  "source": "Independent rasterio/GDAL WGS84 UTM transforms and central true-north derivative; synthetic coordinates, not field measurements",
+  "runtime": {
+    "rasterio": "1.5.2",
+    "gdal": "3.12.2",
+    "proj": "9.8.1"
+  },
+  "convergenceRuleId": "projected-central-true-north-derivative-v1",
+  "maximumDisplayOrRoundTripErrorM": 0.02,
+  "cases": [
+    {
+      "name": "north-central",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:north-central",
+        "horizontalCrs": "EPSG:32649",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 500000.00000000355,
+        "originNorthing": 3651286.9439596827,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            111,
+            33
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": 111.02,
+        "latitude": 33.01,
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:north-central"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 100,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        1868.1058947144193,
+        14.75,
+        -1108.7794673820026
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -6.2829951411898435
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.785207997407705
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.5706061608051531
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.14140248760005
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.712198814394947
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -6.2742684949298715
+        }
+      ]
+    },
+    {
+      "name": "north-east-edge",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:north-east-edge",
+        "horizontalCrs": "EPSG:32649",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 778980.192701367,
+        "originNorthing": 3699654.495676253,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            113.9995,
+            33.4
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": 113.99,
+        "latitude": 33.45,
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:north-east-edge"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 110,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        -1043.4858681678306,
+        24.75,
+        -5520.918197949883
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -6.254401825731063
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.7566146819489248
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.5420128453463733
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.1128091721412696
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.683605498936166
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -6.245675179471091
+        }
+      ]
+    },
+    {
+      "name": "north-west-edge",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:north-west-edge",
+        "horizontalCrs": "EPSG:32649",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 221019.80729864008,
+        "originNorthing": 3699654.4956762525,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            108.0005,
+            33.4
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": 108.01,
+        "latitude": 33.45,
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:north-west-edge"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 120,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        1043.4858681677724,
+        34.75,
+        -5520.918197950348
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -0.0287834815069916
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.8141816449044399
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.5995798083018882
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.170376135096785
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.741172461891681
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -0.02005683524701968
+        }
+      ]
+    },
+    {
+      "name": "south-central",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:south-central",
+        "horizontalCrs": "EPSG:32756",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32756:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 509877.26418795844,
+        "originNorthing": 6958179.20386737,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            153.1,
+            -27.5
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": 153.12,
+        "latitude": -27.3,
+        "transformId": "utm-wgs84-v1:EPSG:32756:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:south-central"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 130,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        1996.8064676348586,
+        44.75,
+        -22151.38136013318
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -0.0009605945040324029
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.7863587579014807
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.571756921298929
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.142553248093826
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.713349574888722
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -6.275419255423647
+        }
+      ]
+    },
+    {
+      "name": "south-west-edge",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:south-west-edge",
+        "horizontalCrs": "EPSG:32756",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32756:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 210638.60389572725,
+        "originNorthing": 6677425.360047432,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            150.0005,
+            -30
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": 150.01,
+        "latitude": -30.1,
+        "transformId": "utm-wgs84-v1:EPSG:32756:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:south-west-edge"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 140,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        1206.9147491622716,
+        54.75,
+        11064.487026077695
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -6.256995731728178
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.7592085879460404
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.5446067513434885
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.1154030781383852
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.686199404933282
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -6.248269085468206
+        }
+      ]
+    },
+    {
+      "name": "south-east-edge",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:south-east-edge",
+        "horizontalCrs": "EPSG:32756",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32756:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 789361.3961042752,
+        "originNorthing": 6677425.360047432,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            155.9995,
+            -30
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": 155.99,
+        "latitude": -30.1,
+        "transformId": "utm-wgs84-v1:EPSG:32756:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:south-east-edge"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 150,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        -1206.9147491648328,
+        64.75,
+        11064.487026077695
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -0.02618957547763671
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.811587738875085
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.5969859022725335
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.16778222906743
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.738578555862326
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -0.01746292921766492
+        }
+      ]
+    },
+    {
+      "name": "north-40km",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:north-40km",
+        "horizontalCrs": "EPSG:32649",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 500000.00000000355,
+        "originNorthing": 3651286.9439596827,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            111,
+            33
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": 111.25775720088383,
+        "latitude": 33.28837815424314,
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:north-40km"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 160,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        24000.000000000407,
+        74.75,
+        -32000.0
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -6.280716162657709
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.782929018875571
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.5683271822730194
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.139123509067916
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.709919835862812
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -6.2719895163977375
+        }
+      ]
+    },
+    {
+      "name": "north-zone1",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:north-zone1",
+        "horizontalCrs": "EPSG:32601",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32601:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 186178.395422291,
+        "originNorthing": 2214292.1496316586,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            -179.999,
+            20
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": -179.99,
+        "latitude": 20.05,
+        "transformId": "utm-wgs84-v1:EPSG:32601:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:north-zone1"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 170,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        1041.508660610416,
+        84.75,
+        -5521.964249649085
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -0.01790582840963046
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.8033039918070787
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.588702155204527
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.1594984819994236
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.73029480879432
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -0.009179182149658882
+        }
+      ]
+    },
+    {
+      "name": "south-zone60",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:south-zone60",
+        "horizontalCrs": "EPSG:32760",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32760:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 812879.1651928697,
+        "originNorthing": 7785724.712355172,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            179.99,
+            -20
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": 179.95,
+        "latitude": -19.95,
+        "transformId": "utm-wgs84-v1:EPSG:32760:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:south-zone60"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 180,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        -4091.0432870341465,
+        94.75,
+        -5612.975420201197
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -0.017581410591172165
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.8029795739886205
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.5883777373860688
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.159174064180965
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.729970390975862
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -0.00885476433120079
+        }
+      ]
+    },
+    {
+      "name": "north-high-latitude",
+      "frame": {
+        "mode": "projected_site",
+        "frameRevision": "fixture:north-high-latitude",
+        "horizontalCrs": "EPSG:32649",
+        "verticalDatum": "EGM2008",
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "originEasting": 500000.00000000047,
+        "originNorthing": 9305766.51919428,
+        "originHeight": 85.25,
+        "convergenceRuleId": "projected-central-true-north-derivative-v1",
+        "anchor": {
+          "localAnchor": [
+            0,
+            0
+          ],
+          "geographicAnchor": [
+            111,
+            83.8
+          ],
+          "trueNorthHeadingDeg": 0,
+          "anchorHeight": {
+            "mode": "absolute",
+            "valueM": 85.25,
+            "verticalDatum": "EGM2008",
+            "sourceNote": "Synthetic fixture"
+          },
+          "heightStrategy": "keep_relative_to_anchor"
+        }
+      },
+      "position": {
+        "mode": "geographic",
+        "longitude": 111.1,
+        "latitude": 83.9,
+        "transformId": "utm-wgs84-v1:EPSG:32649:rasterio-1.5.2-gdal-3.12.2-proj-9.8.1",
+        "frameRevision": "fixture:north-high-latitude"
+      },
+      "height": {
+        "mode": "absolute",
+        "valueM": 190,
+        "verticalDatum": "EGM2008",
+        "sourceNote": "Synthetic fixture"
+      },
+      "expectedDisplay": [
+        1186.3852074158494,
+        104.75,
+        -11164.664326932281
+      ],
+      "headings": [
+        {
+          "trueHeadingDeg": 0,
+          "threeYawRad": -6.281449860063334
+        },
+        {
+          "trueHeadingDeg": 45,
+          "threeYawRad": -0.7836627162811957
+        },
+        {
+          "trueHeadingDeg": 90,
+          "threeYawRad": -1.569060879678644
+        },
+        {
+          "trueHeadingDeg": 180,
+          "threeYawRad": -3.1398572064735406
+        },
+        {
+          "trueHeadingDeg": 270,
+          "threeYawRad": -4.710653533268437
+        },
+        {
+          "trueHeadingDeg": 359.5,
+          "threeYawRad": -6.272723213803362
+        }
+      ]
+    }
+  ]
+}

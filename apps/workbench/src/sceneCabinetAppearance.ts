@@ -1,0 +1,121 @@
+import * as THREE from 'three';
+import type {ProjectModelVersion} from './resourceTypes';
+
+type MaterialChange={mesh:THREE.Mesh;original:THREE.Material|THREE.Material[]};
+const sourceIndex=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>=0;
+const shells=new Set(['tower','nacelle','rotor_cover']);
+const exteriorComponents=new Set([
+  'tower','nacelle','rotor_cover','blade','blade_assembly','rotor','rotorAssembly','hub'
+]);
+
+export function isExteriorMesh(mesh:THREE.Mesh):boolean {
+  const comp=String(mesh.userData?.component??'');
+  if(exteriorComponents.has(comp))return true;
+  const nodeIdx=mesh.userData?.ontoVisNodeIndex;
+  if(sourceIndex(nodeIdx)&&(nodeIdx===2||(nodeIdx>=143&&nodeIdx<=175)))return true;
+  if(/tower|nacelle|shell|housing|cover|case|hood|canopy|cowl|blade|rotor|hub|spinner|impeller/i.test(mesh.name))return true;
+  return false;
+}
+
+/** Temporary cabinet display for an instance clone. Shared cache materials stay untouched. */
+export class SceneCabinetAppearance {
+  private readonly root:THREE.Group;
+  private readonly version:Pick<ProjectModelVersion,'modelVersionId'|'components'>;
+  private changes:MaterialChange[]=[];
+  private owned=new Set<THREE.Material>();
+  private fadedOccluders=new Map<THREE.Mesh,Set<THREE.Material>>();
+  private selected:THREE.Mesh[]=[];
+  private activeKey:string|null=null;
+  private disposed=false;
+  constructor(root:THREE.Group,version:Pick<ProjectModelVersion,'modelVersionId'|'components'>){this.root=root;this.version=version;}
+  apply(componentKeys:readonly string[],color:string,isolate=false,fadeShell=true){
+    if(this.disposed)return;
+    const id=this.root.userData.sceneModelInstanceId,version=this.version.modelVersionId;
+    const keys=new Set(componentKeys),components=this.version.components;
+    if(!this.root.visible||typeof id!=='string'||!id||this.root.userData.ontoVisModelVersionId!==version||
+      !keys.size||keys.size!==componentKeys.length||[...keys].some(key=>typeof key!=='string'||!key||
+        components.filter(component=>component.componentKey===key).length!==1)){this.restore();return;}
+    const key=JSON.stringify([[...keys].sort(),color,isolate,fadeShell]);if(key===this.activeKey)return;
+    this.restore();
+    const selected=new Set<THREE.Mesh>(),enclosing:THREE.Mesh[]=[],meshes:THREE.Mesh[]=[];
+    this.root.traverse(node=>{
+      if(node instanceof THREE.Mesh)meshes.push(node);
+      if(!(node instanceof THREE.Mesh)||node.userData.sceneModelInstanceId!==id||node.userData.ontoVisModelVersionId!==version)return;
+      const data=node.userData,component=components.find(item=>item.componentKey===data.ontoVisComponentKey);
+      if(component&&keys.has(component.componentKey)&&(sourceIndex(data.ontoVisNodeIndex)&&component.nodeIndices.includes(data.ontoVisNodeIndex)||
+        data.ontoVisProxySchematic===true&&component.geometryQuality==='proxy_schematic'&&component.nodeIndices.length===0))selected.add(node);
+      // These source-node annotations are a teaching-model display hint, never engineering identity.
+      if(sourceIndex(data.ontoVisNodeIndex)&&data.ontoVisProxySchematic!==true&&shells.has(data.component))enclosing.push(node);
+    });
+    if(!selected.size)return;
+    this.selected=[...selected];
+    const copies=new Map<THREE.Material,Map<string,THREE.Material>>();
+    const candidates=isolate?meshes:new Set([...selected,...(fadeShell?enclosing:[])]);
+    for(const mesh of candidates){
+      const original=mesh.material,faded=new Set<THREE.Material>(),highlight=selected.has(mesh);
+      let changed=false;
+      const copy=(material:THREE.Material)=>{
+        const isExterior=isExteriorMesh(mesh);
+        if(!highlight&&isExterior&&!fadeShell)return material;
+        const role=highlight?'highlight':isolate?(isExterior?'shell':'interior'):'enclosing';
+        const cached=copies.get(material)?.get(role);if(cached){changed=true;if(!highlight)faded.add(cached);return cached;}
+        const own=(value:THREE.Material)=>{
+          changed=true;
+          let roles=copies.get(material);if(!roles){roles=new Map();copies.set(material,roles);}roles.set(role,value);
+          this.owned.add(value);if(!highlight)faded.add(value);return value;
+        };
+        // Keep the surrounding assembly readable, including mesh parents of the selection.
+        if(isolate&&!highlight){const value=material.clone();value.transparent=true;value.opacity=material.opacity*(isExterior?.32:.5);value.depthWrite=false;return own(value);}
+        if(!(material instanceof THREE.MeshStandardMaterial))return material;
+        const value=material.clone();
+        if(highlight){value.emissive.set(color);value.emissiveIntensity=.25;}
+        else {value.transparent=true;value.opacity=.2;value.depthWrite=false;}
+        value.needsUpdate=true;return own(value);
+      };
+      const replacement=Array.isArray(original)?original.map(copy):copy(original);
+      if(changed){
+        mesh.material=replacement;this.changes.push({mesh,original});if(!highlight)this.fadedOccluders.set(mesh,faded);
+      }
+    }
+    this.activeKey=key;
+  }
+  selectionBounds(target=new THREE.Box3()):THREE.Box3 {
+    return this.displayedBounds(this.selected,target);
+  }
+  componentBounds(componentKeys:readonly string[],target=new THREE.Box3()):THREE.Box3 {
+    target.makeEmpty();
+    const id=this.root.userData.sceneModelInstanceId,version=this.version.modelVersionId,keys=new Set(componentKeys);
+    if(this.disposed||!this.root.visible||typeof id!=='string'||!id||this.root.userData.ontoVisModelVersionId!==version||
+      !keys.size||keys.size!==componentKeys.length||[...keys].some(key=>this.version.components.filter(part=>part.componentKey===key).length!==1))return target;
+    const meshes:THREE.Mesh[]=[];
+    this.root.traverse(node=>{
+      if(!(node instanceof THREE.Mesh)||node.userData.sceneModelInstanceId!==id||node.userData.ontoVisModelVersionId!==version)return;
+      const data=node.userData,component=this.version.components.find(part=>part.componentKey===data.ontoVisComponentKey);
+      if(component&&keys.has(component.componentKey)&&(sourceIndex(data.ontoVisNodeIndex)&&component.nodeIndices.includes(data.ontoVisNodeIndex)||
+        data.ontoVisProxySchematic===true&&component.geometryQuality==='proxy_schematic'&&component.nodeIndices.length===0))meshes.push(node);
+    });
+    return this.displayedBounds(meshes,target);
+  }
+  private displayedBounds(meshes:THREE.Mesh[],target:THREE.Box3):THREE.Box3 {
+    target.makeEmpty();this.root.updateWorldMatrix(true,true);
+    for(const mesh of meshes){
+      let visible=true;
+      for(let node:THREE.Object3D|null=mesh;node;node=node.parent){if(!node.visible){visible=false;break;}if(node===this.root)break;}
+      if(!visible)continue;
+      if(!mesh.geometry.boundingBox)mesh.geometry.computeBoundingBox();
+      if(mesh.geometry.boundingBox)target.union(mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld));
+    }
+    return target;
+  }
+  isFadedOccluder(object:THREE.Object3D,materialIndex=0):boolean {
+    if(!(object instanceof THREE.Mesh))return false;
+    const material=Array.isArray(object.material)?object.material[materialIndex]:object.material;
+    return this.fadedOccluders.get(object)?.has(material)===true;
+  }
+  restore(){
+    for(const {mesh,original} of this.changes)mesh.material=original;
+    for(const material of this.owned)material.dispose();this.owned.clear();
+    this.changes=[];this.fadedOccluders.clear();this.selected=[];this.activeKey=null;
+  }
+  dispose(){this.restore();this.disposed=true;}
+}

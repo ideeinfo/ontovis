@@ -140,12 +140,13 @@ class InstallationPreviewTests(unittest.TestCase):
         self.assertEqual(result['path'],[])
 
     def test_cross_context_or_unreviewed_path_is_rejected(self):
-        for change in ('scope','status','child','root'):
+        for change in ('scope','status','child','root','unreviewed'):
             tree = self.authority.request('GET','/ancestors?entityUid='+CHILD)
             if change=='scope': tree['path'][0]['object']['installationContextId']='fixture-other-context'
             if change=='status': tree['path'][0]['relation']['status']='candidate'
             if change=='child': tree['path'][0]['relation']['childEntityUid']='fixture-other-child'
             if change=='root': tree['path']=tree['path'][:1]
+            if change=='unreviewed': tree['path'][0]['object']['entityUid']='fixture-other-parent'
             self.authority.tree=tree
             with self.subTest(change=change),self.assertRaises(PreviewError) as error:
                 self.preview.locate(CHILD,'7','epoch')
