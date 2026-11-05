@@ -60,11 +60,21 @@
 
 ---
 
-## 4. 验证结果
+## 4. 验证与上线结果
 
-1. **相关自动化测试**：
-   - 运行空间与地球点位测试（`apps/workbench/tests/cockpit-space.test.mjs`）：9/9 通过；
-   - 运行资产状态与去重测试（`apps/workbench/tests/cockpit-state.test.mjs`）：16/16 通过；
-   - 运行驾驶舱与分析工作台测试（`apps/workbench/tests/project-cockpit.test.mjs` 等）：28/28 通过。
-2. **静态类型检查**：
-   - 执行 `node apps/workbench/node_modules/typescript/bin/tsc --noEmit -p apps/workbench`：**0 错误**。
+1. **自动化测试**：
+   - 运行空间与地球点位测试（`apps/workbench/tests/cockpit-space.test.mjs`）：**9/9 通过**；
+   - 运行资产状态与去重测试（`apps/workbench/tests/cockpit-state.test.mjs`）：**16/16 通过**；
+   - 运行驾驶舱与分析工作台测试（`apps/workbench/tests/project-cockpit.test.mjs` 等）：**28/28 通过**。
+2. **静态类型检查与构建打包**：
+   - 执行 `node apps/workbench/node_modules/typescript/bin/tsc --noEmit -p apps/workbench`：**0 错误**；
+   - 执行全量前端生产构建：68 个静态文件打包完毕，资源哈希计算完成。
+3. **版本提交与 GitHub 推送**：
+   - 提交哈希：[`29511eb`](https://github.com/ideeinfo/ontovis/commit/29511eb1193283c2ad17f6c3b2db38d0c5a1157b) (`fix(cockpit): 修复地球图钉双层背景与左侧底色截断缝并规范多语言用词`)；
+   - 已推送至远端分支 `origin/codex/design-foundation`。
+4. **服务器部署（192.168.2.153 / `https://vis.ontobase.ai`）**：
+   - **部署状态**：已成功发布至测试/生产服务器；
+   - **前端版本**：`29511eb1193283c2ad17f6c3b2db38d0c5a1157b`；
+   - **后台服务**：保持 PID `125388`，0 次重启，零业务中断；
+   - **接口核验证明**：`curl -k -s https://vis.ontobase.ai/health` 返回 `200 OK`，包含 `"frontendRelease": "29511eb1193283c2ad17f6c3b2db38d0c5a1157b"`、`"cockpitGlobePinFixVersion": 1`、`"cockpitGlobeCanvasOverscanVersion": 1`、`"cockpitMultiLanguageCleanVersion": 1`；
+   - **线上静态资源核验**：线上 CSS 精确生效 `.pc-globe-render{position:absolute;inset:-4% -18% -4% -6%}` 与 `.pc-globe-pin-label` 样式，JS 精确包含“目标设备”与单复数多语言逻辑。
