@@ -112,8 +112,7 @@ export class SceneModelSelectionBoxes {
       const root=entries.get(id)?.root;if(!root?.visible)continue;
       let helper=this.helpers.get(id);
       if(!helper){
-        helper=new Box3Helper(new Box3(),defaultColor as any);helper.renderOrder=2;
-        for(const material of Array.isArray(helper.material)?helper.material:[helper.material]){material.depthTest=false;material.depthWrite=false;}
+        helper=new Box3Helper(new Box3(),defaultColor as any);
         this.helpers.set(id,helper);this.parent.add(helper);
       } else if(color!==undefined){
         for(const material of Array.isArray(helper.material)?helper.material:[helper.material]){

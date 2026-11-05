@@ -45,8 +45,8 @@ test('multi-selection keeps an individual visible position box for each selected
   selection.update(entries,['a','b'],'#ff790d');assert.equal(selection.helpers.size,2);
   for(const [id,helper] of selection.helpers){
     assert.deepEqual(helper.box,new Box3().setFromObject(entries.get(id).root));
-    assert.equal(helper.material.depthTest,false);assert.equal(helper.material.depthWrite,false);
-    assert.equal(helper.renderOrder,2);assert.equal(helper.material.color.getHexString(),'ff790d');
+    assert.equal(helper.material.depthTest,true);assert.equal(helper.material.depthWrite,true);
+    assert.equal(helper.renderOrder,0);assert.equal(helper.material.color.getHexString(),'ff790d');
   }
   selection.setColor(0x007e6d);
   assert.equal(selection.helpers.get('a').material.color.getHexString(),'007e6d');

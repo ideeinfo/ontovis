@@ -331,7 +331,10 @@ export function SceneViewport(props:SceneViewportProps) {
         if(selected&&selectedBox.visible&&simulated.has(selected))selectedBox.box.setFromObject(entries.get(selected)!.root);
         for(const [id,helper] of selectionBoxes.helpers){
           const entry=entries.get(id);
-          if(entry&&entry.root.visible&&(simulated.has(id)||dirtyFrame||tween))helper.box.setFromObject(entry.root);
+          if(entry&&entry.root.visible&&(simulated.has(id)||dirtyFrame||tween)){
+            helper.box.setFromObject(entry.root);
+            helper.updateMatrixWorld(true);
+          }
         }
         const alarm=current.current.alarm,entry=alarm?entries.get(alarm.instanceId):undefined,marker=alarmMarker.current;
         const show=!!alarm&&!!entry&&entry.root.visible&&!current.current.previewModel;
@@ -472,6 +475,7 @@ export function SceneViewport(props:SceneViewportProps) {
       const componentActive=componentHighlight();
       selectedBox.visible=!state.presentation&&!componentActive&&selectedEntries.length===1&&!preview;
       selectionBoxes.update(entries,state.presentation||componentActive||preview?[]:ids,selectionColor());
+      for(const helper of selectionBoxes.helpers.values())helper.updateMatrixWorld(true);
       if(selectedBox.visible){selectedBox.box.makeEmpty();for(const entry of selectedEntries){entry.root.updateMatrixWorld(true);selectedBox.box.union(new THREE.Box3().setFromObject(entry.root));}selectedBox.updateMatrixWorld(true);}
       previewSelection();
       request();
