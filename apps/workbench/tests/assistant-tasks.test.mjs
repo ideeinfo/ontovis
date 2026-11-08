@@ -3,7 +3,19 @@ import assert from 'node:assert/strict';
 import {checkedTaskSnapshot,snapshotDigest,canApplyFreshTask} from '../src/assistantTasks.ts';
 import {assistantSendBlocker} from '../src/assistantApi.ts';
 import {blankAnalysisDraft} from '../src/analysisDraftState.ts';
+import {assistantEntrySeed} from '../src/analysisSources.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'Demo-PDS'};
+test('a cockpit handoff stays on its target canvas and does not replay after consumption',()=>{
+ const entry={analysisSessionId:'target',analysisRevision:8,assistantQuestion:'Add the matching order',openLatest:true};
+ assert.deepEqual(assistantEntrySeed(entry,null),{});
+ assert.deepEqual(assistantEntrySeed(entry,{analysisSessionId:'other',analysisRevision:8}),{});
+ assert.equal(assistantEntrySeed(entry,{analysisSessionId:'target',analysisRevision:9}).initialQuestion,entry.assistantQuestion);
+ for(const revision of [8,9])assert.equal(assistantEntrySeed(entry,{analysisSessionId:'target',analysisRevision:revision},true).initialQuestion,undefined);
+ const record={...entry,assistantQuestion:undefined,assistantRunId:'saved-turn'};
+ assert.equal(assistantEntrySeed(record,{analysisSessionId:'target',analysisRevision:8}).initialRunId,'saved-turn');
+ assert.equal(assistantEntrySeed(record,{analysisSessionId:'target',analysisRevision:9}).initialRunId,undefined);
+ assert.deepEqual(assistantEntrySeed({newDraft:true},{analysisSessionId:'target',analysisRevision:8}),{});
+});
 test('project querying accepts an unsaved empty canvas but retains permission and uncertainty guards',()=>{
  const state={projectTools:true,busy:false,active:false,pending:false,loadingHistory:false,focusedEarlier:false,taskMismatch:false,hasReceipt:false,
   view:{policy:{enabled:true,reads:8}},policyError:null,service:{enabled:true,canRun:true},selectedCount:0,question:'Find orders'};
