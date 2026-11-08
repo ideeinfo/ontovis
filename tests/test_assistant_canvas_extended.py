@@ -17,6 +17,19 @@ class ExtendedCanvasTests(unittest.TestCase):
     def apply(self, original, actions, **kwargs):
         return build(original, dict(actions=actions), [], None, str(uuid4()), 'source', 'Demo-PDS', **kwargs)
 
+    def test_new_cards_can_be_grouped_pinned_and_linked_in_same_plan(self):
+        for existing in ([],[note(0)]):
+            original=board();original['cards']=existing
+            first,second=('C'+str(len(existing)+i) for i in (1,2))
+            actions=[action('add_note',text='模拟核验 A'),action('add_note',text='模拟核验 B'),
+                     action('group_cards',[first,second],'编辑验收'),action('pin_cards',[first]),
+                     action('add_reference',[first,second],'合成验收参考'),action('save')]
+            updated,receipts,save=self.apply(original,actions)
+            a,b=updated['cards'][-2:]
+            self.assertEqual(a['frameId'],b['frameId']);self.assertTrue(a['pinned']);self.assertFalse(b['pinned'])
+            self.assertEqual((a['id'],b['id'],'reference'),tuple(updated['relations'][0][k] for k in ('from','to','kind')))
+            self.assertEqual(6,len(receipts));self.assertTrue(save);self.assertEqual(existing,original['cards'])
+
     def test_edit_group_pin_and_relation_are_one_atomic_draft(self):
         original=board();original['cards']=[note(1),note(2)]
         actions=[action('update_note',['C1'],'已核对的人工记录'), action('rename_card',['C1'],'温度核对'),

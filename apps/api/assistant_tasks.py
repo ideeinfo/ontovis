@@ -182,6 +182,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         card_keys={c['id']:'C'+str(i+1) for i,c in enumerate(draft['cards'])}
         context=dict(faultCode=draft['context'].get('faultCode',''),mode=body['mode'],history=history,
             title=draft['title'],savedRevision=body['expectedAnalysisRevision'],canUndo='undo' in history_state,canRedo='redo' in history_state,
+            newCardKeys=['C'+str(len(draft['cards'])+i+1) for i in range(8)],
             timeFrom=draft['context']['timeFrom'],timeTo=draft['context']['timeTo'],timezone=draft['context']['timezone'],
             cards=[dict(key=card_keys[c['id']],kind=c['kind'],title=c['title'][:80],pinned=c['pinned'],historical=c.get('historical',False),
                         frame=c.get('frameId'),x=c['x'],y=c['y'],width=c['width'],height=c['height']) for c in draft['cards']],
@@ -218,6 +219,9 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         evidence=[{k:s[k] for k in ('key','kind','summary')} for s in tools.sources]
         if evidence:
             answer=validate_answer(model('answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'],{s['key'] for s in evidence})
+        elif plan['intent']=='edit' and plan['actions'] and not plan['queries']:
+            message='已列出画布操作计划，尚未执行。' if body['mode']=='workbench' else '已列出画布操作建议，可转后台执行；驾驶舱未修改画布。'
+            answer=dict(observations=[dict(text=message,refs=[])],hypotheses=[],gaps=[],nextSteps=[])
         else:answer=dict(observations=[],hypotheses=[],gaps=[dict(text='本次未取得可引用的项目资料。请查看检索过程中的范围或服务状态。',refs=[])],nextSteps=[])
         guard(True)
         result=dict(protocol=PROTOCOL,answer=answer,usage=usage,modelCalls=calls,engineeringConfirmation=False,

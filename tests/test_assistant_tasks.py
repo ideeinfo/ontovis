@@ -164,3 +164,29 @@ class TaskTests(unittest.TestCase):
         self.assertEqual('partial',result['state'],result)
         limited=[t for t in result['result']['task']['trace'] if t['state']=='budget_limited']
         self.assertEqual(3,limited[0]['count']);self.assertEqual(8,result['result']['task']['reads'])
+
+    def test_edit_only_has_pending_receipt_message_without_false_evidence_gap(self):
+        runtime=AssistantRuntime(self.library,'source');self.addCleanup(runtime.close)
+        runtime.store.publish('Demo-PDS',self.actor,dict(requestId=str(uuid4()),expectedRevision=0,policy={**DEFAULT,'enabled':True}),lambda:None)
+        for mode,intent in [('workbench','edit'),('cockpit_query','edit'),('workbench','query')]:
+            b=dict(protocol=PROTOCOL,mode=mode,analysisSessionId=str(uuid4()),expectedAnalysisRevision=0,evidenceRefIds=[],
+                requestId=str(uuid4()),question='新增笔记并分组' if intent=='edit' else '查询资料',snapshotJson=json.dumps(board()),taskId='analysis')
+            calls=[]
+            def source(data,*_):
+                calls.append(data)
+                self.assertEqual('plan',data['workflow']['phase'])
+                self.assertEqual(['C'+str(i) for i in range(1,9)],json.loads(data['workflow']['context'])['newCardKeys'])
+                return dict(usage={},modelCalls=1,engineeringConfirmation=False,
+                    plan=dict(intent=intent,queries=[],actions=[action('add_note',text='待核验')] if intent=='edit' else []))
+            initial=runtime.start(dict(project='Demo-PDS',owner=self.actor,sid='s'),b,runtime.store.policy('Demo-PDS'),
+                dict(serviceRevision='a'*64,accessRevision='g',taskId='analysis',settings={}),lambda _:([],self.reader),lambda *_:None,source)
+            deadline=time.monotonic()+3
+            while time.monotonic()<deadline:
+                result=runtime.store.public(runtime.store.run('Demo-PDS',self.actor,initial['runId']))
+                if result['state'] not in ('reading','model','validating'):break
+                time.sleep(.01)
+            self.assertEqual('complete',result['state'],result);self.assertEqual(1,len(calls))
+            reply=result['result']['answer']
+            self.assertEqual(intent=='query',bool(reply['gaps']))
+            if intent=='edit':
+                self.assertIn('尚未执行' if mode=='workbench' else '驾驶舱未修改',reply['observations'][0]['text'])
