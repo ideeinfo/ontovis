@@ -125,15 +125,16 @@
 .sw-turbine-modal-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:4px;padding-top:12px;border-top:1px solid var(--borderSubtle);width:100%;box-sizing:border-box}
 
 /* Scene Hub (TwinSight-inspired portfolio layout) */
-.sw-hub-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px 24px 14px;border-bottom:1px solid var(--borderSubtle);background:var(--surface);flex-shrink:0}
+.sw-hub-header{padding:18px 24px 14px;border-bottom:1px solid var(--borderSubtle);background:var(--surface);flex-shrink:0}
+.sw-hub-header-inner{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;max-width:1440px;margin:0 auto;width:100%}
 .sw-hub-title-block{min-width:0;display:flex;flex-direction:column;gap:4px}
 .sw-hub-title-block h2{margin:0;font-size:20px;font-weight:700;letter-spacing:-0.01em;color:var(--text)}
 .sw-hub-subtitle{margin:0;font-size:12px;color:var(--textSecondary);line-height:1.5}
 .sw-hub-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .sw-hub-body{padding:18px 24px 28px}
-.sw-empty-box{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:48px 24px;border:1px dashed var(--borderControl);border-radius:10px;background:var(--surface);color:var(--textSecondary);text-align:center}
+.sw-empty-box{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:48px 24px;border:1px dashed var(--borderControl);border-radius:10px;background:var(--surface);color:var(--textSecondary);text-align:center;max-width:1440px;margin:0 auto}
 .sw-empty-box p{margin:0;font-size:13px}
-.sw-hub-grid{display:grid;grid-template-columns:minmax(0,1.62fr) minmax(320px,0.92fr);gap:18px;align-items:start;max-width:1440px}
+.sw-hub-grid{display:grid;grid-template-columns:minmax(0,1.62fr) minmax(320px,0.92fr);gap:18px;align-items:start;max-width:1440px;margin:0 auto}
 .sw-hub-list-panel{background:var(--surface);border:1px solid var(--borderSubtle);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .sw-hub-list-bar{display:flex;align-items:center;gap:10px}
 .sw-hub-list-bar form{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
@@ -154,7 +155,7 @@ button.sw-facility-card-title:hover{color:var(--primary)}
 .sw-facility-status{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;background:rgba(46,160,120,.14);color:var(--primary);border:1px solid rgba(46,160,120,.28);white-space:nowrap}
 .sw-facility-status.is-deleted{background:var(--warningSurface);color:var(--statusWarning);border-color:transparent}
 .sw-facility-card-desc{margin:0;font-size:12px;color:var(--textSecondary);line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.sw-facility-card-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding-top:6px;border-top:1px solid var(--borderSubtle)}
+.sw-facility-card-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding-top:6px;border-top:1px solid var(--borderSubtle)}
 .sw-facility-metric{display:flex;flex-direction:column;gap:2px;min-width:0}
 .sw-facility-metric span{font-size:11px;color:var(--textSecondary)}
 .sw-facility-metric strong{font-size:15px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -178,7 +179,7 @@ button.sw-facility-card-title:hover{color:var(--primary)}
 .sw-hub-pill{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;font-size:11px;color:var(--textSecondary);background:var(--surfaceRaised);border:1px solid var(--borderSubtle)}
 .sw-hub-primary-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .sw-hub-primary-actions>.ov-btn.primary{flex:1;justify-content:center;min-height:32px}
-.sw-hub-stat-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.sw-hub-stat-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .sw-hub-stat-card{background:var(--surfaceRaised);border:1px solid var(--borderSubtle);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
 .sw-hub-stat-card span{font-size:11px;color:var(--textSecondary)}
 .sw-hub-stat-card strong{font-size:18px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
@@ -190,4 +191,4 @@ button.sw-facility-card-title:hover{color:var(--primary)}
 .sw-hub-section-card{background:var(--surfaceRaised);border:1px solid var(--borderSubtle);border-radius:8px;padding:10px 12px}
 .sw-hub-section-card .sw-instance-facts{margin:0}
 @media(max-width:1050px){.sw-hub-grid{grid-template-columns:minmax(0,1fr)}.sw-hub-detail-panel{position:static}}
-@media(max-width:680px){.sw-hub-header{flex-direction:column;padding:12px}.sw-hub-body{padding:12px}.sw-facility-card{grid-template-columns:minmax(0,1fr)}.sw-facility-card-thumb{width:100%;height:156px}}
+@media(max-width:680px){.sw-hub-header{padding:12px}.sw-hub-header-inner{flex-direction:column;gap:12px}.sw-hub-body{padding:12px}.sw-facility-card{grid-template-columns:minmax(0,1fr)}.sw-facility-card-thumb{width:100%;height:156px}}

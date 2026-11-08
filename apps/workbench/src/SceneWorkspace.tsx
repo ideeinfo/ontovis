@@ -125,10 +125,6 @@ function ScenePlaceholderThumb({name,compact=false}:{name:string;compact?:boolea
   </svg>;
 }
 
-function sceneShortCode(id: string){
-  return `SCN-${id.replace(/^scene-/, '').slice(0, 8).toUpperCase()}`;
-}
-
 export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;suspended?:boolean;initialEntry?:LegacySceneEntryTarget|null;initialSceneId?:string;project?:ProjectSummary;onProjectCreated?:(project:ProjectSummary,sceneId:string)=>void;onProjectName?:(name:string)=>void;onConfigure?:()=>void}>(function SceneWorkspace({api,suspended=false,initialEntry,initialSceneId,project,onProjectCreated,onProjectName,onConfigure},ref) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof sceneText>[1])=>sceneText(locale,key);
   const et=(key:Parameters<typeof sceneEngineeringText>[1])=>sceneEngineeringText(locale,key);
@@ -693,25 +689,27 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
       ];
       return <>
         <div className="sw-hub-header">
-          <div className="sw-hub-title-block">
-            <h2>{recycled ? (en ? 'Scene recycle bin' : '场景回收站') : (en ? 'Scene portfolio' : '场景组合')}</h2>
-            <p className="sw-hub-subtitle">
-              {recycled ? (en ? 'Deleted scenes retain model references and revision history.' : '已移至回收站的场景保留原模型引用与修订记录，可在此恢复。') : (en ? 'Organize 3D spatial scenes, terrain anchors, and equipment model instances by project, and enter the scene workbench directly.' : '按项目组织三维空间场景、地形锚点与设备模型实例，直接从这里进入场景工作台。')}
-            </p>
-          </div>
-          <div className="sw-hub-actions">
-            {list?.capabilities.sceneLifecycleWriteVersion === 1 && (
-              <Btn disabled={busy} onClick={() => { setRecycled(!recycled); setList(null); setLifecycleNotice(''); void readList(undefined, !recycled); }}>
-                <Trash2 size={15} />
-                {t(recycled ? 'activeScenes' : 'recycle')}
-              </Btn>
-            )}
-            {!recycled && (
-              <Btn primary disabled={busy || !list?.capabilities.canWrite} onClick={() => setModal('create')}>
-                <Plus size={15} />
-                {t('create')}
-              </Btn>
-            )}
+          <div className="sw-hub-header-inner">
+            <div className="sw-hub-title-block">
+              <h2>{recycled ? (en ? 'Scene recycle bin' : '场景回收站') : (en ? 'Scene portfolio' : '场景组合')}</h2>
+              <p className="sw-hub-subtitle">
+                {recycled ? (en ? 'Deleted scenes retain model references and revision history.' : '已移至回收站的场景保留原模型引用与修订记录，可在此恢复。') : (en ? 'Organize 3D spatial scenes, terrain anchors, and equipment model instances by project, and enter the scene workbench directly.' : '按项目组织三维空间场景、地形锚点与设备模型实例，直接从这里进入场景工作台。')}
+              </p>
+            </div>
+            <div className="sw-hub-actions">
+              {list?.capabilities.sceneLifecycleWriteVersion === 1 && (
+                <Btn disabled={busy} onClick={() => { setRecycled(!recycled); setList(null); setLifecycleNotice(''); void readList(undefined, !recycled); }}>
+                  <Trash2 size={15} />
+                  {t(recycled ? 'activeScenes' : 'recycle')}
+                </Btn>
+              )}
+              {!recycled && (
+                <Btn primary disabled={busy || !list?.capabilities.canWrite} onClick={() => setModal('create')}>
+                  <Plus size={15} />
+                  {t('create')}
+                </Btn>
+              )}
+            </div>
           </div>
         </div>
         <div className="sw-scene-list sw-hub-body">
@@ -790,7 +788,6 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                                     {row.displayName}
                                   </button>
                                 )}
-                                <span className="sw-facility-code">{sceneShortCode(row.sceneId)}</span>
                                 <span className={`sw-facility-status ${recycled ? 'is-deleted' : ''}`}>
                                   {recycled ? (en ? 'Deleted' : '回收站') : (en ? 'Active' : '启用中')}
                                 </span>
@@ -806,10 +803,6 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                                 <div className="sw-facility-metric">
                                   <span>{t('count')}</span>
                                   <strong>{row.instanceCount}</strong>
-                                </div>
-                                <div className="sw-facility-metric">
-                                  <span>{en ? 'Revision' : '版本'}</span>
-                                  <strong>v{row.headRevision}</strong>
                                 </div>
                                 <div className="sw-facility-metric">
                                   <span>{t(recycled ? 'deletedAt' : 'updated')}</span>
@@ -835,7 +828,6 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                                 thumbnail={row.thumbnail}
                                 fallback={<ScenePlaceholderThumb name={row.displayName} />}
                               />
-                              <span className="sw-facility-thumb-badge">v{row.headRevision}</span>
                             </button>
                           </article>
                         </RowContext>
@@ -878,7 +870,6 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                                         {row.displayName}
                                       </button>
                                     )}
-                                    <span className="sw-facility-code">{sceneShortCode(row.sceneId)}</span>
                                   </div>
                                 </td>
                                 <td className="ov-list-number">{row.instanceCount}</td>
@@ -914,8 +905,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                   </p>
                   <div className="sw-hub-pills">
                     <span className="sw-hub-pill">{focusedScene.instanceCount} {t('count')}</span>
-                    <span className="sw-hub-pill">v{focusedScene.headRevision}</span>
-                    <span className="sw-hub-pill">{sceneShortCode(focusedScene.sceneId)}</span>
+                    <span className="sw-hub-pill">{en ? '3D Spatial Scene' : '三维空间场景'}</span>
                   </div>
                   <div className="sw-hub-primary-actions">
                     {recycled ? (
@@ -944,10 +934,6 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                       <strong>{focusedScene.instanceCount}</strong>
                     </div>
                     <div className="sw-hub-stat-card">
-                      <span>{en ? 'Revision' : '当前版本'}</span>
-                      <strong>v{focusedScene.headRevision}</strong>
-                    </div>
-                    <div className="sw-hub-stat-card">
                       <span>{t(recycled ? 'deletedAt' : 'updated')}</span>
                       <strong title={new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}>
                         {new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-GB', { hour: '2-digit', minute: '2-digit' })}
@@ -957,7 +943,6 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                   <div className="sw-hub-section">
                     <div className="sw-hub-section-head">
                       <strong>{en ? 'Scene thumbnail preview' : '场景缩略图预览'}</strong>
-                      <span className="sw-facility-code">{sceneShortCode(focusedScene.sceneId)}</span>
                     </div>
                     <div className="sw-hub-preview-card">
                       <SceneThumbnail
@@ -981,8 +966,6 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
                       <dl className="sw-instance-facts" style={{ padding: 0 }}>
                         <dt>{en ? 'Project' : '所属项目'}</dt>
                         <dd>{project?.displayName || project?.projectRef.projectCode || api.project?.projectCode || '—'}</dd>
-                        <dt>{en ? 'Scene ID' : '场景标识'}</dt>
-                        <dd style={{ fontFamily: 'monospace' }}>{focusedScene.sceneId}</dd>
                         <dt>{t(recycled ? 'deletedAt' : 'updated')}</dt>
                         <dd>{new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}</dd>
                       </dl>
