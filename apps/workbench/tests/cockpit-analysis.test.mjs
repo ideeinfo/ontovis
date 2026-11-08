@@ -189,3 +189,20 @@ test('keyboard movement keeps an off-screen card visible without hidden scrollin
  const revealed=cockpitCanvasReveal(view,value,size);assert.notEqual(revealed,view);assert.ok(revealed.x+value.x*revealed.zoom>=4);assert.ok(revealed.y+value.y*revealed.zoom>=4);assert.ok(revealed.x+(value.x+value.width)*revealed.zoom<=size.width-4);assert.ok(revealed.y+(value.y+value.height)*revealed.zoom<=size.height-4);
  assert.equal(cockpitCanvasReveal(revealed,value,size),revealed);assert.equal(cockpitCanvasReveal(revealed,{...value,x:value.x+8},size),revealed);
 });
+
+test('cockpit analysis assistant supports collapse, expand launcher, and floating drag with boundary protection',async()=>{
+ const fs=await import('node:fs/promises');
+ const css=await fs.readFile(new URL('../src/cockpitAnalysis.css',import.meta.url),'utf8');
+ const tsx=await fs.readFile(new URL('../src/CockpitAnalysis.tsx',import.meta.url),'utf8');
+ assert.ok(css.includes('.pa-workspace .pa-content[data-assistant-collapsed]'));
+ assert.ok(css.includes('.pa-workspace .pa-content[data-assistant-floating]'));
+ assert.ok(css.includes('.pa-assistant[data-floating]'));
+ assert.ok(css.includes('.pa-assistant[data-dragging]'));
+ assert.ok(css.includes('.pa-assistant-launcher'));
+ assert.ok(css.includes('.pa-assistant-controls'));
+ assert.ok(tsx.includes('startAssistantDrag'));
+ assert.ok(tsx.includes('toggleAssistantCollapse'));
+ assert.ok(tsx.includes('pa-assistant-launcher'));
+ assert.ok(tsx.includes('data-assistant-collapsed'));
+ assert.ok(tsx.includes('data-assistant-floating'));
+});
