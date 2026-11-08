@@ -36,3 +36,29 @@ class TaskHttpTests(unittest.TestCase):
             self.assertEqual(422,self.request('task-start',{**self.body,'sql':'select 1'})[0])
             snapshot=json.loads(self.body['snapshotJson']);snapshot['projectCode']='B'
             self.assertEqual(404,self.request('task-start',{**self.body,'snapshotJson':json.dumps(snapshot)})[0]);model.assert_not_called()
+
+    def test_history_scope_and_readonly_source_view_without_registration(self):
+        wrong=json.loads(self.body['snapshotJson']);wrong['projectCode']='B'
+        self.assertEqual(404,self.request('task-start',{**self.body,'historyJson':json.dumps(dict(undo=wrong))})[0])
+        result=dict(plan=dict(intent='query',queries=[],actions=[]),usage={},modelCalls=1,
+                    engineeringConfirmation=False,purpose='ontovis_analysis',serviceRevision='a'*64)
+        with patch('apps.api.assistant_task_api.call_source',return_value=result):
+            status,started=self.request('task-start',self.body);self.assertEqual(200,status,started)
+            for _ in range(60):
+                _,run=self.request('status',dict(runId=started['runId']))
+                if run['state'] not in ('reading','model','validating'):break
+                time.sleep(.01)
+        sources=[dict(key='E1',kind='document',descriptor=dict(documentId='fixed',contentVersionId='v'),retrievalRevision='a'*64)]
+        self.fixture.sessions.assistant.store.update(run['runId'],'complete',sources=sources)
+        body=dict(runId=run['runId'],sourceKey='E1')
+        with patch('apps.api.analysis_source_reader.AnalysisSourceReader.read',return_value=dict(title='Fixed source')) as read,\
+             patch('apps.api.analysis_evidence.AnalysisEvidence.register') as register,\
+             patch('apps.api.analysis_preview.preview',return_value=dict(kind='document',gaps=[])):
+            status,value=self.request('task-source',body);self.assertEqual(200,status,value)
+            read.assert_called_once_with('document',sources[0]['descriptor'])
+            self.assertEqual(200,self.request('task-source-preview',{**body,'options':dict(nodeId='root')})[0])
+            register.assert_not_called()
+            self.assertEqual(404,self.request('task-source',{**body,'sourceKey':'E2'})[0])
+            self.assertEqual(422,self.request('task-source',{**body,'descriptor':dict(documentId='foreign')})[0])
+            self.assertEqual(404,self.request('task-source',body,project='B')[0])
+            self.assertEqual(403,self.request('task-prepare',dict(runId=run['runId'],selectedKeys=[],snapshotJson=self.body['snapshotJson']))[0])

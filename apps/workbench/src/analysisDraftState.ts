@@ -7,6 +7,21 @@ export function pendingLifecycle(item:AnalysisListItem,action:'trash'|'untrash',
     expectedAnalysisRevision:item.analysisRevision,expectedLifecycleRevision:item.lifecycleRevision??0,requestId}};
 }
 export type PendingDraft = {path:string;body:object;snapshot:CanvasSnapshot};
+export type DraftHistory={undo:CanvasSnapshot[];redo:CanvasSnapshot[]};
+export function sameDraftSnapshot(a:CanvasSnapshot,b:CanvasSnapshot):boolean{
+ const canonical=(value:unknown):unknown=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'
+  ?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,canonical(item)])):value;
+ return JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
+}
+export function stepDraftHistory(current:CanvasSnapshot,history:DraftHistory,direction:'undo'|'redo'){
+  const stack=history[direction],next=stack.at(-1);if(!next)return null;
+  return {snapshot:structuredClone(next),history:direction==='undo'
+    ?{undo:stack.slice(0,-1),redo:[...history.redo.slice(-19),structuredClone(current)]}
+    :{undo:[...history.undo.slice(-19),structuredClone(current)],redo:stack.slice(0,-1)}};
+}
+export function assistantHistory(history:DraftHistory){
+  return JSON.stringify({...history.undo.length?{undo:history.undo.at(-1)}:{},...history.redo.length?{redo:history.redo.at(-1)}:{}});
+}
 export function draftChanged(value:CanvasSnapshot|null,saved:string,includeViewport=true):boolean {
   if(!value)return false;
   if(!saved)return true;

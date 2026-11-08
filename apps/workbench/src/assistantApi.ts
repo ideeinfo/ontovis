@@ -58,7 +58,7 @@ export function policyChanges(current:AssistantPolicy,next:AssistantPolicy){
 }
 export interface RetrievalTrace {version:1;plan:{tool:string;faultCode:string|null;operations:number};anchor:{nodeId:string;pageNumber:number}|null;tools:{tool:string;state:string;matches?:number;nodes?:number;relations?:number;truncated?:boolean}[]}
 export function assistantSourceAnchor(source:AssistantSource):SourceAnchor|null{const anchor=source.retrieval?.anchor;return source.kind==='document'&&source.retrieval?.version===1&&anchor&&typeof anchor.nodeId==='string'&&anchor.nodeId.length>0&&anchor.nodeId.length<=160&&Number.isInteger(anchor.pageNumber)&&anchor.pageNumber>=1?anchor:null;}
-export interface AssistantSource {retrieval?:RetrievalTrace;key:string;kind:string;evidenceRefId:string;sourceRevision?:string;summary?:string;availability?:string;reason?:string;summaryHash?:string;retrievalRevision?:string}
+export interface AssistantSource {title?:string;pageNumbers?:number[];descriptor?:Record<string,unknown>;retrieval?:RetrievalTrace;key:string;kind:string;evidenceRefId:string;sourceRevision?:string;summary?:string;availability?:string;reason?:string;summaryHash?:string;retrievalRevision?:string}
 export interface AssistantRun {runId:string;state:string;version:number;analysisSessionId:string;analysisRevision:number;policyRevision:number;
  taskId?:LlmTask;
  question?:string;conversationId?:string|null;conversationVersion?:number;parentRunId?:string|null;
@@ -133,6 +133,10 @@ export function assistantMessage(error:unknown,en=false){
  const outcomes:Record<string,[string,string]>={
   ASSISTANT_QUERY_ONLY:['驾驶舱仅查询；请转后台执行画布操作。','Cockpit is query only. Open the workbench to edit the canvas.'],
   ASSISTANT_DRAFT_CHANGED:['画布已变化，请重新发送操作指令；当前修改保留。','The canvas changed. Send a new instruction; edits are retained.'],
+  ASSISTANT_HISTORY_EMPTY:['当前没有可撤销或重做的修改。','There is no available undo or redo step.'],
+  ASSISTANT_HISTORY_EXCLUSIVE:['撤销、重做或恢复历史需单独执行，可同时明确保存。','Run undo, redo or restoration separately; an explicit save may follow.'],
+  ASSISTANT_SOURCE_MISMATCH:['检索结果不是这张卡片的同一来源，未替换资料。','The result is a different source. The card was not replaced.'],
+  ASSISTANT_SOURCE_RELATION_READ_ONLY:['来源工程关系只能查看，助手可编辑手工分析关联。','Source engineering relations are read-only. Manual analysis relations can be edited.'],
   ASSISTANT_TARGET_AMBIGUOUS:['未找到唯一操作目标，请从检索结果选择资料，或明确资料卡名称。','The target is ambiguous. Select a result or specify the card.'],
   ASSISTANT_FIXED_TREND_WINDOW:['已有趋势使用固定版本；请通过趋势时间工具重新读取，不能只改时间标记。','Existing trends are fixed evidence. Use the trend interval tool to read a new window.'],
 

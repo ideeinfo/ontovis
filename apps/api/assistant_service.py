@@ -142,7 +142,7 @@ class AssistantRuntime:
 def request(sessions,sid,path,payload):
     action=path.removeprefix('/api/workbench/assistant/')
     require(action in ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation',
-                       'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue','task-start','task-prepare','task-ack','task-page'))
+                       'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue','task-start','task-prepare','task-ack','task-page','task-source','task-source-preview','task-source-content'))
     row=sessions.current(sid,authenticated=True,touch=action not in ('policy','status'))
     require(payload.get('expectedSessionRevision')==row.revision,'SESSION_CHANGED',409)
     project=sessions._ref(payload.get('projectRef'));actor=identifier(row.subject_id)
@@ -284,7 +284,7 @@ def request(sessions,sid,path,payload):
         reader=AnalysisSourceReader(SceneEngineeringReader(row.authority,sessions.connection_id,project,guard),
             sessions.shared.project_models,orders,guard,actor,scene_library=local.library)
         return fixed,reader
-    if action in ('task-start','task-prepare','task-ack','task-page'):
+    if action in ('task-start','task-prepare','task-ack','task-page','task-source','task-source-preview','task-source-content'):
         from .assistant_task_api import handle
         return reply(handle(action,body,sessions,row,sid,project,actor,access,runtime,service,prepare,authorize,prefix))
     if action in ('summary','start','graph'):

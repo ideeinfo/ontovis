@@ -215,7 +215,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                                   '/link-work-order', '/simulation/catalogue', '/simulation/detail', '/simulation/qualify'))
             assistant_paths=tuple('/api/workbench/assistant/'+action for action in
                 ('policy','preview','history','publish','rollback','summary','start','status','cancel','graph','conversations','conversation',
-                 'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue','task-start','task-prepare','task-ack','task-page'))
+                 'work-order-preview','work-order-apply','model-config','model-config-save','model-catalogue','task-start','task-prepare','task-ack','task-page','task-source','task-source-preview','task-source-content'))
             weather_paths=tuple('/api/workbench/weather/'+action for action in ('config','save','test','current'))
             scene_object_paths = ('/api/workbench/objects/context', '/api/workbench/objects/detail',
                                   '/api/workbench/objects/children', '/api/workbench/objects/evidence/resolve',
@@ -261,6 +261,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                                          '/api/workbench/scenes/legacy-migration/activate')
             metadata_save = parts.path == '/api/workbench/resources/model/metadata/save'
             limit = (MAX_SCENE_BYTES if large_scene else MAX_METADATA_REQUEST_BYTES if metadata_save else
+                     1048576 if parts.path == '/api/workbench/assistant/task-start' else
                      270336 if parts.path in ('/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/copy',
                                              '/api/workbench/analysis-sessions/import-history', '/api/workbench/analysis-sessions/evidence/register-batch',
                                              '/api/workbench/assistant/task-start','/api/workbench/assistant/task-prepare','/api/workbench/assistant/task-ack') else
@@ -280,7 +281,10 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             if parts.path in project_paths:
                 return self.reply(200, sessions.projects_request(sid, parts.path, payload))
             if parts.path in assistant_paths:
-                return self.reply(200,sessions.assistant_request(sid,parts.path,payload))
+                value=sessions.assistant_request(sid,parts.path,payload)
+                if parts.path.endswith('/task-source-content'):
+                    return self.image(value['content'],value['sessionRevision'],value['mediaType'],value['sha256'])
+                return self.reply(200,value)
             if parts.path in weather_paths:
                 return self.reply(200,sessions.weather_request(sid,parts.path,payload))
             if parts.path in analysis_paths:

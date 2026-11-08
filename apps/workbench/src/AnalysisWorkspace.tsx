@@ -2,7 +2,7 @@ import {useEffect,useId,useMemo,useRef,useState,type PointerEvent as ReactPointe
 import {GitBranch,Hand,History,LayoutGrid,Maximize,MousePointer2,Pin,Plus,Save,Search,StickyNote,Trash2,Undo2,Redo2,X,ZoomIn,ZoomOut,PanelLeft,PanelRight,Copy,Group,RotateCcw,RefreshCw,Sparkles,TriangleAlert} from 'lucide-react';
 import {Btn,IconBtn,Modal} from './Primitives';
 import {addManualRelation,frameBounds,selectedInBox,arrangeCards,fitViewport,moveCard,removeCard,resizeCard,RESIZE_HANDLES,zoomAt,type ResizeHandle,type CanvasSnapshot,type ProjectScope,type RelationKind,type CanvasCard,type CardView} from './analysisCanvas';
-import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle,type AnalysisListItem,type DraftReceipt,type PendingDraft} from './analysisDraftState';
+import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle,sameDraftSnapshot,stepDraftHistory,assistantHistory,type AnalysisListItem,type DraftReceipt,type PendingDraft} from './analysisDraftState';
 import {RowActions,RowContext,type ListAction} from './ListMenus';
 import {AnalysisMaterialPanel} from './AnalysisMaterialPanel';
 import {materialPosition,relatedMaterialSection,withPrimaryAlarm,mergeRecommendations} from './analysisMaterials';
@@ -160,7 +160,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     node.addEventListener('wheel',wheel,{passive:false,capture:true});return()=>node.removeEventListener('wheel',wheel,true);
   },[!!draft,busy,uncertain]);
   function apply(value:CanvasSnapshot,remember=true){if(!editable)return;if(remember&&draft){setUndo(items=>[...items.slice(-19),draft]);setRedo([]);}current.current=value;setDraft(value);setNotice('');}
-  function adopt(value:Detail){setDraft(value.snapshot);setReceipt(value);setSaved(JSON.stringify(value.snapshot));setSelected(value.snapshot.cards[0]?.id||'');setUndo([]);setRedo([]);setMulti([]);setExpanded('');setError(null);setNotice('');setLifecycleNotice('');setUncertain(false);pending.current=null;}
+  function adopt(value:Detail,keepHistory=false){setDraft(value.snapshot);setReceipt(value);setSaved(JSON.stringify(value.snapshot));setSelected(value.snapshot.cards[0]?.id||'');if(!keepHistory){setUndo([]);setRedo([]);}setMulti([]);setExpanded('');setError(null);setNotice('');setLifecycleNotice('');setUncertain(false);pending.current=null;}
   function change(action:()=>void){if(dirty)setLeave(()=>action);else action();}
   async function open(id:string){
     setFixed(false);
@@ -182,7 +182,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     try{
       const result=await api.request<DraftReceipt&{snapshot?:CanvasSnapshot}>(task.path,task.body,abort.signal);
       if(!alive.current||abort.signal.aborted)return false;
-      lastCommitted.current=result;adopt({...result,snapshot:result.snapshot||task.snapshot});setNotice(t('已保存','Saved'));setReload(value=>value+1);setPreview(null);setHistoryOpen(false);return true;
+      lastCommitted.current=result;adopt({...result,snapshot:result.snapshot||task.snapshot},!copy&&!restore);setNotice(t('已保存','Saved'));setReload(value=>value+1);setPreview(null);setHistoryOpen(false);return true;
     }catch(value){
       if(alive.current&&!abort.signal.aborted){const unknown=status(value)===0||status(value)>=500;setUncertain(unknown);if(!unknown)pending.current=null;failure(value);}
       return false;
@@ -191,8 +191,12 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   async function applyAssistantTask(prepared:PreparedTask,baseJson:string):Promise<number|null>{
     const board=current.current;if(!board||!api.project||!editable||uncertain||lifecycleUnknown)throw new Error(t('当前画布不可编辑，修改未应用。','This canvas cannot be edited. No changes applied.'));
     const next=checkedTaskSnapshot(board,prepared,api.project,baseJson);
-    if(JSON.stringify(board)!==JSON.stringify(next))apply(next);if(!receipt){setReceipt(prepared.analysis);setSaved(JSON.stringify(prepared.baseline));setReload(v=>v+1);}
-    const first=prepared.receipts.find(r=>r.cardId),target=next.cards.find(card=>card.id===first?.cardId);if(target)focusCard(target);
+    const direction=prepared.receipts.find(r=>r.historyDirection)?.historyDirection;
+    if(direction){const step=stepDraftHistory(board,{undo,redo},direction);
+      if(!step||!sameDraftSnapshot(step.snapshot,next))throw new Error(t('撤销记录已变化，请重新发出指令。','Undo history changed. Send a new instruction.'));
+      setUndo(step.history.undo);setRedo(step.history.redo);current.current=next;setDraft(next);
+    }else if(JSON.stringify(board)!==JSON.stringify(next))apply(next);if(!receipt){setReceipt(prepared.analysis);setSaved(JSON.stringify(prepared.baseline));setReload(v=>v+1);}
+    const first=prepared.receipts.find(r=>r.cardId),target=next.cards.find(card=>card.id===first?.cardId);if(target){setSelected(target.id);setMulti([target.id]);}
     setNotice(t('助手操作已加入草稿，可撤销。','Assistant actions applied to draft; undo is available.'));
     if(prepared.wantsSave){const ok=await commit(false,undefined,{snapshot:next,receipt:prepared.analysis});return ok?lastCommitted.current?.analysisRevision??null:null;}
     return null;
@@ -353,8 +357,8 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   function finishGesture(){boxDrag.current=null;setSelectionBox(null);drag.current=null;cancelAnimationFrame(frame.current);frame.current=0;if(nextFrame.current){setDraft(frameBounds(nextFrame.current));nextFrame.current=null;}}
   function fit(){if(draft&&canvas.current)setDraft({...draft,viewport:fitViewport(draft.cards,canvas.current.clientWidth,canvas.current.clientHeight)});}
   function zoom(factor:number){if(draft&&canvas.current)setDraft({...draft,viewport:zoomAt(draft.viewport,draft.viewport.zoom*factor,canvas.current.clientWidth/2,canvas.current.clientHeight/2)});}
-  function undoChange(reverse=false){if(!draft||!editable)return;const stack=reverse?redo:undo;if(!stack.length)return;
-    (reverse?setUndo:setRedo)(items=>[...items.slice(-19),draft]);setDraft(stack[stack.length-1]);(reverse?setRedo:setUndo)(items=>items.slice(0,-1));}
+  function undoChange(reverse=false){if(!draft||!editable)return;const step=stepDraftHistory(draft,{undo,redo},reverse?'redo':'undo');if(!step)return;
+    current.current=step.snapshot;setDraft(step.snapshot);setUndo(step.history.undo);setRedo(step.history.redo);}
   function label(card:CanvasCard){return card.kind==='analysis'||referenceState[card.source!.id]==='available'?card.title:referenceState[card.source!.id]==='restricted'?t('资料访问已撤销','Access removed'):materialNames[card.kind]+t(' · 待读取',' · pending');}
   const errorText=error instanceof Error&&!code(error)?error.message:en?'The request could not be completed. Your local edits are retained.':zhError[code(error)]||'暂时无法完成请求，请重试。';
   const statuses=[['analyzing','分析中','Analyzing'],['awaiting_field_check','待现场核查','Awaiting field check'],['awaiting_expert_review','待复核','Awaiting review']];
@@ -447,7 +451,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           <Btn className="ac-save-view" disabled={!editable||!receipt} onClick={()=>void commit()}>{t('保存当前视图','Save current view')}</Btn>
           <span className="ad-hint">{t('中键拖动平移 · 滚轮缩放画布 · 拖标题移动 · 拖边角调整大小','Middle drag to pan · Wheel to zoom canvas · Drag title to move · Edges to resize')}</span>
         </div>
-        {assistantOpen&&<aside className="ad-inspector ad-assistant"><header><strong>{t('分析助手','Analysis assistant')}</strong><IconBtn label={t('关闭助手','Close assistant')} onClick={()=>setAssistantOpen(false)}><X size={16}/></IconBtn></header><AssistantPanel hasUnsaved={dirty} initialQuestion={initialEntry&&'assistantQuestion' in initialEntry?initialEntry.assistantQuestion:undefined} api={api} snapshot={draft} onApplyTask={editable?applyAssistantTask:undefined} canTransfer={editable&&!dirty} preferredOrderId={draft.context.workOrderId} faultCode={draft.context.faultCode} onOpenOrder={onOpenWorkOrder} initialRunId={initialEntry&&'analysisSessionId' in initialEntry?initialEntry.assistantRunId:undefined} cards={draft.cards} receipt={receipt} en={en} canAddNote={editable&&draft.cards.length<50} onFocus={(card,anchor)=>{focusCard(card);if(anchor)openSource(card,anchor);}} onAddNote={text=>{if(!editable||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('助手整理 · 待人工核验','Assistant note · requires verification'),note:text,x:40+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:340,height:300,pinned:false}]});setSelected(id);}}/></aside>}
+        {assistantOpen&&<aside className="ad-inspector ad-assistant"><header><strong>{t('分析助手','Analysis assistant')}</strong><IconBtn label={t('关闭助手','Close assistant')} onClick={()=>setAssistantOpen(false)}><X size={16}/></IconBtn></header><AssistantPanel historyJson={assistantHistory({undo,redo})} hasUnsaved={dirty} initialQuestion={initialEntry&&'assistantQuestion' in initialEntry?initialEntry.assistantQuestion:undefined} api={api} snapshot={draft} onApplyTask={editable?applyAssistantTask:undefined} canTransfer={editable&&!dirty} preferredOrderId={draft.context.workOrderId} faultCode={draft.context.faultCode} onOpenOrder={onOpenWorkOrder} initialRunId={initialEntry&&'analysisSessionId' in initialEntry?initialEntry.assistantRunId:undefined} cards={draft.cards} receipt={receipt} en={en} canAddNote={editable&&draft.cards.length<50} onFocus={(card,anchor)=>{focusCard(card);if(anchor)openSource(card,anchor);}} onAddNote={text=>{if(!editable||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('助手整理 · 待人工核验','Assistant note · requires verification'),note:text,x:40+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:340,height:300,pinned:false}]});setSelected(id);}}/></aside>}
         {right&&<aside className="ad-inspector"><header><strong>{t(selectedCard?'卡片详情':'分析范围',selectedCard?'Card details':'Analysis context')}</strong><IconBtn label={t('关闭详情','Close details')} onClick={()=>setRight(false)}><X size={16}/></IconBtn></header>{selectedCard?<>
           <label>{t('卡片名称','Card title')}<input maxLength={120} disabled={!editable||selectedCard.historical||!!selectedCard.source&&referenceState[selectedCard.source.id]!=='available'} value={label(selectedCard)} onChange={event=>apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,title:event.target.value}:card)})}/></label>
           {selectedCard.kind==='analysis'?<>{noteSections.map(([key,eng])=><label key={key}>{t(key,eng)}<textarea className="ac-note-section" maxLength={4000} disabled={!editable||selectedCard.historical} value={readNote(selectedCard.note||'')[key]} onChange={event=>{const note=writeNote({...readNote(selectedCard.note||''),[key]:event.target.value});if(note.length<=4000)apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,note}:card)});}}/></label>)}<small>{(selectedCard.note||'').length} / 4000</small>

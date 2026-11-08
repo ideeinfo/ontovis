@@ -34,7 +34,7 @@ function KnowledgeGraph({nodes,relations,selected,onSelect}:{nodes:KnowledgeNode
 export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{card:CanvasCard;source:EvidenceSource;sources:AnalysisSources;en:boolean;anchor?:SourceAnchor|null;onAdd?:(item:Recommendation)=>void}){
   const t=(zh:string,eng:string)=>en?eng:zh;
   const document=card.kind==='document';
-  const [section,setSection]=useState('objects'),[mode,setMode]=useState(document&&source.knowledgeNodeId?'graph':'page');
+  const [section,setSection]=useState('objects'),[mode,setMode]=useState(document&&source.knowledgeNodeId&&!anchor?.pageNumber?'graph':'page');
   const [preview,setPreview]=useState<SourcePreview|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState(false),[reload,setReload]=useState(0);
   const [image,setImage]=useState(''),[imageError,setImageError]=useState(false),[page,setPage]=useState(anchor?.pageNumber||source.pageNumber||1);
   const [selected,setSelected]=useState(''),[node,setNode]=useState(anchor?.nodeId||source.knowledgeNodeId||''),[query,setQuery]=useState(''),[filter,setFilter]=useState(''),[cursor,setCursor]=useState(0);

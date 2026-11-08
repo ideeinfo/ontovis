@@ -28,4 +28,5 @@ test('only a newly requested unambiguous draft edit applies directly; history, q
  const saving={...task,plan:{intent:'edit',actions:[{kind:'save',targets:[]}]}};
  assert.equal(canApplyFreshTask(saving,true,true),false);assert.equal(canApplyFreshTask(saving,true,false),true);
  assert.equal(canApplyFreshTask({...task,plan:{intent:'edit',actions:[{kind:'add_results',targets:[]}]},trace:[{nextCursor:6}]},true,false),false);
+ for(const kind of ['replace_source','restore_revision'])assert.equal(canApplyFreshTask({...task,plan:{intent:'edit',actions:[{kind,targets:['C1']}]}},true,false),false);
 });

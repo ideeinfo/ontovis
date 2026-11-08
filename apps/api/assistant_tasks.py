@@ -7,6 +7,7 @@ from uuid import uuid4
 from .assistant_store import require, digest
 from .assistant_summaries import redact, summarize, work_order_summary, validate_answer
 from .authority import PreviewError
+from .assistant_canvas_tasks import ACTIONS
 
 PROTOCOL='ontovis-engineering-tasks-v1'
 
@@ -22,6 +23,17 @@ def snapshot(body, connection, project):
     return value,hashlib.sha256(raw.encode()).hexdigest()
 
 
+def draft_history(body,connection,project):
+    raw=body.get('historyJson','{}')
+    require(type(raw) is str and len(raw.encode())<=524288)
+    try:value=json.loads(raw)
+    except (ValueError,TypeError):require(False)
+    require(type(value) is dict and set(value)<= {'undo','redo'})
+    for item in value.values():
+        snapshot(dict(snapshotJson=json.dumps(item,ensure_ascii=False)),connection,project)
+    return value
+
+
 def validate_plan(value):
     require(type(value) is dict and set(value)=={'intent','queries','actions'},'ASSISTANT_OUTPUT_INVALID',502)
     require(value['intent'] in ('query','edit') and type(value['queries']) is list and len(value['queries'])<=2
@@ -32,8 +44,7 @@ def validate_plan(value):
             and all(type(q[k]) is str and len(q[k])<=200 for k in ('query','faultCode'))
             and type(q.get('orderId','')) is str and len(q.get('orderId',''))<=100,'ASSISTANT_TOOL_NOT_ALLOWED',422)
     for a in value['actions']:
-        require(type(a) is dict and set(a)=={'kind','targets','text','x','y'} and a['kind'] in
-            ('add_results','remove_cards','add_note','arrange','rename','save','set_window','add_relation','move_card','resize_card')
+        require(type(a) is dict and set(a)=={'kind','targets','text','x','y'} and a['kind'] in ACTIONS
             and type(a['targets']) is list and len(a['targets'])<=12 and all(type(t) is str and len(t)<=200 for t in a['targets'])
             and type(a['text']) is str and len(a['text'])<=4000
             and all(a[k] is None or type(a[k]) in (int,float) and -20000<=a[k]<=20000 for k in ('x','y')),
@@ -135,45 +146,8 @@ class ProjectTools:
             self.trace.append(dict(tool=tool,state='complete',count=len(value['items']),nextCursor=value.get('next_cursor'),filters=q))
         elif tool=='knowledge':
             require('document' in self.allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
-            params=dict(q=needle or fault,limit=12)
-            if fault and (not needle or needle==fault):params['kind']='FaultDefinition'
-            value=self.read(lambda:reader.reader._request('GET',prefix+'/document-knowledge/graph?'+urlencode(params)))
-            require(value.get('project_code')==reader.reader.project_code and type(value.get('nodes')) is list and len(value['nodes'])<=13
-                and type(value.get('relations')) is list,'SOURCE_UNAVAILABLE',502)
-            from .analysis_preview import literal
-            self.graphs.append(dict(kind='knowledge',graph=value))
-            nodes=[dict(title=literal(n,'title'),statement=literal(n,'statement'),kind=n['kind'],
-                release=n.get('source',{}).get('release_id'),evidenceIds=n.get('payload',{}).get('evidence_ids',[])) for n in value['nodes']]
-            self.source('document',redact(json.dumps(dict(scope='已发布项目文档知识；名称关联不等于电气连通或因果',nodes=nodes[:4],
-                truncated=len(nodes)>4 or value.get('next_cursor') is not None),ensure_ascii=False),self.private)[:1000],retrievalRevision=digest(value))
-            self.trace.append(dict(tool=tool,state='complete',count=len(value['nodes']),nextCursor=value.get('next_cursor'),filters=q))
-            roots=[node for node in value['nodes'] if node.get('source') and node['kind']!='KnowledgeAssociation'
-                   and (not fault or literal(node,'fault_code')==fault)]
-            # Project pages are independent source topics. Reading one explicit fixed
-            # release does not require claiming that the whole project has one match.
-            if len(roots)==1 and self.limit-self.reads>=3:
-                from .fixed_documents import FixedDocuments
-                from .analysis_preview import node_evidence
-                from .assistant_knowledge import read_neighborhood,summary
-                source=roots[0]['source']
-                fixed=dict(documentId=source['document']['id'],contentVersionId=source['version']['id'])
-                metadata=self.read(lambda:FixedDocuments(reader.reader).metadata(fixed))
-                fixed.update(sourceSha256=metadata['sourceSha256'],knowledgeReleaseId=source['release_id'],knowledgeNodeId=source['local_id'],pageNumber=1)
-                proof=self.read(lambda:node_evidence(reader,fixed))
-                pages=[p['selector'].get('page') for p in proof['items'] if type(p['selector'].get('page')) is int]
-                require(pages,'SOURCE_UNAVAILABLE',502);fixed['pageNumber']=min(pages)
-                graph=self.read(lambda:read_neighborhood(reader,fixed))
-                text=summary(graph,fixed,lambda s:redact(s,self.private))
-                source_row=self.source('document',text,descriptor=fixed,retrievalRevision=digest(graph))
-                references={p['id']:p for p in graph['evidence']}
-                edges=[]
-                for edge in graph['relations']:
-                    edge_pages=[references[e]['page'] for e in edge['evidenceIds'] if e in references]
-                    edges.append(dict(id=edge['id'],source=edge['source'],target=edge['target'],type=edge['predicate'],status='document_rule',
-                        provenance=dict(recordId=source['release_id']+'/'+edge['id'],recordRevision=digest(graph),**(dict(pageNumber=min(edge_pages)) if edge_pages else {}))))
-                self.graphs.append(dict(kind='knowledge',graph={**graph,'relations':edges}))
-                self.trace.append(dict(tool='fixed_manual_neighborhood',state='complete',count=len(edges),truncated=graph['truncated'],
-                    releaseId=source['release_id'],scope='本页匹配的固定发布版邻域；项目其他分页未读取' if value.get('next_cursor') is not None else '匹配的固定发布版邻域'))
+            from .assistant_project_knowledge import query
+            query(self,q)
 
 
 def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
@@ -204,8 +178,15 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         if record.get('conversation_id'):
             _,previous=runtime.store.conversation(job.project,job.owner,record['conversation_id'])
             history=[dict(question=json.loads(r['input_json'])['question'][:400],candidates=[{k:v for k,v in item.items() if k in ('identifier','version','faultCode','kind')} for item in (json.loads(r['result_json']).get('task',{}).get('results',[]) if r['result_json'] else [])][:6]) for r in previous if r['id']!=run_id][-3:]
+        history_state=draft_history(body,runtime.store.connection_id,job.project)
+        card_keys={c['id']:'C'+str(i+1) for i,c in enumerate(draft['cards'])}
         context=dict(faultCode=draft['context'].get('faultCode',''),mode=body['mode'],history=history,
-            title=draft['title'],cards=[dict(key='C'+str(i+1),kind=c['kind'],title=c['title']) for i,c in enumerate(draft['cards'])])
+            title=draft['title'],savedRevision=body['expectedAnalysisRevision'],canUndo='undo' in history_state,canRedo='redo' in history_state,
+            timeFrom=draft['context']['timeFrom'],timeTo=draft['context']['timeTo'],timezone=draft['context']['timezone'],
+            cards=[dict(key=card_keys[c['id']],kind=c['kind'],title=c['title'][:80],pinned=c['pinned'],historical=c.get('historical',False),
+                        frame=c.get('frameId'),x=c['x'],y=c['y'],width=c['width'],height=c['height']) for c in draft['cards']],
+            groups=[dict(key='G'+str(i+1),title=g['title'][:80],cards=[card_keys[c['id']] for c in draft['cards'] if c.get('frameId')==g['id']]) for i,g in enumerate(draft.get('frames',[]))],
+            relations=[dict(key='L'+str(i+1),source=card_keys[r['from']],target=card_keys[r['to']],kind=r['kind'],origin=r['origin']) for i,r in enumerate(draft['relations'])])
         plan=validate_plan(model('plan',context,[])['plan'])
         switches=set(service.get('settings',{}).get('tools',('selected_sources','engineering_neighborhood','manual_fault_lookup')))
         require(all(q['tool']!='graph' or 'engineering_neighborhood' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)

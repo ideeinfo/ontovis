@@ -3,7 +3,7 @@ import copy
 import json
 from uuid import uuid4
 from .assistant_store import require,identifier,digest,encoded
-from .assistant_tasks import PROTOCOL,snapshot,ProjectTools
+from .assistant_tasks import PROTOCOL,snapshot,draft_history,ProjectTools
 from .assistant_transport import call_source
 
 
@@ -11,7 +11,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
     if action=='task-start':
         fields={'protocol','mode','snapshotJson','analysisSessionId','expectedAnalysisRevision','evidenceRefIds','requestId','question',
             'conversationId','expectedConversationVersion','parentRunId','expectedPolicyRevision','expectedAccessRevision','expectedServiceRevision','taskId'}
-        require(set(body)==fields and body['protocol']==PROTOCOL and body['mode'] in ('workbench','cockpit_query'))
+        require(set(body) in (fields,fields|{'historyJson'}) and body['protocol']==PROTOCOL and body['mode'] in ('workbench','cockpit_query'))
         identifier(body['analysisSessionId']);identifier(body['requestId'])
         require(type(body['expectedAnalysisRevision']) is int and 0<=body['expectedAnalysisRevision']<=1000)
         require(type(body['question']) is str and 0<len(body['question'].strip())<=1000 and '\0' not in body['question'])
@@ -19,15 +19,18 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
         ids=body['evidenceRefIds'];require(type(ids) is list and len(ids)<=8 and len(set(ids))==len(ids))
         for item in ids:identifier(item)
         board,_=snapshot(body,sessions.connection_id,project)
+        history=draft_history(body,sessions.connection_id,project)
         if body['expectedAnalysisRevision']==0:
-            require(not ids and all(c['kind']=='analysis' for c in board['cards']) and not board['context']['objectIds'])
+            require(not ids and all(c['kind']=='analysis' for b in [board,*history.values()] for c in b['cards'])
+                    and all(not b['context']['objectIds'] for b in [board,*history.values()]))
         else:
             require(set(ids)<=set(c.get('source',{}).get('id') for c in board['cards']))
             with analysis_store(sessions,project) as store:
                 detail=store.detail(actor,body['analysisSessionId'],lambda:authorize(True),revision=body['expectedAnalysisRevision'])
                 require(detail.get('lifecycle')=='active','ANALYSIS_TRASHED',409)
                 from .analysis_canvas import validate_handles
-                with store.connection.transaction(readonly=True) as cursor:validate_handles(cursor,body['analysisSessionId'],board,store.schema_version)
+                with store.connection.transaction(readonly=True) as cursor:
+                    for item in [board,*history.values()]:validate_handles(cursor,body['analysisSessionId'],item,store.schema_version)
         policy=runtime.store.policy(project);require(policy['policy']['enabled'],'ASSISTANT_POLICY_DISABLED',409)
         selected=service(body['taskId']);require(selected.get('canRun'),selected.get('reason') or 'ASSISTANT_RUN_FORBIDDEN',403)
         require(body['expectedAccessRevision']==access['accessRevision'] and body['expectedPolicyRevision']==policy['revision']
@@ -54,6 +57,29 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
     require(runtime.store.policy(project)['revision']==record['policy_revision'],'ASSISTANT_POLICY_CHANGED',409)
     selected=service(original['taskId'])
     require(selected.get('canRun') and selected['serviceRevision']==record['service_revision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
+    if action in ('task-source','task-source-preview','task-source-content'):
+        require({'runId','sourceKey'}<=set(body)<={'runId','sourceKey','options'})
+        sources=json.loads(record['sources_json'])
+        source=next((s for s in sources if s['key']==body['sourceKey']),None)
+        require(source and source.get('descriptor') and source['kind'] in ('document','drawing'),'NOT_FOUND_OR_FORBIDDEN',404)
+        require(source['kind'] in runtime.store.policy(project)['policy']['allowedKinds'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
+        _,reader=prepare(authorize,original)
+        descriptor=copy.deepcopy(source['descriptor']);options=body.get('options',{})
+        require(type(options) is dict)
+        # Descriptors come exclusively from the owned run. Viewing does not register
+        # evidence or change a Canvas, including in the cockpit.
+        if action=='task-source':
+            require(not options)
+            value=dict(kind=source['kind'],source=reader.read(source['kind'],descriptor),
+                revision=source.get('sourceRevision') or source.get('retrievalRevision') or digest(descriptor))
+        elif action=='task-source-preview':
+            from .analysis_preview import preview
+            value=preview(reader,source['kind'],descriptor,options)
+        else:
+            require(not options or source['kind']=='document' and set(options)=={'pageNumber'} and type(options['pageNumber']) is int)
+            value=reader.content(source['kind'],{**descriptor,**options})
+        authorize(True)
+        return value
     if action=='task-page':
         require(set(body)=={'runId','traceIndex'})
         index=body['traceIndex'];require(type(index) is int and 0<=index<len(task['trace']))
@@ -107,14 +133,28 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
     require(plan['intent']=='edit' and plan['actions'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
     _,reader=prepare(authorize,original)
     # A retained preparation is not a grant to use a now-stale source version.
-    if prior:
+    def checked_preparation(prior):
+        prepared=json.loads(prior['prepared_json'])
         for candidate in choices:
-            if any(a['kind']=='add_results' and (not a['targets'] or candidate['key'] in a['targets'] or candidate['identifier'] in a['targets']) for a in plan['actions']):
+            if any(a['kind'] in ('add_results','replace_source') and (not a['targets'] or candidate['key'] in a['targets'] or candidate['identifier'] in a['targets']) for a in plan['actions']):
                 reader.resolve(candidate['kind'],candidate['selector'])
-        return json.loads(prior['prepared_json'])
+        with analysis_store(sessions,project) as store:
+            identity=prepared['analysis'];current=store.detail(actor,identity['analysisSessionId'],lambda:authorize(True))
+            require(current['analysisRevision']==identity['analysisRevision'] and current.get('lifecycle')=='active','ANALYSIS_CHANGED',409)
+            from .analysis_evidence import AnalysisEvidence
+            evidence=AnalysisEvidence(store)
+            original_ids={c['source']['id'] for c in board['cards'] if c.get('source')}
+            for card in prepared['snapshot']['cards']:
+                if not card.get('source') or card['source']['id'] in original_ids:continue
+                ref,fixed=evidence.descriptor(actor,dict(analysisSessionId=identity['analysisSessionId'],evidenceRefId=card['source']['id']),lambda:authorize(True))
+                require(ref['sourceKind'] in runtime.store.policy(project)['policy']['allowedKinds'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
+                reader.read(ref['sourceKind'],fixed)
+        authorize(True)
+        return prepared
+    if prior:return checked_preparation(prior)
     with runtime.lock:
         prior=operations.load(runtime.store.library,record['id'],selection)
-        if prior:return json.loads(prior['prepared_json'])
+        if prior:return checked_preparation(prior)
         with analysis_store(sessions,project) as store:
             analysis_id=original['analysisSessionId'];revision=original['expectedAnalysisRevision'];baseline=None
             if revision==0:
@@ -137,7 +177,42 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
                 return evidence.register(actor,dict(analysisSessionId=analysis_id,expectedAnalysisRevision=revision,
                     requestId=operations.operation_id(record['id'],'register:'+candidate['key']),sourceKind=candidate['kind'],selector=candidate['selector']),
                     lambda:authorize(True),reader.resolve)
-            updated,receipts,wants_save=operations.build(board,plan,choices,register,record['id'],sessions.connection_id,project)
+            def descriptor(card):
+                return evidence.descriptor(actor,dict(analysisSessionId=analysis_id,evidenceRefId=card['source']['id']),lambda:authorize(True))[1]
+            def special(kind,action,candidate,index):
+                if kind in ('undo','redo'):
+                    history=draft_history(original,sessions.connection_id,project)
+                    require(kind in history,'ASSISTANT_HISTORY_EMPTY',409)
+                    return copy.deepcopy(history[kind])
+                if kind=='restore_revision':
+                    import re
+                    require(re.fullmatch(r'r?[1-9][0-9]{0,3}',action['text']) is not None)
+                    target=int(action['text'].removeprefix('r'));require(target<revision,'ANALYSIS_CHANGED',409)
+                    return copy.deepcopy(store.detail(actor,analysis_id,lambda:authorize(True),revision=target)['snapshot'])
+                if kind=='set_window':
+                    dates=action['text'].split('|')
+                    for card in candidate['cards']:
+                        if card['kind']!='trend' or card.get('historical'):continue
+                        fixed=descriptor(card);fixed.update(timeFrom=dates[0],timeTo=dates[1])
+                        ref=register(dict(kind='trend',key='trend:'+str(index)+':'+card['id'],selector=fixed),index)
+                        card['source'].update(id=ref['evidenceRefId'],revision=ref['sourceRevision'])
+                    return candidate
+                require(kind=='replace_source' and len(action['targets'])==2,'ASSISTANT_TARGET_AMBIGUOUS',409)
+                aliases={'C'+str(i+1):c['id'] for i,c in enumerate(board['cards'])}
+                card=next((c for c in candidate['cards'] if c['id']==aliases.get(action['targets'][0])),None)
+                require(card and card.get('source') and not card.get('historical'),'ASSISTANT_TARGET_AMBIGUOUS',409)
+                matches=[r for r in choices if action['targets'][1] in (r['key'],r['identifier'])]
+                require(len(matches)==1,'ASSISTANT_TARGET_AMBIGUOUS',409);row=copy.deepcopy(matches[0])
+                require(row['kind']==('model' if card['kind']=='model3d' else card['kind']),'ASSISTANT_SOURCE_MISMATCH',409)
+                fixed=descriptor(card);identity={'work_order':'orderId','object':'entityUid','document':'documentId','photo':'documentId','model':'modelAssetId'}.get(row['kind'])
+                require(identity and identity in fixed and fixed[identity]==row['selector'].get(identity),'ASSISTANT_SOURCE_MISMATCH',409)
+                if row['kind']=='document':row['selector']['pageNumber']=fixed['pageNumber']
+                ref=register(row,index);card['source'].update(id=ref['evidenceRefId'],revision=ref['sourceRevision'])
+                card.pop('view',None)
+                return candidate
+            updated,receipts,wants_save=operations.build(board,plan,choices,register,record['id'],sessions.connection_id,project,special=special)
+            from .analysis_canvas import validate_handles
+            with store.connection.transaction(readonly=True) as cursor:validate_handles(cursor,analysis_id,updated,store.schema_version)
             authorize(True)
             value=dict(operationId=operations.operation_id(record['id'],'batch:'+selection),baseDigest=base,snapshot=updated,receipts=receipts,
                 wantsSave=wants_save,analysis={k:current[k] for k in ('analysisSessionId','analysisRevision','contentSha256','lifecycle','lifecycleRevision') if k in current},

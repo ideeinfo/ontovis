@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle} from '../src/analysisDraftState.ts';
+import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle,sameDraftSnapshot,stepDraftHistory,assistantHistory} from '../src/analysisDraftState.ts';
 const scope={ontobaseConnectionId:'synthetic',projectCode:'A'};
+test('manual and assistant undo share one bounded history without mutating saved snapshots',()=>{
+ const original=blankAnalysisDraft(scope),changed={...original,title:'edited'},history={undo:[original],redo:[]};
+ assert.deepEqual(JSON.parse(assistantHistory(history)),{undo:original});
+ const back=stepDraftHistory(changed,history,'undo');assert.deepEqual(back.snapshot,original);
+ assert.equal(history.undo.length,1);assert.equal(back.history.redo[0].title,'edited');
+ const forward=stepDraftHistory(back.snapshot,back.history,'redo');assert.equal(forward.snapshot.title,'edited');
+ assert.equal(stepDraftHistory(changed,{undo:[],redo:[]},'undo'),null);
+ const pending=pendingDraft(changed,{analysisSessionId:'saved',analysisRevision:2},'write');
+ assert.equal(pending.body.snapshot.title,'edited');assert.equal(back.snapshot.title,'新建分析');
+});
 test('new draft has explicit time scope and inherits no source or work order',()=>{
  const value=blankAnalysisDraft(scope,new Date('2026-10-26T12:00:00Z'));
  assert.deepEqual(value.context,{objectIds:[],timeFrom:'2026-10-25T12:00:00.000Z',timeTo:'2026-10-26T12:00:00.000Z',timezone:'Asia/Shanghai'});
@@ -37,4 +47,11 @@ test('recycle-bin requests pin both versions and keep content revision restore s
  assert.deepEqual(pending,{path:'/api/workbench/analysis-sessions/trash',body:{analysisSessionId:'fixture-id',expectedAnalysisRevision:5,expectedLifecycleRevision:2,requestId:'request-fixed'}});
  assert.equal(pendingLifecycle(item,'untrash','restore-id').path,'/api/workbench/analysis-sessions/untrash');
  assert.equal(pendingLifecycle({...item,lifecycleRevision:undefined},'trash','first').body.expectedLifecycleRevision,0);
+});
+
+test('persisted history key order does not invalidate the same undo snapshot',()=>{
+ const value=blankAnalysisDraft(scope),reordered=Object.fromEntries(Object.entries(value).reverse());
+ reordered.context=Object.fromEntries(Object.entries(value.context).reverse());
+ assert.ok(sameDraftSnapshot(value,reordered));
+ assert.equal(sameDraftSnapshot(value,{...reordered,title:'other'}),false);
 });
