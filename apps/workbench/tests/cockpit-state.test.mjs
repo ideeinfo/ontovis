@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {ApiError} from '../src/api.ts';
-import {CockpitCatalogCache,interfaceScale,sceneIdentity,catalogIdentity,readCockpitCatalog} from '../src/cockpitState.ts';
+import {CockpitCatalogCache,interfaceScale,sceneIdentity,catalogIdentity,readCockpitCatalog,COCKPIT_OPACITY_VALUES,cockpitSavedOpacity} from '../src/cockpitState.ts';
 const project={ontobaseConnectionId:'source',projectCode:'P'};
 const equipment=[{entityUid:'u1',objectScope:'installation'},{entityUid:'u2',objectScope:'installation'},{entityUid:'definition',objectScope:'definition'}];
 const scene=(ids)=>({snapshot:{instances:ids.map((uid,i)=>({sceneModelInstanceId:String(i),rootBinding:uid?{objectRef:{...project,entityUid:uid}}:null}))}});
@@ -111,4 +111,13 @@ test('cancelling retains completed memory but late responses cannot publish; sel
  const cache=new CockpitCatalogCache(api),reading=cache.read(abort.signal,value=>updates.push(value));await tick();assert.deepEqual(opened,['0','1','2']);
  priority='4';cache.priority=priority;gates[0].resolve();await tick();assert.deepEqual(opened,['0','1','2','4']);
  const count=updates.length;abort.abort();gates.forEach(g=>g.resolve());await assert.rejects(reading,{name:'AbortError'});assert.equal(updates.length,count);assert.equal(cache.peek().scenes[0].opened.sceneId,'0');
+});
+
+test('cockpit panel opacity provides valid alpha scales and defaults safely', () => {
+  assert.equal(typeof COCKPIT_OPACITY_VALUES.ultra, 'object');
+  assert.equal(typeof COCKPIT_OPACITY_VALUES.medium, 'object');
+  assert.equal(typeof COCKPIT_OPACITY_VALUES.solid, 'object');
+  assert.ok(COCKPIT_OPACITY_VALUES.ultra.darkAlpha < COCKPIT_OPACITY_VALUES.medium.darkAlpha);
+  assert.ok(COCKPIT_OPACITY_VALUES.medium.darkAlpha < COCKPIT_OPACITY_VALUES.solid.darkAlpha);
+  assert.equal(cockpitSavedOpacity(), 'medium');
 });

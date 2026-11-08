@@ -11,6 +11,21 @@ export function interfaceScale(value:InterfaceScale,width:number,height:number){
   const w=Math.round(width),h=Math.round(height);
   return w>=3840&&h>=2160?2:w>=2880&&h>=1620?1.5:1;
 }
+export type CockpitPanelOpacity='ultra'|'high'|'medium'|'low'|'solid';
+export const COCKPIT_OPACITY_VALUES:Record<CockpitPanelOpacity,{darkAlpha:number;lightAlpha:number}>={
+  ultra:{darkAlpha:0.35,lightAlpha:0.45},
+  high:{darkAlpha:0.50,lightAlpha:0.60},
+  medium:{darkAlpha:0.66,lightAlpha:0.72},
+  low:{darkAlpha:0.85,lightAlpha:0.88},
+  solid:{darkAlpha:0.98,lightAlpha:0.98},
+};
+export function cockpitSavedOpacity():CockpitPanelOpacity{
+  try{
+    const saved=localStorage.getItem('ontovis.cockpit.panel_opacity');
+    if(saved&&saved in COCKPIT_OPACITY_VALUES)return saved as CockpitPanelOpacity;
+  }catch{}
+  return 'medium';
+}
 export type CockpitScene={summary:SceneSummary;opened:SceneOpen|null;error:unknown|null};
 export type CockpitCatalog={scenes:CockpitScene[];equipment:EquipmentCatalogItem[];loading?:boolean;equipmentReady?:boolean};
 export function sameProject(a:ProjectRef,b:ProjectRef){return a.ontobaseConnectionId===b.ontobaseConnectionId&&a.projectCode===b.projectCode;}
