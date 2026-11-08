@@ -3,14 +3,14 @@ import {ModelComponentTree,ModelComponentProperties,ModelPreviewTools,useModelPr
 import {SceneLoadingProgress} from './SceneLoadingProgress';
 import {SceneEnvironmentPanel} from './SceneEnvironmentPanel';
 import {SceneBasicInfoDialog} from './SceneBasicInfoDialog';
-import {SceneThumbnailField} from './SceneThumbnail';
+import {SceneThumbnail, SceneThumbnailField} from './SceneThumbnail';
 import {sceneInformationSnapshot,onlySceneInformationChanged} from './sceneInformation';
 import {sceneWithEnvironment} from './sceneEnvironmentEditing';
 import {waterSurfaceSupported} from './sceneEnvironment';
 import {sceneResourceGroups} from './sceneResourceGroups';
 import './projectModelCenter.css';
 import {forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useMemo, useRef, useState} from 'react';
-import {ArrowLeft, Check, Copy, Eye, EyeOff, Focus, Layers, LockKeyhole, MapPin, PanelLeft, PanelRight, Pencil, Plus, Redo2, RotateCcw, Save, Search, Trash2, Undo2, UnlockKeyhole, X, Zap} from 'lucide-react';
+import {ArrowLeft, Check, Copy, Eye, EyeOff, Focus, Layers, LayoutGrid, List, LockKeyhole, MapPin, PanelLeft, PanelRight, Pencil, Plus, Redo2, RotateCcw, Save, Search, Trash2, Undo2, UnlockKeyhole, X, Zap} from 'lucide-react';
 import {RowActions,RowContext,type ListAction} from './ListMenus';
 import {ApiError, cancelled, failureMessage, WorkbenchApi} from './api';
 import {SceneApi} from './sceneApi';
@@ -64,6 +64,71 @@ function ScopeCheckbox({ids,selectedIds,label,disabled,onToggle}:{ids:string[];s
     onClick={event=>event.stopPropagation()} onChange={event=>onToggle(event.target.checked)}/>;
 }
 
+function ScenePlaceholderThumb({name,compact=false}:{name:string;compact?:boolean}){
+  const isSubstation=/变|站|substation|transformer/i.test(name);
+  return <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice" aria-hidden="true" className={`sw-thumb-svg ${compact?'is-compact':''}`}>
+    <defs>
+      <linearGradient id={isSubstation?'sw-thumb-sky-sub':'sw-thumb-sky-wtg'} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={isSubstation?'#162329':'#182b26'}/>
+        <stop offset="60%" stopColor={isSubstation?'#20333a':'#233d34'}/>
+        <stop offset="100%" stopColor={isSubstation?'#2b4249':'#2f5244'}/>
+      </linearGradient>
+      <linearGradient id={isSubstation?'sw-thumb-hill-sub':'sw-thumb-hill-wtg'} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={isSubstation?'#3d5964':'#456a56'}/>
+        <stop offset="100%" stopColor={isSubstation?'#1a272c':'#1d3126'}/>
+      </linearGradient>
+    </defs>
+    <rect width="320" height="180" fill={`url(#${isSubstation?'sw-thumb-sky-sub':'sw-thumb-sky-wtg'})`}/>
+    <circle cx="264" cy="38" r="18" fill="#a7d7c5" opacity="0.16"/>
+    {isSubstation?<>
+      <rect x="0" y="88" width="320" height="92" fill="#1b2a30"/>
+      <g stroke="#3d5b66" strokeWidth="0.8" opacity="0.4">
+        <path d="M0 108 H320 M0 132 H320 M0 156 H320"/>
+        <path d="M48 88 V180 M104 88 V180 M160 88 V180 M216 88 V180 M272 88 V180"/>
+      </g>
+      <g transform="translate(130, 134)" fill="#8bb5a4" stroke="#d5ede3" strokeWidth="1.2">
+        <path d="M-14 -6 L-6 -14 H18 L10 -6 Z"/>
+        <rect x="-14" y="-28" width="24" height="22" rx="2"/>
+        <path d="M10 -28 L18 -34 V-12 L10 -6 Z" fill="#699482"/>
+        <path d="M-8 -28 V-36 M0 -28 V-36 M8 -28 V-36" strokeWidth="1.8"/>
+      </g>
+      <g transform="translate(205, 142)" fill="#8bb5a4" stroke="#d5ede3" strokeWidth="1.2">
+        <path d="M-12 -5 L-5 -12 H15 L8 -5 Z"/>
+        <rect x="-12" y="-24" width="20" height="19" rx="2"/>
+        <path d="M8 -24 L15 -29 V-10 L8 -5 Z" fill="#699482"/>
+      </g>
+    </>:<>
+      <path d="M-10 116 L48 78 L102 96 L160 62 L222 92 L274 68 L330 100 L330 180 L-10 180 Z" fill="url(#sw-thumb-hill-wtg)" opacity="0.85"/>
+      <path d="M-10 138 L68 108 L138 124 L212 94 L278 116 L330 98 L330 180 L-10 180 Z" fill="#2d483a"/>
+      <path d="M10 162 Q120 126 214 150 T318 120" fill="none" stroke="#7aa88f" strokeWidth="4" opacity="0.4"/>
+      <g transform="translate(160, 126)" stroke="#e4f4ed" strokeWidth="1.8" fill="#cfe9de">
+        <path d="M-2 0 L-1 -52 H1 L2 0 Z"/>
+        <rect x="-6" y="-55" width="12" height="4" rx="1" />
+        <g transform="translate(-5, -53) rotate(24)">
+          <path d="M0 0 L-2 -24 L1.5 -6 Z"/>
+          <path d="M0 0 L21 12 L4.5 1.5 Z"/>
+          <path d="M0 0 L-19 14 L-4 3 Z"/>
+          <circle r="2.4" fill="#5ce1b6"/>
+        </g>
+      </g>
+      <g transform="translate(248, 108) scale(0.68)" stroke="#e4f4ed" strokeWidth="1.8" fill="#cfe9de" opacity="0.88">
+        <path d="M-2 0 L-1 -52 H1 L2 0 Z"/>
+        <rect x="-6" y="-55" width="12" height="4" rx="1" />
+        <g transform="translate(-5, -53) rotate(-18)">
+          <path d="M0 0 L-2 -24 L1.5 -6 Z"/>
+          <path d="M0 0 L21 12 L4.5 1.5 Z"/>
+          <path d="M0 0 L-19 14 L-4 3 Z"/>
+          <circle r="2.4" fill="#5ce1b6"/>
+        </g>
+      </g>
+    </>}
+  </svg>;
+}
+
+function sceneShortCode(id: string){
+  return `SCN-${id.replace(/^scene-/, '').slice(0, 8).toUpperCase()}`;
+}
+
 export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;suspended?:boolean;initialEntry?:LegacySceneEntryTarget|null;initialSceneId?:string;project?:ProjectSummary;onProjectCreated?:(project:ProjectSummary,sceneId:string)=>void;onProjectName?:(name:string)=>void;onConfigure?:()=>void}>(function SceneWorkspace({api,suspended=false,initialEntry,initialSceneId,project,onProjectCreated,onProjectName,onConfigure},ref) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof sceneText>[1])=>sceneText(locale,key);
   const et=(key:Parameters<typeof sceneEngineeringText>[1])=>sceneEngineeringText(locale,key);
@@ -75,6 +140,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
   useEffect(()=>{const abort=new AbortController();setSharedConfigurations(null);void new EquipmentApi(api).configurations(abort.signal).then(value=>{if(!abort.signal.aborted)setSharedConfigurations(value);}).catch(error=>{if(!abort.signal.aborted&&!cancelled(error))failed(error);});return()=>abort.abort();},[api,api.epoch,api.revision]);
   const [list,setList]=useState<SceneList|null>(null),[search,setSearch]=useState(''),[base,setBase]=useState<SceneOpen|null>(null);
   const [recycled,setRecycled]=useState(false),[deleteTarget,setDeleteTarget]=useState<SceneSummary|null>(null),[lifecycleNotice,setLifecycleNotice]=useState('');
+  const [listMode,setListMode]=useState<'cards'|'table'>('cards'),[selectedSceneId,setSelectedSceneId]=useState<string|null>(null);
   useEffect(()=>{if(!lifecycleNotice)return;const timer=setTimeout(()=>setLifecycleNotice(''),5000);return()=>clearTimeout(timer);},[lifecycleNotice]);
   const lifecycleRequest=useRef<{key:string;body:SceneLifecycleRequest}|null>(null);
   const [history,setHistory]=useState<SceneHistory|null>(null),[selected,setSelected]=useState<string|null>(null);
@@ -610,14 +676,325 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     {saveUnknown&&<div className="sw-notice" role="status"><span>{t('saveUnknown')}</span><Btn disabled={busy||!canWrite} onClick={()=>void save(anchorResult||undefined)}>{t('retry')}</Btn></div>}
     {errorText&&!spatialDialog&&<div className="sw-notice" role="alert"><span>{errorText}</span>{entryPending&&initialEntry&&<Btn disabled={busy} onClick={()=>void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry)}>{t('retry')}</Btn>}<IconBtn label={t('cancel')} onClick={()=>setError(null)}><X size={14}/></IconBtn></div>}
     {opening&&<SceneLoadingProgress locale={locale}/>}
-    {!base&&entryPending?<></>:!base?<><div className="sw-list-toolbar"><form onSubmit={event=>{event.preventDefault();void readList();}}><Search size={15}/><input aria-label={t('search')} placeholder={t('search')} value={search} onChange={event=>setSearch(event.target.value)}/><Btn disabled={busy} onClick={()=>void readList()}>{t('search')}</Btn></form>{list?.capabilities.sceneLifecycleWriteVersion===1&&<Btn disabled={busy} onClick={()=>{setRecycled(!recycled);setList(null);setLifecycleNotice('');void readList(undefined,!recycled);}}><Trash2 size={15}/>{t(recycled?'activeScenes':'recycle')}</Btn>}{!recycled&&<Btn primary disabled={busy||!list?.capabilities.canWrite} onClick={()=>setModal('create')}><Plus size={15}/>{t('create')}</Btn>}</div>
-      <div className="sw-scene-list">{!list&&!opening&&!error?<SceneLoadingProgress locale={locale} phase="list"/>:!list?null:list.items.length===0?<p>{t(recycled?'recycleEmpty':'empty')}</p>:<table className="ov-list-table" aria-label={t(recycled?'recycle':'scenes')}><thead><tr><th scope="col">{t('name')}</th><th scope="col" className="ov-list-number">{t('count')}</th><th scope="col" className="ov-list-date">{t(recycled?'deletedAt':'updated')}</th><th scope="col" className="ov-list-actions"><span className="ov-sr-only">{en?'Actions':'操作'}</span></th></tr></thead><tbody>{list.items.map(row=>{
-        const actions:ListAction[]=recycled?[{id:'restore',label:t('restore'),icon:<RotateCcw/>,disabled:busy||!list.capabilities.canWrite,onSelect:()=>void changeLifecycle('restore',row)}]:[
-          {id:'open',label:t('open'),icon:<Eye/>,disabled:busy,onSelect:()=>void open(row.sceneId)},
-          {id:'info',opensDialog:true,label:en?'Basic information':'基本信息',icon:<Pencil/>,disabled:busy,onSelect:()=>setInfoTarget(row.sceneId)},
-          ...(list.capabilities.sceneLifecycleWriteVersion===1?[{id:'delete',opensDialog:true,label:en?'Move to recycle bin':'移至回收站',icon:<Trash2/>,danger:true,disabled:busy||!list.capabilities.canWrite,onSelect:()=>{setError(null);setDeleteTarget(row);}}]:[])];
-        return <RowContext key={row.sceneId} name={row.displayName} actions={actions} disabled={busy}><tr><td><div className="ov-list-name"><Layers size={15}/>{recycled?<span>{row.displayName}</span>:<button type="button" onClick={()=>void open(row.sceneId)} disabled={busy}>{row.displayName}</button>}</div></td><td className="ov-list-number">{row.instanceCount}</td><td className="ov-list-date">{new Date(recycled&&row.deletedAt?row.deletedAt:row.updatedAt).toLocaleString(locale==='zh'?'zh-CN':'en-GB')}</td><td className="ov-list-actions"><RowActions name={row.displayName} actions={actions} locale={locale} disabled={busy}/></td></tr></RowContext>;
-      })}</tbody></table>}{list?.nextCursor&&<Btn disabled={busy} onClick={()=>void readList(list.nextCursor!)}>{t('more')}</Btn>}</div></>:
+    {!base&&entryPending?<></>:!base?(()=>{
+      const focusedScene = list?.items.find(row => row.sceneId === selectedSceneId) ?? list?.items[0] ?? null;
+      const getRowActions = (row: SceneSummary): ListAction[] => recycled ? [{
+        id: 'restore',
+        label: t('restore'),
+        icon: <RotateCcw />,
+        disabled: busy || !list?.capabilities.canWrite,
+        onSelect: () => void changeLifecycle('restore', row)
+      }] : [
+        { id: 'open', label: en ? 'Open workbench' : '打开工作台', icon: <Eye />, disabled: busy, onSelect: () => void open(row.sceneId) },
+        { id: 'info', opensDialog: true, label: en ? 'Basic information' : '基本信息', icon: <Pencil />, disabled: busy, onSelect: () => setInfoTarget(row.sceneId) },
+        ...(list?.capabilities.sceneLifecycleWriteVersion === 1 ? [{
+          id: 'delete', opensDialog: true, label: en ? 'Move to recycle bin' : '移至回收站', icon: <Trash2 />, danger: true, disabled: busy || !list.capabilities.canWrite, onSelect: () => { setError(null); setDeleteTarget(row); }
+        }] : [])
+      ];
+      return <>
+        <div className="sw-hub-header">
+          <div className="sw-hub-title-block">
+            <h2>{recycled ? (en ? 'Scene recycle bin' : '场景回收站') : (en ? 'Scene portfolio' : '场景组合')}</h2>
+            <p className="sw-hub-subtitle">
+              {recycled ? (en ? 'Deleted scenes retain model references and revision history.' : '已移至回收站的场景保留原模型引用与修订记录，可在此恢复。') : (en ? 'Organize 3D spatial scenes, terrain anchors, and equipment model instances by project, and enter the scene workbench directly.' : '按项目组织三维空间场景、地形锚点与设备模型实例，直接从这里进入场景工作台。')}
+            </p>
+          </div>
+          <div className="sw-hub-actions">
+            {list?.capabilities.sceneLifecycleWriteVersion === 1 && (
+              <Btn disabled={busy} onClick={() => { setRecycled(!recycled); setList(null); setLifecycleNotice(''); void readList(undefined, !recycled); }}>
+                <Trash2 size={15} />
+                {t(recycled ? 'activeScenes' : 'recycle')}
+              </Btn>
+            )}
+            {!recycled && (
+              <Btn primary disabled={busy || !list?.capabilities.canWrite} onClick={() => setModal('create')}>
+                <Plus size={15} />
+                {t('create')}
+              </Btn>
+            )}
+          </div>
+        </div>
+        <div className="sw-scene-list sw-hub-body">
+          {!list && !opening && !error ? (
+            <SceneLoadingProgress locale={locale} phase="list" />
+          ) : !list ? null : list.items.length === 0 ? (
+            <div className="sw-empty-box">
+              <Layers size={32} />
+              <p>{t(recycled ? 'recycleEmpty' : 'empty')}</p>
+              {!recycled && (
+                <Btn disabled={busy || !list?.capabilities.canWrite} onClick={() => setModal('create')}>
+                  <Plus size={15} />
+                  {t('create')}
+                </Btn>
+              )}
+            </div>
+          ) : (
+            <div className="sw-hub-grid">
+              <section className="sw-hub-list-panel" aria-label={t(recycled ? 'recycle' : 'scenes')}>
+                <div className="sw-hub-list-bar">
+                  <form onSubmit={event => { event.preventDefault(); void readList(); }}>
+                    <Search size={15} />
+                    <input aria-label={t('search')} placeholder={t('search')} value={search} onChange={event => setSearch(event.target.value)} />
+                    <Btn disabled={busy} onClick={() => void readList()}>{t('search')}</Btn>
+                  </form>
+                  <div className="sw-view-switch" role="group" aria-label={en ? 'View mode' : '视图切换'}>
+                    <button
+                      type="button"
+                      className={listMode === 'cards' ? 'active' : ''}
+                      aria-pressed={listMode === 'cards'}
+                      title={en ? 'Card view' : '卡片视图'}
+                      onClick={() => setListMode('cards')}
+                    >
+                      <LayoutGrid size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className={listMode === 'table' ? 'active' : ''}
+                      aria-pressed={listMode === 'table'}
+                      title={en ? 'Table view' : '列表视图'}
+                      onClick={() => setListMode('table')}
+                    >
+                      <List size={15} />
+                    </button>
+                  </div>
+                </div>
+                {listMode === 'cards' ? (
+                  <div className="sw-card-stack">
+                    {list.items.map(row => {
+                      const actions = getRowActions(row);
+                      const isSelected = focusedScene?.sceneId === row.sceneId;
+                      return (
+                        <RowContext key={row.sceneId} name={row.displayName} actions={actions} disabled={busy}>
+                          <article
+                            className={`sw-facility-card ${isSelected ? 'is-selected' : ''}`}
+                            onClick={() => setSelectedSceneId(row.sceneId)}
+                            onDoubleClick={() => { if (!recycled && !busy) void open(row.sceneId); }}
+                            data-testid={`scene-card-${row.sceneId}`}
+                          >
+                            <div className="sw-facility-card-main">
+                              <div className="sw-facility-card-head">
+                                {recycled ? (
+                                  <strong className="sw-facility-card-title">{row.displayName}</strong>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="sw-facility-card-title"
+                                    onClick={event => {
+                                      event.stopPropagation();
+                                      setSelectedSceneId(row.sceneId);
+                                      void open(row.sceneId);
+                                    }}
+                                    disabled={busy}
+                                    data-testid={`scene-open-${row.sceneId}`}
+                                  >
+                                    {row.displayName}
+                                  </button>
+                                )}
+                                <span className="sw-facility-code">{sceneShortCode(row.sceneId)}</span>
+                                <span className={`sw-facility-status ${recycled ? 'is-deleted' : ''}`}>
+                                  {recycled ? (en ? 'Deleted' : '回收站') : (en ? 'Active' : '启用中')}
+                                </span>
+                                <span className="sw-grow" />
+                                <div onClick={event => event.stopPropagation()}>
+                                  <RowActions name={row.displayName} actions={actions} locale={locale} disabled={busy} />
+                                </div>
+                              </div>
+                              <p className="sw-facility-card-desc">
+                                {en ? 'Organize 3D spatial models, geographic terrain anchors, and equipment bindings.' : '组织三维空间模型、地形锚点与设备构件绑定，支持进入工作台进行空间浏览与布置。'}
+                              </p>
+                              <div className="sw-facility-card-metrics">
+                                <div className="sw-facility-metric">
+                                  <span>{t('count')}</span>
+                                  <strong>{row.instanceCount}</strong>
+                                </div>
+                                <div className="sw-facility-metric">
+                                  <span>{en ? 'Revision' : '版本'}</span>
+                                  <strong>v{row.headRevision}</strong>
+                                </div>
+                                <div className="sw-facility-metric">
+                                  <span>{t(recycled ? 'deletedAt' : 'updated')}</span>
+                                  <strong>{new Date(recycled && row.deletedAt ? row.deletedAt : row.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}</strong>
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="sw-facility-card-thumb"
+                              disabled={recycled || busy}
+                              aria-label={`${t('open')} ${row.displayName}`}
+                              onClick={event => {
+                                event.stopPropagation();
+                                setSelectedSceneId(row.sceneId);
+                                if (!recycled) void open(row.sceneId);
+                              }}
+                            >
+                              <SceneThumbnail
+                                client={client}
+                                sceneId={row.sceneId}
+                                name={row.displayName}
+                                thumbnail={row.thumbnail}
+                                fallback={<ScenePlaceholderThumb name={row.displayName} />}
+                              />
+                              <span className="sw-facility-thumb-badge">v{row.headRevision}</span>
+                            </button>
+                          </article>
+                        </RowContext>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="sw-table-wrap">
+                    <table className="ov-list-table" aria-label={t(recycled ? 'recycle' : 'scenes')}>
+                      <thead>
+                        <tr>
+                          <th scope="col">{t('name')}</th>
+                          <th scope="col" className="ov-list-number">{t('count')}</th>
+                          <th scope="col" className="ov-list-date">{t(recycled ? 'deletedAt' : 'updated')}</th>
+                          <th scope="col" className="ov-list-actions"><span className="ov-sr-only">{en ? 'Actions' : '操作'}</span></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {list.items.map(row => {
+                          const actions = getRowActions(row);
+                          const isSelected = focusedScene?.sceneId === row.sceneId;
+                          return (
+                            <RowContext key={row.sceneId} name={row.displayName} actions={actions} disabled={busy}>
+                              <tr className={isSelected ? 'is-selected' : ''} onClick={() => setSelectedSceneId(row.sceneId)}>
+                                <td>
+                                  <div className="ov-list-name">
+                                    <span className="sw-table-thumb">
+                                      <SceneThumbnail
+                                        client={client}
+                                        sceneId={row.sceneId}
+                                        name={row.displayName}
+                                        thumbnail={row.thumbnail}
+                                        fallback={<ScenePlaceholderThumb name={row.displayName} compact />}
+                                      />
+                                    </span>
+                                    {recycled ? (
+                                      <span>{row.displayName}</span>
+                                    ) : (
+                                      <button type="button" onClick={() => void open(row.sceneId)} disabled={busy} data-testid={`scene-open-${row.sceneId}`}>
+                                        {row.displayName}
+                                      </button>
+                                    )}
+                                    <span className="sw-facility-code">{sceneShortCode(row.sceneId)}</span>
+                                  </div>
+                                </td>
+                                <td className="ov-list-number">{row.instanceCount}</td>
+                                <td className="ov-list-date">{new Date(recycled && row.deletedAt ? row.deletedAt : row.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}</td>
+                                <td className="ov-list-actions">
+                                  <RowActions name={row.displayName} actions={actions} locale={locale} disabled={busy} />
+                                </td>
+                              </tr>
+                            </RowContext>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {list?.nextCursor && (
+                  <Btn disabled={busy} onClick={() => void readList(list.nextCursor!)}>{t('more')}</Btn>
+                )}
+              </section>
+              {focusedScene && (
+                <aside className="sw-hub-detail-panel" aria-label={en ? 'Selected scene details' : '当前场景详情'}>
+                  <div className="sw-hub-detail-top">
+                    <div>
+                      <span className="sw-hub-detail-eyebrow">{en ? 'Selected scene' : '当前场景'}</span>
+                      <h3 className="sw-hub-detail-title">{focusedScene.displayName}</h3>
+                    </div>
+                    <span className={`sw-facility-status ${recycled ? 'is-deleted' : ''}`}>
+                      {recycled ? (en ? 'Deleted' : '回收站') : (en ? 'Active' : '启用中')}
+                    </span>
+                  </div>
+                  <p className="sw-hub-detail-desc">
+                    {en ? '3D spatial scene containing equipment models, placement coordinates, and engineering links.' : '包含设备模型放置坐标、地理锚点与工程对象绑定的三维空间场景。'}
+                  </p>
+                  <div className="sw-hub-pills">
+                    <span className="sw-hub-pill">{focusedScene.instanceCount} {t('count')}</span>
+                    <span className="sw-hub-pill">v{focusedScene.headRevision}</span>
+                    <span className="sw-hub-pill">{sceneShortCode(focusedScene.sceneId)}</span>
+                  </div>
+                  <div className="sw-hub-primary-actions">
+                    {recycled ? (
+                      <Btn
+                        primary
+                        disabled={busy || !list.capabilities.canWrite}
+                        onClick={() => void changeLifecycle('restore', focusedScene)}
+                      >
+                        <RotateCcw size={14} />
+                        {t('restore')}
+                      </Btn>
+                    ) : (
+                      <>
+                        <Btn primary disabled={busy} onClick={() => void open(focusedScene.sceneId)}>
+                          {en ? 'Open workbench' : '打开工作台'}
+                        </Btn>
+                        <Btn disabled={busy} onClick={() => setInfoTarget(focusedScene.sceneId)}>
+                          {en ? 'Basic information' : '基本信息'}
+                        </Btn>
+                      </>
+                    )}
+                  </div>
+                  <div className="sw-hub-stat-grid">
+                    <div className="sw-hub-stat-card">
+                      <span>{t('count')}</span>
+                      <strong>{focusedScene.instanceCount}</strong>
+                    </div>
+                    <div className="sw-hub-stat-card">
+                      <span>{en ? 'Revision' : '当前版本'}</span>
+                      <strong>v{focusedScene.headRevision}</strong>
+                    </div>
+                    <div className="sw-hub-stat-card">
+                      <span>{t(recycled ? 'deletedAt' : 'updated')}</span>
+                      <strong title={new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}>
+                        {new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-GB', { hour: '2-digit', minute: '2-digit' })}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="sw-hub-section">
+                    <div className="sw-hub-section-head">
+                      <strong>{en ? 'Scene thumbnail preview' : '场景缩略图预览'}</strong>
+                      <span className="sw-facility-code">{sceneShortCode(focusedScene.sceneId)}</span>
+                    </div>
+                    <div className="sw-hub-preview-card">
+                      <SceneThumbnail
+                        client={client}
+                        sceneId={focusedScene.sceneId}
+                        name={focusedScene.displayName}
+                        thumbnail={focusedScene.thumbnail}
+                        fallback={<ScenePlaceholderThumb name={focusedScene.displayName} />}
+                      />
+                      <div className="sw-hub-preview-meta">
+                        <span>{focusedScene.displayName}</span>
+                        <span>{new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-GB')}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="sw-hub-section">
+                    <div className="sw-hub-section-head">
+                      <strong>{en ? 'Scene metadata' : '场景元数据'}</strong>
+                    </div>
+                    <div className="sw-hub-section-card">
+                      <dl className="sw-instance-facts" style={{ padding: 0 }}>
+                        <dt>{en ? 'Project' : '所属项目'}</dt>
+                        <dd>{project?.displayName || project?.projectRef.projectCode || api.project?.projectCode || '—'}</dd>
+                        <dt>{en ? 'Scene ID' : '场景标识'}</dt>
+                        <dd style={{ fontFamily: 'monospace' }}>{focusedScene.sceneId}</dd>
+                        <dt>{t(recycled ? 'deletedAt' : 'updated')}</dt>
+                        <dd>{new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}</dd>
+                      </dl>
+                    </div>
+                  </div>
+                </aside>
+              )}
+            </div>
+          )}
+        </div>
+      </>;
+    })():
       <><div className="sw-editor-toolbar"><IconBtn label={t('back')} disabled={busy} onClick={()=>requestLeave(()=>{setBase(null);setHistory(null);setTerrain(null);setPreview(null);setModal(null);void readList();})}><ArrowLeft size={16}/></IconBtn><strong>{draft?.displayName}</strong><Btn disabled={busy||!!anchorResult||saveUnknown||routePlaying} onClick={()=>{if(draft){setInfo({name:draft.displayName,description:draft.description||''});setInfoThumbFile(null);setModal('info');}}}>{en?'Basic information':'基本信息'}</Btn><Badge>{unsaved?t('unsaved'):t('saved')}</Badge>{!canWrite&&<Badge>{t('readOnly')}</Badge>}<span className="sw-grow"/>{update&&<Btn disabled={busy} onClick={()=>setModal('conflict')}>{t('updateAvailable')}</Btn>}
         <Btn disabled={busy||unsaved||editing||routePlaying||!!preview||!!anchorResult} onClick={()=>setAlarmOpen(v=>!v)}>{en?'Alarm exercise':'告警演练'}</Btn><div className="sw-mode" role="group" aria-label={t('scenes')}><button type="button" aria-pressed={!editing} disabled={busy||!!anchorResult||routePlaying} onClick={()=>{setEditing(false);setPending(null);setContinuous(false);}}>{t('read')}</button><button type="button" aria-pressed={editing} disabled={!canWrite||busy||!!anchorResult||routePlaying} onClick={()=>{setEditing(true);setPreview(null);}}>{t('edit')}</button></div><Btn primary title={t('saveViewHint')} disabled={!canWrite||(!dirty&&!reviewDirty&&!saveUnknown)||busy||!!anchorResult||routePlaying||environmentInvalid||!!preview} onClick={()=>void save()}><Save size={14}/>{busy?t('saving'):t('save')}</Btn>{base.capabilities.sceneLifecycleWriteVersion===1&&<IconBtn label={t('deleteScene')} disabled={!canWrite||busy||unsaved||routePlaying} title={unsaved?t('beforeDelete'):undefined} onClick={()=>{setError(null);setDeleteTarget({sceneId:base.sceneId,headRevision:base.sceneRevision,lifecycleRevision:base.lifecycleRevision,displayName:draft!.displayName,updatedAt:base.savedAt,instanceCount:draft!.instances.length});}}><Trash2 size={15}/></IconBtn>}</div>
       {snapshot&&<><div className="sw-mobile-tools"><IconBtn label={t('content')} onClick={()=>setSide(side==='left'?null:'left')}><PanelLeft size={16}/></IconBtn><span className="sw-grow"/><IconBtn label={t('position')} onClick={()=>setSide(side==='right'?null:'right')}><PanelRight size={16}/></IconBtn></div>
