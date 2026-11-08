@@ -109,3 +109,17 @@ test('portfolio scene focus target resolves its cluster group and focus paramete
  const missing=findGroup('不存在的场景');
  assert.equal(missing,undefined);
 });
+
+test('cockpit scene preparation and viewport prompt overlays adhere to frosted glass and panel opacity rules',async()=>{
+ const fs=await import('node:fs/promises');
+ const spaceCss=await fs.readFile(new URL('../src/cockpitSpace.css',import.meta.url),'utf8');
+ const cockpitCss=await fs.readFile(new URL('../src/projectCockpit.css',import.meta.url),'utf8');
+ assert.ok(spaceCss.includes('.pc-app .sw-loading'));
+ assert.ok(spaceCss.includes('.pc-viewport .sw-loading'));
+ assert.ok(spaceCss.includes('.pc-viewport .ov-scene-viewport-state'));
+ assert.ok(spaceCss.includes('.pc-viewport .ov-scene-viewport-state:has(.sw-loading)'));
+ assert.ok(cockpitCss.includes('.pc-app .sw-ground-cursor-badge'));
+ assert.ok(cockpitCss.includes('.pc-viewport .ov-scene-viewport-tools'));
+ assert.ok(cockpitCss.includes('.pc-viewport .ov-scene-imagery-attribution'));
+ assert.ok(cockpitCss.includes('.pc-viewport .ev-status'));
+});
