@@ -147,6 +147,26 @@ python3 tools/model_store_backup.py restore-new \
 
 恢复只生成新目录，不启用服务、不覆写原根。切换后须由操作者比较当前库与恢复回执中的 registry/全表摘要，保持同一 active gate 和全部新数据；不得以切换前旧备份倒回库或让不识别 gate 的旧后端启动。失败回退优先保留兼容后端、只退兼容前端；无法保持旧写关闭则停服维护。真实停服、恢复演练、旧写拒绝与部署回退另行验收，不由本工具的合成测试代替。
 
+## 恢复被误改的固定影像上传记录
+
+固定影像的上传元数据参与内容修订计算。展示名称使用单独的字段。旧批量改写脚本已停用，现行名称请通过产品的正常编辑入口维护。
+
+[repair_imagery_metadata.py](repair_imagery_metadata.py)用于恢复单条影像的原始上传名称和幂等请求正文。原始证据须来自同一项目库的独立旧副本，并能重算出已有的内容修订。工具还核对当前元数据摘要、上传请求身份、来源文件、纹理及原有写保护。
+
+先在独立副本演练。线上操作前停止写入并完整备份最新数据。使用以下命令预检，确认返回 `ready` 后用同一组参数增加 `--apply`，最后用原备份工具校验并恢复到新位置。
+
+```bash
+python3 -m tools.repair_imagery_metadata \
+  --library-root "$IMAGERY_LIBRARY_ROOT" \
+  --original-database "$IMAGERY_ORIGINAL_DATABASE" \
+  --version-id "$IMAGERY_VERSION_ID" \
+  --expected-revision "$IMAGERY_FIXED_REVISION" \
+  --expected-metadata-sha256 "$IMAGERY_CURRENT_METADATA_SHA256" \
+  --service-stopped
+```
+
+所有路径使用真实绝对路径。两个恢复字段在同一 SQLite 事务内提交，读回失败会回滚。展示名称、固定版本 ID 和既有引用沿用当前库记录。重复执行已完成的恢复会返回 `already_repaired`。
+
 ## 项目登记 PostgreSQL 迁移候选
 
 `python -m tools.project_registry_postgres --help` 提供 export/stage/verify/restore-new 四个固定操作，完整字段、预算及错误见[迁移准备契约](../docs/contracts/项目登记PostgreSQL迁移准备契约.md)。export先验证现有整组备份和外部manifest SHA，再只读导出当前三表登记；固定包只含原UUID、范围、状态和时间文本，不包含文件原件、会话或凭据。
