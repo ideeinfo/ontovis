@@ -76,7 +76,7 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
       {onRelated&&<Btn onClick={()=>onRelated(value)}>{en?'Related materials':'推荐相关资料'}</Btn>}</>}
     {card.kind==='alarm'&&<><span className="ad-badge">{en?'Simulated alarm':'模拟报警'}</span><p>{value.dataset?.presetCause}</p><dl>{value.items?.map(row=><div key={row.sourceRevision}><dt>{row.state==='active'?(en?'Occurred':'发生'):(en?'Recovered':'恢复')}</dt><dd>{new Date(row.sourceTime).toLocaleString(en?'en-GB':'zh-CN')} · {en?row.severity:row.severity==='critical'?'严重':'警告'}</dd></div>)}</dl></>}
     {card.kind==='trend'&&value.samples&&<><span className="ad-badge">{en?'Simulation · fixed window':'模拟数据 · 固定时间窗'}</span><AnalysisTrend trends={[value as SimulatedTrend]} en={en} cursor={cursor} onCursor={onCursor}/></>}
-    {progressOpen&&card.kind==='work_order'&&<WorkOrderProgressDialog api={sources.api} before={value} en={en} canLoad={!!onUpdateWorkOrder} onLoad={onUpdateWorkOrder} onClose={()=>setProgressOpen(false)}/>}
+    {progressOpen&&card.kind==='work_order'&&<WorkOrderProgressDialog api={sources.api} before={value} en={en} keepHistory={!!card.historical} canLoad={!!onUpdateWorkOrder} onLoad={onUpdateWorkOrder} onClose={()=>setProgressOpen(false)}/>}
     {card.kind==='work_order'&&<>
       {!viewOnly&&<Btn onClick={()=>setProgressOpen(true)}>{en?'Order progress':'工单进展'}</Btn>}
       {value.workflow&&value.orderId&&value.orderRevision&&value.snapshotSha256?<WorkOrderRecords
