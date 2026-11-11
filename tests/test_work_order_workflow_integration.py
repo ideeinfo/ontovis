@@ -110,6 +110,18 @@ class WorkOrderWorkflowIntegrationTests(unittest.TestCase):
                 expectedAnalysisRevision=copied['analysisRevision'], requestId=str(uuid4()), snapshot=snapshot), client=reviewer)
             self.assertEqual((late[0], late[1]['code']), (403, 'ANALYSIS_WRITE_FORBIDDEN'))
 
+        from tools import analysis_workbench_backup as backup, analysis_draft_backup as analysis
+        self.sessions.close()
+        source = self.root/'workflow-paired'
+        target = self.root/'workflow-restored'
+        packed = backup.snapshot(self.runtime/'project-spaces', source, self.urls[0],
+                                 library_root=self.runtime/'workbench-library', service_stopped=True)
+        original = analysis.export_package(self.urls[0])['tables']
+        backup.restore_new(source, packed['manifestSha256'], self.urls[1], target, service_stopped=True)
+        restored = analysis.export_package(self.urls[1])['tables']
+        self.assertEqual({key: value for key, value in original.items() if key != 'store_meta'},
+                         {key: value for key, value in restored.items() if key != 'store_meta'})
+
     def test_attachment_upload_resumes_and_fixed_content_survives_detach(self):
         from apps.api.work_order_attachments import PART_BYTES
         from tests.test_scene_http import ORIGIN

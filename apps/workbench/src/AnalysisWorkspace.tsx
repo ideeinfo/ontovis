@@ -55,6 +55,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   const [reuseDialog,setReuseDialog]=useState<import('./workOrderWorkflow').AnalysisReuse|null>(null);
   const linkRequest=useRef<{path:string;body:object}|null>(null);
   const [linkUnknown,setLinkUnknown]=useState(false);
+  const [linkSavedRevision,setLinkSavedRevision]=useState<number|null>(null);
   const [tool,setTool]=useState<'pointer'|'hand'>('pointer'),[versions,setVersions]=useState<Versions|null>(null),[preview,setPreview]=useState<Detail|null>(null);
   const [historyOpen,setHistoryOpen]=useState(false),[leave,setLeave]=useState<(()=>void)|null>(null),[linkOpen,setLinkOpen]=useState(false);
   const [target,setTarget]=useState(''),[relationKind,setRelationKind]=useState<RelationKind>('hypothesis'),[reason,setReason]=useState('');
@@ -330,14 +331,15 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
       if(!ok||!lastCommitted.current)return;
       version=lastCommitted.current;
     }
-    setBusy(true);setError(null);
+    setBusy(true);setError(null);setLinkSavedRevision(version.analysisRevision);
     try {
       if(!linkRequest.current){
-        const order=await api.request<{orderId:string;orderRevision:number;workflowVersion?:number;canProcess:boolean}>(
+        const order=await api.request<{orderId:string;orderRevision:number;workflowVersion?:number;canProcess:boolean;state:string}>(
           '/api/workbench/work-orders/workflow-detail',{orderId:orderId.trim()});
         const body={analysisSessionId:version.analysisSessionId,analysisRevision:version.analysisRevision,
           orderId:order.orderId,expectedOrderRevision:order.orderRevision,requestId:crypto.randomUUID()};
         if(order.workflowVersion){
+          if(order.state==='archived')throw new Error(t('工单已归档，可在工单页面查看已采纳分析。','This order is archived. View the adopted analysis from the order.'));
           if(!order.canProcess)throw new Error(t('请由本单当前处理人关联分析。','The current handler must link this analysis.'));
           linkRequest.current={path:'/api/workbench/work-orders/workflow',body:{...body,
             analysisSha256:version.contentSha256,action:draft.workflowOrderId===order.orderId?'adopt_analysis':'link_analysis'}};
@@ -451,7 +453,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           <Btn disabled={!editable||!currentTrends.length} title={t('主动调整本次趋势；助手直接沿用已有时间','Adjust current trends; the assistant uses the existing interval')} onClick={openTimeWindow}>{t('趋势时间','Trend interval')}</Btn>
           <Btn disabled={draft.cards.filter(c=>c.kind==='trend'&&trendData[c.id]).length<2} onClick={()=>{setCompareIds(draft.cards.filter(c=>c.kind==='trend'&&trendData[c.id]).slice(0,4).map(c=>c.id));setCompare(true);}}>{t('趋势对比','Compare trends')}</Btn>
           {draft.schemaVersion===2&&<Btn disabled={!editable} onClick={()=>setReuseDialog({...draft.reuse})}>{t('分析复用说明','Reuse details')}</Btn>}
-          <Btn disabled={!receipt||busy||!writable||fixed||archived||lifecycleUnknown} onClick={()=>{setOrderId(draft.workflowOrderId||draft.context.workOrderId||'');setLinkOrderOpen(true);}}>
+          <Btn disabled={!receipt||busy||!writable||fixed||archived||lifecycleUnknown} onClick={()=>{setOrderId(draft.workflowOrderId||draft.context.workOrderId||'');setLinkSavedRevision(null);setError(null);setLinkOrderOpen(true);}}>
             {draft.workflowOrderId?t('保存并用于本单','Save & use for this order'):t('保存并关联工单','Save & link')}</Btn>
           {draft.workflowOrderId&&onOpenWorkOrder&&<Btn disabled={busy||linkUnknown} onClick={()=>onOpenWorkOrder(draft.workflowOrderId!)}>{t('返回工单','Return to order')}</Btn>}
           <Btn aria-pressed={assistantOpen} onClick={()=>{setAssistantOpen(v=>!v);setRight(false);}}><Sparkles size={15}/>{t('分析助手','Assistant')}</Btn>
@@ -519,7 +521,8 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
         <label>{t('工单编号','Work order ID')}<input aria-label={t('关联工单编号','Linked work order ID')}
           value={orderId} readOnly={!!draft?.workflowOrderId} disabled={busy||linkUnknown} onChange={event=>setOrderId(event.target.value)}/></label>
         {!!error&&<p role="alert">{errorText}</p>}
-        {linkUnknown&&<small role="status">{t('工单更新结果待确认','Order update result is unknown')}</small>}
+        {!!error&&linkSavedRevision!==null&&<small role="status">{t(`分析 r${linkSavedRevision} 已保存。`,`Analysis r${linkSavedRevision} is saved.`)}{' '}
+          {linkUnknown?t('工单更新结果待确认。','Order update result is unknown.'):t('本次工单更新未完成。','The order update did not complete.')}</small>}
         <Btn primary disabled={busy||!orderId.trim()} onClick={()=>void saveAndLink()}>
           {linkUnknown?t('检查工单更新','Check order update'):draft?.workflowOrderId?t('保存并采纳','Save and adopt'):t('保存并关联','Save and link')}</Btn>
       </div>

@@ -180,14 +180,18 @@ def validate_package(package):
         for (session_id,_), row in revisions.items():
             snapshot=json.loads(row['snapshot_json'])
             if snapshot['schemaVersion']!=2:continue
-            origin=snapshot.get('inheritedFrom'); original=None
-            if origin:
+            original=None
+            for provenance in ('inheritedFrom', 'derivedFrom'):
+                origin=snapshot.get(provenance)
+                if not origin:
+                    continue
                 owner=sessions[session_id]; source=sessions.get(origin['analysisSessionId'])
                 saved=revisions.get((origin['analysisSessionId'],origin['analysisRevision']))
-                draft.require(source and saved and source['owner_id']==owner['owner_id']
+                draft.require(source and saved and (provenance=='derivedFrom' or source['owner_id']==owner['owner_id'])
                     and source['project_code']==owner['project_code'] and saved['content_sha256']==origin['contentSha256'],
                     'ANALYSIS_PAIR_SOURCE_MISMATCH',409)
-                original=json.loads(saved['snapshot_json'])
+                if original is None:
+                    original=json.loads(saved['snapshot_json'])
             validate_registered(snapshot,references.get(session_id,{}),original)
     raw = draft.canonical(package).encode()
     draft.require(len(raw) <= MAX_PACKAGE_BYTES, 'ANALYSIS_PACKAGE_LIMIT', 413)
