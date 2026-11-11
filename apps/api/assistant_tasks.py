@@ -180,7 +180,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             history=[dict(question=json.loads(r['input_json'])['question'][:400],candidates=[{k:v for k,v in item.items() if k in ('identifier','version','faultCode','kind')} for item in (json.loads(r['result_json']).get('task',{}).get('results',[]) if r['result_json'] else [])][:6]) for r in previous if r['id']!=run_id][-3:]
         history_state=draft_history(body,runtime.store.connection_id,job.project)
         card_keys={c['id']:'C'+str(i+1) for i,c in enumerate(draft['cards'])}
-        context=dict(faultCode=draft['context'].get('faultCode',''),mode=body['mode'],history=history,
+        context=dict(faultCode=draft['context'].get('faultCode') or draft.get('reuse',{}).get('faultCode',''),mode=body['mode'],history=history,
             title=draft['title'],savedRevision=body['expectedAnalysisRevision'],canUndo='undo' in history_state,canRedo='redo' in history_state,
             newCardKeys=['C'+str(len(draft['cards'])+i+1) for i in range(8)],
             timeFrom=draft['context']['timeFrom'],timeTo=draft['context']['timeTo'],timezone=draft['context']['timezone'],

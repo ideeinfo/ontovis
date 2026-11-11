@@ -11,6 +11,7 @@ import {RowContext} from './ListMenus';
 import {Btn} from './Primitives';
 import {objectLocationLabel} from './objectCatalog';
 import './workOrders.css';
+import {workflowLabel} from './workOrderWorkflow';
 
 const ROOT='/api/workbench/work-orders';
 const states:OrderState[]=['open','diagnosing','investigating','review','closed'];
@@ -55,10 +56,10 @@ function PhotoPanel({en,location,photos,chosen,image,reading,error,onOpen,onImag
   </section>;
 }
 
-export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange,onAnalyze,onOpenAnalysis,onOpenReference}:{api:OrderApi;locale?:string;initialQuery?:string;onDirtyChange?:(dirty:boolean)=>void;onAnalyze?:(orderId:string)=>void;onOpenAnalysis?:(id:string,revision:number,runId?:string)=>void;onOpenReference?:(entry:WorkOrderReferenceEntry)=>void}){
+export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange,onAnalyze,onOpenAnalysis,onOpenReference,onlyRecord}:{api:OrderApi;locale?:string;initialQuery?:string;onDirtyChange?:(dirty:boolean)=>void;onAnalyze?:(orderId:string)=>void;onOpenAnalysis?:(id:string,revision:number,runId?:string)=>void;onOpenReference?:(entry:WorkOrderReferenceEntry)=>void;onlyRecord?:string}){
   const en=locale==='en';
   const [list,setList]=useState<OrderListing|null>(null),[detail,setDetail]=useState<WorkOrderDetail|null>(null);
-  const [selected,setSelected]=useState(''),[query,setQuery]=useState(initialQuery),[filter,setFilter]=useState({q:initialQuery,state:''});
+  const [selected,setSelected]=useState(onlyRecord||''),[query,setQuery]=useState(initialQuery),[filter,setFilter]=useState({q:initialQuery,state:''});
   const [refresh,setRefresh]=useState(0),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false);
   const [note,setNote]=useState(''),[checks,setChecks]=useState<string[]>([]);
   const [plan,setPlan]=useState<Investigation|null>(null),[history,setHistory]=useState<{orderRevision:number;investigation:Investigation}|null>(null);
@@ -76,11 +77,12 @@ export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange,onAnal
   function useDetail(value:WorkOrderDetail){setDetail(value);setPlan(structuredClone(value.investigation));setChecks(value.checks);setNote(value.note);}
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;photoAbort.current?.abort();actionAbort.current?.abort();if(picture.current)URL.revokeObjectURL(picture.current);};},[]);
   useEffect(()=>{
+    if(onlyRecord)return;
     const abort=new AbortController();setLoading(true);setError(null);
     void api.request<OrderListing>(ROOT,{...filter,limit:50},abort.signal).then(value=>{if(!abort.signal.aborted){setList(value);if(!selectedRef.current&&value.items[0])setSelected(value.items[0].orderId);}})
       .catch(value=>{if(!abort.signal.aborted&&!cancelled(value)){setList(null);setError(value);}}).finally(()=>{if(!abort.signal.aborted)setLoading(false);});
     return()=>abort.abort();
-  },[api,api.revision,api.epoch,filter,refresh]);
+  },[api,api.revision,api.epoch,filter,refresh,onlyRecord]);
   useEffect(()=>{
     const abort=new AbortController();setDetail(null);setPlan(null);setHistory(null);setLocation(null);setPhotos(null);setLocateKey('');setCabinet('');setReferenceRds('');setMembers(undefined);clearPhoto();setError(null);pending.current=null;
     if(selected)void api.request<WorkOrderDetail>(ROOT+'/detail',{orderId:selected},abort.signal).then(value=>{if(!abort.signal.aborted)useDetail(value);})
@@ -133,21 +135,21 @@ export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange,onAnal
     try{const value=await api.request<{orderRevision:number;investigation:Investigation}>(ROOT+'/diagnosis-history',{orderId:identifier,orderRevision});if(alive.current&&selectedRef.current===identifier)setHistory(value);}
     catch(value){if(alive.current&&selectedRef.current===identifier){setHistory(null);setError(value);}}
   }
-  const canWrite=!!list?.capabilities.canWrite;
+  const canWrite=!onlyRecord&&!!list?.capabilities.canWrite;
   const main=detail?nextAction[detail.state]:null;
   const requiresNote=detail&&['investigating','review','closed'].includes(detail.state);
   const incomplete=detail&&['investigating','review'].includes(detail.state)&&(checks.length!==detail.diagnosis.checks.length||!detail.investigationComplete);
-  return <div className="wo-workspace">
-    <aside className="wo-list"><div className="wo-list-head"><ClipboardList size={17}/><strong>{en?'Project work orders':'项目工单'}</strong><span className="wo-count">{list?.total??'—'}</span><button type="button" aria-label={en?'Reload work orders':'重新读取工单'} disabled={loading||busy||dirty} onClick={()=>setRefresh(v=>v+1)}><RefreshCw size={14}/></button></div>
+  return <div className={'wo-workspace'+(onlyRecord?' wov-legacy':'')}>
+    {!onlyRecord&&<aside className="wo-list"><div className="wo-list-head"><ClipboardList size={17}/><strong>{en?'Project work orders':'项目工单'}</strong><span className="wo-count">{list?.total??'—'}</span><button type="button" aria-label={en?'Reload work orders':'重新读取工单'} disabled={loading||busy||dirty} onClick={()=>setRefresh(v=>v+1)}><RefreshCw size={14}/></button></div>
       <form className="wo-search" onSubmit={event=>{event.preventDefault();setFilter(value=>({...value,q:query}));}}><Search size={14}/><input aria-label={en?'Search work orders':'搜索工单'} placeholder={en?'Code or title':'故障码或工单主题'} maxLength={200} value={query} onChange={event=>setQuery(event.target.value)}/><button type="submit">{en?'Search':'搜索'}</button></form>
       <label className="wo-filter">{en?'Status':'状态'}<select value={filter.state} onChange={event=>setFilter(value=>({...value,state:event.target.value}))}><option value="">{en?'All':'全部'}</option>{states.map(state=><option value={state} key={state}>{labels[state][en?1:0]}</option>)}</select></label>
       {loading&&<p className="wo-empty" role="status">{en?'Loading…':'正在读取…'}</p>}
       {!loading&&list?.total===0&&<div className="wo-empty"><p>{en?'No work orders in this project':'当前项目暂无工单'}</p>{list.capabilities.canSeedDemo&&<button type="button" className="wo-button primary" disabled={busy} onClick={()=>void seed()}>{en?'Create 20 demo orders':'生成20条演示工单'}</button>}</div>}
       <ul className="wo-order-list ov-list" aria-label={en?'Project work orders':'项目工单'}>{list?.items.map(item=><RowContext key={item.orderId} name={item.title} disabled={busy||dirty} actions={[{id:'open',label:en?'Open work order':'打开工单',icon:<ClipboardList/>,disabled:busy||dirty,onSelect:()=>setSelected(item.orderId)}]}><li className={`ov-list-item${selected===item.orderId?' selected':''}`}><button type="button" className="wo-order ov-list-main" aria-pressed={selected===item.orderId} disabled={busy||dirty} onClick={()=>setSelected(item.orderId)}><span className="wo-order-top"><span className="wo-mono">{item.faultCode}</span><span className={`wo-status ${item.state}`}>{labels[item.state][en?1:0]}</span></span><span className="ov-list-copy"><strong>{item.title}</strong><small>{String(item.number).padStart(3,'0')} · {cabinetCode(item.cabinet)} · {new Date(item.alarmAt).toLocaleString(en?'en-GB':'zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></span></button></li></RowContext>)}</ul>
-    </aside>
+    </aside>}
     <div className="wo-main">{!!error&&<div className="wo-error" role="alert">{failureMessage(error,locale)} <button type="button" disabled={dirty||busy} onClick={()=>setRefresh(v=>v+1)}>{en?'Reload':'重新读取'}</button></div>}
       {!detail?<div className="wo-empty wo-welcome"><ClipboardList size={30}/><h2>{en?'Alarm to object evidence':'从报警走到对象证据'}</h2><p>{en?'Select an order to diagnose, investigate, locate photos and review.':'选择工单，沿诊断图谱排查、核对照片位置并完成复核。'}</p></div>:<>
-        <header className="wo-detail-head"><div><span className="wo-tag">{en?'Simulated alarm · demo work order':'模拟报警 · 演示工单'}</span><h2>{detail.title}</h2><small className="wo-mono">{detail.orderId} · r{detail.orderRevision}</small></div>{onAnalyze&&['13001','13002','13003','13004'].includes(detail.faultCode)&&<Btn onClick={()=>onAnalyze(detail.orderId)}>{en?'Analyze in canvas':'进入分析画布'}</Btn>}<span className={`wo-status ${detail.state}`}>{labels[detail.state][en?1:0]}</span></header>
+        <header className="wo-detail-head"><div><span className="wo-tag">{en?'Simulated alarm · demo work order':'模拟报警 · 演示工单'}</span><h2>{detail.title}</h2><small className="wo-mono">{detail.orderId} · r{detail.orderRevision}</small></div>{onAnalyze&&['13001','13002','13003','13004'].includes(detail.faultCode)&&<Btn onClick={()=>onAnalyze(detail.orderId)}>{en?'Analyze in canvas':'进入分析画布'}</Btn>}<span className={`wo-status ${detail.state}`}>{(labels[detail.state]?.[en?1:0]||workflowLabel(detail.state,en))}</span></header>
         {!!detail.analysisLinks?.length&&<section className="wo-panel"><header><strong>{en?'Linked analyses':'关联分析'}</strong></header><div className="wo-step-actions">{detail.analysisLinks.slice().reverse().map(link=><Btn key={link.orderRevision} onClick={()=>onOpenAnalysis?.(link.analysisSessionId,link.analysisRevision)}>{en?'Open linked analysis':'打开关联分析'} · r{link.analysisRevision}<small> · {en?'Work order':'工单'} r{link.orderRevision}</small></Btn>)}</div></section>}
         <ol className="wo-progress" aria-label={en?'Work order lifecycle':'工单流程'}>{states.map((state,index)=><li key={state} aria-current={detail.state===state?'step':undefined} className={states.indexOf(detail.state)>=index?'done':''}><span>{states.indexOf(detail.state)>index?<CheckCircle2 size={14}/>:index+1}</span>{labels[state][en?1:0]}</li>)}</ol>
         <section className="wo-alarm"><AlertTriangle size={19}/><div><strong>{en?'Alarm':'故障报警'} {detail.faultCode}</strong><span>{new Date(detail.alarmAt).toLocaleString(en?'en-GB':'zh-CN')} · {en?'Demo unit 07':'7号演示机组'} · {cabinetCode(detail.cabinet)}</span></div><span className="wo-tag">{en?'Simulated · no live source':'模拟数据 · 未接真实源'}</span></section>
@@ -164,7 +166,7 @@ export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange,onAnal
           <div className="wo-actions">{canWrite&&main&&<button type="button" className="wo-button primary" disabled={busy||dirty||!!requiresNote&&!note.trim()||!!incomplete} onClick={()=>void action(main[0])}>{busy?(en?'Saving…':'正在保存…'):main[en?2:1]}<ArrowRight size={14}/></button>}{canWrite&&['diagnosing','investigating','review'].includes(detail.state)&&<button type="button" className="wo-button" disabled={busy||dirty} onClick={()=>void action('save')}>{en?'Save findings':'保存排查记录'}</button>}{canWrite&&detail.state==='review'&&<button type="button" className="wo-button" disabled={busy||!note.trim()} onClick={()=>void action('return')}>{en?'Return for investigation':'退回排查'}</button>}{incomplete&&<small>{en?'Save step results, conclusion and review basis, and complete all checks.':'保存逐项结果、结论与复核依据，并完成全部检查后可提交或关闭。'}</small>}</div>
         </section>
         {!!detail.investigationHistory?.length&&<details className="wo-card wo-history"><summary>{en?'Investigation revisions':'诊断修订历史'} <span>{detail.investigationHistory.length}</span></summary><div className="wo-plan-history">{detail.investigationHistory.map(row=><button type="button" className="wo-button" key={row.orderRevision} onClick={()=>void readHistory(row.orderRevision)}>r{row.orderRevision} · {row.actor} · {new Date(row.recordedAt).toLocaleString(en?'en-GB':'zh-CN')}</button>)}</div>{history&&<div className="wo-history-snapshot"><strong>{en?'Read-only snapshot':'只读快照'} r{history.orderRevision}</strong>{history.investigation.hypotheses.map(row=><p key={row.id}>{row.description} · {en?row.status:{candidate:'待核候选',supported:'记录支持',rejected:'记录排除'}[row.status]}<br/>{row.basis}</p>)}{history.investigation.steps.map((row,index)=><p key={row.id}>{index+1}. {row.title} · {en?row.outcome:{pending:'待排查',observed:'已记录观察',gap:'资料缺口',not_applicable:'不适用'}[row.outcome]}<br/>{row.result}</p>)}<p>{history.investigation.conclusion}</p><p>{history.investigation.reviewBasis}</p></div>}</details>}
-        <details className="wo-card wo-history"><summary>{en?'Workflow history':'流转记录'} <span>{detail.events.length}</span></summary><ol>{detail.events.map(event=><li key={event.revision}><strong>{labels[event.to][en?1:0]}</strong><span>{event.actor} · {new Date(event.recordedAt).toLocaleString(en?'en-GB':'zh-CN')}</span><p>{event.note}</p></li>)}</ol></details>
+        <details className="wo-card wo-history"><summary>{en?'Workflow history':'流转记录'} <span>{detail.events.length}</span></summary><ol>{detail.events.map(event=><li key={event.revision}><strong>{(labels[event.to]?.[en?1:0]||workflowLabel(event.to,en))}</strong><span>{event.actor} · {new Date(event.recordedAt).toLocaleString(en?'en-GB':'zh-CN')}</span><p>{event.note}</p></li>)}</ol></details>
       </>}
     </div>
   </div>;

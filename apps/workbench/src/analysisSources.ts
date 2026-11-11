@@ -6,6 +6,7 @@ import type {Investigation,DiagnosticNode} from './workOrderTypes';
 import type {ObjectClassification} from './types';
 import type {SimulatedTrend,SimulatedDataset,SimulatedAlarm} from './simulatedAlarms';
 import type {WorkOrderReferenceEntry} from './workOrderReferences';
+import type {Workflow} from './workOrderWorkflow';
 
 export const ANALYSIS_ROOT='/api/workbench/analysis-sessions';
 export type AnalysisEntry={projectOnly:true}|{entityUid:string;expectedEntityRevision:string;timeTo:string}|{datasetId:string;datasetRevision:string}|{orderId:string}|{analysisSessionId:string;analysisRevision:number;assistantRunId?:string;assistantQuestion?:string;openLatest?:true}|{newDraft:true}|WorkOrderReferenceEntry;
@@ -35,6 +36,7 @@ export type EvidenceSource=Partial<Omit<ProjectModelVersion,'state'> & Simulated
   item?:{entityUid:string;entityRevision:string;displayName?:string;objectKind?:string;objectScope?:string;classification?:ObjectClassification|null;identifiers?:{value:string;role:string}[];definitionParentEntityUid?:string};
   dataset?:SimulatedDataset;items?:SimulatedAlarm[];mappingKind?:string;
   orderId?:string;orderRevision?:number;faultCode?:string;state?:string;investigation?:Investigation;
+  workflow?:Workflow;snapshotSha256?:string;sourceKind?:'simulated'|'manual';
   checks?:string[];note?:string;
   diagnosis?:{gap?:string;nodes?:DiagnosticNode[]};events?:{recordedAt:string;action:string;note:string}[];
 };

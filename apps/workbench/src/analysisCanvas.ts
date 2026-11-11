@@ -1,4 +1,5 @@
 // Bounded canvas layout shared by the design prototype and draft workspace.
+import type {AnalysisReuse} from './workOrderWorkflow';
 export const CARD_KINDS = ['object','drawing','document','photo','model3d','trend','alarm','work_order','analysis'] as const;
 export type CardKind = typeof CARD_KINDS[number];
 export type Availability = 'ready'|'restricted'|'missing'|'unavailable'|'unconnected'|'stale';
@@ -14,7 +15,10 @@ export type CanvasRelation = {id:string;from:string;to:string;kind:RelationKind;
 export type Viewport = {x:number;y:number;zoom:number};
 export type AnalysisContext = {objectIds:string[];eventId?:string;workOrderId?:string;timeFrom:string;timeTo:string;timezone:'Asia/Shanghai'|'UTC';faultCode?:string;sourceConnectionId?:string;branch?:string;datasetId?:string;datasetRevision?:string};
 export type CanvasFrame={id:string;title:string;x:number;y:number;width:number;height:number};
-export type CanvasSnapshot = ProjectScope & {schemaVersion:1|2;title:string;status:SessionStatus;context:AnalysisContext;cards:CanvasCard[];relations:CanvasRelation[];viewport:Viewport;frames?:CanvasFrame[];inheritedFrom?:{analysisSessionId:string;analysisRevision:number;contentSha256:string}};
+type AnalysisOrigin={analysisSessionId:string;analysisRevision:number;contentSha256:string};
+export type CanvasSnapshot = ProjectScope & {schemaVersion:1|2;title:string;status:SessionStatus;context:AnalysisContext;
+  cards:CanvasCard[];relations:CanvasRelation[];viewport:Viewport;frames?:CanvasFrame[];inheritedFrom?:AnalysisOrigin;
+  derivedFrom?:AnalysisOrigin;workflowOrderId?:string;reuse?:AnalysisReuse};
 export const MIN_ZOOM=.25;
 export const MAX_ZOOM=1.5;
 const finite=(v:unknown,min:number,max:number):v is number=>typeof v==='number'&&Number.isFinite(v)&&v>=min&&v<=max;
@@ -26,7 +30,7 @@ export function validateSnapshot(value:unknown,scope:ProjectScope):string[]{
   const errors:string[]=[];
   if(!record(value))return ['画布数据无效'];
   const v2=value.schemaVersion===2;
-  if(!only(value,['schemaVersion','ontobaseConnectionId','projectCode','title','status','context','cards','relations','viewport',...(v2?['frames','inheritedFrom']:[])]))errors.push('画布包含未支持字段');
+  if(!only(value,['schemaVersion','ontobaseConnectionId','projectCode','title','status','context','cards','relations','viewport',...(v2?['frames','inheritedFrom','derivedFrom','workflowOrderId','reuse']:[])]))errors.push('画布包含未支持字段');
   if(![1,2].includes(Number(value.schemaVersion))||value.projectCode!==scope.projectCode||value.ontobaseConnectionId!==scope.ontobaseConnectionId||!bounded(scope.projectCode,120)||!bounded(scope.ontobaseConnectionId,120))errors.push('画布版本或项目不匹配');
   if(!bounded(value.title,120))errors.push('会话名称需为 1–120 字');
   if(!['analyzing','awaiting_field_check','awaiting_expert_review','concluded','archived'].includes(String(value.status)))errors.push('会话状态无效');

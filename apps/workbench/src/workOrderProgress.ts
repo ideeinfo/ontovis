@@ -1,7 +1,7 @@
 import type {EvidenceSource,Recommendation} from './analysisSources';
 import type {Investigation,WorkOrderDetail,AssistantTransfer} from './workOrderTypes';
 
-export type ProgressSource=Pick<EvidenceSource,'orderId'|'orderRevision'|'state'|'title'|'investigation'|'checks'|'note'|'diagnosis'>;
+export type ProgressSource=Pick<EvidenceSource,'orderId'|'orderRevision'|'state'|'title'|'investigation'|'checks'|'note'|'diagnosis'|'workflow'|'sourceKind'>;
 export const progressTargetLabel=(key:string,source:ProgressSource)=>source.diagnosis?.nodes?.find(row=>row.locateKey===key)?.label;
 export type ProgressRow={id:string;kind:'hypothesis'|'step';before?:Investigation['hypotheses'][number]|Investigation['steps'][number];after?:Investigation['hypotheses'][number]|Investigation['steps'][number];change:'added'|'removed'|'changed'|'unchanged'};
 const signature=(row:NonNullable<ProgressRow['before']>)=>'description' in row?[row.description,row.status,row.basis]:[row.title,row.targetKey,row.outcome,row.result];
@@ -12,7 +12,7 @@ export function progressRows(before:ProgressSource,after:ProgressSource):Progres
   return ids.map(id=>{const a=old.find(r=>r.id===id),b=current.find(r=>r.id===id);return {id,kind:group==='hypotheses'?'hypothesis':'step',before:a,after:b,change:!a?'added':!b?'removed':same(a,b)?'unchanged':'changed'} as ProgressRow;});
  });
 }
-export function progressRecommendation(before:ProgressSource,after:WorkOrderDetail):Recommendation|null{
+export function progressRecommendation(before:ProgressSource,after:Pick<WorkOrderDetail,'orderId'|'orderRevision'|'title'>):Recommendation|null{
  if(!before.orderId||after.orderId!==before.orderId||!Number.isInteger(after.orderRevision)||after.orderRevision<=(before.orderRevision??0))return null;
  return {key:'work-order-progress:'+after.orderId+':'+after.orderRevision,kind:'work_order',title:after.title,reason:'已明确选择的本单进展',selector:{orderId:after.orderId,expectedOrderRevision:after.orderRevision}};
 }

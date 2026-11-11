@@ -27,11 +27,23 @@ def location_for(path):
 
 
 class WorkbenchDeploymentTests(unittest.TestCase):
+    def test_work_order_workflow_uses_explicit_json_routes_and_bounded_upload_parts(self):
+        from apps.api.work_order_routes import WORKFLOW_PATHS
+        for suffix in WORKFLOW_PATHS:
+            path = '/api/workbench/work-orders/' + suffix
+            with self.subTest(path=path):
+                self.assertIn('proxy_buffering off;', location_for(path))
+                limit = '4m' if suffix == 'attachments/part' else '32k'
+                self.assertIn('client_max_body_size '+limit+';', location_for(path))
+                for extra in ('/', '/extra'):
+                    with self.assertRaises(AssertionError):
+                        location_for(path+extra)
+
     def test_project_task_routes_accept_bounded_drafts_and_keep_the_proxy_allowlist(self):
         for action in ('task-start','task-prepare','task-ack'):
             root='/api/workbench/assistant/'+action
             body=location_for(root)
-            self.assertIn('client_max_body_size 264k;',body)
+            self.assertIn('client_max_body_size 1m;',body)
             self.assertIn('proxy_read_timeout 120s;',body)
             for suffix in ('/','/extra'):
                 with self.assertRaises(AssertionError):location_for(root+suffix)

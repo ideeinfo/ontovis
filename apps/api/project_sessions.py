@@ -494,8 +494,17 @@ class ProjectSessions(UserSessions):
         actor = identifier(row.subject_id)
         writing = action in ('create', 'save', 'restore', 'trash', 'untrash', 'evidence/register', 'start', 'copy', 'import-history', 'evidence/register-batch', 'link-work-order')
         access = self._access(sid, row, code)
+        scoped_actions = ('detail', 'save', 'restore', 'evidence/register', 'evidence/register-batch')
+        scoped_writer = access.get('role') == 'reviewer' and action in scoped_actions
+        work_order_scope = None
+        can_edit_order = False
         if writing:
-            require(access.get('role') == 'admin', 'ANALYSIS_WRITE_FORBIDDEN', 403)
+            require(access.get('role') == 'admin' or scoped_writer, 'ANALYSIS_WRITE_FORBIDDEN', 403)
+
+        def can_edit_assigned_order(orders, order_id):
+            from .work_order_workflow import can_process
+            order = orders.detail({'orderId': order_id})
+            return can_process(order, actor, access.get('role'))
 
         def authorize():
             self.guard(sid, row)
@@ -505,7 +514,10 @@ class ProjectSessions(UserSessions):
                         and me.get('username') == row.authority.username, 'SESSION_EXPIRED', 401)
                 current = self._access(sid, row, code)
                 require(current['accessRevision'] == access['accessRevision']
-                        and (not writing or current.get('role') == 'admin'), 'ACCESS_CHANGED', 409)
+                        and (not writing or current.get('role') == 'admin' or work_order_scope is not None),
+                        'ACCESS_CHANGED', 409)
+                if writing and work_order_scope is not None:
+                    require(can_edit_assigned_order(*work_order_scope), 'ANALYSIS_WRITE_FORBIDDEN', 403)
                 self.guard(sid, row)
             except PreviewError as error:
                 if error.status == 401: self.invalidate(sid, row)
@@ -529,6 +541,18 @@ class ProjectSessions(UserSessions):
         try:
             store = AnalysisDrafts(self.analysis_database_url, self.connection_id, code)
             require(store.store_id == self.analysis_store_id, 'ANALYSIS_STORE_SCOPE_MISMATCH', 409)
+            if scoped_writer and 'analysisSessionId' in body:
+                current = store.detail(actor, body['analysisSessionId'], lambda: self.guard(sid, row))
+                order_id = current['snapshot'].get('workflowOrderId')
+                workspace = self.registry.lookup(code) if order_id else None
+                if workspace is not None:
+                    from .work_order_routes import order_store
+                    orders, _ = order_store(self, workspace)
+                    can_edit_order = can_edit_assigned_order(orders, order_id)
+                    if can_edit_order:
+                        work_order_scope = (orders, order_id)
+                if writing:
+                    require(can_edit_order, 'ANALYSIS_WRITE_FORBIDDEN', 403)
             if action.startswith(('evidence/', 'simulation/')) or action in ('link-work-order','start','recommendations','history-candidates','import-history'):
                 from .analysis_evidence import AnalysisEvidence
                 from .analysis_source_reader import AnalysisSourceReader
@@ -660,7 +684,7 @@ class ProjectSessions(UserSessions):
                 from .analysis_lifecycle import change
                 value = change(store, actor, access['role'], action, body, authorize)
             elif writing:
-                value = store.write(actor, access['role'], action, body, authorize)
+                value = store.write(actor, 'admin' if can_edit_order else access['role'], action, body, authorize)
             elif action == '':
                 value = store.listing(actor, body, authorize, cursor_key=self.cursor_key, session_revision=row.revision)
             elif action == 'detail':
@@ -671,17 +695,33 @@ class ProjectSessions(UserSessions):
                 value = store.history(actor, body['analysisSessionId'], authorize,
                                       before=body.get('before'), limit=body.get('limit', 25))
             return {**value, 'projectRef': payload['projectRef'], 'sessionRevision': row.revision,
-                    'capabilities': {'canWrite': access.get('role') == 'admin', 'canConfirmConclusion': False,
+                    'capabilities': {'canWrite': access.get('role') == 'admin', 'canEditAssignedOrder': can_edit_order,
+                                     'canConfirmConclusion': False,
                                      'sourceCardsEnabled': store.schema_version >= 2, 'sourceReferenceApiVersion': 2 if store.schema_version >= 2 else 0,
                                      'canManageLifecycle': store.schema_version >= 3 and access.get('role') == 'admin',
                                      'canLinkWorkOrder': store.schema_version >= 2 and access.get('role') == 'admin'}}
         finally:
             release_store()
 
-    def work_order_request(self, sid, path, payload):
+    def work_order_request(self, sid, path, payload, *, stream=None, length=None):
         row = self._session(sid, payload)
         code = self._ref(payload.get('projectRef'))
         access = self._access(sid, row, code)
+        from .work_order_routes import WORKFLOW_PATHS, WORKFLOW_WRITES, request as workflow_request
+        action = path.removeprefix('/api/workbench/work-orders/')
+        cockpit = payload.get('workOrderView') == 'cockpit'
+        if 'workOrderView' in payload:
+            order_require(cockpit)
+            order_require(action not in WORKFLOW_WRITES | {'seed-demo', 'action'}, 'WORK_ORDER_QUERY_ONLY', 403)
+        body = {key: value for key, value in payload.items()
+                if key not in ('expectedSessionRevision', 'projectRef', 'workOrderView')}
+        if action in WORKFLOW_PATHS:
+            value = workflow_request(self, sid, row, code, access, action, body, stream=stream, length=length)
+            if cockpit and action == 'workflow-detail':
+                value.update(canManage=False, canProcess=False, canAttach=False)
+            current = self._access(sid, row, code)
+            order_require(current['accessRevision'] == access['accessRevision'], 'ACCESS_CHANGED', 409)
+            return {**value, 'projectRef': payload['projectRef'], 'sessionRevision': row.revision}
         writing = path.endswith(('/seed-demo', '/action'))
         if writing and access.get('role') != 'admin':
             raise PreviewError(403, 'WORK_ORDER_WRITE_FORBIDDEN')
@@ -690,7 +730,6 @@ class ProjectSessions(UserSessions):
             current = self._access(sid, row, code)
             order_require(current['accessRevision'] == access['accessRevision']
                           and (not writing or current.get('role') == 'admin'), 'ACCESS_CHANGED', 409)
-        body = {key: value for key, value in payload.items() if key not in ('expectedSessionRevision', 'projectRef')}
         # Source reads enforce membership themselves. Bracket a read-only locate
         # with full access revisions, without repeating a remote grant per node.
         reader = SceneEngineeringReader(row.authority, self.connection_id, code,
@@ -706,8 +745,9 @@ class ProjectSessions(UserSessions):
         if workspace is None:
             if path != '/api/workbench/work-orders':
                 raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
-            order_require(set(body) <= {'q', 'state', 'cursor', 'limit', 'expectedSnapshotRevision'})
-            value = WorkOrders.empty(access.get('role') == 'admin' and code == DEMO_PROJECT)
+            order_require(set(body) <= {'q', 'state', 'cursor', 'limit', 'expectedSnapshotRevision', 'handlerId'})
+            value = WorkOrders.empty(not cockpit and access.get('role') == 'admin' and code == DEMO_PROJECT)
+            value['capabilities']['canWrite'] = not cockpit and access.get('role') == 'admin'
         else:
             service = self._workspace(workspace)
             if not hasattr(service, 'work_orders'):
@@ -716,7 +756,7 @@ class ProjectSessions(UserSessions):
                         service.work_orders = WorkOrders(service.library, code)
             orders = service.work_orders
             if path == '/api/workbench/work-orders':
-                value = orders.listing(body, access.get('role') == 'admin')
+                value = orders.listing(body, not cockpit and access.get('role') == 'admin')
             elif path.endswith('/detail'):
                 value = orders.detail(body)
             elif path.endswith('/diagnosis-history'):

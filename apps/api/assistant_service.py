@@ -411,6 +411,7 @@ def request(sessions,sid,path,payload):
         orders = WorkOrders(sessions._workspace(workspace).library, project)
         if action == 'work-order-preview':
             detail = orders.detail({'orderId': body['orderId']})
+            require(not detail.get('workflowVersion'), 'WORK_ORDER_USE_WORKFLOW', 409)
             adopted = [item['sourceItemId'] for transfer in detail.get('assistantTransfers', [])
                        if transfer['runId'] == record['id'] for item in transfer['items']]
             authorize(True)

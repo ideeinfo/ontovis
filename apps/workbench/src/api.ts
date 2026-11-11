@@ -12,14 +12,17 @@ export class ApiError extends Error {
 export interface BinaryDescriptor {
   mime: 'model/gltf-binary' | 'application/octet-stream' | 'image/png' | readonly ('image/png'|'image/jpeg'|'image/webp')[]; maxBytes: number; sha256: string;
 }
-type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk' | 'sceneThumbnail';
+type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk' | 'sceneThumbnail' | 'workOrderPart';
 const MIB = 1024 * 1024;
 const writeOnlyDenials: Record<string, readonly string[]> = {
   WEATHER_WRITE_FORBIDDEN: ['/api/workbench/weather/save','/api/workbench/weather/test'],
   ASSISTANT_RUN_FORBIDDEN: ['/api/workbench/assistant/start','/api/workbench/assistant/summary','/api/workbench/assistant/publish','/api/workbench/assistant/rollback','/api/workbench/assistant/cancel'],
   ASSISTANT_TOOL_NOT_ALLOWED: ['/api/workbench/assistant/start','/api/workbench/assistant/summary'],
   ANALYSIS_WRITE_FORBIDDEN: ['/api/workbench/analysis-sessions/import-history','/api/workbench/analysis-sessions/evidence/register-batch','/api/workbench/analysis-sessions/start', '/api/workbench/analysis-sessions/copy', '/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/restore', '/api/workbench/analysis-sessions/evidence/register', '/api/workbench/analysis-sessions/link-work-order'],
-  WORK_ORDER_WRITE_FORBIDDEN: ['/api/workbench/work-orders/seed-demo', '/api/workbench/work-orders/action'],
+  WORK_ORDER_WRITE_FORBIDDEN: ['/api/workbench/work-orders/seed-demo', '/api/workbench/work-orders/action',
+    '/api/workbench/work-orders/create','/api/workbench/work-orders/workflow','/api/workbench/work-orders/members'],
+  WORK_ORDER_HANDLER_REQUIRED: ['/api/workbench/work-orders/workflow','/api/workbench/work-orders/analysis-draft',
+    '/api/workbench/work-orders/attachments/start','/api/workbench/work-orders/attachments/part','/api/workbench/work-orders/attachments/complete'],
   IMAGERY_WRITE_FORBIDDEN:['/api/workbench/imagery/upload','/api/workbench/imagery/uploads/start',
     '/api/workbench/imagery/uploads/chunk','/api/workbench/imagery/uploads/complete','/api/workbench/imagery/uploads/cancel'],
   MODEL_WRITE_FORBIDDEN: ['/api/workbench/models/upload', '/api/workbench/models/binding',
@@ -106,6 +109,10 @@ export class WorkbenchApi {
 
   uploadImageryChunk<T>(file:Blob,metadata:object,signal?:AbortSignal) {
     return this.send<T>('/api/workbench/imagery/uploads/chunk',metadata,signal,false,{file,kind:'imageryChunk'});
+  }
+
+  uploadWorkOrderPart<T>(file:Blob,metadata:object,signal?:AbortSignal) {
+    return this.send<T>('/api/workbench/work-orders/attachments/part',metadata,signal,false,{file,kind:'workOrderPart'});
   }
 
   uploadTerrain<T>(file: Blob, metadata: object, signal?: AbortSignal) {
@@ -197,6 +204,14 @@ export class WorkbenchApi {
         if (metadata.length > 6144) throw new ApiError(413, 'INVALID_REQUEST');
         headers['Content-Type'] = mime;
         headers['X-Scene-Thumbnail-Metadata'] = btoa(String.fromCharCode(...metadata));
+      } else if (upload.kind === 'workOrderPart') {
+        if (!Number.isSafeInteger(upload.file.size) || upload.file.size < 1 || upload.file.size > 4 * MIB) {
+          throw new ApiError(413, 'CONTENT_SIZE_LIMIT');
+        }
+        const metadata = new TextEncoder().encode(json!);
+        if (metadata.length > 3072) throw new ApiError(413, 'INVALID_REQUEST');
+        headers['X-Work-Order-Part'] = btoa(String.fromCharCode(...metadata));
+        headers['Content-Type'] = 'application/octet-stream';
       } else {
         const chunk = upload.kind === 'imageryChunk';
         const imagery = upload.kind === 'imagery'||chunk,terrain = upload.kind === 'terrain'||imagery;

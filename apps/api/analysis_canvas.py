@@ -10,7 +10,7 @@ SOURCE_KIND = {kind: ('model' if kind == 'model3d' else kind) for kind in CARD_K
 
 def validate_canvas(value, connection_id, project_code):
     d.require(set(value) <= {'schemaVersion', 'ontobaseConnectionId', 'projectCode', 'title', 'status',
-        'context', 'cards', 'relations', 'viewport', 'frames', 'inheritedFrom'}
+        'context', 'cards', 'relations', 'viewport', 'frames', 'inheritedFrom', 'derivedFrom', 'workflowOrderId', 'reuse'}
         and {'schemaVersion', 'ontobaseConnectionId', 'projectCode', 'title', 'status', 'context', 'cards', 'relations', 'viewport'} <= set(value))
     d.require(type(value['schemaVersion']) is int and value['schemaVersion'] == 2)
     d.require((value['ontobaseConnectionId'], value['projectCode']) == (connection_id, project_code), 'ANALYSIS_SCOPE_MISMATCH', 404)
@@ -84,8 +84,21 @@ def validate_canvas(value, connection_id, project_code):
         d.require(d.number(frame['x'], -20000, 20000) and d.number(frame['y'], -20000, 20000)
             and d.number(frame['width'], 280, 20000) and d.number(frame['height'], 220, 20000))
     d.require(all(c.get('frameId') is None or c['frameId'] in frame_ids for c in cards))
-    if 'inheritedFrom' in value:
-        origin = value['inheritedFrom']
+    if 'workflowOrderId' in value:
+        d.text(value['workflowOrderId'], 100)
+    if 'reuse' in value:
+        reuse = value['reuse']
+        limits = {'faultCode': 100, 'faultSystem': 120, 'equipment': 200, 'summary': 1000, 'advice': 2000}
+        d.require(type(reuse) is dict and set(reuse) <= {*limits, 'simulated'})
+        for key, item in reuse.items():
+            if key == 'simulated':
+                d.require(type(item) is bool)
+            else:
+                d.text(item, limits[key])
+    for key in ('inheritedFrom', 'derivedFrom'):
+        if key not in value:
+            continue
+        origin = value[key]
         d.require(type(origin) is dict and set(origin) == {'analysisSessionId','analysisRevision','contentSha256'})
         d.identifier(origin['analysisSessionId']); d.require(type(origin['analysisRevision']) is int and 1 <= origin['analysisRevision'] <= 1000)
         from .analysis_evidence import sha
@@ -96,13 +109,16 @@ def validate_canvas(value, connection_id, project_code):
 
 def validate_handles(cursor, session_id, snapshot, schema_version):
     d.require(schema_version >= 2, 'ANALYSIS_SOURCES_NOT_ENABLED', 503)
-    origin = snapshot.get('inheritedFrom')
+    origin = snapshot.get('inheritedFrom') or snapshot.get('derivedFrom')
     historical = [c for c in snapshot['cards'] if c.get('historical')]
     d.require(not historical or origin is not None, 'ANALYSIS_HISTORY_REFERENCE_REQUIRED', 409)
-    if origin:
+    if origin and ('inheritedFrom' in snapshot or historical):
+        # Cross-owner provenance is set only by the checked copy operation and
+        # remains fixed on subsequent saves. Ordinary history stays owner-scoped.
+        same_owner = 'and original.owner_id=current.owner_id' if 'inheritedFrom' in snapshot else ''
         cursor.execute(f'''select r.snapshot_json,r.content_sha256 from {d.SCHEMA}.analysis_sessions current
-            join {d.SCHEMA}.analysis_sessions original on original.owner_id=current.owner_id
-              and original.connection_id=current.connection_id and original.project_code=current.project_code
+            join {d.SCHEMA}.analysis_sessions original on
+              original.connection_id=current.connection_id and original.project_code=current.project_code {same_owner}
             join {d.SCHEMA}.analysis_revisions r on r.session_id=original.session_id
             where current.session_id=%s and original.session_id=%s and r.revision=%s''',
             (session_id,origin['analysisSessionId'],origin['analysisRevision']))

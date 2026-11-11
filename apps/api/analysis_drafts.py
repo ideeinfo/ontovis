@@ -400,7 +400,7 @@ class AnalysisDrafts:
             return {'items': items[start:start+limit], 'total': len(items), 'nextCursor': following,
                     'snapshotRevision': revision}
 
-    def write(self, actor_id, project_role, action, body, authorize):
+    def write(self, actor_id, project_role, action, body, authorize, *, work_order_origin=None, derived_from=None):
         """actor/role and authorize must come from the server session, never JSON."""
         identifier(actor_id); authorize()
         require(project_role == 'admin', 'ANALYSIS_WRITE_FORBIDDEN', 403)
@@ -442,6 +442,13 @@ class AnalysisDrafts:
                     _, stored = self._revision(cursor, session_id, restored_from)
                     raw = stored[0]
             snapshot = json.loads(raw)
+            if action == 'create':
+                require(snapshot.get('workflowOrderId') == work_order_origin
+                        and snapshot.get('derivedFrom') == derived_from, 'ANALYSIS_CONTEXT_CHANGED', 409)
+            else:
+                current_snapshot, _ = self._revision(cursor, session_id, current)
+                require(all(snapshot.get(key) == current_snapshot.get(key)
+                            for key in ('workflowOrderId', 'derivedFrom')), 'ANALYSIS_CONTEXT_CHANGED', 409)
             if snapshot.get('schemaVersion') == 2:
                 from .analysis_canvas import validate_handles
                 validate_handles(cursor, session_id, snapshot, self.schema_version)

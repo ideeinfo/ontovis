@@ -11,6 +11,10 @@ from .demo_faults import BATCH, DEMO_PROJECT, RULE_REVISION, diagnosis, scenario
 from .work_order_diagnosis import initial_plan, validate_plan, complete, reset_results
 
 STATES = ('open', 'diagnosing', 'investigating', 'review', 'closed')
+WORKFLOW_STATES = ('pending', 'processing', 'completed', 'archived')
+WORKFLOW_STATE_SQL = """case state when 'open' then 'pending' when 'closed' then 'completed'
+    when 'diagnosing' then 'processing' when 'investigating' then 'processing'
+    when 'review' then 'processing' else state end"""
 TRANSITIONS = {'accept': ('open', 'diagnosing'), 'investigate': ('diagnosing', 'investigating'),
                'submit': ('investigating', 'review'), 'return': ('review', 'investigating'),
                'close': ('review', 'closed'), 'reopen': ('closed', 'investigating')}
@@ -90,6 +94,13 @@ class WorkOrders:
                     begin select raise(abort, 'immutable assistant transfer'); end;
                 create trigger if not exists work_order_assistant_transfers_no_delete before delete on work_order_assistant_transfers
                     begin select raise(abort, 'retained assistant transfer'); end;
+                create table if not exists work_order_workflows (
+                    order_id text primary key references work_orders(order_id),
+                    source_event text unique, data text not null);
+                create table if not exists work_order_analysis_shares (
+                    analysis_session_id text not null, analysis_revision integer not null,
+                    analysis_sha256 text not null, owner_id text not null, shared_at text not null,
+                    primary key(analysis_session_id,analysis_revision));
             ''')
 
     @staticmethod
@@ -104,18 +115,24 @@ class WorkOrders:
 
     @staticmethod
     def _public(row):
-        return {'orderId': row['order_id'], 'batchId': row['batch_id'], 'number': row['ordinal'],
+        result = {'orderId': row['order_id'], 'batchId': row['batch_id'], 'number': row['ordinal'],
                 'faultCode': row['fault_code'], 'title': row['title'],
                 'cabinet': 'CN2' if row['batch_id'] == BATCH and row['cabinet'] == 'CN' else row['cabinet'],
                 'state': row['state'], 'orderRevision': row['revision'], 'alarmAt': row['alarm_at'],
                 'updatedAt': row['updated_at'], 'checks': json.loads(row['checks']), 'note': row['note'],
                 'sourceKind': 'simulated', 'engineeringConfirmation': False}
+        data = row['workflow_data'] if 'workflow_data' in row.keys() else None
+        if data:
+            workflow = json.loads(data)
+            result.update(sourceKind=workflow['sourceKind'], workflowVersion=1, handler=workflow['handler'])
+        return result
 
     def listing(self, body, can_write):
-        require(set(body) <= {'q', 'state', 'cursor', 'limit', 'expectedSnapshotRevision'})
+        require(set(body) <= {'q', 'state', 'cursor', 'limit', 'expectedSnapshotRevision', 'handlerId'})
         q = text(body.get('q', ''), 200, empty=True)
+        handler = text(body.get('handlerId', ''), 100, empty=True)
         state, start, limit = body.get('state', ''), body.get('cursor', 0), body.get('limit', 50)
-        require(state in ('', *STATES) and type(start) is int and 0 <= start <= 10000
+        require(state in ('', *STATES, *WORKFLOW_STATES) and type(start) is int and 0 <= start <= 10000
                 and type(limit) is int and 1 <= limit <= 50)
         with self.library.connect() as db:
             snapshot = self._snapshot(db)
@@ -123,10 +140,14 @@ class WorkOrders:
                 require(body.get('expectedSnapshotRevision') == snapshot, 'WORK_ORDER_CHANGED', 409)
             # Escape LIKE metacharacters so a search is a literal phrase.
             phrase = '%' + q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
-            predicate = "(title like ? escape '\\' or fault_code like ? escape '\\' or order_id like ? escape '\\') and (?='' or state=?)"
-            params = (phrase, phrase, phrase, state, state)
-            total = db.execute('select count(*) from work_orders where ' + predicate, params).fetchone()[0]
-            rows = db.execute('select * from work_orders where ' + predicate + ' order by ordinal limit ? offset ?',
+            state_field = WORKFLOW_STATE_SQL if state in WORKFLOW_STATES else 'state'
+            predicate = f"""(title like ? escape '\\' or fault_code like ? escape '\\' or w.order_id like ? escape '\\')
+                and (?='' or ({state_field})=?) and (?='' or json_extract(f.data,'$.handler.userId')=?)"""
+            params = (phrase, phrase, phrase, state, state, handler, handler)
+            joined = ' from work_orders w left join work_order_workflows f on f.order_id=w.order_id where '
+            total = db.execute('select count(*)' + joined + predicate, params).fetchone()[0]
+            rows = db.execute('select w.*,f.data as workflow_data' + joined + predicate +
+                              ' order by w.updated_at desc,w.ordinal,w.order_id limit ? offset ?',
                               (*params, limit, start)).fetchall()
             return {'items': [self._public(row) for row in rows], 'total': total,
                     'nextCursor': start + limit if start + limit < total else None, 'snapshotRevision': snapshot,
@@ -144,10 +165,11 @@ class WorkOrders:
             if start or body['expectedSnapshotRevision'] is not None:
                 require(body['expectedSnapshotRevision']==snapshot,'WORK_ORDER_CHANGED',409)
             phrase='%'+q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-            predicate="(title like ? escape '\\' or fault_code like ? escape '\\' or order_id like ? escape '\\')"
-            rows=db.execute('select * from work_orders where '+predicate+''' order by
-                case when order_id=? then 0 when fault_code=? and ?<>'' then 1 else 2 end,
-                updated_at desc,ordinal,order_id limit ? offset ?''',
+            predicate="(title like ? escape '\\' or fault_code like ? escape '\\' or w.order_id like ? escape '\\')"
+            rows=db.execute('''select w.*,f.data as workflow_data from work_orders w
+                left join work_order_workflows f on f.order_id=w.order_id where '''+predicate+''' order by
+                case when w.order_id=? then 0 when fault_code=? and ?<>'' then 1 else 2 end,
+                updated_at desc,ordinal,w.order_id limit ? offset ?''',
                 (phrase,phrase,phrase,order,fault,fault,limit+1,start)).fetchall()
             return {'items':[self._public(row) for row in rows[:limit]],'snapshotRevision':snapshot,
                 'nextCursor':start+limit if len(rows)>limit else None}
@@ -165,26 +187,34 @@ class WorkOrders:
             if start or body['snapshotRevision'] is not None:
                 require(body['snapshotRevision']==snapshot,'WORK_ORDER_CHANGED',409)
             phrase='%'+q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-            where="(?='' or fault_code=?) and (?='' or order_id=?) and (title like ? escape '\\' or order_id like ? escape '\\')"
+            where="(?='' or fault_code=?) and (?='' or w.order_id=?) and (title like ? escape '\\' or w.order_id like ? escape '\\')"
             args=(fault,fault,order_id,order_id,phrase,phrase)
-            total=db.execute('select count(*) from work_orders where '+where,args).fetchone()[0]
-            rows=db.execute('select * from work_orders where '+where+' order by updated_at desc,order_id limit ? offset ?',
+            total=db.execute('select count(*) from work_orders w where '+where,args).fetchone()[0]
+            rows=db.execute('''select w.*,f.data as workflow_data from work_orders w
+                left join work_order_workflows f on f.order_id=w.order_id where '''+where+
+                ' order by updated_at desc,w.order_id limit ? offset ?',
                             (*args,limit,start)).fetchall()
             return dict(items=[self._public(r) for r in rows],total=total,
                         nextCursor=start+limit if start+limit<total else None,snapshotRevision=snapshot)
 
     def _detail(self, db, identifier):
-        row = db.execute('select * from work_orders where order_id=?', (identifier,)).fetchone()
+        row = db.execute('''select w.*, f.data as workflow_data from work_orders w
+            left join work_order_workflows f on f.order_id=w.order_id where w.order_id=?''', (identifier,)).fetchone()
         require(row is not None, 'NOT_FOUND_OR_FORBIDDEN', 404)
         batch = db.execute('select * from work_order_batches where batch_id=?', (row['batch_id'],)).fetchone()
         events = db.execute('select * from work_order_events where order_id=? order by revision', (identifier,)).fetchall()
         require(len(events) <= 100, 'WORK_ORDER_EVENT_LIMIT', 413)
         record = db.execute('select * from work_order_diagnostics where order_id=? order by order_revision desc limit 1', (identifier,)).fetchone()
-        graph = json.loads(record['source_graph']) if record else diagnosis(row['fault_code'])
-        plan = json.loads(record['snapshot']) if record else initial_plan(row['fault_code'], graph)
+        if row['batch_id'] == BATCH:
+            graph = json.loads(record['source_graph']) if record else diagnosis(row['fault_code'])
+            plan = json.loads(record['snapshot']) if record else initial_plan(row['fault_code'], graph)
+        else:
+            graph = {'nodes': [], 'edges': []}
+            plan = {'hypotheses': [], 'steps': [], 'conclusion': '', 'reviewBasis': ''}
         transfers = [json.loads(saved[0]) for saved in db.execute(
             'select snapshot_json from work_order_assistant_transfers where order_id=? order by order_revision', (identifier,))]
-        return {**self._public(row), 'diagnosis': graph, 'investigation': plan,
+        workflow = {'workflow': json.loads(row['workflow_data'])} if row['workflow_data'] else {}
+        return {**self._public(row), **workflow, 'diagnosis': graph, 'investigation': plan,
                 **({'assistantTransfers': transfers} if transfers else {}),
                 'investigationRevision': record['order_revision'] if record else None,
                 'investigationComplete': bool(record) and complete(plan),
@@ -260,6 +290,7 @@ class WorkOrders:
                 and all(c in '0123456789abcdef' for c in body['analysisSha256']))
         def operation(db):
             value = self._detail(db, identifier)
+            require(not value.get('workflowVersion'), 'WORK_ORDER_USE_WORKFLOW', 409)
             require(value['orderRevision'] == body['expectedOrderRevision'], 'WORK_ORDER_CHANGED', 409)
             self._retain(db, value, actor)
             revision = value['orderRevision'] + 1; stamp = datetime.now(timezone.utc).isoformat()
@@ -278,7 +309,7 @@ class WorkOrders:
             guard(); analysis_guard()
         return self._mutate(body, actor, authorized, operation)
 
-    def _mutate(self, body, actor, guard, operation):
+    def _mutate(self, body, actor, guard, operation, *, replay_guard=None):
         text(actor, 200)
         try:
             request_id = str(UUID(body.get('requestId')))
@@ -292,6 +323,8 @@ class WorkOrders:
             previous = db.execute('select * from work_order_requests where request_id=?', (request_id,)).fetchone()
             if previous:
                 require(previous['payload_sha256'] == fingerprint, 'REQUEST_REUSE_CONFLICT', 409)
+                if replay_guard:
+                    replay_guard(db)
                 guard()
                 return json.loads(previous['response'])
             result = operation(db)
@@ -308,6 +341,7 @@ class WorkOrders:
                 'ASSISTANT_PROPOSAL_CHANGED', 409)
         def operation(db):
             value = self._detail(db, identifier)
+            require(not value.get('workflowVersion'), 'WORK_ORDER_USE_WORKFLOW', 409)
             require(value['orderRevision'] == body['expectedOrderRevision'], 'WORK_ORDER_CHANGED', 409)
             require(value['state'] in ('diagnosing', 'investigating'), 'WORK_ORDER_STATE_CONFLICT', 409)
             rows = selected_items(body['items'], proposed, value['diagnosis'])
@@ -372,6 +406,7 @@ class WorkOrders:
                 and len(set(checks)) == len(checks) and set(checks) <= {'alarm-context', 'circuit', 'photo-location', 'review'})
         def operation(db):
             value = self._detail(db, identifier)
+            require(not value.get('workflowVersion'), 'WORK_ORDER_USE_WORKFLOW', 409)
             require(value['orderRevision'] == revision, 'WORK_ORDER_CHANGED', 409)
             self._retain(db, value, actor)
             require(revision < 100, 'WORK_ORDER_EVENT_LIMIT', 413)

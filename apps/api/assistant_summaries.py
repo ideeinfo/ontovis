@@ -17,6 +17,8 @@ def redact(value, private=()):
 
 def work_order_summary(value, private):
     """Bound human records without turning them into independently verified facts."""
+    if 'workflow' in value:
+        return treatment_summary(value, private)
     plan = value.get('investigation') or {}
     hypotheses, steps = plan.get('hypotheses', []), plan.get('steps', [])
     short = lambda text, limit: redact(text or '', private)[:limit]
@@ -45,6 +47,46 @@ def work_order_summary(value, private):
         result[group].pop()
         text = encode()
     return text
+
+
+def treatment_summary(value, private):
+    workflow = value['workflow']
+    rows = workflow['records']
+    files = workflow['attachments']
+    result = workflow['result']
+    short = lambda body, limit: redact(body or '', private)[:limit]
+    summary = {
+        'kind': 'work_order', 'orderId': value['orderId'], 'revision': value['orderRevision'],
+        'faultCode': value['faultCode'], 'state': value['state'],
+        'simulated': value['sourceKind'] == 'simulated', 'engineeringConfirmation': False,
+        'meaning': '人员登记的处置过程和结果。采纳的分析建议不作为独立佐证，附件正文未读。',
+        'result': short(result['text'], 230) if result else None,
+        'resultTruncated': bool(result and len(redact(result['text'], private)) > 230),
+        'resultRecordId': result['recordId'] if result else None,
+        'voided': bool(result and result.get('voided')),
+        'records': [
+            {'id': row['recordId'], 'revision': row['recordRevision'], 'time': row['occurredAt'] or row['recordedAt'],
+             'text': short(row['text'], 160), 'truncated': len(redact(row['text'], private)) > 160}
+            for row in rows[-3:]
+        ],
+        'attachmentCount': len(files),
+    }
+    while True:
+        summary['omittedRecords'] = len(rows) - len(summary['records'])
+        encoded = json.dumps(summary, ensure_ascii=False, separators=(',', ':'))
+        if len(encoded) <= 1000 or not summary['records']:
+            break
+        summary['records'].pop(0)
+    if files:
+        summary['attachments'] = []
+        for item in files[-2:]:
+            summary['attachments'].append({'title': short(item['title'], 45), 'version': item['versionNumber'],
+                                           'recordId': item['recordId']})
+            expanded = json.dumps(summary, ensure_ascii=False, separators=(',', ':'))
+            if len(expanded) > 1000:
+                break
+            encoded = expanded
+    return encoded
 
 def summarize(reader, kind, descriptor, private=()):
     if kind=='document' and descriptor.get('knowledgeNodeId'):

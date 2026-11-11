@@ -122,18 +122,24 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200, value)
             if self.command == 'GET' and parts.path in ('/api/demo/context','/api/demo/locate'):
                 return self.reply(200, sessions.read(sid, parts.path, query))
-            if self.command == 'POST' and parts.path == '/api/workbench/imagery/uploads/chunk' and not query:
+            attachment_part = parts.path == '/api/workbench/work-orders/attachments/part'
+            if self.command == 'POST' and (parts.path == '/api/workbench/imagery/uploads/chunk' or attachment_part) and not query:
+                metadata_header = 'X-Work-Order-Part' if attachment_part else 'X-Imagery-Chunk'
                 if (self.headers.get_all('Transfer-Encoding') or self.headers.get_all('Content-Type') != ['application/octet-stream']
                         or len(self.headers.get_all('Content-Length', [])) != 1
-                        or len(self.headers.get_all('X-Imagery-Chunk', [])) != 1):
+                        or len(self.headers.get_all(metadata_header, [])) != 1):
                     raise PreviewError(415, 'INVALID_REQUEST')
                 try:
-                    header = self.headers['X-Imagery-Chunk']; text_length = self.headers['Content-Length']
+                    header = self.headers[metadata_header]; text_length = self.headers['Content-Length']
                     if len(header) > 4096 or not text_length.isascii() or not text_length.isdecimal(): raise ValueError()
                     payload = strict_json(base64.b64decode(header, validate=True)); length = int(text_length)
                     if not isinstance(payload, dict): raise ValueError()
                 except (ValueError, UnicodeError, ProbeError):
                     raise PreviewError(422, 'INVALID_REQUEST') from None
+                if attachment_part:
+                    from .work_order_attachments import PART_BYTES
+                    if not 1 <= length <= PART_BYTES: raise PreviewError(413, 'CONTENT_SIZE_LIMIT')
+                    return self.reply(200, sessions.work_order_request(sid, parts.path, payload, stream=self.rfile, length=length))
                 if not 1 <= length <= CHUNK_BYTES: raise PreviewError(413, 'IMAGERY_LIMIT_EXCEEDED')
                 return self.reply(200, sessions.imagery_chunk(sid, payload, self.rfile, length))
             if self.command == 'POST' and parts.path in ('/api/workbench/terrains/upload','/api/workbench/imagery/upload') and not query:
@@ -207,8 +213,11 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                            '/api/workbench/scenes/delete','/api/workbench/scenes/restore',
                            '/api/workbench/scenes/thumbnail/content')
             project_paths = ('/api/workbench/projects', '/api/workbench/projects/access')
-            work_order_paths = tuple('/api/workbench/work-orders' + suffix
-                                     for suffix in ('', '/seed-demo', '/detail', '/action', '/locate', '/diagnosis-history', '/snapshot'))
+            from .work_order_routes import WORKFLOW_PATHS
+            workflow_paths = tuple('/api/workbench/work-orders/' + suffix for suffix in WORKFLOW_PATHS
+                                   if suffix != 'attachments/part')
+            work_order_paths = ('/api/workbench/work-orders',) + tuple('/api/workbench/work-orders/' + suffix
+                for suffix in ('seed-demo', 'detail', 'action', 'locate', 'diagnosis-history', 'snapshot')) + workflow_paths
             analysis_paths = tuple('/api/workbench/analysis-sessions' + suffix
                                    for suffix in ('', '/create', '/detail', '/save', '/restore', '/revisions', '/trash', '/untrash',
                                                   '/evidence/register', '/evidence/detail', '/evidence/content', '/evidence/batch', '/evidence/preview', '/evidence/relationships', '/evidence/preview-content', '/start', '/copy', '/recommendations', '/history-candidates', '/import-history', '/evidence/register-batch',
@@ -265,7 +274,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                      270336 if parts.path in ('/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/copy',
                                              '/api/workbench/analysis-sessions/import-history', '/api/workbench/analysis-sessions/evidence/register-batch',
                                              '/api/workbench/assistant/task-start','/api/workbench/assistant/task-prepare','/api/workbench/assistant/task-ack') else
-                     32768 if parts.path in (*weather_paths, '/api/workbench/work-orders/action', '/api/workbench/assistant/work-order-apply') else
+                     32768 if parts.path in (*weather_paths, *workflow_paths, '/api/workbench/work-orders/action', '/api/workbench/assistant/work-order-apply') else
                      16384 if parts.path in (SIMULATION_STREAM_PATH, *analysis_paths, *assistant_paths, *work_order_paths, *workbench_paths, *scene_paths, *scene_object_paths, *equipment_paths, *legacy_migration_paths, *terrain_paths, *imagery_paths, *resource_paths) else 4096)
             if not 0 < length <= limit:
                 raise PreviewError(413, 'SCENE_LIMIT_EXCEEDED' if large_scene else 'INVALID_REQUEST')
@@ -293,7 +302,10 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                     return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'])
                 return self.reply(200, value)
             if parts.path in work_order_paths:
-                return self.reply(200, sessions.work_order_request(sid, parts.path, payload))
+                value = sessions.work_order_request(sid, parts.path, payload)
+                if parts.path.endswith('/attachments/content') or 'content' in value and parts.path.endswith('/analysis-source'):
+                    return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'])
+                return self.reply(200, value)
             if parts.path in equipment_paths:
                 value=sessions.equipment_request(sid,parts.path,payload)
                 if parts.path.endswith(('/shared-photos/content','/materials/content')):

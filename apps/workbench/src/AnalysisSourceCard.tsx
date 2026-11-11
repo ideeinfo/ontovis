@@ -3,6 +3,10 @@ import {ChevronUp,ExternalLink,RefreshCw} from 'lucide-react';
 import {Btn,IconBtn} from './Primitives';
 import {WorkOrderProgressDialog} from './WorkOrderProgressDialog';
 import {HistoricalWorkOrder} from './HistoricalWorkOrder';
+import {WorkOrderRecords} from './WorkOrderRecords';
+import {WorkOrderAttachmentView} from './WorkOrderAttachments';
+import {WorkOrderAnalysisView} from './WorkOrderAnalysisView';
+import type {FixedAttachment} from './workOrderWorkflow';
 import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
 import {objectCategory,objectLocationLabel} from './objectCatalog';
 import {trendDomain,trendSegments,type SimulatedTrend} from './simulatedAlarms';
@@ -15,7 +19,7 @@ import './dataAlarms.css';
 import './analysisMaterials.css';
 const ModelCard=lazy(()=>import('./AnalysisModelCard').then(module=>({default:module.AnalysisModelCard})));
 const EvidenceViewer=lazy(()=>import('./AnalysisEvidenceViewer').then(module=>({default:module.AnalysisEvidenceViewer})));
-export const materialNames={object:'工程对象',drawing:'图纸',document:'文档',photo:'照片',model3d:'三维模型',trend:'趋势',alarm:'故障报警',work_order:'历史工单',analysis:'分析记录'};
+export const materialNames={object:'工程对象',drawing:'图纸',document:'文档',photo:'照片',model3d:'三维模型',trend:'趋势',alarm:'故障报警',work_order:'工单',analysis:'分析记录'};
 export function AnalysisTrend({trends,en,cursor,onCursor}:{trends:SimulatedTrend[];en:boolean;cursor?:number|null;onCursor?:(value:number|null)=>void}){
   const [localCursor,setLocalCursor]=useState<number|null>(null),position=cursor===undefined?localCursor:cursor;
   const domain=trendDomain(trends),first=trends[0],span=first?Date.parse(first.timeTo)-Date.parse(first.timeFrom):0;
@@ -40,7 +44,8 @@ const refKey=(card:CanvasCard)=>card.source?.id+':'+card.source?.revision;
 export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,en,active,onActivate,onDeactivate,onOpen,onRelated,onPage,onTrend,onAvailability,onView,cursor,onCursor,anchor,onAddMaterial,onUpdateWorkOrder,full=false,viewOnly=false}:Props){
   const [detail,setDetail]=useState<EvidenceDetail|null>(null),[image,setImage]=useState(''),[error,setError]=useState(false),[retry,setRetry]=useState(0),[slow,setSlow]=useState(false),[authorized,setAuthorized]=useState(''),[cancelled,setCancelled]=useState(false);
   const [original,setOriginal]=useState(false),[imagePending,setImagePending]=useState(false),[progressOpen,setProgressOpen]=useState(false);
-  useEffect(()=>setProgressOpen(false),[refKey(card)]);
+  const [orderAttachment,setOrderAttachment]=useState<FixedAttachment|null>(null),[orderBasis,setOrderBasis]=useState(false);
+  useEffect(()=>{setProgressOpen(false);setOrderAttachment(null);setOrderBasis(false);},[refKey(card)]);
   const authorizationKey=card.source!.id+':'+active+':'+retry;
   const ref=card.source!;
   useEffect(()=>{let live=true;setDetail(null);setAuthorized('');setImage('');setError(false);setSlow(false);setCancelled(false);
@@ -72,7 +77,23 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     {card.kind==='alarm'&&<><span className="ad-badge">{en?'Simulated alarm':'模拟报警'}</span><p>{value.dataset?.presetCause}</p><dl>{value.items?.map(row=><div key={row.sourceRevision}><dt>{row.state==='active'?(en?'Occurred':'发生'):(en?'Recovered':'恢复')}</dt><dd>{new Date(row.sourceTime).toLocaleString(en?'en-GB':'zh-CN')} · {en?row.severity:row.severity==='critical'?'严重':'警告'}</dd></div>)}</dl></>}
     {card.kind==='trend'&&value.samples&&<><span className="ad-badge">{en?'Simulation · fixed window':'模拟数据 · 固定时间窗'}</span><AnalysisTrend trends={[value as SimulatedTrend]} en={en} cursor={cursor} onCursor={onCursor}/></>}
     {progressOpen&&card.kind==='work_order'&&<WorkOrderProgressDialog api={sources.api} before={value} en={en} canLoad={!!onUpdateWorkOrder} onLoad={onUpdateWorkOrder} onClose={()=>setProgressOpen(false)}/>}
-    {card.kind==='work_order'&&<>{!viewOnly&&<Btn onClick={()=>setProgressOpen(true)}>{en?'Order progress':'工单进展'}</Btn>}<HistoricalWorkOrder source={value} en={en} full={full}/></>}
+    {card.kind==='work_order'&&<>
+      {!viewOnly&&<Btn onClick={()=>setProgressOpen(true)}>{en?'Order progress':'工单进展'}</Btn>}
+      {value.workflow&&value.orderId&&value.orderRevision&&value.snapshotSha256?<WorkOrderRecords
+        key={value.orderId+':'+value.orderRevision} orderId={value.orderId} revision={value.orderRevision}
+        state={value.state||''} workflow={value.workflow} simulated={value.sourceKind==='simulated'}
+        en={en} compact={!full} onOpenAttachment={full?setOrderAttachment:undefined}/>:
+        <HistoricalWorkOrder source={value} en={en} full={full}/>}
+      {full&&value.workflow?.attachments.filter(item=>!item.recordId).map(item=><Btn key={item.attachmentId}
+        onClick={()=>setOrderAttachment(item)}>{item.title} · v{item.versionNumber}</Btn>)}
+      {full&&value.workflow?.adoptedAnalysis&&<Btn onClick={()=>setOrderBasis(true)}>
+        {en?'Analysis used for treatment':'当时的处置依据'} · r{value.workflow.adoptedAnalysis.analysisRevision}</Btn>}
+      {orderAttachment&&value.orderId&&value.orderRevision&&value.snapshotSha256&&<WorkOrderAttachmentView
+        api={sources.api} order={{orderId:value.orderId,orderRevision:value.orderRevision,snapshotSha256:value.snapshotSha256}}
+        item={orderAttachment} en={en} onClose={()=>setOrderAttachment(null)}/>}
+      {orderBasis&&value.workflow?.adoptedAnalysis&&<WorkOrderAnalysisView api={sources.api}
+        fixed={value.workflow.adoptedAnalysis} en={en} canShare={false} canEdit={false} onClose={()=>setOrderBasis(false)}/>}
+    </>}
     {viewOnly&&card.kind==='document'&&<small>{en?'Page ':'第'}{value.pageNumber||1}{en?'':'页'} / {value.pageCount||1}</small>}
     {!viewOnly&&card.kind==='document'&&<label className="ac-page">{en?'Page':'页码'}<input type="number" min={1} max={value.pageCount||1} aria-label={en?'Document page':'文档页码'} value={value.pageNumber||1} onChange={event=>{const page=Number(event.target.value);if(page>=1&&page<=(value.pageCount||1))onPage?.(page,value);}}/><span>/ {value.pageCount}</span>{value.newerVersionAvailable&&<small>{en?'Newer version available; this card retains its selected version.':'已有新版，此卡保持所选版本。'}</small>}</label>}
     {!viewOnly&&card.kind==='document'&&!!value.outline?.length&&<select aria-label={en?'Document section':'文档章节'} value={value.outline.find(row=>row.page===value.pageNumber)?.page||''} onChange={event=>onPage?.(Number(event.target.value),value)}><option value="" disabled>{en?'Go to section':'定位章节'}</option>{value.outline.map((row,i)=><option key={i} value={row.page}>{row.title}</option>)}</select>}

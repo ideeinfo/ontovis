@@ -19,8 +19,8 @@ import {AnalysisTimeWindowForm} from './AnalysisTrendTimeForm';
 import {intersectTimeWindows,timeWindowLabel,timeZoneLabel,type TimeWindow} from './analysisTimeWindow';
 import {WorkOrderReferenceView} from './WorkOrderReferenceView';
 
-export interface DraftApi {revision:string;epoch:number;project:ProjectScope|null;request<T>(path:string,body?:object,signal?:AbortSignal,image?:boolean|'model'|'source'):Promise<T>}
-type Detail=DraftReceipt&{snapshot:CanvasSnapshot};
+export interface DraftApi {revision:string;epoch:number;project:ProjectScope|null;request<T>(path:string,body?:object,signal?:AbortSignal,image?:boolean|'model'|'source'):Promise<T>;content?:import('./api').WorkbenchApi['content']}
+type Detail=DraftReceipt&{snapshot:CanvasSnapshot;capabilities?:{canEditAssignedOrder?:boolean}};
 type Listing={items:AnalysisListItem[];total:number;nextCursor:string|null;capabilities:{canWrite:boolean;canManageLifecycle?:boolean}};
 type Versions={items:{revision:number;createdAt:string;operation:string}[];nextBeforeRevision:number|null};
 const ROOT='/api/workbench/analysis-sessions';
@@ -37,7 +37,7 @@ const zhError:Record<string,string>={ANALYSIS_BUSY:'分析读取较忙，请稍�
   ANALYSIS_REVIEW_NOT_CONFIGURED:'当前分析尚未开放结论确认。',ACCESS_CHANGED:'项目权限已变化，请重新打开分析。',
   NOT_FOUND_OR_FORBIDDEN:'分析不存在或当前账号无权查看。',INVALID_REQUEST:'请检查分析名称、内容和时间范围。'};
 
-type WorkspaceProps={presentation?:boolean;api:DraftApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void;initialEntry?:AnalysisEntry|null;onOpenWorkOrder?:(code:string)=>void};
+type WorkspaceProps={presentation?:boolean;api:DraftApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void;initialEntry?:AnalysisEntry|null;onOpenWorkOrder?:(code:string,record?:string)=>void};
 export function AnalysisWorkspace(props:WorkspaceProps){
  const entry=props.initialEntry;
  if(entry&&'workOrderReference' in entry)return <WorkOrderReferenceView api={props.api} entry={entry} en={props.locale==='en'} onReturn={props.onOpenWorkOrder?()=>props.onOpenWorkOrder!(entry.workOrderReference.orderId):undefined}/>;
@@ -49,7 +49,12 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   const [list,setList]=useState<Listing|null>(null),[query,setQuery]=useState(''),[filter,setFilter]=useState(''),[reload,setReload]=useState(0);
   const [draft,setDraft]=useState<CanvasSnapshot|null>(null),[receipt,setReceipt]=useState<DraftReceipt|null>(null),[saved,setSaved]=useState('');
   const [selected,setSelected]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState<unknown>(null);
-  const [uncertain,setUncertain]=useState(false),[writable,setWritable]=useState(false),[notice,setNotice]=useState('');
+  const [uncertain,setUncertain]=useState(false),[projectWritable,setWritable]=useState(false),[notice,setNotice]=useState('');
+  const [assignedWritable,setAssignedWritable]=useState(false);
+  const writable=(projectWritable||assignedWritable)&&!presentation;
+  const [reuseDialog,setReuseDialog]=useState<import('./workOrderWorkflow').AnalysisReuse|null>(null);
+  const linkRequest=useRef<{path:string;body:object}|null>(null);
+  const [linkUnknown,setLinkUnknown]=useState(false);
   const [tool,setTool]=useState<'pointer'|'hand'>('pointer'),[versions,setVersions]=useState<Versions|null>(null),[preview,setPreview]=useState<Detail|null>(null);
   const [historyOpen,setHistoryOpen]=useState(false),[leave,setLeave]=useState<(()=>void)|null>(null),[linkOpen,setLinkOpen]=useState(false);
   const [target,setTarget]=useState(''),[relationKind,setRelationKind]=useState<RelationKind>('hypothesis'),[reason,setReason]=useState('');
@@ -105,7 +110,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   }),[previewCardIds]);
   const sourceRelations=useSourceRelations(sources,draft?.cards||[]);
   const visibleRelations=sourceRelations.relations.filter(link=>[link.from,link.to].every(card=>!referenceState[card.source!.id]||referenceState[card.source!.id]==='available'));
-  const analysisEntry=useMemo<AnalysisEntry|null>(()=>draft?(draft.context.datasetId&&draft.context.datasetRevision?{datasetId:draft.context.datasetId,datasetRevision:draft.context.datasetRevision}:{projectOnly:true}):initialEntry&& !('analysisSessionId' in initialEntry)&&!('entityUid' in initialEntry)?initialEntry:null,[draft?.context.datasetId,draft?.context.datasetRevision,!!draft,initialEntry]);
+  const analysisEntry=useMemo<AnalysisEntry|null>(()=>draft?(draft.workflowOrderId?{orderId:draft.workflowOrderId}:draft.context.datasetId&&draft.context.datasetRevision?{datasetId:draft.context.datasetId,datasetRevision:draft.context.datasetRevision}:{projectOnly:true}):initialEntry&& !('analysisSessionId' in initialEntry)&&!('entityUid' in initialEntry)?initialEntry:null,[draft?.workflowOrderId,draft?.context.datasetId,draft?.context.datasetRevision,!!draft,initialEntry]);
   const objectContextSection=section==='types'||OBJECT_MATERIAL_SECTIONS.includes(section)&&!(section==='objects'&&recommendFilter?.trim());
   const scopeTarget=objectContextSection?relatedTarget:undefined;
   const recommendationScope=useRef('');recommendationScope.current=JSON.stringify([api.project,api.epoch,api.revision,analysisEntry,materialsOpen,section,
@@ -147,7 +152,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   function failure(value:unknown){
     if(!alive.current||value instanceof Error&&value.name==='AbortError')return;
     setError(value);setNotice('');
-    if(code(value)==='ANALYSIS_WRITE_FORBIDDEN')setWritable(false);
+    if(code(value)==='ANALYSIS_WRITE_FORBIDDEN'){setWritable(false);setAssignedWritable(false);}
     else if([401,403].includes(status(value))){setDraft(null);setReceipt(null);setList(null);setSaved('');setSelected('');setPreview(null);setVersions(null);pending.current=null;setUncertain(false);}
   }
   useEffect(()=>{
@@ -163,7 +168,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     node.addEventListener('wheel',wheel,{passive:false,capture:true});return()=>node.removeEventListener('wheel',wheel,true);
   },[!!draft,busy,uncertain]);
   function apply(value:CanvasSnapshot,remember=true){if(!editable)return;if(remember&&draft){setUndo(items=>[...items.slice(-19),draft]);setRedo([]);}current.current=value;setDraft(value);setNotice('');}
-  function adopt(value:Detail,keepHistory=false){setDraft(value.snapshot);setReceipt(value);setSaved(JSON.stringify(value.snapshot));setSelected(value.snapshot.cards[0]?.id||'');if(!keepHistory){setUndo([]);setRedo([]);}setMulti([]);setExpanded('');setError(null);setNotice('');setLifecycleNotice('');setUncertain(false);pending.current=null;}
+  function adopt(value:Detail,keepHistory=false){if(value.capabilities)setAssignedWritable(!!value.capabilities.canEditAssignedOrder);setDraft(value.snapshot);setReceipt(value);setSaved(JSON.stringify(value.snapshot));setSelected(value.snapshot.cards[0]?.id||'');if(!keepHistory){setUndo([]);setRedo([]);}setMulti([]);setExpanded('');setError(null);setNotice('');setLifecycleNotice('');setUncertain(false);pending.current=null;}
   function change(action:()=>void){if(dirty)setLeave(()=>action);else action();}
   async function open(id:string){
     setFixed(false);
@@ -171,7 +176,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     try {const value=await api.request<Detail>(ROOT+'/detail',{analysisSessionId:id},abort.signal);if(alive.current&&!abort.signal.aborted)adopt(value);}
     catch(value){if(!abort.signal.aborted)failure(value);}finally{if(alive.current&&!abort.signal.aborted)setBusy(false);}
   }
-  function fresh(){if(!api.project)return;setFixed(false);setDraft({...blankAnalysisDraft(api.project),schemaVersion:2});setReceipt(null);setSaved('');setSelected('');setUndo([]);setRedo([]);setError(null);setNotice('');pending.current=null;setUncertain(false);}
+  function fresh(){if(!api.project)return;setAssignedWritable(false);setFixed(false);setDraft({...blankAnalysisDraft(api.project),schemaVersion:2});setReceipt(null);setSaved('');setSelected('');setUndo([]);setRedo([]);setError(null);setNotice('');pending.current=null;setUncertain(false);}
   async function commit(copy=false,restore?:Detail,assistantOverride?:{snapshot:CanvasSnapshot;receipt:DraftReceipt}):Promise<boolean>{
     if(busy||!draft||!api.project||!writable||fixed||archived||lifecycleUnknown)return false;
     let task=pending.current;
@@ -183,7 +188,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     if(!task)return false;
     const abort=new AbortController();request.current=abort;setBusy(true);setError(null);
     try{
-      const result=await api.request<DraftReceipt&{snapshot?:CanvasSnapshot}>(task.path,task.body,abort.signal);
+      const result=await api.request<DraftReceipt&{snapshot?:CanvasSnapshot;capabilities?:Detail['capabilities']}>(task.path,task.body,abort.signal);
       if(!alive.current||abort.signal.aborted)return false;
       lastCommitted.current=result;adopt({...result,snapshot:result.snapshot||task.snapshot},!copy&&!restore);setNotice(t('已保存','Saved'));setReload(value=>value+1);setPreview(null);setHistoryOpen(false);return true;
     }catch(value){
@@ -318,12 +323,36 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     const x=Math.min(...cards.map(c=>c.x))-20,y=Math.min(...cards.map(c=>c.y))-38;
     apply({...draft,schemaVersion:2,cards:draft.cards.map(c=>multi.includes(c.id)?{...c,frameId:id}:c),frames:[...(draft.frames||[]),{id,title:t('资料分组','Material group'),x,y,width:Math.max(...cards.map(c=>c.x+c.width))-x+20,height:Math.max(...cards.map(c=>c.y+c.height))-y+20}]});}
   async function saveAndLink(){
-    if(!draft||!receipt||!orderId.trim())return;let version=receipt;
-    if(dirty){const ok=await commit();if(!ok||!lastCommitted.current)return;version=lastCommitted.current;}
-    setBusy(true);try{const order=await api.request<{orderId:string;orderRevision:number}>('/api/workbench/work-orders/detail',{orderId:orderId.trim()});
-      await api.request(ROOT+'/link-work-order',{analysisSessionId:version.analysisSessionId,analysisRevision:version.analysisRevision,orderId:order.orderId,expectedOrderRevision:order.orderRevision,requestId:crypto.randomUUID()});
-      setLinkOrderOpen(false);setNotice(t('分析已保存并关联工单','Analysis saved and linked'));}
-    catch(value){failure(value);setNotice(t('分析已保存；工单关联未完成，可重试','Analysis saved; linking is incomplete. Retry.'));}finally{setBusy(false);}
+    if(!draft||!receipt||!orderId.trim()||busy)return;
+    let version=receipt;
+    if(!linkRequest.current&&(dirty||uncertain)){
+      const ok=await commit();
+      if(!ok||!lastCommitted.current)return;
+      version=lastCommitted.current;
+    }
+    setBusy(true);setError(null);
+    try {
+      if(!linkRequest.current){
+        const order=await api.request<{orderId:string;orderRevision:number;workflowVersion?:number;canProcess:boolean}>(
+          '/api/workbench/work-orders/workflow-detail',{orderId:orderId.trim()});
+        const body={analysisSessionId:version.analysisSessionId,analysisRevision:version.analysisRevision,
+          orderId:order.orderId,expectedOrderRevision:order.orderRevision,requestId:crypto.randomUUID()};
+        if(order.workflowVersion){
+          if(!order.canProcess)throw new Error(t('请由本单当前处理人关联分析。','The current handler must link this analysis.'));
+          linkRequest.current={path:'/api/workbench/work-orders/workflow',body:{...body,
+            analysisSha256:version.contentSha256,action:draft.workflowOrderId===order.orderId?'adopt_analysis':'link_analysis'}};
+        }else linkRequest.current={path:ROOT+'/link-work-order',body};
+      }
+      const request=linkRequest.current;
+      const linked=await api.request<{orderRevision:number}>(request.path,request.body);
+      linkRequest.current=null;setLinkUnknown(false);setLinkOrderOpen(false);
+      setNotice(t('分析已保存，工单已更新','Analysis saved and order updated')+' · r'+linked.orderRevision);
+    }catch(value){
+      const unknown=!!linkRequest.current&&(status(value)===0||status(value)>=500);
+      if(!unknown)linkRequest.current=null;
+      setLinkUnknown(unknown);setError(value);
+      setNotice(t('分析已保存，可继续核对工单关联','Analysis saved. You can check the order link.'));
+    }finally{setBusy(false);}
   }
   function pointerDown(event:ReactPointerEvent,id?:string,handle?:ResizeHandle){
     if(!draft||![0,1].includes(event.button)||busy||uncertain||(event.target as Element).closest('.ac-material-panel'))return;
@@ -414,7 +443,10 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           <Btn disabled={!draft.context.faultCode||busy||fixed} onClick={()=>void loadRelatedHistory()}>{t('同码历史','Same-code history')}</Btn>
           <Btn disabled={!editable||!currentTrends.length} title={t('主动调整本次趋势；助手直接沿用已有时间','Adjust current trends; the assistant uses the existing interval')} onClick={openTimeWindow}>{t('趋势时间','Trend interval')}</Btn>
           <Btn disabled={draft.cards.filter(c=>c.kind==='trend'&&trendData[c.id]).length<2} onClick={()=>{setCompareIds(draft.cards.filter(c=>c.kind==='trend'&&trendData[c.id]).slice(0,4).map(c=>c.id));setCompare(true);}}>{t('趋势对比','Compare trends')}</Btn>
-          <Btn disabled={!receipt||busy||!writable||fixed||archived||lifecycleUnknown} onClick={()=>{setOrderId(draft.context.workOrderId||'');setLinkOrderOpen(true);}}>{t('保存并关联工单','Save & link')}</Btn>
+          {draft.schemaVersion===2&&<Btn disabled={!editable} onClick={()=>setReuseDialog({...draft.reuse})}>{t('分析复用说明','Reuse details')}</Btn>}
+          <Btn disabled={!receipt||busy||!writable||fixed||archived||lifecycleUnknown} onClick={()=>{setOrderId(draft.workflowOrderId||draft.context.workOrderId||'');setLinkOrderOpen(true);}}>
+            {draft.workflowOrderId?t('保存并用于本单','Save & use for this order'):t('保存并关联工单','Save & link')}</Btn>
+          {draft.workflowOrderId&&onOpenWorkOrder&&<Btn disabled={busy||linkUnknown} onClick={()=>onOpenWorkOrder(draft.workflowOrderId!)}>{t('返回工单','Return to order')}</Btn>}
           <Btn aria-pressed={assistantOpen} onClick={()=>{setAssistantOpen(v=>!v);setRight(false);}}><Sparkles size={15}/>{t('分析助手','Assistant')}</Btn>
           <IconBtn label={t('查看详情','Show details')} aria-pressed={right} onClick={()=>{setRight(v=>!v);setAssistantOpen(false);setMaterialsOpen(false);}}><PanelRight size={16}/></IconBtn>
         </div>
@@ -454,7 +486,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           <Btn className="ac-save-view" disabled={!editable||!receipt} onClick={()=>void commit()}>{t('保存当前视图','Save current view')}</Btn>
           <span className="ad-hint">{t('中键拖动平移 · 滚轮缩放画布 · 拖标题移动 · 拖边角调整大小','Middle drag to pan · Wheel to zoom canvas · Drag title to move · Edges to resize')}</span>
         </div>
-        {assistantOpen&&<aside className="ad-inspector ad-assistant"><header><strong>{t('分析助手','Analysis assistant')}</strong><IconBtn label={t('关闭助手','Close assistant')} onClick={()=>setAssistantOpen(false)}><X size={16}/></IconBtn></header><AssistantPanel key={assistantEntryState.key} {...assistantSeed} onInitialQuestionUsed={()=>{assistantEntryState.questionUsed=true;}} historyJson={assistantHistory({undo,redo})} hasUnsaved={dirty} api={api} snapshot={draft} onApplyTask={editable?applyAssistantTask:undefined} canTransfer={editable&&!dirty} preferredOrderId={draft.context.workOrderId} faultCode={draft.context.faultCode} onOpenOrder={onOpenWorkOrder} cards={draft.cards} receipt={receipt} en={en} canAddNote={editable&&draft.cards.length<50} onFocus={(card,anchor)=>{focusCard(card);if(anchor)openSource(card,anchor);}} onAddNote={text=>{if(!editable||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('助手整理 · 待人工核验','Assistant note · requires verification'),note:text,x:40+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:340,height:300,pinned:false}]});setSelected(id);}}/></aside>}
+        {assistantOpen&&<aside className="ad-inspector ad-assistant"><header><strong>{t('分析助手','Analysis assistant')}</strong><IconBtn label={t('关闭助手','Close assistant')} onClick={()=>setAssistantOpen(false)}><X size={16}/></IconBtn></header><AssistantPanel key={assistantEntryState.key} {...assistantSeed} onInitialQuestionUsed={()=>{assistantEntryState.questionUsed=true;}} historyJson={assistantHistory({undo,redo})} hasUnsaved={dirty} api={api} snapshot={draft} onApplyTask={editable?applyAssistantTask:undefined} canTransfer={editable&&!dirty} preferredOrderId={draft.workflowOrderId||draft.context.workOrderId} faultCode={draft.context.faultCode||draft.reuse?.faultCode} onOpenOrder={onOpenWorkOrder} cards={draft.cards} receipt={receipt} en={en} canAddNote={editable&&draft.cards.length<50} onFocus={(card,anchor)=>{focusCard(card);if(anchor)openSource(card,anchor);}} onAddNote={text=>{if(!editable||draft.cards.length>=50)return;const id=crypto.randomUUID();apply({...draft,cards:[...draft.cards,{id,kind:'analysis',title:t('助手整理 · 待人工核验','Assistant note · requires verification'),note:text,x:40+(draft.cards.length%3)*340,y:40+Math.floor(draft.cards.length/3)*240,width:340,height:300,pinned:false}]});setSelected(id);}}/></aside>}
         {right&&<aside className="ad-inspector"><header><strong>{t(selectedCard?'卡片详情':'分析范围',selectedCard?'Card details':'Analysis context')}</strong><IconBtn label={t('关闭详情','Close details')} onClick={()=>setRight(false)}><X size={16}/></IconBtn></header>{selectedCard?<>
           <label>{t('卡片名称','Card title')}<input maxLength={120} disabled={!editable||selectedCard.historical||!!selectedCard.source&&referenceState[selectedCard.source.id]!=='available'} value={label(selectedCard)} onChange={event=>apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,title:event.target.value}:card)})}/></label>
           {selectedCard.kind==='analysis'?<>{noteSections.map(([key,eng])=><label key={key}>{t(key,eng)}<textarea className="ac-note-section" maxLength={4000} disabled={!editable||selectedCard.historical} value={readNote(selectedCard.note||'')[key]} onChange={event=>{const note=writeNote({...readNote(selectedCard.note||''),[key]:event.target.value});if(note.length<=4000)apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,note}:card)});}}/></label>)}<small>{(selectedCard.note||'').length} / 4000</small>
@@ -473,9 +505,45 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     {frameDialog&&draft&&<Modal title={t('资料分区','Material group')} description={t('分区只组织布局，不改变工程关系','Groups organize layout only')} onClose={()=>setFrameDialog(null)}><input aria-label={t('分区名称','Group name')} maxLength={120} value={frameDialog.title} onChange={event=>setFrameDialog({...frameDialog,title:event.target.value})}/><Btn primary disabled={!frameDialog.title.trim()} onClick={()=>{apply({...draft,frames:draft.frames?.map(f=>f.id===frameDialog.id?{...f,title:frameDialog.title.trim()}:f)});setFrameDialog(null);}}>{t('保存名称','Save name')}</Btn><Btn onClick={()=>{apply({...draft,cards:draft.cards.map(c=>{if(c.frameId!==frameDialog.id)return c;const {frameId,...rest}=c;return rest;}),frames:draft.frames?.filter(f=>f.id!==frameDialog.id)});setFrameDialog(null);}}>{t('解除分区','Ungroup')}</Btn><Btn onClick={()=>{const ids=new Set(draft.cards.filter(c=>c.frameId===frameDialog.id).map(c=>c.id));apply({...draft,cards:draft.cards.filter(c=>!ids.has(c.id)),relations:draft.relations.filter(r=>!ids.has(r.from)&&!ids.has(r.to)),frames:draft.frames?.filter(f=>f.id!==frameDialog.id)});setFrameDialog(null);}}>{t('移除整组资料','Remove group and cards')}</Btn></Modal>}
     {expandedCard&&sources&&<Modal className="ac-source-modal" title={label(expandedCard)} description={t('固定来源资料；浏览操作不改变源文件','Fixed source; viewing does not change the original')} onClose={()=>{setExpanded('');setExpandedAnchor(null);}}><div className="ac-expanded">{sourceContent(expandedCard,true)}</div></Modal>}
     {compare&&draft&&<Modal className="ac-compare-modal" title={t('趋势对比','Trend comparison')} description={t('最多四条曲线，按窗口起点对齐；不同单位分开显示','Up to four trends; separate axes for different units')} onClose={()=>setCompare(false)}><div className="ac-compare-choice">{draft.cards.filter(c=>c.kind==='trend'&&trendData[c.id]).map(c=><label key={c.id}><input type="checkbox" checked={compareIds.includes(c.id)} disabled={!compareIds.includes(c.id)&&compareIds.length>=4} onChange={event=>setCompareIds(ids=>event.target.checked?[...ids,c.id]:ids.filter(id=>id!==c.id))}/>{label(c)} · {trendData[c.id].unit}</label>)}</div><div className="ac-comparison">{[...new Set(compareIds.map(id=>trendData[id]?.unit).filter(Boolean))].map(unit=><AnalysisTrend key={unit} en={en} cursor={trendCursor} onCursor={setTrendCursor} trends={compareIds.map(id=>trendData[id]).filter(row=>row?.unit===unit)}/>)}</div></Modal>}
-    {linkOrderOpen&&<Modal title={t('保存并关联工单','Save and link work order')} description={t('工单记录所保存的明确修订，不改变处理状态','Links a fixed analysis revision without changing work-order state')} onClose={()=>!busy&&setLinkOrderOpen(false)}><label>{t('工单编号','Work order ID')}<input aria-label={t('关联工单编号','Linked work order ID')} value={orderId} onChange={event=>setOrderId(event.target.value)}/></label><Btn primary disabled={busy||!orderId.trim()} onClick={()=>void saveAndLink()}>{t('保存并关联','Save and link')}</Btn>{draft?.context.faultCode&&onOpenWorkOrder&&<Btn disabled={busy||dirty} onClick={()=>onOpenWorkOrder(draft.context.faultCode!)}>{t('查看相关工单','View related orders')}</Btn>}</Modal>}
+    {linkOrderOpen&&<Modal title={draft?.workflowOrderId?t('保存并用于本单','Save and use for this order'):t('保存并关联工单','Save and link')}
+      description={t('工单引用已保存的明确分析修订','Link a specific saved analysis revision')}
+      onClose={()=>!busy&&!linkUnknown&&setLinkOrderOpen(false)}>
+      <div className="wov-form">
+        <label>{t('工单编号','Work order ID')}<input aria-label={t('关联工单编号','Linked work order ID')}
+          value={orderId} readOnly={!!draft?.workflowOrderId} disabled={busy||linkUnknown} onChange={event=>setOrderId(event.target.value)}/></label>
+        {!!error&&<p role="alert">{errorText}</p>}
+        {linkUnknown&&<small role="status">{t('工单更新结果待确认','Order update result is unknown')}</small>}
+        <Btn primary disabled={busy||!orderId.trim()} onClick={()=>void saveAndLink()}>
+          {linkUnknown?t('检查工单更新','Check order update'):draft?.workflowOrderId?t('保存并采纳','Save and adopt'):t('保存并关联','Save and link')}</Btn>
+      </div>
+    </Modal>}
     {deleteTarget&&<Modal title={t('移至回收站','Move to recycle bin')} description={deleteTarget.title} onClose={()=>{if(!busy)setDeleteTarget(null);}}><p>{t('画布将从正常列表移除，可以在回收站恢复。原有修订、资料引用和工单关联会保留。','The canvas leaves the active list and can be restored. Revisions, source references and work-order links are retained.')}</p>{receipt?.analysisSessionId===deleteTarget.analysisSessionId&&dirty&&<p>{t('当前未保存的修改不会保存。','Current unsaved changes will not be saved.')}</p>}<div className="ad-inline"><Btn disabled={busy} onClick={()=>setDeleteTarget(null)}>{t('取消','Cancel')}</Btn><Btn primary disabled={busy||uncertain} onClick={()=>void manageLifecycle(deleteTarget,'trash')}>{busy?t('处理中…','Working…'):lifecycleUnknown?t('重试移至回收站','Retry move'):t('移至回收站','Move to recycle bin')}</Btn></div></Modal>}
     {leave&&<Modal title={t('修改尚未保存','Unsaved changes')} description={t('离开前处理当前修改','Handle changes before leaving')} onClose={()=>setLeave(null)}><p>{uncertain?t('保存结果尚未确认，建议先重试。','Save result is unknown; retry first.'):t('离开将放弃当前未保存的修改。','Leaving discards unsaved edits.')}</p><div className="ad-inline"><Btn onClick={()=>setLeave(null)}>{t('继续编辑','Keep editing')}</Btn><Btn disabled={busy} onClick={()=>{const action=leave;setLeave(null);pending.current=null;setUncertain(false);action();}}>{t('放弃修改并离开','Discard and leave')}</Btn><Btn primary disabled={!writable||busy} onClick={()=>void commit().then(ok=>{if(ok){setLeave(null);leave();}})}>{t('保存并继续','Save and continue')}</Btn></div></Modal>}
+    {reuseDialog&&draft&&<Modal title={t('分析复用说明','Analysis reuse details')} description={t('摘要与建议随当前分析版本保存','The summary and advice are saved with this analysis revision')} onClose={()=>setReuseDialog(null)}>
+      <div className="wov-form">
+        <div className="wov-form-row">
+          <label>{t('故障码','Fault code')}<input maxLength={100} value={reuseDialog.faultCode??draft.context.faultCode??''}
+            onChange={event=>setReuseDialog({...reuseDialog,faultCode:event.target.value})}/></label>
+          <label>{t('代码体系','Code system')}<input maxLength={120} value={reuseDialog.faultSystem??draft.context.sourceConnectionId??''}
+            onChange={event=>setReuseDialog({...reuseDialog,faultSystem:event.target.value})}/></label>
+        </div>
+        <label>{t('适用设备说明','Applicable equipment')}<input maxLength={200} value={reuseDialog.equipment||''}
+          onChange={event=>setReuseDialog({...reuseDialog,equipment:event.target.value})}/></label>
+        <label>{t('分析摘要','Summary')}<textarea maxLength={1000} value={reuseDialog.summary||''}
+          onChange={event=>setReuseDialog({...reuseDialog,summary:event.target.value})}/></label>
+        <label>{t('排查建议','Recommended checks')}<textarea maxLength={2000} value={reuseDialog.advice||''}
+          onChange={event=>setReuseDialog({...reuseDialog,advice:event.target.value})}/></label>
+        {draft.derivedFrom&&<small>{t('另存来源','Copied from')} · r{draft.derivedFrom.analysisRevision}</small>}
+        <Btn primary onClick={()=>{
+          const fields={...reuseDialog};
+          for(const key of ['faultCode','faultSystem','equipment','summary','advice'] as const){
+            const text=fields[key]?.trim();
+            if(text)fields[key]=text;else delete fields[key];
+          }
+          apply({...draft,reuse:fields});setReuseDialog(null);
+        }}>{t('应用到画布','Apply to canvas')}</Btn>
+      </div>
+    </Modal>}
     {historyOpen&&<Modal title={t('修订历史','Revision history')} description={t('历史只读，恢复将追加新修订','History is immutable; restoring adds a revision')} onClose={()=>{if(!busy){setHistoryOpen(false);setPreview(null);}}}><div className="ad-history">{versions?.items.map(item=><Btn key={item.revision} disabled={busy} onClick={()=>void viewRevision(item.revision)}>r{item.revision} · {new Date(item.createdAt).toLocaleString(en?'en-GB':'zh-CN')}</Btn>)}{versions?.nextBeforeRevision&&<Btn disabled={busy} onClick={()=>void history(versions.nextBeforeRevision!)}>{t('更早修订','Earlier revisions')}</Btn>}</div>{preview&&<><h3>{preview.snapshot.title} · r{preview.analysisRevision}</h3>{preview.snapshot.cards.map(card=><div key={card.id}><strong>{label(card)}</strong><p className="ad-history-note">{card.note}</p></div>)}<Btn primary disabled={!writable||busy||dirty||preview.analysisRevision===(receipt?.headRevision??receipt?.analysisRevision)} onClick={()=>void commit(false,preview)}>{t('恢复为新修订','Restore as a new revision')}</Btn>{dirty&&<p>{t('先保存或放弃当前修改，再恢复历史。','Save or discard your edits before restoring.')}</p>}</>}</Modal>}
     {linkOpen&&draft&&<Modal title={t('添加人工关系','Add manual relationship')} description={t('记录资料或笔记之间的依据','Record evidence connecting materials or notes')} onClose={()=>setLinkOpen(false)}><form className="ad-link-form" onSubmit={event=>{event.preventDefault();try{apply(addManualRelation({...draft,relations:draft.relations.filter(r=>r.id!==editingRelation)},{id:editingRelation||crypto.randomUUID(),from:selected,to:target,kind:relationKind,origin:'manual',reason}));setLinkOpen(false);}catch(value){failure(value);}}}><label>{t('关联卡片','Related card')}<select value={target} onChange={event=>setTarget(event.target.value)}>{draft.cards.filter(card=>card.id!==selected).map(card=><option key={card.id} value={card.id}>{label(card)}</option>)}</select></label><label>{t('关系类型','Relation type')}<select value={relationKind} onChange={event=>setRelationKind(event.target.value as RelationKind)}>{[['reference','资料引用','Reference'],['hypothesis','原因假设','Hypothesis'],['supports','支持依据','Supports'],['contradicts','反证','Contradicts']].map(([key,zh,eng])=><option key={key} value={key}>{t(zh,eng)}</option>)}</select></label><label>{t('关系依据','Reason')}<textarea maxLength={1000} required value={reason} onChange={event=>setReason(event.target.value)}/></label><button type="submit" className="ov-btn primary">{t('添加关系','Add relationship')}</button></form></Modal>}
   </section>;

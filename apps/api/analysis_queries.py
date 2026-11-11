@@ -18,6 +18,13 @@ def entry_dataset(reader, entry):
     order = None
     if 'orderId' in entry:
         order = reader.orders.detail({'orderId': entry['orderId']})
+        if order.get('workflowVersion'):
+            source = order['workflow'].get('source')
+            if not source:
+                return None, order
+            identity = source['identity']
+            sim.catalogue(reader.reader.project_code)
+            return sim.dataset(identity['datasetId'], identity['datasetRevision']), order
         dataset = sim.identity(order['faultCode'])
     else:
         dataset = sim.dataset(entry['datasetId'], entry['datasetRevision'])
@@ -169,8 +176,9 @@ def recommendations(reader, body, scene_library=None, *, cursor_key=None, sessio
             d.require(type(position) is dict and set(position)=={'offset','snapshot'},'ANALYSIS_RECOMMENDATIONS_CHANGED',409)
         else:
             d.require(offset==0,'ANALYSIS_RECOMMENDATIONS_CHANGED',409);position={'offset':0,'snapshot':None}
-        value=reader.orders.recommendation_listing({'q':query or (dataset['faultCode'] if dataset else ''),
-            'faultCode':dataset['faultCode'] if dataset else '', 'orderId':order['orderId'] if order else '',
+        fault = dataset['faultCode'] if dataset else order['faultCode'] if order else ''
+        value=reader.orders.recommendation_listing({'q':query or fault,
+            'faultCode':fault, 'orderId':order['orderId'] if order else '',
             'cursor':position['offset'],'expectedSnapshotRevision':position['snapshot'],'limit':12})
         for item in value['items']:
             current=order and item['orderId']==order['orderId'];same=dataset and item['faultCode']==dataset['faultCode']
@@ -189,6 +197,7 @@ def start_analysis(store, actor, reader, body, authorize):
     if type(body['entry']) is dict and set(body['entry'])=={'entityUid','expectedEntityRevision','timeTo'}:
         return start_object_analysis(store,actor,reader,body,authorize)
     request_id = d.identifier(body['requestId']); dataset, order = entry_dataset(reader,body['entry'])
+    d.require(dataset is not None, 'WORK_ORDER_USE_WORKFLOW', 409)
     namespace = UUID(request_id)
     rid = lambda name: str(uuid5(namespace,name))
     primary, gap = None, None
@@ -288,14 +297,18 @@ def copy_analysis(store, actor, body, authorize):
     snapshot=copy.deepcopy(body['snapshot']); d.validate_snapshot(snapshot,store.connection_id,store.project_code)
     authorize()
     with store.connection.transaction(readonly=True) as cur:
-        store._session(cur,original_id,actor)
+        head = store._session(cur,original_id,actor,active=True)[0]
+        original, _ = store._revision(cur, original_id, head)
+        d.require(all(original.get(key) == snapshot.get(key) for key in ('workflowOrderId', 'derivedFrom')),
+                  'ANALYSIS_CONTEXT_CHANGED', 409)
         if snapshot['schemaVersion']==2: validate_handles(cur,original_id,snapshot,store.schema_version)
         cur.execute(f'''select evidence_ref_id::text,source_kind,descriptor_json
             from {d.SCHEMA}.analysis_evidence_refs where session_id=%s''',(original_id,))
         refs=cur.fetchall()
     blank={**snapshot,'cards':[],'relations':[],'context':{k:v for k,v in snapshot['context'].items() if k in ('objectIds','timeFrom','timeTo','timezone')}}
     blank['context']['objectIds']=[];blank.pop('inheritedFrom',None)
-    created=store.write(actor,'admin','create',{'requestId':str(uuid5(namespace,'create')),'snapshot':blank},authorize)
+    created=store.write(actor,'admin','create',{'requestId':str(uuid5(namespace,'create')),'snapshot':blank},authorize,
+        work_order_origin=blank.get('workflowOrderId'), derived_from=blank.get('derivedFrom'))
     sources=AnalysisEvidence(store);mapping={}
     for ref_id,kind,raw in refs:
         reference=sources.register(actor,{'analysisSessionId':created['analysisSessionId'],'expectedAnalysisRevision':1,
@@ -312,6 +325,8 @@ def copy_analysis(store, actor, body, authorize):
 def history_candidates(store, actor, reader, body, authorize):
     d.require(type(body) is dict and set(body) == {'entry'})
     dataset, _ = entry_dataset(reader, body['entry'])
+    if not dataset:
+        return {'items': []}
     primary = reader._rds(dataset['primaryRds'])['item']['entityUid']
     rows = matching_history(store, actor, dataset, primary, authorize)
     items=[]

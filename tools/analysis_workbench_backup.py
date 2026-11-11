@@ -66,6 +66,14 @@ def _paired(workbench, workbench_sha, package):
                   'ANALYSIS_PROJECT_NOT_REGISTERED', 409)
     sessions = {row['session_id']: row for row in package['tables']['analysis_sessions']}
     revisions = {(row['session_id'], row['revision']): row for row in package['tables']['analysis_revisions']}
+    for (session_id, _), row in revisions.items():
+        origin = json.loads(row['snapshot_json']).get('derivedFrom')
+        if origin:
+            parent = sessions.get(origin['analysisSessionId'])
+            fixed = revisions.get((origin['analysisSessionId'], origin['analysisRevision']))
+            draft.require(parent and fixed and parent['project_code'] == sessions[session_id]['project_code']
+                          and fixed['content_sha256'] == origin['contentSha256'],
+                          'ANALYSIS_PAIR_LINK_MISMATCH', 409)
     evidence = {row['evidence_ref_id']: row for row in package['tables'].get('analysis_evidence_refs', [])}
     libraries = {row['project_code']: Path(workbench)/('workbench-library' if row['storage_key'] == 'legacy'
         else 'project-spaces/libraries/'+row['storage_key'])/'library.sqlite3' for row in rows['project_workspaces']}
@@ -102,6 +110,13 @@ def _paired(workbench, workbench_sha, package):
         if not path.is_file(): continue
         with database(path) as db:
             if not db.execute("select 1 from sqlite_master where name='work_order_analysis_links' and type='table'").fetchone(): continue
+            if db.execute("select 1 from sqlite_master where name='work_order_analysis_shares'").fetchone():
+                for session_id, revision, digest, owner in db.execute(
+                        'select analysis_session_id,analysis_revision,analysis_sha256,owner_id from work_order_analysis_shares'):
+                    session = sessions.get(session_id)
+                    saved = revisions.get((session_id, revision))
+                    draft.require(session and saved and session['project_code'] == project and session['owner_id'] == owner
+                                  and saved['content_sha256'] == digest, 'ANALYSIS_PAIR_LINK_MISMATCH', 409)
             if db.execute("select 1 from sqlite_master where name='work_order_assistant_transfers'").fetchone():
                 orphan = db.execute('''select 1 from work_order_assistant_transfers t
                     left join work_order_analysis_links l on l.order_id=t.order_id and l.order_revision=t.order_revision
@@ -112,8 +127,24 @@ def _paired(workbench, workbench_sha, package):
                 draft.require(session and saved and session['project_code'] == project and saved['content_sha256'] == digest,
                               'ANALYSIS_PAIR_LINK_MISMATCH', 409)
                 event = db.execute('select action,actor from work_order_events where order_id=? and revision=?', (order, order_revision)).fetchone()
-                draft.require(event in (('link_analysis', session['owner_id']), ('adopt_assistant', session['owner_id'])),
-                              'ANALYSIS_PAIR_LINK_MISMATCH', 409)
+                if event and event[0] in ('adopt_analysis', 'workflow_link_analysis'):
+                    from apps.api.work_orders import digest as order_digest
+                    fixed = db.execute('select snapshot_json,content_sha256 from work_order_snapshots where order_id=? and order_revision=?',
+                                       (order, order_revision)).fetchone()
+                    value = json.loads(fixed[0]) if fixed else {}
+                    draft.require(fixed and order_digest(value) == fixed[1] and 'workflow' in value
+                                  and {'orderRevision': order_revision, 'analysisSessionId': session_id,
+                                       'analysisRevision': revision, 'analysisSha256': digest} in value['analysisLinks'],
+                                  'ANALYSIS_PAIR_LINK_MISMATCH', 409)
+                    if event[0] == 'adopt_analysis':
+                        adopted = value['workflow']['adoptedAnalysis']
+                        draft.require(adopted and adopted['orderRevision'] == order_revision
+                                      and adopted['analysisSessionId'] == session_id and adopted['analysisRevision'] == revision
+                                      and adopted['analysisSha256'] == digest and adopted['actor'] == event[1],
+                                      'ANALYSIS_PAIR_LINK_MISMATCH', 409)
+                else:
+                    draft.require(event in (('link_analysis', session['owner_id']), ('adopt_assistant', session['owner_id'])),
+                                  'ANALYSIS_PAIR_LINK_MISMATCH', 409)
                 if event[0] == 'adopt_assistant':
                     has_table = db.execute("select 1 from sqlite_master where name='work_order_assistant_transfers'").fetchone()
                     transfer = db.execute('select run_id,snapshot_json from work_order_assistant_transfers where order_id=? and order_revision=?',

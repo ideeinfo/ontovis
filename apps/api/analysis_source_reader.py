@@ -146,6 +146,8 @@ class AnalysisSourceReader:
                 frozen_configuration_bindings(self,self.scene_library,descriptor['modelVersionId'],descriptor['configurationRefs'])
         elif kind == 'work_order':
             value = self.orders.fixed_snapshot(descriptor)
+            if 'workflow' in value:
+                value = {**value, 'snapshotSha256': descriptor['snapshotSha256']}
         elif kind == 'document':
             prefix = self.reader.prefix + '/documents/' + descriptor['documentId']
             document = self.reader._request('GET', prefix)['item']

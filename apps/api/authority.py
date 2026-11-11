@@ -5,6 +5,7 @@ import hashlib
 import urllib.error
 import urllib.parse
 import urllib.request
+from uuid import uuid4
 
 class PreviewError(Exception):
     def __init__(self, status: int, code: str):
@@ -35,8 +36,23 @@ class Authority:
             headers['Content-Type'] = 'application/json'
         request = urllib.request.Request(self.base_url + path, method=method, headers=headers,
                                          data=json.dumps(body).encode() if body is not None else None)
+        return self._json_response(request, timeout=20)
+
+    def document_upload_part(self, path, content):
+        boundary = uuid4().hex
+        payload = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="part"\r\n'
+                   'Content-Type: application/octet-stream\r\n\r\n').encode()
+        payload += content + f'\r\n--{boundary}--\r\n'.encode()
+        request = urllib.request.Request(self.base_url + path, method='PUT', headers={
+            'Authorization': 'Bearer ' + self.token,
+            'Content-Type': 'multipart/form-data; boundary=' + boundary,
+            'Accept': 'application/json',
+        }, data=payload)
+        return self._json_response(request, timeout=30)
+
+    def _json_response(self, request, *, timeout):
         try:
-            with self.opener.open(request, timeout=20) as response:
+            with self.opener.open(request, timeout=timeout) as response:
                 raw = response.read(2 * 1024 * 1024 + 1)
                 if len(raw) > 2 * 1024 * 1024:
                     raise PreviewError(502, 'SOURCE_UNAVAILABLE')
@@ -46,13 +62,13 @@ class Authority:
                 return result
         except urllib.error.HTTPError as error:
             code = 'SOURCE_UNAVAILABLE'
-            if error.code in (401, 403, 404, 409, 413, 422, 503):
+            if error.code in (401, 403, 404, 409, 410, 413, 422, 503):
                 try:
                     detail = json.loads(error.read(16384)).get('detail', {})
                     code = detail.get('code') if isinstance(detail, dict) else None
                 except (ValueError, AttributeError):
                     code = None
-                code = code or {401:'SESSION_EXPIRED',403:'FORBIDDEN',404:'NOT_FOUND_OR_FORBIDDEN',409:'REVISION_CONFLICT',413:'CONTENT_SIZE_LIMIT',422:'INVALID_REQUEST',503:'SOURCE_UNAVAILABLE'}[error.code]
+                code = code or {401:'SESSION_EXPIRED',403:'FORBIDDEN',404:'NOT_FOUND_OR_FORBIDDEN',409:'REVISION_CONFLICT',410:'ANALYSIS_SOURCE_UNAVAILABLE',413:'CONTENT_SIZE_LIMIT',422:'INVALID_REQUEST',503:'SOURCE_UNAVAILABLE'}[error.code]
                 status = error.code
                 error.close()
                 raise PreviewError(status, code) from None
@@ -150,14 +166,14 @@ class Authority:
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             raise PreviewError(502, 'SOURCE_UNAVAILABLE') from None
 
-    def source_bytes(self, path: str, media_types: tuple[str, ...]) -> dict:
+    def source_bytes(self, path: str, media_types: tuple[str, ...], *, max_bytes=20 * 1024 * 1024) -> dict:
         """A server-constructed source path; callers verify project and fixed identity."""
         request = urllib.request.Request(self.base_url + path, headers={
             'Authorization': 'Bearer ' + self.token, 'Accept': ','.join(media_types)})
         try:
             with self.opener.open(request, timeout=30) as response:
-                raw = response.read(20 * 1024 * 1024 + 1); mime = response.headers.get_content_type()
-                if not raw or len(raw) > 20 * 1024 * 1024 or mime not in media_types:
+                raw = response.read(max_bytes + 1); mime = response.headers.get_content_type()
+                if not raw or len(raw) > max_bytes or mime not in media_types:
                     raise PreviewError(502, 'SOURCE_UNAVAILABLE')
                 return {'content': raw, 'mediaType': mime, 'sha256': hashlib.sha256(raw).hexdigest()}
         except urllib.error.HTTPError as error:
