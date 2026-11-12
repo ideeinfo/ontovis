@@ -59,6 +59,12 @@ class ModelProbeTests(unittest.TestCase):
             {'sourceNodeIndex': 0, 'sourceObjectId': 77, 'component': 'cabinet',
              'destinationGroup': 'part', 'firstTriangle': 0, 'triangleCount': 1}]}
 
+    def claimed_document(self):
+        doc = copy.deepcopy(self.document)
+        doc['nodes'][0]['extras']['ontoVis'] = {'sourceModelKey': 'fixture-model',
+                                               'sourceElementId': 'fixture-element', 'placementId': 'fixture-placement'}
+        return doc
+
     def control(self, model):
         return {'modelSha256': model.sha256, 'units': 'm', 'basis': 'synthetic_fixture',
                 'toleranceMetres': .0001, 'points': [
@@ -170,6 +176,188 @@ class ModelProbeTests(unittest.TestCase):
         rows = probe.Glb(self.write_glb(document=doc)).catalog()
         self.assertEqual([r['sourceIdentityState'] for r in rows], ['collision', 'collision'])
         self.assertFalse(any(r['sourceIdentityVerified'] for r in rows))
+
+    def test_incomplete_and_invalid_claims_keep_raw_attributes_and_diagnostics(self):
+        cases = [(None, 'invalid', [], ['ontoVis']),
+                 ([], 'invalid', [], ['ontoVis']),
+                 ({}, 'incomplete', list(probe.IDENTITY_FIELDS), []),
+                 ({'sourceModelKey': 'source'}, 'incomplete', ['sourceElementId', 'placementId'], []),
+                 ({'sourceModelKey': ' ', 'sourceElementId': True}, 'invalid', ['placementId'],
+                  ['sourceModelKey', 'sourceElementId'])]
+        for claim, state, missing, invalid in cases:
+            with self.subTest(claim=claim):
+                doc = copy.deepcopy(self.document)
+                doc['nodes'][0]['extras']['ontoVis'] = claim
+                model = probe.Glb(self.write_glb(document=doc))
+                row = model.catalog()[0]
+                self.assertEqual(row['sourceExtras'], doc['nodes'][0]['extras'])
+                self.assertEqual(row['sourceIdentityState'], state)
+                self.assertEqual(row['sourceIdentityMissingFields'], missing)
+                self.assertEqual(row['sourceIdentityInvalidFields'], invalid)
+                self.assertIsNone(row['sourceIdentityClaim'])
+                self.assertFalse(row['sourceIdentityVerified'])
+                self.assertEqual(model.summary()['sourceIdentityStates'], {state: 1, 'missing': 1})
+
+    def test_missing_null_and_non_object_extras_are_preserved_separately(self):
+        for extras in (None, [], 'source text', {'properties': {'enabled': True, 'count': 1}}):
+            with self.subTest(extras=extras):
+                doc = copy.deepcopy(self.document)
+                doc['nodes'][0]['extras'] = extras
+                row = probe.Glb(self.write_glb(document=doc)).catalog()[0]
+                self.assertTrue(row['sourceExtrasPresent'])
+                self.assertEqual(row['sourceExtras'], extras)
+                self.assertEqual(row['sourceIdentityState'], 'missing')
+        doc['nodes'][0].pop('extras')
+        row = probe.Glb(self.write_glb(document=doc)).catalog()[0]
+        self.assertFalse(row['sourceExtrasPresent'])
+        self.assertIsNone(row['sourceExtras'])
+
+    def test_complete_claim_keeps_case_spaces_and_ignores_self_verification(self):
+        doc = self.claimed_document()
+        claim = doc['nodes'][0]['extras']['ontoVis']
+        claim.update(sourceModelKey=' Source:A ', sourceElementId='UID-Ab', verified=True)
+        row = probe.Glb(self.write_glb(document=doc)).catalog()[0]
+        self.assertEqual(row['sourceIdentityClaim'], {key: claim[key] for key in probe.IDENTITY_FIELDS})
+        self.assertEqual(row['sourceExtras']['ontoVis'], claim)
+        self.assertEqual(row['sourceIdentityState'], 'unverified_claim')
+        self.assertEqual(row['keyStability'], 'version_local')
+        self.assertFalse(row['sourceIdentityVerified'])
+
+    def test_cross_version_candidate_survives_node_reorder_and_name_change(self):
+        doc = self.claimed_document()
+        previous = probe.Glb(self.write_glb('previous.glb', document=doc))
+        doc['nodes'].reverse()
+        doc['nodes'][0]['children'] = [1]
+        doc['nodes'][1]['name'] = 'renamed'
+        doc['scenes'][0]['nodes'] = [0]
+        current = probe.Glb(self.write_glb(document=doc))
+        result = probe.compare_identity_claims(previous, current)
+        self.assertEqual(result['counts']['candidate'], 1)
+        row = result['entries'][0]
+        self.assertEqual(row['previous'][0]['componentKey'], f'{previous.sha256}:node:0')
+        self.assertEqual(row['current'][0]['componentKey'], f'{current.sha256}:node:1')
+        self.assertTrue(row['nameChanged'])
+        self.assertFalse(row['propertiesChanged'])
+        self.assertEqual(result['status'], 'review_required')
+        for key in ('sourceIdentityVerified', 'geometryCorrespondenceVerified', 'bindingMigrationApproved'):
+            self.assertFalse(result[key])
+
+    def test_identity_comparison_does_not_normalize_any_triple_field(self):
+        previous = probe.Glb(self.write_glb('previous.glb', document=self.claimed_document()))
+        for key in probe.IDENTITY_FIELDS:
+            for change in (str.upper, lambda value: value + ' '):
+                with self.subTest(key=key, change=change):
+                    doc = self.claimed_document()
+                    doc['nodes'][0]['extras']['ontoVis'][key] = change(doc['nodes'][0]['extras']['ontoVis'][key])
+                    result = probe.compare_identity_claims(previous, probe.Glb(self.write_glb(document=doc)))
+                    self.assertEqual(result['counts']['candidate'], 0)
+                    self.assertEqual(result['counts']['previous_only'], 1)
+                    self.assertEqual(result['counts']['current_only'], 1)
+
+    def test_same_names_indices_and_legacy_ids_never_fill_missing_identity(self):
+        model = probe.Glb(self.write_glb())
+        result = probe.compare_identity_claims(model, model)
+        self.assertEqual(sum(result['counts'].values()), 0)
+        self.assertEqual(result['unavailableCounts'], {'previous': {'missing': 2}, 'current': {'missing': 2}})
+        self.assertEqual(len(result['unavailable']), 4)
+
+    def test_duplicate_claim_on_either_side_blocks_candidates_including_inactive_nodes(self):
+        doc = self.claimed_document()
+        unique = probe.Glb(self.write_glb('unique.glb', document=doc))
+        doc['nodes'].append({'extras': copy.deepcopy(doc['nodes'][0]['extras'])})
+        duplicate = probe.Glb(self.write_glb(document=doc))
+        self.assertEqual(duplicate.catalog()[2]['sourceIdentityState'], 'collision')
+        self.assertFalse(duplicate.catalog()[2]['activeScene'])
+        for previous, current in ((unique, duplicate), (duplicate, unique)):
+            with self.subTest(previous=previous.sha256):
+                result = probe.compare_identity_claims(previous, current)
+                self.assertEqual(result['counts']['candidate'], 0)
+                self.assertEqual(result['counts']['collision'], 1)
+                self.assertEqual(sum(len(result['entries'][0][side]) for side in ('previous', 'current')), 3)
+
+    def test_unique_inactive_claim_is_reported_without_candidate(self):
+        doc = self.claimed_document()
+        doc['nodes'].append({'extras': {'ontoVis': doc['nodes'][0]['extras'].pop('ontoVis')}})
+        model = probe.Glb(self.write_glb(document=doc))
+        result = probe.compare_identity_claims(model, model)
+        self.assertEqual(result['counts']['inactive'], 1)
+        self.assertEqual(result['counts']['candidate'], 0)
+
+    def test_added_and_removed_claims_are_listed_beside_unchanged_claim(self):
+        doc = self.claimed_document()
+        doc['nodes'].append(copy.deepcopy(doc['nodes'][0]))
+        doc['nodes'][1]['children'].append(2)
+        doc['nodes'][2]['extras']['ontoVis']['sourceElementId'] = 'removed'
+        previous = probe.Glb(self.write_glb('previous.glb', document=doc))
+        doc['nodes'][2]['extras']['ontoVis']['sourceElementId'] = 'added'
+        result = probe.compare_identity_claims(previous, probe.Glb(self.write_glb(document=doc)))
+        self.assertEqual(result['counts'], {'candidate': 1, 'collision': 0, 'previous_only': 1, 'current_only': 1, 'inactive': 0})
+
+    def test_property_comparison_preserves_json_types_and_never_follows_attribute_uri(self):
+        doc = self.claimed_document()
+        doc['nodes'][0]['extras']['properties'] = {'enabled': True, 'values': [None, 2, '2'],
+                                                  'uri': 'file:///private/not-a-model-resource'}
+        previous = probe.Glb(self.write_glb('previous.glb', document=doc))
+        doc['nodes'][0]['extras']['properties']['enabled'] = 1
+        with patch('urllib.request.urlopen', side_effect=AssertionError('no fetch')) as fetch:
+            current = probe.Glb(self.write_glb(document=doc))
+            result = probe.compare_identity_claims(previous, current)
+            fetch.assert_not_called()
+        self.assertTrue(result['entries'][0]['propertiesChanged'])
+        self.assertIs(type(previous.catalog()[0]['sourceExtras']['properties']['enabled']), bool)
+        self.assertIs(type(current.catalog()[0]['sourceExtras']['properties']['enabled']), int)
+
+    def test_probe_exports_fingerprinted_catalog_and_review_candidates(self):
+        previous = self.write_glb('previous.glb', document=self.claimed_document())
+        current = self.write_glb(document=self.claimed_document())
+        before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (previous, current)}
+        output = self.root / 'identity-result'
+        report = probe.run_probe(current, output, previous_path=previous,
+                                 previous_sha256=hashlib.sha256(previous.read_bytes()).hexdigest())
+        self.assertEqual(report['status'], 'passed')
+        self.assertEqual(report['schemaVersion'], 2)
+        self.assertFalse(report['releaseReadiness']['eligible'])
+        for key in ('catalog', 'identityComparison'):
+            artifact = (output / report[key]['file']).read_bytes()
+            self.assertEqual(report[key]['sha256'], hashlib.sha256(artifact).hexdigest())
+        catalog = json.loads((output / 'components.json').read_bytes())
+        self.assertEqual(set(catalog), {'source', 'previous'})
+        self.assertEqual(report['identityComparison']['counts']['candidate'], 1)
+        for path, baseline in before.items():
+            self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), baseline)
+
+    def test_wrong_previous_fingerprint_fails_without_exporting_candidates(self):
+        path = self.write_glb(document=self.claimed_document())
+        output = self.root / 'wrong-previous'
+        report = probe.run_probe(path, output, previous_path=path, previous_sha256='0' * 64)
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(report['error']['code'], 'DIGEST_MISMATCH')
+        self.assertFalse((output / 'components.json').exists())
+        self.assertFalse((output / 'identity-candidates.json').exists())
+
+    def test_cli_previous_source_is_wired_and_unpaired_fingerprint_fails(self):
+        path = self.write_glb(document=self.claimed_document())
+        fingerprint = hashlib.sha256(path.read_bytes()).hexdigest()
+        output = self.root / 'cli-identity'
+        with patch('builtins.print'):
+            self.assertEqual(probe.main(['--source', str(path), '--previous-source', str(path),
+                                         '--previous-source-sha256', fingerprint, '--output', str(output)]), 0)
+            self.assertEqual(probe.main(['--source', str(path), '--previous-source-sha256', fingerprint,
+                                         '--output', str(self.root / 'unpaired')]), 1)
+        self.assertEqual(json.loads((output / 'identity-candidates.json').read_bytes())['counts']['candidate'], 1)
+        failed = json.loads((self.root / 'unpaired/report.json').read_bytes())
+        self.assertEqual(failed['error']['code'], 'INVALID_ARGUMENT')
+
+    def test_failed_geometry_controls_never_export_identity_candidates(self):
+        path = self.write_glb(document=self.claimed_document())
+        control = self.control(probe.Glb(path))
+        control['points'][1]['expected'] = [2, 0, 0]
+        controls = self.root / 'control.json'
+        controls.write_text(json.dumps(control))
+        output = self.root / 'failed-with-identity'
+        report = probe.run_probe(path, output, previous_path=path, control_points=controls)
+        self.assertEqual(report['status'], 'failed')
+        self.assertFalse((output / 'identity-candidates.json').exists())
 
     def test_full_mapping_compares_decoded_triangle_positions(self):
         source = probe.Glb(self.write_glb())

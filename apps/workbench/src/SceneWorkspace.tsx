@@ -1,0 +1,1185 @@
+import type {ProjectSummary,ProjectDirectory,ProjectAccess} from './projectTypes';
+import {ModelComponentTree,ModelComponentProperties,ModelPreviewTools,useModelPreview} from './ModelPreviewInspector';
+import {SceneLoadingProgress} from './SceneLoadingProgress';
+import {SceneEnvironmentPanel} from './SceneEnvironmentPanel';
+import {SceneBasicInfoDialog} from './SceneBasicInfoDialog';
+import {SceneThumbnail, SceneThumbnailField} from './SceneThumbnail';
+import {sceneInformationSnapshot,onlySceneInformationChanged} from './sceneInformation';
+import {sceneWithEnvironment} from './sceneEnvironmentEditing';
+import {waterSurfaceSupported} from './sceneEnvironment';
+import {sceneResourceGroups} from './sceneResourceGroups';
+import './projectModelCenter.css';
+import {forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useMemo, useRef, useState} from 'react';
+import {ArrowLeft, Check, Copy, Eye, EyeOff, Focus, Layers, LayoutGrid, List, LockKeyhole, MapPin, PanelLeft, PanelRight, Pencil, Plus, Redo2, RotateCcw, Save, Search, Trash2, Undo2, UnlockKeyhole, X, Zap} from 'lucide-react';
+import {RowActions,RowContext,type ListAction} from './ListMenus';
+import {ApiError, cancelled, failureMessage, WorkbenchApi} from './api';
+import {SceneApi} from './sceneApi';
+import {EquipmentApi,type EquipmentConfigurations} from './equipmentApi';
+import {legacyEntryInstance} from './legacySceneEntry';
+import {ReplacementImpact} from './ReplacementImpact';
+import {SceneObjectsPanel} from './SceneObjectsPanel';
+import {SceneInstanceLinks} from './SceneInstanceLinks';
+import {SceneBindingReview} from './SceneBindingReview';
+import {SourceEvidence} from './SourceEvidence';
+import {SceneBatchPanel,type SceneSnap} from './SceneBatchPanel';
+import {SceneRoutePanel,type SceneRouteControl} from './SceneRoutePanel';
+import type {SceneCameraControl} from './SceneViewport';
+import type {SceneAlarm} from './sceneAlarm';
+import {SceneBatchError,moveSceneInstances,pruneSceneGroups,selectSceneInstances,selectSceneScope,snapNumber,snapPoint} from './sceneOrganization';
+import {organizationError,organizationText} from './sceneOrganizationMessages';
+import {sceneEngineeringText} from './sceneEngineeringMessages';
+import {engineeringReviews,reviewSelectedObject,reviewedForSave,rootChangesForSave,changeRootBinding,bindComponentKeys,refKey} from './sceneEngineeringState';
+import type {EngineeringExpectation,SceneObjectContext,SceneLocation,SceneRepresentation} from './sceneEngineeringTypes';
+import type {SceneComponentPick,SceneComponentPickRequest} from './sceneComponentPick';
+import type {ComponentFocusRequest} from './sceneComponentFocus';
+import {Badge, Btn, IconBtn, Modal} from './Primitives';
+import {usePreferences} from './Preferences';
+import {sceneText} from './sceneMessages';
+import {cloneSnapshot, commitScene, duplicateAt, hasSceneChanges, isLocalInstance, isLocalScene, moveInstance, placeModel, redoScene, sceneHistory, undoScene, updateInstance, type SceneHistory} from './sceneState';
+import {sceneSnapshotWithView,sceneViewChanged} from './sceneSaveView';
+import {scenePublicGeoCenter} from './publicGeoForm';
+import {fromDisplay, toDisplay} from './sceneTransforms';
+import type {ProjectModelVersion, TerrainVersion, ProjectTurbineDefinition} from './resourceTypes';
+import type {ModelResourceSelection} from './resourceForms';
+import type {EditableSceneSnapshot, GeographicAnchor, LegacySceneEntryTarget, ModelResourceRef, RootBindingChange, SceneCheck, SceneList, SceneSummary, SceneLifecycleRequest, SceneModelInstance, SceneOpen, SceneReplacementCheckRequest, SceneSaveRequest, SceneView, Vector3} from './sceneTypes';
+import {Image as ImageIcon} from 'lucide-react';
+import {ImageryFacts} from './ImageryPanel';
+import {imageryText,imageryFailure} from './imageryMessages';
+import type {ImageryVersion} from './resourceTypes';
+import {ModelThumbnail} from './ModelThumbnail';
+import './scenes.css';
+
+const SceneAlarmPanel=lazy(()=>import('./SceneAlarmPanel').then(module=>({default:module.SceneAlarmPanel})));
+const SceneViewport=lazy(()=>import('./SceneViewport').then(module=>({default:module.SceneViewport})));
+const ResourcePanel=lazy(()=>import('./ResourcePanel').then(module=>({default:module.ResourcePanel})));
+export interface SceneWorkspaceHandle {requestLeave:(after:()=>void)=>void;cockpitEntry:()=>{sceneId:string;sceneRevision:string;instanceId:string|null;camera?:SceneView}|null}
+const modelRef=(model:ProjectModelVersion):ModelResourceRef=>({modelAssetId:model.modelAssetId,modelVersionId:model.modelVersionId,contentRevision:model.contentRevision,sha256:model.sha256});
+type ReplacementOperation=Omit<Extract<SceneReplacementCheckRequest,{kind:'model'}>,'sceneId'|'expectedSceneRevision'|'snapshot'>|Omit<Extract<SceneReplacementCheckRequest,{kind:'terrain'}>,'sceneId'|'expectedSceneRevision'|'snapshot'>;
+const finite=(value:string)=>value.trim()!=='' && Number.isFinite(Number(value));
+
+function ScopeCheckbox({ids,selectedIds,label,disabled,onToggle}:{ids:string[];selectedIds:string[];label:string;disabled:boolean;onToggle:(checked:boolean)=>void}) {
+  const checked=ids.length>0&&ids.every(id=>selectedIds.includes(id)),partial=!checked&&ids.some(id=>selectedIds.includes(id));
+  return <input className="so-select" type="checkbox" aria-label={label} aria-checked={partial?'mixed':checked}
+    ref={node=>{if(node)node.indeterminate=partial;}} checked={checked} disabled={disabled||!ids.length}
+    onClick={event=>event.stopPropagation()} onChange={event=>onToggle(event.target.checked)}/>;
+}
+
+function ScenePlaceholderThumb({name,compact=false}:{name:string;compact?:boolean}){
+  const isSubstation=/变|站|substation|transformer/i.test(name);
+  return <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice" aria-hidden="true" className={`sw-thumb-svg ${compact?'is-compact':''}`}>
+    <defs>
+      <linearGradient id={isSubstation?'sw-thumb-sky-sub':'sw-thumb-sky-wtg'} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={isSubstation?'#162329':'#182b26'}/>
+        <stop offset="60%" stopColor={isSubstation?'#20333a':'#233d34'}/>
+        <stop offset="100%" stopColor={isSubstation?'#2b4249':'#2f5244'}/>
+      </linearGradient>
+      <linearGradient id={isSubstation?'sw-thumb-hill-sub':'sw-thumb-hill-wtg'} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={isSubstation?'#3d5964':'#456a56'}/>
+        <stop offset="100%" stopColor={isSubstation?'#1a272c':'#1d3126'}/>
+      </linearGradient>
+    </defs>
+    <rect width="320" height="180" fill={`url(#${isSubstation?'sw-thumb-sky-sub':'sw-thumb-sky-wtg'})`}/>
+    <circle cx="264" cy="38" r="18" fill="#a7d7c5" opacity="0.16"/>
+    {isSubstation?<>
+      <rect x="0" y="88" width="320" height="92" fill="#1b2a30"/>
+      <g stroke="#3d5b66" strokeWidth="0.8" opacity="0.4">
+        <path d="M0 108 H320 M0 132 H320 M0 156 H320"/>
+        <path d="M48 88 V180 M104 88 V180 M160 88 V180 M216 88 V180 M272 88 V180"/>
+      </g>
+      <g transform="translate(130, 134)" fill="#8bb5a4" stroke="#d5ede3" strokeWidth="1.2">
+        <path d="M-14 -6 L-6 -14 H18 L10 -6 Z"/>
+        <rect x="-14" y="-28" width="24" height="22" rx="2"/>
+        <path d="M10 -28 L18 -34 V-12 L10 -6 Z" fill="#699482"/>
+        <path d="M-8 -28 V-36 M0 -28 V-36 M8 -28 V-36" strokeWidth="1.8"/>
+      </g>
+      <g transform="translate(205, 142)" fill="#8bb5a4" stroke="#d5ede3" strokeWidth="1.2">
+        <path d="M-12 -5 L-5 -12 H15 L8 -5 Z"/>
+        <rect x="-12" y="-24" width="20" height="19" rx="2"/>
+        <path d="M8 -24 L15 -29 V-10 L8 -5 Z" fill="#699482"/>
+      </g>
+    </>:<>
+      <path d="M-10 116 L48 78 L102 96 L160 62 L222 92 L274 68 L330 100 L330 180 L-10 180 Z" fill="url(#sw-thumb-hill-wtg)" opacity="0.85"/>
+      <path d="M-10 138 L68 108 L138 124 L212 94 L278 116 L330 98 L330 180 L-10 180 Z" fill="#2d483a"/>
+      <path d="M10 162 Q120 126 214 150 T318 120" fill="none" stroke="#7aa88f" strokeWidth="4" opacity="0.4"/>
+      <g transform="translate(160, 126)" stroke="#e4f4ed" strokeWidth="1.8" fill="#cfe9de">
+        <path d="M-2 0 L-1 -52 H1 L2 0 Z"/>
+        <rect x="-6" y="-55" width="12" height="4" rx="1" />
+        <g transform="translate(-5, -53) rotate(24)">
+          <path d="M0 0 L-2 -24 L1.5 -6 Z"/>
+          <path d="M0 0 L21 12 L4.5 1.5 Z"/>
+          <path d="M0 0 L-19 14 L-4 3 Z"/>
+          <circle r="2.4" fill="#5ce1b6"/>
+        </g>
+      </g>
+      <g transform="translate(248, 108) scale(0.68)" stroke="#e4f4ed" strokeWidth="1.8" fill="#cfe9de" opacity="0.88">
+        <path d="M-2 0 L-1 -52 H1 L2 0 Z"/>
+        <rect x="-6" y="-55" width="12" height="4" rx="1" />
+        <g transform="translate(-5, -53) rotate(-18)">
+          <path d="M0 0 L-2 -24 L1.5 -6 Z"/>
+          <path d="M0 0 L21 12 L4.5 1.5 Z"/>
+          <path d="M0 0 L-19 14 L-4 3 Z"/>
+          <circle r="2.4" fill="#5ce1b6"/>
+        </g>
+      </g>
+    </>}
+  </svg>;
+}
+
+export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;suspended?:boolean;initialEntry?:LegacySceneEntryTarget|null;initialSceneId?:string;project?:ProjectSummary;onProjectCreated?:(project:ProjectSummary,sceneId:string)=>void;onProjectName?:(name:string)=>void;onConfigure?:()=>void}>(function SceneWorkspace({api,suspended=false,initialEntry,initialSceneId,project,onProjectCreated,onProjectName,onConfigure},ref) {
+  const {locale}=usePreferences(),t=(key:Parameters<typeof sceneText>[1])=>sceneText(locale,key);
+  const et=(key:Parameters<typeof sceneEngineeringText>[1])=>sceneEngineeringText(locale,key);
+  const it=(key:Parameters<typeof imageryText>[1])=>imageryText(locale,key);
+  const ot=(key:Parameters<typeof organizationText>[1])=>organizationText(locale,key);
+  const client=useMemo(()=>new SceneApi(api),[api]);
+  const modelCatalog=useMemo(()=>new Map<string,ProjectModelVersion>(),[api,api.epoch,api.revision]);
+  const [sharedConfigurations,setSharedConfigurations]=useState<EquipmentConfigurations|null>(null);
+  useEffect(()=>{const abort=new AbortController();setSharedConfigurations(null);void new EquipmentApi(api).configurations(abort.signal).then(value=>{if(!abort.signal.aborted)setSharedConfigurations(value);}).catch(error=>{if(!abort.signal.aborted&&!cancelled(error))failed(error);});return()=>abort.abort();},[api,api.epoch,api.revision]);
+  const [list,setList]=useState<SceneList|null>(null),[search,setSearch]=useState(''),[base,setBase]=useState<SceneOpen|null>(null);
+  const [recycled,setRecycled]=useState(false),[deleteTarget,setDeleteTarget]=useState<SceneSummary|null>(null),[lifecycleNotice,setLifecycleNotice]=useState('');
+  const [listMode,setListMode]=useState<'cards'|'table'>('cards'),[selectedSceneId,setSelectedSceneId]=useState<string|null>(null);
+  useEffect(()=>{if(!lifecycleNotice)return;const timer=setTimeout(()=>setLifecycleNotice(''),5000);return()=>clearTimeout(timer);},[lifecycleNotice]);
+  const lifecycleRequest=useRef<{key:string;body:SceneLifecycleRequest}|null>(null);
+  const [history,setHistory]=useState<SceneHistory|null>(null),[selected,setSelected]=useState<string|null>(null);
+  const [selection,setSelection]=useState<string[]>([]),[inspectorTab,setInspectorTab]=useState<'properties'|'batch'|'routesTab'>('properties');
+  const [continuous,setContinuous]=useState(false),[snap,setSnap]=useState<SceneSnap>({grid:0,angle:0}),[routePlaying,setRoutePlaying]=useState(false);
+  const cameraControl=useRef<SceneCameraControl|null>(null),routeControl=useRef<SceneRouteControl|null>(null),placementInFlight=useRef(false);
+  const [opening,setOpening]=useState(false),[metadataAttempt,setMetadataAttempt]=useState(0);
+  const [metadataErrors,setMetadataErrors]=useState<{terrain:unknown;imagery:unknown}>({terrain:null,imagery:null});
+  const [entryPending,setEntryPending]=useState(!!initialEntry);
+  const [editing,setEditing]=useState(false),[readOnly,setReadOnly]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null);
+  const [left,setLeft]=useState<'content'|'resources'|'objects'>('content'),[side,setSide]=useState<'left'|'right'|null>(null);
+  const [modal,setModal]=useState<'info'|'create'|'leave'|'conflict'|'anchor'|'replaceTerrain'|'bindingReview'|'engineeringReview'|null>(null),[newName,setNewName]=useState('');
+  const [newDescription,setNewDescription]=useState(''),[projectOptions,setProjectOptions]=useState<ProjectSummary[]>(project?[project]:[]),[createProject,setCreateProject]=useState(project?.projectRef.projectCode||api.project?.projectCode||'');
+  const [createAccess,setCreateAccess]=useState<ProjectAccess|null>(null);
+  useEffect(()=>{setCreateAccess(null);if(modal!=='create'||!createProject)return;const abort=new AbortController();const ref=projectOptions.find(value=>value.projectRef.projectCode===createProject)?.projectRef;if(!ref)return;void api.request<ProjectAccess>('/api/workbench/projects/access',{projectRef:ref},abort.signal).then(value=>{if(!abort.signal.aborted)setCreateAccess(value);}).catch(value=>{if(!abort.signal.aborted&&!cancelled(value))setError(value);});return()=>abort.abort();},[api,modal,createProject,projectOptions]);
+  const [info,setInfo]=useState({name:'',description:''}),[infoTarget,setInfoTarget]=useState<string|null>(null),[infoThumbFile,setInfoThumbFile]=useState<File|null>(null);
+  const en=locale==='en';
+  useEffect(()=>{if(modal!=='create')return;const abort=new AbortController();void(async()=>{let items:ProjectSummary[]=[];let cursor:string|null=null;do{const value:ProjectDirectory=await api.request<ProjectDirectory>('/api/workbench/projects',{limit:100,...(cursor?{cursor}:{})},abort.signal);items=[...items,...value.items];cursor=value.nextCursor;}while(cursor&&!abort.signal.aborted);if(!abort.signal.aborted)setProjectOptions(items);})().catch(value=>{if(!abort.signal.aborted&&!cancelled(value))setError(value);});return()=>abort.abort();},[modal,api]);
+
+  const [reviewCandidate,setReviewCandidate]=useState<SceneObjectContext|null>(null),[reviewDirty,setReviewDirty]=useState(false);
+  const [internal,setInternal]=useState(false),[rootRead,setRootRead]=useState<{identity:string;value:SceneObjectContext|null;reading:boolean}|null>(null);
+  const [object,setObject]=useState<SceneObjectContext|null>(null),[objectLoading,setObjectLoading]=useState(false);
+  const [objectScope,setObjectScope]=useState<'equipment'|'project'>('project');
+  const [internalModel,setInternalModel]=useState<ProjectModelVersion|null>(null),[location,setLocation]=useState<SceneLocation|null>(null);
+  const [locating,setLocating]=useState(false),[bindingReview,setBindingReview]=useState<SceneCheck|null>(null);
+  const [objectTab,setObjectTab]=useState<'links'|'evidence'>('links');
+  const [componentFocus,setComponentFocus]=useState<ComponentFocusRequest|undefined>();
+  const [pickedComponent,setPickedComponent]=useState<SceneComponentPickRequest|null>(null);
+  const pickIntent=useRef(0);
+  const [personal,setPersonal]=useState<Record<string,boolean>>({}),[terrainVisible,setTerrainVisible]=useState(true),[update,setUpdate]=useState(false);
+  const [terrain,setTerrain]=useState<TerrainVersion|null>(null),[candidate,setCandidate]=useState<TerrainVersion|null>(null);
+  const [preview,setPreview]=useState<ProjectModelVersion|null>(null),[anchorResult,setAnchorResult]=useState<SceneCheck|null>(null);
+  const inspection=useModelPreview(preview);
+  const [saveUnknown,setSaveUnknown]=useState(false);
+  const [viewDirty,setViewDirty]=useState(false);
+  const [terrainStrategy,setTerrainStrategy]=useState<'keep_height'|'resample_ground'>('resample_ground');
+  const [pending,setPending]=useState<{kind:'model',model:ProjectModelVersion}|{kind:'copy',sourceId:string}|null>(null);
+  const [pendingTurbine,setPendingTurbine]=useState<ProjectTurbineDefinition|null>(null);
+  const [turbinePlacementModal,setTurbinePlacementModal]=useState<{turbine:ProjectTurbineDefinition;point:Vector3;selectedType:'appearance'|'detailed'}|null>(null);
+  const [hints,setHints]=useState<Record<string,ModelResourceRef>>({});
+  const [resourceSelection,setResourceSelection]=useState<ModelResourceSelection|null>(null);
+  const [alarmOpen,setAlarmOpen]=useState(false),[sceneAlarm,setSceneAlarm]=useState<SceneAlarm|null>(null);
+  const [viewCommand,setViewCommand]=useState<{token:number,view:SceneView}|undefined>(),[focus,setFocus]=useState<{token:number,instanceId:string|null,instanceIds?:string[]}|undefined>();
+  const [anchor,setAnchor]=useState({x:'0',z:'0',longitude:'',latitude:'',heading:'0',offset:'0',strategy:'resample_each_ground' as GeographicAnchor['heightStrategy']});
+  const [position,setPosition]=useState({name:'',mode:'local',x:'0',z:'0',longitude:'',latitude:'',heading:'0',heightMode:'relative',height:'0',source:''});
+  const mounted=useRef(false),requests=useRef(new Set<AbortController>()),sequence=useRef(0),listSequence=useRef(0);
+  const leave=useRef<(()=>void)|null>(null),liveView=useRef<SceneView|null>(null),beforeAnchorView=useRef<SceneView|null>(null);
+  const saveRequest=useRef<{body:SceneSaveRequest,models:ModelResourceRef[],terrain:TerrainVersion|null}|null>(null);
+  const editRequest=useRef<AbortController|null>(null),saveInFlight=useRef(false);
+  const openRequest=useRef<AbortController|null>(null);
+  const acceptedEngineering=useRef(new Map<string,EngineeringExpectation>()),approvedRoots=useRef<RootBindingChange[]>([]);
+  const objectRead=useRef<AbortController|null>(null),objectIntent=useRef(0),locationRead=useRef<AbortController|null>(null);
+  const retainObject=useRef(false);
+  const savedAnalysis=useRef<{sceneId:string;instanceId:string|null;uid:string;scope:'equipment'|'project';ticket:number}|null>(null);
+  const internalReturn=useRef<{view:SceneView|null;visibility:Record<string,boolean>}|null>(null);
+  const createRequest=useRef<{name:string,id:string}|null>(null);
+  const [imageryVersion,setImageryVersion]=useState<ImageryVersion|null>(null),[imageryVisible,setImageryVisible]=useState(true);
+  const draft=history?.present||null,current=draft?.instances.find(item=>item.sceneModelInstanceId===selected)||null;
+  const turbinePoint=useMemo(()=>{
+    if(!turbinePlacementModal||!draft)return null;
+    try{return fromDisplay(draft.coordinateFrame,turbinePlacementModal.point);}catch{return null;}
+  },[turbinePlacementModal,draft?.coordinateFrame]);
+  const selectedIds=selection.filter(id=>draft?.instances.some(item=>item.sceneModelInstanceId===id));
+  const sceneIdentity=JSON.stringify([base?.sceneId,base?.sceneRevision,draft]);
+  const latestSceneIdentity=useRef(sceneIdentity);latestSceneIdentity.current=sceneIdentity;
+  const currentIdentity=JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,selected,current?.rootBinding,current?.modelVersionId]);
+  const latestRootIdentity=useRef(currentIdentity);latestRootIdentity.current=currentIdentity;
+  const rootObject=rootRead?.identity===currentIdentity&&rootRead.value&&current?.rootBinding&&
+    refKey(rootRead.value.objectRef)===refKey(current.rootBinding.objectRef)?rootRead.value:null;
+  const rootReading=!!current?.rootBinding&&(rootRead?.identity!==currentIdentity||rootRead?.reading===true);
+  const selectionIdentity=JSON.stringify([base?.sceneId,base?.sceneRevision,selected]);
+  const latestIdentity=useRef(selectionIdentity);latestIdentity.current=selectionIdentity;
+  const [environmentInvalid,setEnvironmentInvalid]=useState(false);
+  const effectiveEnvironment=draft?.environment;
+  const terrainCovered=!!effectiveEnvironment?.water.enabled||!!draft?.imagery&&(editing?draft.imagery.visible:imageryVisible);
+  const dirty=hasSceneChanges(base?.snapshot??null,draft,viewDirty);
+  const unsaved=hasSceneChanges(base?.snapshot??null,draft,viewDirty||reviewDirty||!!anchorResult||saveUnknown||environmentInvalid);
+  const canWrite=!!base?.capabilities.canWrite && base.sceneRevision===base.headRevision && !readOnly,environmentEditable=editing && canWrite && !busy && !preview && !anchorResult && !saveUnknown && !routePlaying;
+  const editable=environmentEditable;
+  useEffect(()=>{if(draft&&!preview&&!anchorResult&&!routePlaying&&!busy)setViewDirty(previous=>(editing||previous)&&sceneViewChanged(draft.initialView,liveView.current));},[draft?.initialView,editing,preview,anchorResult,routePlaying,busy]);
+  const snapshot=anchorResult?.proposedSnapshot||draft;
+  const refs=useMemo(()=>{
+    const known=new Map([...(base?.resourceRefs||[]),...Object.values(hints),...(anchorResult?.resourceRefs.models||[])].map(item=>[item.modelVersionId,item]));
+    return [...new Set(snapshot?.instances.map(item=>item.modelVersionId)||[])].flatMap(id=>known.has(id)?[known.get(id)!]:[]);
+  },[snapshot,base,hints,anchorResult]);
+  const [resourceNames,setResourceNames]=useState<Record<string,string>>({});
+  const resourceGroups=useMemo(()=>sceneResourceGroups(snapshot?.instances||[],refs),[snapshot?.instances,refs]);
+  const resourceIdentity=JSON.stringify(refs);
+  useEffect(()=>{
+    const abort=new AbortController();setResourceNames({});
+    for(const resource of refs){
+      if(!resource.modelAssetId)continue;
+      const known=modelCatalog.get(resource.modelVersionId);
+      const read=known&&known.sha256===resource.sha256&&known.contentRevision===resource.contentRevision?Promise.resolve(known):
+        client.model(resource.modelAssetId,resource.modelVersionId,abort.signal);
+      void read.then(value=>{if(!abort.signal.aborted){modelCatalog.set(value.modelVersionId,value);setResourceNames(previous=>({...previous,[value.modelVersionId]:value.displayName}));}})
+        .catch(value=>{if(!abort.signal.aborted&&!cancelled(value))failed(value);});
+    }
+    return()=>abort.abort();
+  },[resourceIdentity,client,modelCatalog]);
+  function controller(){const value=new AbortController();requests.current.add(value);return value;}
+  function done(value:AbortController){requests.current.delete(value);}
+  function syncWrite(value:{sceneId:string,capabilities:{canWrite:boolean}}){
+    setBase(previous=>previous&&previous.sceneId===value.sceneId&&previous.capabilities.canWrite!==value.capabilities.canWrite?
+      {...previous,capabilities:{...previous.capabilities,canWrite:value.capabilities.canWrite}}:previous);
+    setReadOnly(!value.capabilities.canWrite);
+    if(!value.capabilities.canWrite){setEditing(false);setPending(null);}
+  }
+  function cancelPlacement(){
+    if(editRequest.current){sequence.current++;editRequest.current.abort();editRequest.current=null;setBusy(false);}
+    setPending(null);
+    setPendingTurbine(null);
+    setTurbinePlacementModal(null);
+  }
+  function failed(value:unknown){
+    if(cancelled(value)||!mounted.current)return;
+    if(value instanceof ApiError&&[401,403].includes(value.status))routeControl.current?.cancel(false);
+    if(value instanceof ApiError && value.status===403 && ['SCENE_WRITE_FORBIDDEN','MODEL_WRITE_FORBIDDEN'].includes(value.code)){setReadOnly(true);setEditing(false);setList(previous=>previous?{...previous,capabilities:{...previous.capabilities,canWrite:false}}:previous);}
+    if(value instanceof ApiError&&value.code==='SCENE_DELETED'){setReadOnly(true);setEditing(false);setUpdate(false);}
+    setError(value);
+  }
+  function requestLeave(after:()=>void){routeControl.current?.cancel(true);if(busy){if(!entryPending)return;openRequest.current?.abort();sequence.current++;}if(unsaved){leave.current=after;setModal('leave');}else after();}
+  useImperativeHandle(ref,()=>({requestLeave,cockpitEntry:()=>base?{sceneId:base.sceneId,sceneRevision:base.sceneRevision,instanceId:selected,...(liveView.current?{camera:structuredClone(liveView.current)}:{})}:null}),[unsaved,busy,entryPending,base,selected]);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;sequence.current++;listSequence.current++;for(const value of requests.current)value.abort();requests.current.clear();};},[]);
+  useEffect(()=>{
+    const reference=draft?.terrain;setTerrain(null);setMetadataErrors(value=>({...value,terrain:null}));
+    if(!base||!reference)return;
+    const abort=controller();
+    void client.version(reference.terrainVersionId,abort.signal).then(value=>{
+      if(mounted.current&&!abort.signal.aborted)setTerrain(value);
+    }).catch(value=>{if(!abort.signal.aborted&&!cancelled(value)){setMetadataErrors(previous=>({...previous,terrain:value}));failed(value);}}).finally(()=>done(abort));
+    return()=>{abort.abort();done(abort);};
+  },[client,base?.sceneId,draft?.terrain?.terrainVersionId,draft?.terrain?.expectedContentRevision,metadataAttempt]);
+  useEffect(()=>{
+    const reference=draft?.imagery;setImageryVersion(null);setMetadataErrors(value=>({...value,imagery:null}));
+    if(!base||!reference)return;
+    const abort=controller();
+    void client.imageryVersion(reference.imageryVersionId,abort.signal).then(value=>{
+      if(value.contentRevision!==reference.expectedContentRevision||value.expectedReportSha256!==reference.expectedReportSha256)throw new ApiError(409,'RESOURCE_CHANGED');
+      if(mounted.current&&!abort.signal.aborted)setImageryVersion(value);
+    }).catch(value=>{if(!abort.signal.aborted&&!cancelled(value)){setMetadataErrors(previous=>({...previous,imagery:value}));failed(value);}}).finally(()=>done(abort));
+    return()=>{abort.abort();done(abort);};
+  },[client,base?.sceneId,draft?.imagery?.imageryVersionId,draft?.imagery?.expectedContentRevision,draft?.imagery?.expectedReportSha256,metadataAttempt]);
+  useEffect(()=>{setImageryVisible(draft?.imagery?.visible??true);},[base?.sceneId,draft?.imagery?.imageryVersionId,draft?.imagery?.visible]);
+  useEffect(()=>{const handler=(event:BeforeUnloadEvent)=>{if(unsaved){event.preventDefault();event.returnValue='';}};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler);},[unsaved]);
+  useEffect(()=>{const handler=(event:KeyboardEvent)=>{if(event.key==='Escape'){const cancelPreflight=!!editRequest.current&&(modal==='anchor'||modal==='replaceTerrain');cancelPlacement();if(cancelPreflight){setModal(null);setCandidate(null);}if(!modal&&anchorResult&&!saveUnknown&&!saveInFlight.current)cancelAnchor();setSide(null);}};window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);},[anchorResult,saveUnknown,modal]);
+  async function readList(cursor?:string,deleted=recycled){
+    const token=++listSequence.current,abort=controller();setBusy(true);setError(null);
+    try{const value=await client.list({q:search,state:deleted?'deleted':'active',...(cursor?{cursor}:{})},abort.signal);if(mounted.current&&token===listSequence.current){setList(previous=>cursor&&previous?{...value,items:[...previous.items,...value.items]}:value);if(value.projectName)onProjectName?.(value.projectName);}}
+    catch(value){if(token===listSequence.current)failed(value);}finally{done(abort);if(mounted.current&&token===listSequence.current)setBusy(false);}
+  }
+  async function changeLifecycle(action:'delete'|'restore',target:SceneSummary){
+    if(busy)return;
+    const key=JSON.stringify([action,target.sceneId,target.headRevision,target.lifecycleRevision??0]);
+    if(lifecycleRequest.current?.key!==key)lifecycleRequest.current={key,body:{sceneId:target.sceneId,
+      expectedSceneRevision:target.headRevision,expectedLifecycleRevision:target.lifecycleRevision??0,clientRequestId:crypto.randomUUID()}};
+    const abort=controller();setBusy(true);setError(null);setLifecycleNotice('');
+    try{
+      await client.lifecycle(action,lifecycleRequest.current.body,abort.signal);
+      if(!mounted.current||abort.signal.aborted)return;
+      lifecycleRequest.current=null;setDeleteTarget(null);setLifecycleNotice(t(action==='delete'?'deleted':'restored'));
+      if(base?.sceneId===target.sceneId){routeControl.current?.cancel(false);setBase(null);setHistory(null);setTerrain(null);setPreview(null);setModal(null);setEnvironmentInvalid(false);}
+      await readList();
+    }catch(value){if(!abort.signal.aborted)failed(value);}finally{done(abort);if(mounted.current)setBusy(false);}
+  }
+  useEffect(()=>{if(initialEntry)void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry);else if(initialSceneId)void open(initialSceneId);else void readList();},[]);
+  async function adopt(value:SceneOpen,instanceId?:string){
+    savedAnalysis.current=null;
+    routeControl.current?.cancel(false);setContinuous(false);setSnap({grid:0,angle:0});setInspectorTab('properties');
+    const initialId=instanceId||(value.snapshot.instances.find(item=>item.visible)||value.snapshot.instances[0])?.sceneModelInstanceId||null;
+    setSelection(initialId?[initialId]:[]);
+    setBase(value);setHistory(sceneHistory(value.snapshot));setSelected(initialId);
+    setPersonal({});setEditing(false);setReadOnly(value.sceneRevision!==value.headRevision);setPending(null);setPreview(null);setAnchorResult(null);setUpdate(value.headRevision!==value.sceneRevision);setHints({});setSide(null);setResourceSelection(null);
+    setSaveUnknown(false);setViewDirty(false);saveRequest.current=null;
+    acceptedEngineering.current=engineeringReviews(value.validation);approvedRoots.current=[];setReviewDirty(false);setReviewCandidate(null);
+    setObject(null);setLocation(null);setComponentFocus(undefined);setFocus(instanceId?{token:Date.now(),instanceId}:undefined);setPickedComponent(null);setInternal(false);internalReturn.current=null;
+    liveView.current=value.snapshot.initialView;setViewCommand({token:Date.now(),view:value.snapshot.initialView});
+    if(value.projectName)onProjectName?.(value.projectName);
+    setTerrain(null);
+    setImageryVersion(null);setMetadataErrors({terrain:null,imagery:null});setMetadataAttempt(value=>value+1);
+  }
+  async function open(sceneId:string,revision?:string,entry?:LegacySceneEntryTarget){
+    openRequest.current?.abort();objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setFocus(undefined);setComponentFocus(undefined);
+    const token=++sequence.current,abort=controller();setBusy(true);setOpening(true);setError(null);
+    openRequest.current=abort;
+    try{const value=await client.open(sceneId,revision,abort.signal);if(mounted.current&&token===sequence.current&&!abort.signal.aborted){
+      const required=entry||(base&&initialEntry?.sceneId===sceneId?{...initialEntry,sceneRevision:revision||value.sceneRevision}:undefined);
+      await adopt(value,required?legacyEntryInstance(value,required):undefined);if(mounted.current&&token===sequence.current)setEntryPending(false);
+    }}
+    catch(value){if(token===sequence.current&&!abort.signal.aborted)failed(value);}finally{done(abort);if(openRequest.current===abort)openRequest.current=null;if(mounted.current&&token===sequence.current){setBusy(false);setOpening(false);}}
+  }
+  useEffect(()=>{
+    if(!base)return;const abort=controller();let running=false;
+    const check=async()=>{if(document.hidden||running)return;running=true;try{const value=await client.head(base.sceneId,base.sceneRevision,abort.signal);if(!abort.signal.aborted){setUpdate(value.updateAvailable);syncWrite(value);}}catch(value){if(!cancelled(value))failed(value);}finally{running=false;}};
+    const timer=window.setInterval(()=>void check(),30000);document.addEventListener('visibilitychange',check);
+    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',check);abort.abort();done(abort);};
+  },[base?.sceneId,base?.sceneRevision]);
+  useEffect(()=>{
+    if(!current||!draft)return;
+    try{const point=toDisplay(draft.coordinateFrame,current.placement.position,current.placement.height),height=current.placement.height;
+      setPosition({name:current.displayName,mode:isLocalScene(draft)?'local':'geographic',x:String(point[0]),z:String(point[2]),
+        longitude:isLocalInstance(current)?'':String(current.placement.position.longitude),latitude:isLocalInstance(current)?'':String(current.placement.position.latitude),heading:String(Number(current.placement.headingDeg.toFixed(8))%360),
+        heightMode:height.mode==='local_relative'?'relative':height.mode==='terrain_ground'?'ground':'absolute',
+        height:String(height.mode==='local_relative'?height.relativeHeightM:height.mode==='terrain_ground'?height.offsetM:height.valueM),source:height.mode==='absolute'?height.sourceNote:''});
+    }catch(value){failed(value);}
+  },[selected,current,draft?.coordinateFrame]);
+  useEffect(()=>{
+    const abort=controller(),identity=currentIdentity,expected=current?.rootBinding?.objectRef;
+    const active=()=>mounted.current&&!abort.signal.aborted&&latestRootIdentity.current===identity;
+    setRootRead({identity,value:null,reading:!!expected});
+    if(expected)client.objectContext(expected.entityUid,undefined,abort.signal).then(value=>{
+      if(!active())return;if(refKey(value.objectRef)!==refKey(expected))throw new ApiError(409,'ENGINEERING_CHANGED');
+      setRootRead({identity,value,reading:false});
+    }).catch(value=>{if(active()){setRootRead({identity,value:null,reading:false});failed(value);}});
+    return()=>{abort.abort();done(abort);};
+  },[currentIdentity,client,api.epoch,api.revision]);
+  useEffect(()=>{
+    const abort=controller();setInternalModel(null);
+    const resource=refs.find(value=>value.modelVersionId===current?.modelVersionId);
+    if(resource?.modelAssetId){const known=modelCatalog.get(resource.modelVersionId);if(known&&known.sha256===resource.sha256&&known.contentRevision===resource.contentRevision)setInternalModel(known);
+      else client.model(resource.modelAssetId,resource.modelVersionId,abort.signal).then(value=>{if(!abort.signal.aborted){modelCatalog.set(value.modelVersionId,value);setInternalModel(value);}}).catch(value=>{if(!abort.signal.aborted)failed(value);});}
+    return()=>{abort.abort();done(abort);};
+  },[currentIdentity,internal,client,modelCatalog]);
+  useEffect(()=>{setPickedComponent(null);if(retainObject.current){retainObject.current=false;return;}
+    const restore=savedAnalysis.current,restoreCurrent=restore?.ticket===objectIntent.current;savedAnalysis.current=null;
+    objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setLocation(null);setComponentFocus(undefined);setObject(null);setObjectLoading(false);setLocating(false);
+    if(restore&&restoreCurrent&&restore.sceneId===base?.sceneId&&restore.instanceId===selected)void chooseObject(restore.uid,restore.scope);
+  },[base?.sceneId,base?.sceneRevision,selected]);
+  async function chooseObject(uid:string,scope:'equipment'|'project'='project'){
+    routeControl.current?.cancel(false);
+    objectRead.current?.abort();locationRead.current?.abort();const abort=controller(),ticket=++objectIntent.current;
+    objectRead.current=abort;setObjectScope(scope);setObject(null);setLocation(null);setComponentFocus(undefined);setPickedComponent(null);setObjectLoading(true);setLocating(false);setError(null);
+    try{const value=await client.objectContext(uid,undefined,abort.signal);if(!abort.signal.aborted&&ticket===objectIntent.current){setObject(value);setSide('right');}}
+    catch(value){if(ticket===objectIntent.current&&!abort.signal.aborted)failed(value);}finally{done(abort);if(ticket===objectIntent.current&&!abort.signal.aborted)setObjectLoading(false);}
+  }
+  function enterInternal(){if(!current||!rootObject)return;internalReturn.current={view:liveView.current?structuredClone(liveView.current):null,visibility:{...personal}};setInternal(true);setLeft('objects');setObject(rootObject);setObjectScope('equipment');setObjectTab('links');}
+  function returnInternal(){setInternal(false);setLocation(null);setComponentFocus(undefined);setPickedComponent(null);locationRead.current?.abort();objectIntent.current++;setLocating(false);if(internalReturn.current){setPersonal(internalReturn.current.visibility);if(internalReturn.current.view)setViewCommand({token:Date.now(),view:internalReturn.current.view});}internalReturn.current=null;setLeft('content');}
+  function pickComponent(pick:SceneComponentPick){
+    if(internal&&current&&sharedConfiguration&&rootObject){
+      const mapping=sharedConfiguration.snapshot.models.find(model=>model.modelVersionId===current.modelVersionId)?.mappings.find(mapping=>mapping.componentKeys.includes(pick.componentKey));
+      if(mapping){const abort=controller(),identity=currentIdentity,ticket=++objectIntent.current;void new EquipmentApi(api).resolve([rootObject.item.entityUid],abort.signal).then(value=>{
+        if(abort.signal.aborted||latestRootIdentity.current!==identity||ticket!==objectIntent.current)return;const child=value.items[0].children.find(child=>child.sourceTemplateEntityUid===mapping.objectRef.entityUid);
+        return chooseObject(child?.entityUid??mapping.objectRef.entityUid,child?'equipment':'project');
+      }).catch(error=>{if(!cancelled(error))failed(error);}).finally(()=>done(abort));}return;
+    }
+    if(!internal||!editable||!current||!object?.bindingEligible||!object.expectation||pick.sceneModelInstanceId!==current.sceneModelInstanceId||pick.modelVersionId!==current.modelVersionId||!internalModel?.components.some(component=>component.componentKey===pick.componentKey))return;
+    setPickedComponent({...pick,token:++pickIntent.current,objectRef:object.objectRef,expectedEntityRevision:object.expectation.expectedEntityRevision,installationContextId:object.expectation.installationContextId,expectedHierarchyRevision:object.expectation.expectedHierarchyRevision});setSide('right');
+  }
+  async function chooseRoot(value:SceneObjectContext|null){
+    if(!draft||!current||!editable)return;
+    const identity=selectionIdentity,next=changeRootBinding(draft,current.sceneModelInstanceId,value?.objectRef||null);
+    if(value&&!value.bindingEligible)throw new ApiError(409,'ENGINEERING_CHANGED');
+    if(await commit(next)&&latestIdentity.current===identity){if(value){acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,value);setReviewDirty(true);}approvedRoots.current=[];saveRequest.current=null;
+      const target=next.instances.find(item=>item.sceneModelInstanceId===selected);
+      setRootRead({identity:JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,selected,target?.rootBinding,target?.modelVersionId]),value,reading:false});setObject(value);}
+  }
+  async function bindComponents(value:SceneObjectContext,keys:string[]){
+    if(!draft||!current||!editable)return;
+    const identity=selectionIdentity,next=bindComponentKeys(draft,current.sceneModelInstanceId,value.objectRef,keys);
+    if(await commit(next)&&latestIdentity.current===identity){acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,value);setReviewDirty(true);saveRequest.current=null;setLocation(null);setComponentFocus(undefined);}
+  }
+  async function reviewObject(value:SceneObjectContext){
+    if(!editable)return;const identity=selectionIdentity,abort=controller();setBusy(true);setError(null);
+    try{const fresh=await client.objectContext(value.item.entityUid,undefined,abort.signal);if(!abort.signal.aborted&&latestIdentity.current===identity){if(!fresh.bindingEligible)throw new ApiError(409,'ENGINEERING_CHANGED');setReviewCandidate(fresh);setModal('engineeringReview');}}
+    catch(error){if(!abort.signal.aborted)failed(error);}finally{done(abort);if(mounted.current)setBusy(false);}
+  }
+  async function locateObject(choice?:Pick<SceneRepresentation,'sceneModelInstanceId'|'modelVersionId'>){
+    if(!base||!object||unsaved||busy)return;
+    locationRead.current?.abort();const abort=controller(),ticket=++objectIntent.current,epoch=crypto.randomUUID();locationRead.current=abort;setLocating(true);setLocation(null);setComponentFocus(undefined);
+    const fixedScene=sceneIdentity,limit=choice||(current&&(internal&&objectScope==='equipment'||!!sharedConfiguration)?{sceneModelInstanceId:current.sceneModelInstanceId,modelVersionId:current.modelVersionId}:undefined);
+    try{const value=await client.locate({sceneId:base.sceneId,sceneRevision:base.sceneRevision,selectedObjectRef:object.objectRef,contextEpoch:epoch,...(limit?{representationChoice:limit}:{})},abort.signal);
+      if(abort.signal.aborted||ticket!==objectIntent.current||value.contextEpoch!==epoch||latestSceneIdentity.current!==fixedScene)return;
+      if(value.selectedObject.entityRevision!==object.item.entityRevision)throw new ApiError(409,'ENGINEERING_CHANGED');
+      setLocation(value);
+      if(value.status==='located'&&value.sceneModelInstanceId&&value.worldBounds){setSelection([value.sceneModelInstanceId]);if(value.sceneModelInstanceId!==selected){retainObject.current=true;setSelected(value.sceneModelInstanceId);}setPersonal(previous=>({...previous,[value.sceneModelInstanceId!]:true}));setComponentFocus({token:Date.now(),instanceId:value.sceneModelInstanceId,bounds:value.worldBounds,componentKeys:[...value.componentKeys]});}
+    }catch(value){if(ticket===objectIntent.current&&!abort.signal.aborted)failed(value);}finally{done(abort);if(ticket===objectIntent.current&&!abort.signal.aborted)setLocating(false);}
+  }
+  async function commit(next:EditableSceneSnapshot):Promise<boolean>{
+    if(!history||!base||!editable)return false;
+    if(JSON.stringify([draft?.coordinateFrame,draft?.instances])!==JSON.stringify([next.coordinateFrame,next.instances])){
+      locationRead.current?.abort();setLocating(false);setLocation(null);setComponentFocus(undefined);approvedRoots.current=[];
+    }
+    const token=++sequence.current,abort=controller();editRequest.current=abort;setError(null);
+    try{
+      let proposed=next;
+      if(!isLocalScene(next)){setBusy(true);const value=await client.check({kind:'validate',sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,snapshot:next},abort.signal);syncWrite(value);if(!value.capabilities.canWrite)throw new ApiError(403,'SCENE_WRITE_FORBIDDEN');proposed=value.proposedSnapshot;}
+      if(!mounted.current||token!==sequence.current)return false;
+      setHistory(previous=>previous?commitScene(previous,proposed):previous);return true;
+    }catch(value){failed(value);return false;}finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
+  }
+  async function save(override?:SceneCheck,editedSnapshot?:EditableSceneSnapshot):Promise<boolean>{
+    if(!base||!draft||!canWrite||busy||saveInFlight.current||routePlaying||preview||environmentInvalid)return false;
+    const analysis=object?{uid:object.item.entityUid,scope:objectScope,instanceId:selected,ticket:objectIntent.current}:null;
+    saveInFlight.current=true;const token=++sequence.current,abort=controller();setBusy(true);setError(null);let submitted=false;
+    try{
+      // An unconfirmed write must replay its frozen body, even if the camera has since moved.
+      if(!saveUnknown||!saveRequest.current){
+        const informationOnly=!!editedSnapshot&&base.capabilities.sceneInfoOnlyWriteVersion===1&&!reviewDirty&&onlySceneInformationChanged(base.snapshot,editedSnapshot);
+        const proposed=override?.proposedSnapshot||(informationOnly?editedSnapshot!:sceneSnapshotWithView(editedSnapshot||draft,cameraControl.current?.getView()||liveView.current));
+        const checked=override||(!informationOnly&&(!isLocalScene(proposed)||base.capabilities.supportsEngineeringBindings)?await client.check({kind:'validate',sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,snapshot:proposed},abort.signal):null);
+        if(checked){syncWrite(checked);if(!checked.capabilities.canWrite)throw new ApiError(403,'SCENE_WRITE_FORBIDDEN');}
+        const requiredChanges=checked?.rootBindingChanges||[];
+        try{rootChangesForSave(requiredChanges,approvedRoots.current);}catch{setBindingReview(checked);setModal('bindingReview');return false;}
+        const reviewed=reviewedForSave(checked?.reviewedEngineering||[],acceptedEngineering.current);
+        saveRequest.current={body:{sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,expectedLifecycleRevision:base.lifecycleRevision??0,clientRequestId:crypto.randomUUID(),snapshot:cloneSnapshot(checked?.proposedSnapshot||proposed),...(informationOnly?{informationOnly:true as const}:{}),
+          reviewedEngineering:reviewed,rootBindingChanges:rootChangesForSave(requiredChanges,approvedRoots.current),...(checked?.spatialChange?{spatialChange:checked.spatialChange}:{})},models:checked?.resourceRefs.models||refs,terrain:override?.spatialChange&&override.spatialChange.kind!=='model'?candidate:terrain};
+      }
+      const attempt=saveRequest.current;submitted=true;
+      const value=await client.save(attempt.body,abort.signal),canonical=attempt.body.snapshot;
+      if(!mounted.current||token!==sequence.current)return false;
+      const known:SceneOpen={...base,...value,validation:attempt.body.informationOnly?base.validation:value.validation,snapshot:cloneSnapshot(canonical),resourceRefs:attempt.models,
+        terrainRefs:value.terrainRefs||[],sceneRevision:value.sceneRevision,headRevision:value.headRevision};
+      if(analysis&&!override&&analysis.ticket===objectIntent.current&&latestIdentity.current===selectionIdentity&&
+        JSON.stringify([base.snapshot.coordinateFrame,base.snapshot.instances])===JSON.stringify([canonical.coordinateFrame,canonical.instances])){
+        savedAnalysis.current={sceneId:base.sceneId,instanceId:analysis.instanceId,uid:analysis.uid,scope:analysis.scope,ticket:analysis.ticket};
+      }
+      setBase(known);setHistory(sceneHistory(canonical));setTerrain(attempt.terrain);setAnchorResult(null);setCandidate(null);setModal(null);setUpdate(false);setPending(null);setSaveUnknown(false);saveRequest.current=null;
+      setViewDirty(editing&&sceneViewChanged(canonical.initialView,liveView.current));
+      acceptedEngineering.current=engineeringReviews(known.validation);approvedRoots.current=[];setReviewDirty(false);setBindingReview(null);setLocation(null);setComponentFocus(undefined);
+      if(override)setEditing(true);return true;
+    }catch(value){if(submitted&&(!(value instanceof ApiError)||value.status>=500))setSaveUnknown(true);
+      if(submitted&&value instanceof ApiError&&value.status<500){setSaveUnknown(false);saveRequest.current=null;}
+      if(value instanceof ApiError&&value.code==='SPATIAL_PRECHECK_INVALID'){setSaveUnknown(false);saveRequest.current=null;}
+      if(value instanceof ApiError&&value.code==='SCENE_CHANGED'){setUpdate(true);setModal('conflict');}failed(value);return false;}
+    finally{saveInFlight.current=false;done(abort);if(mounted.current&&token===sequence.current)setBusy(false);}
+  }
+  async function create(){
+    const name=newName.trim();if(!name||Array.from(name).length>200||Array.from(newDescription).length>2000){setError(new Error(t('invalidName')));return;}
+    const chosen=projectOptions.find(value=>value.projectRef.projectCode===createProject);if(!chosen){setError(new ApiError(422,'PROJECT_REQUIRED'));return;}
+    const key=JSON.stringify([chosen.projectRef,name,newDescription]);
+    const token=++sequence.current,abort=controller();setBusy(true);setError(null);
+    if(createRequest.current?.name!==key)createRequest.current={name:key,id:crypto.randomUUID()};
+    try{const target=new WorkbenchApi(api.transport);target.session(api.revision);target.selectProject(chosen.projectRef);target.onDenied=api.onDenied;const value=await new SceneApi(target).create({displayName:name,...(newDescription?{description:newDescription}:{}),clientRequestId:createRequest.current.id},abort.signal);if(mounted.current&&token===sequence.current){if(project&&chosen.projectRef.projectCode!==project.projectRef.projectCode){onProjectCreated?.(chosen,value.sceneId);return;}await adopt(value);setEditing(true);setModal(null);setNewName('');createRequest.current=null;}}
+    catch(value){if(project&&chosen.projectRef.projectCode!==project.projectRef.projectCode)setError(value);else failed(value);}finally{done(abort);if(mounted.current&&token===sequence.current)setBusy(false);}
+  }
+  async function place(point:Vector3){
+    if(!draft||!base||!editable||busy||placementInFlight.current)return;
+    if(pendingTurbine){
+      setTurbinePlacementModal({
+        turbine:pendingTurbine,
+        point,
+        selectedType:pendingTurbine.appearanceModel?'appearance':'detailed',
+      });
+      return;
+    }
+    if(!draft||!base||!pending||!editable||placementInFlight.current)return;
+    placementInFlight.current=true;
+    try{point=snapPoint(point,snap.grid);const id=crypto.randomUUID(),next=pending.kind==='model'?placeModel(draft,pending.model,point,terrain,id,base.limits.maxInstances):duplicateAt(draft,pending.sourceId,point,id,base.limits.maxInstances);
+      if(await commit(next)){setSelected(id);setSelection([id]);if(!continuous){setPending(null);}}}
+    catch(value){failed(value);}finally{placementInFlight.current=false;}
+  }
+  async function confirmTurbinePlacement(){
+    if(!turbinePlacementModal||!turbinePoint||!draft||!base||!editable||busy||placementInFlight.current)return;
+    placementInFlight.current=true;
+    const {turbine,point,selectedType}=turbinePlacementModal;
+    const targetRef=selectedType==='appearance'?(turbine.appearanceModel||turbine.detailedModel):(turbine.detailedModel||turbine.appearanceModel);
+    if(!targetRef){placementInFlight.current=false;setError(new Error(locale==='zh'?'所选形态未关联模型文件':'No model bound for selected representation'));return;}
+    const abort=controller(),token=++sequence.current;editRequest.current=abort;setBusy(true);setError(null);
+    try{
+      const model=await client.model(targetRef.modelAssetId,targetRef.modelVersionId,abort.signal);
+      if(!mounted.current||token!==sequence.current)return;
+      if(model.contentRevision!==targetRef.contentRevision||model.sha256!==targetRef.sha256)throw new ApiError(409,'RESOURCE_CHANGED');
+      modelCatalog.set(model.modelVersionId,model);
+      setHints(prior=>({...prior,[model.modelVersionId]:modelRef(model)}));
+      const id=crypto.randomUUID();
+      const snapped=snapPoint(point,snap.grid);
+      const next=placeModel(draft,model,snapped,terrain,id,base.limits.maxInstances);
+      const inst=next.instances.find(item=>item.sceneModelInstanceId===id);
+      if(inst){
+        const count=draft.instances.filter(it=>it.modelVersionId===model.modelVersionId).length+1;
+        inst.displayName=`${turbine.displayName||turbine.modelCode} #${count}`;
+      }
+      if(await commit(next)){
+        setSelected(id);
+        setSelection([id]);
+        setTurbinePlacementModal(null);
+        if(!continuous){
+          setPendingTurbine(null);
+        }
+      }
+    }catch(value){failed(value);}
+    finally{placementInFlight.current=false;done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
+  }
+  async function resourceDrop(reference:{modelAssetId:string,modelVersionId:string},point:Vector3){
+    if(!editable||!draft||!base)return;const abort=controller(),token=++sequence.current;editRequest.current=abort;setBusy(true);
+    try{const value=await client.model(reference.modelAssetId,reference.modelVersionId,abort.signal);if(!mounted.current||token!==sequence.current)return;setHints(prior=>({...prior,[value.modelVersionId]:modelRef(value)}));
+      const id=crypto.randomUUID(),next=placeModel(draft,value,snapPoint(point,snap.grid),terrain,id,base.limits.maxInstances);if(await commit(next)){setSelected(id);setSelection([id]);if(continuous)setPending({kind:'model',model:value});}}
+    catch(value){failed(value);}finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
+  }
+  async function equipmentDrop(uid:string,point:Vector3){
+    if(!editable||busy||placementInFlight.current||!draft||!base)return;
+    const existing=draft.instances.find(item=>item.rootBinding?.objectRef.entityUid===uid);
+    if(existing){selectInstance(existing.sceneModelInstanceId,true);return;}
+    placementInFlight.current=true;
+    const abort=controller(),token=++sequence.current;editRequest.current=abort;setBusy(true);setError(null);
+    try{
+      const equipmentApi=new EquipmentApi(api),[catalogue,object]=await Promise.all([equipmentApi.configurations(abort.signal),client.objectContext(uid,undefined,abort.signal)]);
+      if(!object.bindingEligible||object.root?.entityUid!==uid)throw new ApiError(409,'ROOT_EQUIPMENT_REQUIRED');
+      const assignment=catalogue.assignments.find(row=>row.equipment_uid===uid),configuration=catalogue.items.find(row=>row.configurationId===assignment?.configuration_id);
+      const model=configuration&&catalogue.models.find(model=>configuration.snapshot.models.some(row=>row.modelVersionId===model.modelVersionId));
+      if(!model)throw new ApiError(409,'MODEL_MAPPING_REQUIRED');
+      if(abort.signal.aborted||!mounted.current||token!==sequence.current)return;
+      setHints(previous=>({...previous,[model.modelVersionId]:modelRef(model)}));
+      const id=crypto.randomUUID();let next=placeModel(draft,model,snapPoint(point,snap.grid),terrain,id,base.limits.maxInstances);
+      next=changeRootBinding(next,id,object.objectRef);next.instances.find(item=>item.sceneModelInstanceId===id)!.displayName=object.item.displayName;
+      if(await commit(next)){acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,object);setReviewDirty(true);setSelected(id);setSelection([id]);setLeft('content');}
+    }catch(error){if(!cancelled(error)&&!abort.signal.aborted)failed(error);}finally{placementInFlight.current=false;done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
+  }
+  function changeCurrent(change:(item:SceneModelInstance)=>SceneModelInstance){if(draft&&current&&editable)void commit(updateInstance(draft,change(structuredClone(current))));}
+  function selectInstance(id:string|null,locate=false,additive=false){
+    if(routePlaying)return;
+    const ids=draft?selectSceneInstances(draft,selectedIds,id,additive):[];setSelection(ids);
+    retainObject.current=false;
+    if(internal)returnInternal();
+    objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setObject(null);setObjectLoading(false);setLocation(null);setComponentFocus(undefined);setPickedComponent(null);setLocating(false);
+    cancelPlacement();
+    const nextSelected=id&&ids.includes(id)?id:(ids[ids.length-1]??null);
+    setSelected(nextSelected);setPreview(null);setSide(null);
+    if(nextSelected&&!editing)setPersonal(previous=>({...previous,[nextSelected]:true}));
+    if(locate){
+      if(ids.length===1)setFocus({token:Date.now(),instanceId:ids[0]});
+      else if(ids.length>1)setFocus({token:Date.now(),instanceId:null,instanceIds:[...ids]});
+    }
+  }
+  function selectMany(ids:string[],locate=true){
+    if(routePlaying)return;
+    const nextSelected=ids[0]??null;
+    selectInstance(nextSelected,false);
+    setSelection(ids);
+    if(locate){
+      if(ids.length===1)setFocus({token:Date.now(),instanceId:ids[0]});
+      else if(ids.length>1)setFocus({token:Date.now(),instanceId:null,instanceIds:[...ids]});
+    }
+  }
+  function loadSelected(){
+    if(!selectedIds.length||busy||routePlaying||anchorResult)return;
+    selectMany(selectedIds);
+    setPersonal(previous=>({...previous,...Object.fromEntries(selectedIds.map(id=>[id,true]))}));
+    setFocus({token:Date.now(),instanceId:null,instanceIds:[...selectedIds]});
+  }
+  function toggleInstanceVisibility(item:SceneModelInstance){
+    const id=item.sceneModelInstanceId,visible=personal[id]??item.visible;
+    if(editing)void commit(updateInstance(draft!,{...item,visible:!visible})).then(ok=>{
+      if(ok)setPersonal(previous=>{const next={...previous};delete next[id];return next;});
+    });else setPersonal(previous=>({...previous,[id]:!visible}));
+  }
+  function showTools(value:'properties'|'batch'|'routesTab'){routeControl.current?.cancel(true);if(value==='batch'&&internal)returnInternal();setInspectorTab(value);setSide('right');}
+  async function moveBatch(delta:[number,number],heading:number){
+    if(!draft||!editable)return false;
+    try{const next=moveSceneInstances(draft,selectedIds,delta,heading,snap.grid,snap.angle);
+      if(JSON.stringify(next)===JSON.stringify(draft)){setError(new Error(ot('noChange')));return false;}
+      return await commit(next);
+    }catch(error){failed(error);return false;}
+  }
+  function removeCurrent(){
+    if(!draft||!current||!editable||current.positionLocked)return;
+    const next=cloneSnapshot(draft);
+    if(isLocalScene(next))next.instances=next.instances.filter(item=>item.sceneModelInstanceId!==current.sceneModelInstanceId);
+    else next.instances=next.instances.filter(item=>item.sceneModelInstanceId!==current.sceneModelInstanceId);
+    void commit(pruneSceneGroups(next)).then(ok=>{if(ok){setSelected(null);setSelection([]);}});
+  }
+  async function applyPosition(){
+    if(!current||!draft||!editable)return;
+    if(!position.name.trim()||position.name.trim().length>200){setError(new Error(t('invalidName')));return;}
+    if(current.positionLocked){await commit(updateInstance(draft,{...current,displayName:position.name.trim()}));return;}
+    const inputs=[position.heading,position.height,...(position.mode==='local'?[position.x,position.z]:[position.longitude,position.latitude])];
+    if(!inputs.every(finite)){setError(new Error(t('invalidPosition')));return;}
+    try{const item=structuredClone(current),heading=((snapNumber(Number(position.heading),snap.angle)%360)+360)%360;
+      item.displayName=position.name.trim();item.placement.headingDeg=heading;
+      if(isLocalInstance(item)){item.placement.position={mode:'local',xM:Number(position.x),zM:Number(position.z)};item.placement.height={mode:'local_relative',relativeHeightM:Number(position.height)};}
+      else if(!isLocalScene(draft)){
+        const coordinate=position.mode==='local'?fromDisplay(draft.coordinateFrame,[Number(position.x),0,Number(position.z)]).position:
+          {mode:'geographic' as const,longitude:Number(position.longitude),latitude:Number(position.latitude),transformId:draft.coordinateFrame.transformId,frameRevision:draft.coordinateFrame.frameRevision};
+        if(coordinate.mode!=='geographic')throw new Error(t('invalidPosition'));item.placement.position=coordinate;
+        if(position.heightMode==='absolute'){
+          if(draft.coordinateFrame.verticalDatum==='UNKNOWN_RELATIVE'||!position.source.trim())throw new Error(t('sourceRequired'));
+          item.placement.height={mode:'absolute',valueM:Number(position.height),verticalDatum:draft.coordinateFrame.verticalDatum,sourceNote:position.source.trim()};
+        }else{
+          if(!terrain)throw new ApiError(409,'RESOURCE_CHANGED');
+          item.placement.height={mode:'terrain_ground',terrainVersionId:terrain.terrainVersionId,terrainSha256:terrain.sha256,sampleLongitude:coordinate.longitude,sampleLatitude:coordinate.latitude,
+            sampledHeightM:0,offsetM:Number(position.height),verticalDatum:draft.coordinateFrame.verticalDatum,samplingRule:terrain.report.mesh.placementSamplingRule};
+        }
+      }
+      const next=updateInstance(draft,item);
+      await commit(snap.grid?moveInstance(next,item.sceneModelInstanceId,snapPoint(toDisplay(draft.coordinateFrame,item.placement.position,item.placement.height),snap.grid)):next);
+    }catch(value){failed(value);}
+  }
+  function adoptTerrain(value:TerrainVersion){
+    if(!draft||!editable)return;
+    if(dirty){setError(new Error(t('saveFirst')));return;}
+    setError(null);
+    if(!isLocalScene(draft)){setCandidate(value);setTerrainStrategy('resample_ground');setModal('replaceTerrain');return;}
+    const box=value.report.source.samplingCentreCoverageWgs84;
+    setCandidate(value);setAnchorResult(null);setAnchor({x:'0',z:'0',longitude:String((box[0]+box[2])/2),latitude:String((box[1]+box[3])/2),heading:'0',offset:'0',strategy:'resample_each_ground'});setModal('anchor');
+  }
+  async function previewAnchor(){
+    if(!base||!draft||!isLocalScene(draft)||!candidate||busy)return;
+    if(![anchor.x,anchor.z,anchor.longitude,anchor.latitude,anchor.heading,anchor.offset].every(finite)){setError(new Error(t('invalidPosition')));return;}
+    const token=++sequence.current,abort=controller();editRequest.current=abort;setBusy(true);setError(null);
+    try{const value=await client.check({kind:'anchor',sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,snapshot:draft,candidateTerrainVersionId:candidate.terrainVersionId,
+      anchor:{localAnchor:[Number(anchor.x),Number(anchor.z)],geographicAnchor:[Number(anchor.longitude),Number(anchor.latitude)],trueNorthHeadingDeg:Number(anchor.heading),anchorHeight:{mode:'terrain_ground',terrainVersionId:candidate.terrainVersionId,offsetM:Number(anchor.offset)},heightStrategy:anchor.strategy}},abort.signal);
+      if(mounted.current&&token===sequence.current){syncWrite(value);if(!value.capabilities.canWrite)throw new ApiError(403,'SCENE_WRITE_FORBIDDEN');beforeAnchorView.current=liveView.current;setAnchorResult(value);setLeft('content');setModal(null);setViewCommand({token:Date.now(),view:value.proposedSnapshot.initialView});}}
+    catch(value){failed(value);}finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
+  }
+  async function previewReplacement(operation:ReplacementOperation){
+    if(!base||!draft||!editable)return;
+    if(dirty){setError(new Error(t('saveFirst')));return;}
+    cancelPlacement();const token=++sequence.current,abort=controller();editRequest.current=abort;setBusy(true);setError(null);
+    try{
+      const value=await client.replacementCheck({sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,
+        snapshot:cloneSnapshot(draft),...operation},abort.signal);
+      if(mounted.current&&token===sequence.current){syncWrite(value);if(!value.capabilities.canWrite)throw new ApiError(403,'SCENE_WRITE_FORBIDDEN');
+        beforeAnchorView.current=liveView.current;setAnchorResult(value);setLeft('content');setModal(null);setPreview(null);
+        if(liveView.current)setViewCommand({token:Date.now(),view:structuredClone(liveView.current)});
+      }
+    }catch(value){failed(value);}finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
+  }
+  function cancelAnchor(){if(saveInFlight.current||saveUnknown)return;setAnchorResult(null);if(beforeAnchorView.current)setViewCommand({token:Date.now(),view:beforeAnchorView.current});setCandidate(null);}
+  const organizationFailure=organizationError(locale,error);
+  const memberNames=error instanceof SceneBatchError?error.instanceIds.flatMap(id=>{const item=draft?.instances.find(value=>value.sceneModelInstanceId===id);return item?[item.displayName]:[];}).join('、'):'';
+  const errorText=organizationFailure?organizationFailure+(memberNames?`：${memberNames}`:''):error instanceof Error&&'code' in error&&error.code==='ENGINEERING_CHANGED'?et('reviewRequired'):error instanceof ApiError?imageryFailure(error,locale):error instanceof Error?('code' in error&&typeof error.code==='string'?failureMessage(new ApiError(422,error.code),locale):error.message):error?failureMessage(error,locale):'';
+  const fields=(keys:('x'|'z'|'longitude'|'latitude'|'heading'|'height')[])=>keys.map(key=><label key={key}><span>{t(key==='height'?(position.heightMode==='relative'?'relativeHeight':position.heightMode==='ground'?'offset':'elevation'):key)}</span><input type="number" step="any" value={position[key]} onChange={event=>setPosition(value=>({...value,[key]:event.target.value}))}/></label>);
+  const isAnchor=anchorResult?.spatialChange?.kind==='anchor',viewTerrain=anchorResult?.spatialChange&&anchorResult.spatialChange.kind!=='model'?candidate:terrain;
+  const spatialDialog=modal==='anchor'||modal==='replaceTerrain';
+  const locationReason=location?.reason==='INCOMPLETE_PHYSICAL_CHAIN'?'chainIncomplete':location?.reason==='NO_REPRESENTATION'?'noRepresentation':location?.reason==='BINDING_NEEDS_REVIEW'?'bindingNeedsReview':'resourceNotReady';
+  const currentModel=internalModel?.modelVersionId===current?.modelVersionId?internalModel:null;
+  const sharedAdoption=sharedConfigurations?.assignments.find(row=>row.equipment_uid===current?.rootBinding?.objectRef.entityUid);
+  const sharedConfiguration=sharedConfigurations?.items.find(row=>row.configurationId===sharedAdoption?.configuration_id&&row.snapshot.models.some(model=>model.modelVersionId===current?.modelVersionId));
+  const links=current?<><SceneInstanceLinks api={api} instanceId={current.sceneModelInstanceId} modelVersionId={current.modelVersionId} pickedComponent={pickedComponent} root={rootObject} rootReading={rootReading} rootBinding={current.rootBinding} componentBindings={current.componentBindings} components={internalModel?.components||[]} selectedObject={object} internal={internal} readOnly={!editable} disabled={busy||!!anchorResult||saveUnknown} onChooseRoot={chooseRoot} onEnterInternal={enterInternal} onReturnToScene={returnInternal} onBindComponents={bindComponents} onConfigure={onConfigure} sharedConfiguration={sharedConfiguration?{displayName:sharedConfiguration.snapshot.displayName,configurationRevision:sharedConfiguration.configurationRevision}:undefined}/>
+    {editable&&rootObject&&<Btn onClick={()=>void reviewObject(rootObject)}>{et('reviewObject')} · {rootObject.item.displayName}</Btn>}</>:null;
+  return <section className="sw-workspace" aria-label={t('scenes')}>
+    {lifecycleNotice&&<div className="sw-notice sw-success" role="status"><Check size={15}/><span>{lifecycleNotice}</span><IconBtn label={t('cancel')} onClick={()=>setLifecycleNotice('')}><X size={14}/></IconBtn></div>}
+    {saveUnknown&&<div className="sw-notice" role="status"><span>{t('saveUnknown')}</span><Btn disabled={busy||!canWrite} onClick={()=>void save(anchorResult||undefined)}>{t('retry')}</Btn></div>}
+    {errorText&&!spatialDialog&&<div className="sw-notice" role="alert"><span>{errorText}</span>{entryPending&&initialEntry&&<Btn disabled={busy} onClick={()=>void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry)}>{t('retry')}</Btn>}<IconBtn label={t('cancel')} onClick={()=>setError(null)}><X size={14}/></IconBtn></div>}
+    {opening&&<SceneLoadingProgress locale={locale}/>}
+    {!base&&entryPending?<></>:!base?(()=>{
+      const focusedScene = list?.items.find(row => row.sceneId === selectedSceneId) ?? list?.items[0] ?? null;
+      const getRowActions = (row: SceneSummary): ListAction[] => recycled ? [{
+        id: 'restore',
+        label: t('restore'),
+        icon: <RotateCcw />,
+        disabled: busy || !list?.capabilities.canWrite,
+        onSelect: () => void changeLifecycle('restore', row)
+      }] : [
+        { id: 'open', label: en ? 'Open workbench' : '打开工作台', icon: <Eye />, disabled: busy, onSelect: () => void open(row.sceneId) },
+        { id: 'info', opensDialog: true, label: en ? 'Basic information' : '基本信息', icon: <Pencil />, disabled: busy, onSelect: () => setInfoTarget(row.sceneId) },
+        ...(list?.capabilities.sceneLifecycleWriteVersion === 1 ? [{
+          id: 'delete', opensDialog: true, label: en ? 'Move to recycle bin' : '移至回收站', icon: <Trash2 />, danger: true, disabled: busy || !list.capabilities.canWrite, onSelect: () => { setError(null); setDeleteTarget(row); }
+        }] : [])
+      ];
+      return <>
+        <div className="sw-hub-header">
+          <div className="sw-hub-header-inner">
+            <div className="sw-hub-title-block">
+              <h2>{recycled ? (en ? 'Scene recycle bin' : '场景回收站') : (en ? 'Scene portfolio' : '场景组合')}</h2>
+              <p className="sw-hub-subtitle">
+                {recycled ? (en ? 'Deleted scenes retain model references and revision history.' : '已移至回收站的场景保留原模型引用与修订记录，可在此恢复。') : (en ? 'Organize 3D spatial scenes, terrain anchors, and equipment model instances by project, and enter the scene workbench directly.' : '按项目组织三维空间场景、地形锚点与设备模型实例，直接从这里进入场景工作台。')}
+              </p>
+            </div>
+            <div className="sw-hub-actions">
+              {list?.capabilities.sceneLifecycleWriteVersion === 1 && (
+                <Btn disabled={busy} onClick={() => { setRecycled(!recycled); setList(null); setLifecycleNotice(''); void readList(undefined, !recycled); }}>
+                  <Trash2 size={15} />
+                  {t(recycled ? 'activeScenes' : 'recycle')}
+                </Btn>
+              )}
+              {!recycled && (
+                <Btn primary disabled={busy || !list?.capabilities.canWrite} onClick={() => setModal('create')}>
+                  <Plus size={15} />
+                  {t('create')}
+                </Btn>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="sw-scene-list sw-hub-body">
+          {!list && !opening && !error ? (
+            <SceneLoadingProgress locale={locale} phase="list" />
+          ) : !list ? null : list.items.length === 0 ? (
+            <div className="sw-empty-box">
+              <Layers size={32} />
+              <p>{t(recycled ? 'recycleEmpty' : 'empty')}</p>
+              {!recycled && (
+                <Btn disabled={busy || !list?.capabilities.canWrite} onClick={() => setModal('create')}>
+                  <Plus size={15} />
+                  {t('create')}
+                </Btn>
+              )}
+            </div>
+          ) : (
+            <div className="sw-hub-grid">
+              <section className="sw-hub-list-panel" aria-label={t(recycled ? 'recycle' : 'scenes')}>
+                <div className="sw-hub-list-bar">
+                  <form onSubmit={event => { event.preventDefault(); void readList(); }}>
+                    <Search size={15} />
+                    <input aria-label={t('search')} placeholder={t('search')} value={search} onChange={event => setSearch(event.target.value)} />
+                    <Btn disabled={busy} onClick={() => void readList()}>{t('search')}</Btn>
+                  </form>
+                  <div className="sw-view-switch" role="group" aria-label={en ? 'View mode' : '视图切换'}>
+                    <button
+                      type="button"
+                      className={listMode === 'cards' ? 'active' : ''}
+                      aria-pressed={listMode === 'cards'}
+                      title={en ? 'Card view' : '卡片视图'}
+                      onClick={() => setListMode('cards')}
+                    >
+                      <LayoutGrid size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className={listMode === 'table' ? 'active' : ''}
+                      aria-pressed={listMode === 'table'}
+                      title={en ? 'Table view' : '列表视图'}
+                      onClick={() => setListMode('table')}
+                    >
+                      <List size={15} />
+                    </button>
+                  </div>
+                </div>
+                {listMode === 'cards' ? (
+                  <div className="sw-card-stack">
+                    {list.items.map(row => {
+                      const actions = getRowActions(row);
+                      const isSelected = focusedScene?.sceneId === row.sceneId;
+                      return (
+                        <RowContext key={row.sceneId} name={row.displayName} actions={actions} disabled={busy}>
+                          <article
+                            className={`sw-facility-card ${isSelected ? 'is-selected' : ''}`}
+                            onClick={() => setSelectedSceneId(row.sceneId)}
+                            onDoubleClick={() => { if (!recycled && !busy) void open(row.sceneId); }}
+                            data-testid={`scene-card-${row.sceneId}`}
+                          >
+                            <div className="sw-facility-card-main">
+                              <div className="sw-facility-card-head">
+                                {recycled ? (
+                                  <strong className="sw-facility-card-title">{row.displayName}</strong>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="sw-facility-card-title"
+                                    onClick={event => {
+                                      event.stopPropagation();
+                                      setSelectedSceneId(row.sceneId);
+                                      void open(row.sceneId);
+                                    }}
+                                    disabled={busy}
+                                    data-testid={`scene-open-${row.sceneId}`}
+                                  >
+                                    {row.displayName}
+                                  </button>
+                                )}
+                                <span className={`sw-facility-status ${recycled ? 'is-deleted' : ''}`}>
+                                  {recycled ? (en ? 'Deleted' : '回收站') : (en ? 'Active' : '启用中')}
+                                </span>
+                                <span className="sw-grow" />
+                                <div onClick={event => event.stopPropagation()}>
+                                  <RowActions name={row.displayName} actions={actions} locale={locale} disabled={busy} />
+                                </div>
+                              </div>
+                              <p className="sw-facility-card-desc">
+                                {en ? 'Organize 3D spatial models, geographic terrain anchors, and equipment bindings.' : '组织三维空间模型、地形锚点与设备构件绑定，支持进入工作台进行空间浏览与布置。'}
+                              </p>
+                              <div className="sw-facility-card-metrics">
+                                <div className="sw-facility-metric">
+                                  <span>{t('count')}</span>
+                                  <strong>{row.instanceCount}</strong>
+                                </div>
+                                <div className="sw-facility-metric">
+                                  <span>{t(recycled ? 'deletedAt' : 'updated')}</span>
+                                  <strong>{new Date(recycled && row.deletedAt ? row.deletedAt : row.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}</strong>
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="sw-facility-card-thumb"
+                              disabled={recycled || busy}
+                              aria-label={`${t('open')} ${row.displayName}`}
+                              onClick={event => {
+                                event.stopPropagation();
+                                setSelectedSceneId(row.sceneId);
+                                if (!recycled) void open(row.sceneId);
+                              }}
+                            >
+                              <SceneThumbnail
+                                client={client}
+                                sceneId={row.sceneId}
+                                name={row.displayName}
+                                thumbnail={row.thumbnail}
+                                fallback={<ScenePlaceholderThumb name={row.displayName} />}
+                              />
+                            </button>
+                          </article>
+                        </RowContext>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="sw-table-wrap">
+                    <table className="ov-list-table" aria-label={t(recycled ? 'recycle' : 'scenes')}>
+                      <thead>
+                        <tr>
+                          <th scope="col">{t('name')}</th>
+                          <th scope="col" className="ov-list-number">{t('count')}</th>
+                          <th scope="col" className="ov-list-date">{t(recycled ? 'deletedAt' : 'updated')}</th>
+                          <th scope="col" className="ov-list-actions"><span className="ov-sr-only">{en ? 'Actions' : '操作'}</span></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {list.items.map(row => {
+                          const actions = getRowActions(row);
+                          const isSelected = focusedScene?.sceneId === row.sceneId;
+                          return (
+                            <RowContext key={row.sceneId} name={row.displayName} actions={actions} disabled={busy}>
+                              <tr className={isSelected ? 'is-selected' : ''} onClick={() => setSelectedSceneId(row.sceneId)}>
+                                <td>
+                                  <div className="ov-list-name">
+                                    <span className="sw-table-thumb">
+                                      <SceneThumbnail
+                                        client={client}
+                                        sceneId={row.sceneId}
+                                        name={row.displayName}
+                                        thumbnail={row.thumbnail}
+                                        fallback={<ScenePlaceholderThumb name={row.displayName} compact />}
+                                      />
+                                    </span>
+                                    {recycled ? (
+                                      <span>{row.displayName}</span>
+                                    ) : (
+                                      <button type="button" onClick={() => void open(row.sceneId)} disabled={busy} data-testid={`scene-open-${row.sceneId}`}>
+                                        {row.displayName}
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="ov-list-number">{row.instanceCount}</td>
+                                <td className="ov-list-date">{new Date(recycled && row.deletedAt ? row.deletedAt : row.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}</td>
+                                <td className="ov-list-actions">
+                                  <RowActions name={row.displayName} actions={actions} locale={locale} disabled={busy} />
+                                </td>
+                              </tr>
+                            </RowContext>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {list?.nextCursor && (
+                  <Btn disabled={busy} onClick={() => void readList(list.nextCursor!)}>{t('more')}</Btn>
+                )}
+              </section>
+              {focusedScene && (
+                <aside className="sw-hub-detail-panel" aria-label={en ? 'Selected scene details' : '当前场景详情'}>
+                  <div className="sw-hub-detail-top">
+                    <div>
+                      <span className="sw-hub-detail-eyebrow">{en ? 'Selected scene' : '当前场景'}</span>
+                      <h3 className="sw-hub-detail-title">{focusedScene.displayName}</h3>
+                    </div>
+                    <span className={`sw-facility-status ${recycled ? 'is-deleted' : ''}`}>
+                      {recycled ? (en ? 'Deleted' : '回收站') : (en ? 'Active' : '启用中')}
+                    </span>
+                  </div>
+                  <p className="sw-hub-detail-desc">
+                    {en ? '3D spatial scene containing equipment models, placement coordinates, and engineering links.' : '包含设备模型放置坐标、地理锚点与工程对象绑定的三维空间场景。'}
+                  </p>
+                  <div className="sw-hub-pills">
+                    <span className="sw-hub-pill">{focusedScene.instanceCount} {t('count')}</span>
+                    <span className="sw-hub-pill">{en ? '3D Spatial Scene' : '三维空间场景'}</span>
+                  </div>
+                  <div className="sw-hub-primary-actions">
+                    {recycled ? (
+                      <Btn
+                        primary
+                        disabled={busy || !list.capabilities.canWrite}
+                        onClick={() => void changeLifecycle('restore', focusedScene)}
+                      >
+                        <RotateCcw size={14} />
+                        {t('restore')}
+                      </Btn>
+                    ) : (
+                      <>
+                        <Btn primary disabled={busy} onClick={() => void open(focusedScene.sceneId)}>
+                          {en ? 'Open workbench' : '打开工作台'}
+                        </Btn>
+                        <Btn disabled={busy} onClick={() => setInfoTarget(focusedScene.sceneId)}>
+                          {en ? 'Basic information' : '基本信息'}
+                        </Btn>
+                      </>
+                    )}
+                  </div>
+                  <div className="sw-hub-stat-grid">
+                    <div className="sw-hub-stat-card">
+                      <span>{t('count')}</span>
+                      <strong>{focusedScene.instanceCount}</strong>
+                    </div>
+                    <div className="sw-hub-stat-card">
+                      <span>{t(recycled ? 'deletedAt' : 'updated')}</span>
+                      <strong title={new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}>
+                        {new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-GB', { hour: '2-digit', minute: '2-digit' })}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="sw-hub-section">
+                    <div className="sw-hub-section-head">
+                      <strong>{en ? 'Scene thumbnail preview' : '场景缩略图预览'}</strong>
+                    </div>
+                    <div className="sw-hub-preview-card">
+                      <SceneThumbnail
+                        client={client}
+                        sceneId={focusedScene.sceneId}
+                        name={focusedScene.displayName}
+                        thumbnail={focusedScene.thumbnail}
+                        fallback={<ScenePlaceholderThumb name={focusedScene.displayName} />}
+                      />
+                      <div className="sw-hub-preview-meta">
+                        <span>{focusedScene.displayName}</span>
+                        <span>{new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-GB')}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="sw-hub-section">
+                    <div className="sw-hub-section-head">
+                      <strong>{en ? 'Scene metadata' : '场景元数据'}</strong>
+                    </div>
+                    <div className="sw-hub-section-card">
+                      <dl className="sw-instance-facts" style={{ padding: 0 }}>
+                        <dt>{en ? 'Project' : '所属项目'}</dt>
+                        <dd>{project?.displayName || project?.projectRef.projectCode || api.project?.projectCode || '—'}</dd>
+                        <dt>{t(recycled ? 'deletedAt' : 'updated')}</dt>
+                        <dd>{new Date(recycled && focusedScene.deletedAt ? focusedScene.deletedAt : focusedScene.updatedAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB')}</dd>
+                      </dl>
+                    </div>
+                  </div>
+                </aside>
+              )}
+            </div>
+          )}
+        </div>
+      </>;
+    })():
+      <><div className="sw-editor-toolbar"><IconBtn label={t('back')} disabled={busy} onClick={()=>requestLeave(()=>{setBase(null);setHistory(null);setTerrain(null);setPreview(null);setModal(null);void readList();})}><ArrowLeft size={16}/></IconBtn><strong>{draft?.displayName}</strong><Btn disabled={busy||!!anchorResult||saveUnknown||routePlaying} onClick={()=>{if(draft){setInfo({name:draft.displayName,description:draft.description||''});setInfoThumbFile(null);setModal('info');}}}>{en?'Basic information':'基本信息'}</Btn><Badge>{unsaved?t('unsaved'):t('saved')}</Badge>{!canWrite&&<Badge>{t('readOnly')}</Badge>}<span className="sw-grow"/>{update&&<Btn disabled={busy} onClick={()=>setModal('conflict')}>{t('updateAvailable')}</Btn>}
+        <Btn disabled={busy||unsaved||editing||routePlaying||!!preview||!!anchorResult} onClick={()=>setAlarmOpen(v=>!v)}>{en?'Alarm exercise':'告警演练'}</Btn><div className="sw-mode" role="group" aria-label={t('scenes')}><button type="button" aria-pressed={!editing} disabled={busy||!!anchorResult||routePlaying} onClick={()=>{setEditing(false);setPending(null);setContinuous(false);}}>{t('read')}</button><button type="button" aria-pressed={editing} disabled={!canWrite||busy||!!anchorResult||routePlaying} onClick={()=>{setEditing(true);setPreview(null);}}>{t('edit')}</button></div><Btn primary title={t('saveViewHint')} disabled={!canWrite||(!dirty&&!reviewDirty&&!saveUnknown)||busy||!!anchorResult||routePlaying||environmentInvalid||!!preview} onClick={()=>void save()}><Save size={14}/>{busy?t('saving'):t('save')}</Btn>{base.capabilities.sceneLifecycleWriteVersion===1&&<IconBtn label={t('deleteScene')} disabled={!canWrite||busy||unsaved||routePlaying} title={unsaved?t('beforeDelete'):undefined} onClick={()=>{setError(null);setDeleteTarget({sceneId:base.sceneId,headRevision:base.sceneRevision,lifecycleRevision:base.lifecycleRevision,displayName:draft!.displayName,updatedAt:base.savedAt,instanceCount:draft!.instances.length});}}><Trash2 size={15}/></IconBtn>}</div>
+      {snapshot&&<><div className="sw-mobile-tools"><IconBtn label={t('content')} onClick={()=>setSide(side==='left'?null:'left')}><PanelLeft size={16}/></IconBtn><span className="sw-grow"/><IconBtn label={t('position')} onClick={()=>setSide(side==='right'?null:'right')}><PanelRight size={16}/></IconBtn></div>
+      <div className="sw-editor" data-side={side||undefined}><aside className="sw-left"><div className="sw-tabs" role="tablist">{(['content','resources','objects'] as const).map(value=><button type="button" role="tab" disabled={busy||!!anchorResult} aria-selected={left===value} key={value} onClick={()=>{setLeft(value);if(value!=='resources')setPreview(null);}}>{t(value==='objects'?'projectObjects':value==='resources'?'modelResources':'sceneContents')}</button>)}</div>
+        {left==='objects'?<SceneObjectsPanel key={internal?'equipment':'project'} api={api} root={internal?rootObject:null} rootReading={internal&&rootReading} selectedUid={object?.item.entityUid||''} ancestorUids={object?.ancestors.path.map(row=>row.object.entityUid)||[]} onSelect={(uid,scope)=>void chooseObject(uid,scope)}/>:left==='resources'?<>{preview&&<ModelComponentTree version={preview} inspection={inspection} onClose={()=>setPreview(null)} onSelect={()=>{if(matchMedia('(max-width:999px)').matches)setSide('right');}}/>}<div className="mp-catalog" hidden={!!preview}><Suspense fallback={<p role="status">{t('loading')}</p>}><ResourcePanel key={base.sceneId} projectCode={base.projectCode} api={api} publicGeoCenter={scenePublicGeoCenter(draft!.coordinateFrame)} canPlace={editable} canAcquire={canWrite&&!busy} geographic={!isLocalScene(draft!)} modelSelection={resourceSelection} onModelSelected={setResourceSelection} canReplace={editable&&!dirty&&!!current&&!current.positionLocked} replaceTargetVersion={current?.modelVersionId}
+          onEnterEdit={()=>{if(!editing&&canWrite)setEditing(true);}}
+          onPlaceTurbine={turbine=>{
+            if(!editing&&canWrite)setEditing(true);
+            setPendingTurbine(turbine);
+            setPending(null);
+            setPreview(null);
+          }}
+          onReplace={value=>{if(current)void previewReplacement({kind:'model',sceneModelInstanceId:current.sceneModelInstanceId,candidateModelVersionId:value.modelVersionId});}} onPlace={value=>{if(!editing&&canWrite)setEditing(true);modelCatalog.set(value.modelVersionId,value);setHints(prior=>({...prior,[value.modelVersionId]:modelRef(value)}));setPending({kind:'model',model:value});setPendingTurbine(null);setPreview(null);}}
+          onImageryReady={value=>{if(editable&&draft&&!isLocalScene(draft)){void commit({...draft,imagery:{imageryVersionId:value.imageryVersionId,expectedContentRevision:value.contentRevision,expectedReportSha256:value.expectedReportSha256,visible:true}}).then(ok=>{if(ok)setLeft('content');});}}}
+          onPreview={value=>{if(value)modelCatalog.set(value.modelVersionId,value);routeControl.current?.cancel(false);cancelPlacement();setPreview(value);if(value)setSide(null);}} onTerrainReady={adoptTerrain} activeTerrainVersion={terrain}/></Suspense></div></>:<div className="sw-content-list"><div className="sw-model-selection"><label><ScopeCheckbox ids={draft?.instances.map(item=>item.sceneModelInstanceId)||[]} selectedIds={selectedIds} label={t('selectAllModels')} disabled={busy||routePlaying||!!anchorResult} onToggle={checked=>selectMany(selectSceneScope(selectedIds,draft?.instances.map(item=>item.sceneModelInstanceId)||[],checked))}/><span>{t('selectAllModels')}</span></label><Btn disabled={!selectedIds.length||busy||routePlaying||!!anchorResult} onClick={loadSelected}><Eye size={14}/>{t('loadSelected')}</Btn></div><div className="sw-content-row"><Layers size={15}/><span>{terrain?.displayName||t('noTerrain')}</span>{terrain&&<IconBtn label={terrainVisible?t('hide'):t('show')} onClick={()=>setTerrainVisible(value=>!value)}>{terrainVisible?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn>}</div>
+          {draft?.imagery&&<section className="sw-imagery-layer"><div className="sw-content-row"><ImageIcon size={15}/><span>{imageryVersion?.displayName||it('loading')}</span><IconBtn label={(editing?draft.imagery.visible:imageryVisible)?it('hide'):it('show')} disabled={busy} onClick={()=>{if(editing&&draft.imagery)void commit({...draft,imagery:{...draft.imagery,visible:!draft.imagery.visible}});else setImageryVisible(v=>!v);}}>{(editing?draft.imagery.visible:imageryVisible)?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn>{editing&&<IconBtn label={it('remove')} disabled={!editable} onClick={()=>void commit({...draft,imagery:null})}><Trash2 size={14}/></IconBtn>}</div><small className="ov-resource-caption">{it('precision')}</small>{imageryVersion&&<ImageryFacts value={imageryVersion}/>}</section>}
+          {draft?.instances.length===0&&<p className="sw-empty">{t('noContents')}</p>}{resourceGroups.map(group=>{const ids=group.versions.flatMap(version=>version.instances.map(item=>item.sceneModelInstanceId)),name=resourceNames[group.versions[0].modelVersionId]||group.modelAssetId||t('modelResource');return <details className="sw-resource-group" key={group.key} open><summary><ScopeCheckbox ids={ids} selectedIds={selectedIds} label={`${t('selectModelGroup')} · ${name}`} disabled={busy||routePlaying||!!anchorResult} onToggle={checked=>selectMany(selectSceneScope(selectedIds,ids,checked))}/><span>{name}<small>{group.instanceCount} {t('instances')}</small></span></summary>{group.versions.map(groupVersion=><section className="sw-version-group" key={groupVersion.modelVersionId}><p>{t('version')} · <span title={groupVersion.modelVersionId}>{groupVersion.modelVersionId.slice(0,8)}</span> · {groupVersion.instances.length} {t('instances')}</p>{groupVersion.instances.map(item=>{
+              const visible=personal[item.sceneModelInstanceId]??item.visible;
+              const toggleVisibility=()=>toggleInstanceVisibility(item);
+              const actions:ListAction[]=[{id:'focus',label:t('locate'),icon:<Focus/>,disabled:routePlaying,onSelect:()=>selectInstance(item.sceneModelInstanceId,true,false)},
+                {id:'visibility',label:visible?t('hide'):t('show'),icon:visible?<Eye/>:<EyeOff/>,disabled:busy||!!anchorResult,onSelect:toggleVisibility}];
+              return <RowContext key={item.sceneModelInstanceId} name={item.displayName} actions={actions}><div className={`sw-content-row ${selectedIds.includes(item.sceneModelInstanceId)?'selected':''}`}><input className="so-select" type="checkbox" aria-label={`${ot('selectInstance')} ${item.displayName}`} checked={selectedIds.includes(item.sceneModelInstanceId)} disabled={routePlaying||busy||!!anchorResult} onChange={()=>selectInstance(item.sceneModelInstanceId,true,true)}/><button type="button" className="sw-content-name" disabled={routePlaying} onClick={event=>selectInstance(item.sceneModelInstanceId,true,event.shiftKey)}>{item.displayName}</button>{item.positionLocked&&<LockKeyhole size={12} aria-label={t('locked')}/>}<IconBtn label={visible?t('hide'):t('show')} disabled={busy||!!anchorResult} onClick={toggleVisibility}>{visible?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn></div></RowContext>;
+            })}</section>)}</details>;})}
+          {Object.keys(personal).length>0&&<Btn onClick={()=>setPersonal({})}>{t('resetVisibility')}</Btn>}</div>}
+      </aside><div className="sw-viewport"><div className="so-bar"><span>{ot('selected')} {selectedIds.length}</span><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('batch')}>{ot('batch')}</button><button type="button" className="so-text" disabled={!!anchorResult} onClick={()=>showTools('routesTab')}>{ot('routesTab')}</button></div>{preview&&<div className="sw-preview-tools"><ModelPreviewTools inspection={inspection}/></div>}<Suspense fallback={<SceneLoadingProgress locale={locale} phase="viewer"/>}><SceneViewport active={!suspended} alarm={sceneAlarm} onAlarmFocus={()=>sceneAlarm&&selectInstance(sceneAlarm.instanceId,true)} api={api} snapshot={snapshot} preparationKey={JSON.stringify([base.sceneId,base.sceneRevision,metadataAttempt])} preparationError={metadataErrors.terrain||metadataErrors.imagery} onRetryPreparation={()=>{setError(null);setMetadataAttempt(value=>value+1);}} modelRefs={refs} terrainVersion={viewTerrain} selectedId={selected} selectedIds={selectedIds} gridSnap={snap.grid} cameraControl={cameraControl} onCameraInteraction={()=>routeControl.current?.manual()} editing={editable&&!internal} disabled={busy} personalVisibility={componentFocus?{...personal,[componentFocus.instanceId]:true}:personal} terrainVisible={terrainVisible} imageryVersion={imageryVersion} imageryVisible={editing?!!snapshot?.imagery?.visible:imageryVisible} pendingPlacement={!!pending||!!pendingTurbine} placementModel={pending?.kind==='model'?pending.model:null} previewModel={preview} previewSelection={inspection.selection} onPreviewStructure={inspection.ready} onPreviewPick={(identity,id)=>{inspection.pick(identity,id);if(id)setSide('right');}} viewCommand={viewCommand} focusRequest={focus} componentFocus={componentFocus} componentPickingInstanceId={internal&&editable?current?.sceneModelInstanceId:null} onComponentPick={pickComponent}
+        onSelect={(id,additive)=>{if(!internal)selectInstance(id,false,additive);}} onPoint={point=>void place(point)} onMove={async(id,point)=>{try{return !!draft&&await commit(moveInstance(draft,id,snapPoint(point,snap.grid)));}catch(error){failed(error);return false;}}} onViewChange={value=>{if(preview)return;liveView.current=value;if(draft&&!anchorResult&&!routePlaying&&!busy)setViewDirty(previous=>(editing||previous)&&sceneViewChanged(draft.initialView,value));}} onResourceDrop={(reference,point)=>void resourceDrop(reference,point)} onEquipmentDrop={(uid,point)=>void equipmentDrop(uid,point)} onError={failed}/></Suspense>
+        {alarmOpen&&!suspended&&!editing&&!unsaved&&!preview&&!routePlaying&&!anchorResult&&<Suspense fallback={<span role="status">{en?'Loading alarm exercise…':'正在读取告警演练…'}</span>}><SceneAlarmPanel key={base.sceneId+':'+base.sceneRevision} api={api} snapshot={snapshot} en={en} onAlarm={setSceneAlarm} onFocus={id=>selectInstance(id,true)} onClose={()=>setAlarmOpen(false)}/></Suspense>}
+        {preview&&<div className="sw-floating"><span>{t('preview')} · {preview.displayName}</span><Btn onClick={()=>setPreview(null)}>{t('closePreview')}</Btn></div>}
+        {pending&&<div className="sw-floating"><span>{t(pending.kind==='copy'?'copyHint':'placementHint')}</span><IconBtn label={t('cancel')} onClick={cancelPlacement}><X size={15}/></IconBtn></div>}
+        {pendingTurbine&&<div className="sw-floating"><span>{locale==='zh'?`正在布置机型：${pendingTurbine.displayName||pendingTurbine.modelCode} —— 请在三维地表点击确定机位`:`Placing turbine: ${pendingTurbine.displayName||pendingTurbine.modelCode} — Click ground to place`}</span><IconBtn label={t('cancel')} onClick={cancelPlacement}><X size={15}/></IconBtn></div>}
+        {anchorResult&&<div className="sw-floating sw-anchor-result"><strong>{t(isAnchor?'anchorPending':'replacementPreview')}</strong><span>{t(isAnchor?'anchorImpact':'replacementHint')}</span><Btn disabled={busy||saveUnknown} onClick={cancelAnchor}>{t('cancel')}</Btn><Btn primary disabled={busy||!canWrite||saveUnknown} onClick={()=>void save(anchorResult)}>{t(isAnchor?'anchorSave':'confirmReplacement')}</Btn></div>}
+      </div><aside className="sw-inspector">{preview?<ModelComponentProperties version={preview} inspection={inspection}/>:<><div className="sw-inspector-title"><strong>{object?.item.displayName||current?.displayName||t('position')}</strong><button type="button" className="ov-icon-btn so-close" aria-label={ot('closePanel')} disabled={routePlaying} onClick={()=>setSide(null)}><X size={14}/></button>{current&&<IconBtn label={t('locate')} disabled={routePlaying} onClick={()=>selectInstance(current.sceneModelInstanceId,true)}><Focus size={15}/></IconBtn>}</div><div className="so-tabs" role="tablist" aria-label={ot('properties')}>{(['properties','batch','routesTab'] as const).map(value=><button type="button" role="tab" key={value} disabled={!!anchorResult} aria-selected={inspectorTab===value} onClick={()=>showTools(value)}>{ot(value)}</button>)}</div>
+        {anchorResult?<ReplacementImpact result={anchorResult} snapshot={draft!}/>:inspectorTab==='batch'?<SceneBatchPanel snapshot={draft!} editable={editable} selectedIds={selectedIds} onSelect={selectMany} onCommit={commit} onMove={moveBatch} onError={failed} continuous={continuous} onContinuous={value=>{setContinuous(value);if(!value)cancelPlacement();}} snap={snap} onSnap={setSnap}/>:inspectorTab==='routesTab'?<SceneRoutePanel snapshot={draft!} identity={JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,draft])} editable={editable} canPreview={!busy&&!preview&&!pending&&!anchorResult&&!saveUnknown} captureKind={internal&&location?.status==='located'&&location.componentKeys.length>0?'component':'overview'} captureInstanceId={internal&&location?.status==='located'?location.sceneModelInstanceId:null} analysisObjectName={object?.item.displayName||null} camera={cameraControl} control={routeControl} onCommit={commit} onError={failed} onPlaying={value=>{setRoutePlaying(value);if(value)setSide('right');}} beforePreview={async signal=>{if(!base)throw new ApiError(404,'NOT_FOUND_OR_FORBIDDEN');const value=await client.open(base.sceneId,base.sceneRevision,signal);if(signal.aborted)return;syncWrite(value);setUpdate(value.headRevision!==base.sceneRevision);}} onView={value=>{setComponentFocus(undefined);setViewCommand({token:Date.now(),view:value});}}/>:objectLoading?<p role="status">{et('loading')}</p>:object?<>
+          <section className="sw-object-head" aria-label={et('ownObject')}><strong>{object.item.displayName}</strong><div className="se-link-status"><Badge>{et(object.item.reviewStatus==='confirmed'?'objectConfirmed':'objectUnreviewed')}</Badge>{object.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div>
+            <Btn disabled={unsaved||busy||locating} onClick={()=>void locateObject()}><Focus size={14}/>{et(locating?'locating':'locate')}</Btn>{unsaved&&<p className="se-note">{et('saveToLocate')}</p>}
+            {editable&&acceptedEngineering.current.has(refKey(object.objectRef))&&<Btn onClick={()=>void reviewObject(object)}>{et('reviewObject')}</Btn>}
+            {location?.status==='located'&&<><p className="se-note">{et('host')}：{location.hostObject?.displayName}</p><div className="se-link-status"><Badge>{et(location.geometryQuality==='proxy_schematic'?'proxyGeometry':'sourceGeometry')}</Badge>{location.relationshipStatus==='assumed'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div></>}
+            {location?.status==='choose_representation'&&<div className="se-representations"><p className="se-note">{et('chooseRepresentation')}</p>{location.choices.map(choice=><Btn key={choice.sceneModelInstanceId} disabled={locating||unsaved} onClick={()=>void locateObject({sceneModelInstanceId:choice.sceneModelInstanceId,modelVersionId:choice.modelVersionId})}>{choice.instanceName} · {choice.hostObject.displayName}</Btn>)}</div>}
+            {location?.status==='unavailable'&&<p className="se-state" role="status">{et(locationReason)}</p>}
+          </section><div className="sw-tabs" role="tablist" aria-label={et('selectedObject')}><button type="button" role="tab" aria-selected={objectTab==='links'} onClick={()=>setObjectTab('links')}>{et('componentLinks')}</button><button type="button" role="tab" aria-selected={objectTab==='evidence'} onClick={()=>setObjectTab('evidence')}>{et('evidence')}</button></div>
+          {objectTab==='evidence'?<SourceEvidence key={object.item.entityUid} api={api} object={object.item} context={object.context} host={location?.hostObject?.displayName||'—'} endpointPrefix="/api/workbench/objects/evidence"/>:links}
+        </>:current?<><section className="sw-instance-overview" aria-label={t('modelProperties')}>
+          <fieldset disabled={!editable}><label>{t('modelName')}<input value={position.name} onChange={event=>setPosition(value=>({...value,name:event.target.value}))}/></label></fieldset>
+          <dl className="sw-instance-facts"><dt>{t('instanceId')}</dt><dd className="sw-instance-id">{current.sceneModelInstanceId}</dd><dt>{t('modelResource')}</dt><dd>{currentModel?.displayName||resourceNames[current.modelVersionId]||t('loading')}<button type="button" className="sw-text-button" onClick={()=>{const resource=refs.find(value=>value.modelVersionId===current.modelVersionId);if(resource?.modelAssetId)setResourceSelection({modelAssetId:resource.modelAssetId,modelVersionId:resource.modelVersionId});setLeft('resources');setSide('left');}}>{t('viewResource')}</button></dd><dt>{t('sameVersionInstances')}</dt><dd>{draft!.instances.filter(item=>item.modelVersionId===current.modelVersionId).length}</dd><dt>{t('version')}</dt><dd><span className="sw-fixed-version" title={current.modelVersionId}>{current.modelVersionId.slice(0,8)}</span>{editing&&<button type="button" className="sw-text-button" disabled={!editable||dirty||current.positionLocked} title={dirty?t('saveFirst'):undefined} onClick={()=>{setLeft('resources');setSide('left');}}>{t('changeVersion')}</button>}</dd></dl>
+          {links}
+          </section><section className="sw-position-section" aria-label={t('position')}><h3>{t('position')}</h3><fieldset disabled={!editable||current.positionLocked}>
+          {!isLocalScene(draft!)&&<label className="sw-coordinate-mode">{t('coordinateMode')}<select value={position.mode} onChange={event=>setPosition(value=>({...value,mode:event.target.value}))}><option value="geographic">{t('geographic')}</option><option value="local">{t('local')}</option></select></label>}
+          <div className="sw-field-pair">{fields(position.mode==='local'?['x','z']:['longitude','latitude'])}</div>
+          <div className="sw-field-pair">{fields(['heading'])}{!isLocalScene(draft!)&&<label>{t('height')}<select value={position.heightMode} onChange={event=>setPosition(value=>({...value,heightMode:event.target.value,height:'0'}))}><option value="ground">{t('ground')}</option>{draft!.coordinateFrame.mode==='projected_site'&&draft!.coordinateFrame.verticalDatum!=='UNKNOWN_RELATIVE'&&<option value="absolute">{t('absolute')}</option>}</select></label>}</div>{fields(['height'])}
+          {position.heightMode==='absolute'&&<label>{t('heightSource')}<input value={position.source} onChange={event=>setPosition(value=>({...value,source:event.target.value}))}/></label>}
+          </fieldset>{editing&&<div className="sw-position-apply"><Btn disabled={!editable} onClick={()=>void applyPosition()}><Check size={14}/>{t('apply')}</Btn></div>}
+          </section><div className="sw-actions sw-instance-actions">{editing&&<><Btn disabled={!editable} onClick={()=>changeCurrent(item=>({...item,positionLocked:!item.positionLocked}))}>{current.positionLocked?<UnlockKeyhole size={14}/>:<LockKeyhole size={14}/>} {t(current.positionLocked?'unlock':'lock')}</Btn><Btn disabled={!editable} onClick={()=>setPending({kind:'copy',sourceId:current.sceneModelInstanceId})}><Copy size={14}/>{t('duplicate')}</Btn><Btn disabled={!editable||current.positionLocked} onClick={removeCurrent}><Trash2 size={14}/>{t('remove')}</Btn></>}</div>
+        </>:<p className="sw-empty">{t('noSelection')}</p>}
+        {inspectorTab==='properties'&&<><SceneEnvironmentPanel key={`${base?.sceneId}:${base?.sceneRevision}`} value={draft?.environment} editable={environmentEditable&&!!base?.capabilities.environmentSchemaVersions?.includes(1)} waterSupported={!!draft&&waterSurfaceSupported(draft.coordinateFrame,terrain)} locale={locale} surroundingsSupported={!!base?.capabilities.surroundingBackgroundModes?.includes('auto')} cloudsSupported={!!base?.capabilities.cloudModes?.includes('procedural-cumulus-v1')} terrainMaterial={draft?.defaults.terrainMaterial} terrainCovered={terrainCovered} onValidityChange={setEnvironmentInvalid} onChange={value=>{if(environmentEditable)setHistory(previous=>previous?commitScene(previous,sceneWithEnvironment(previous.present,value)):previous);}}/><details className="sw-details"><summary>{effectiveEnvironment?(locale==='en'?'Base ground':'基础地表'):t('appearance')}</summary>{effectiveEnvironment&&<p className="se-note">{locale==='en'?'Background and lighting are controlled by Environment. This style only affects uncovered ground.':'背景和光照由环境渲染统一控制；此处仅设置未被影像或水面覆盖的基础地表。'}</p>}<fieldset disabled={!editable}>{(effectiveEnvironment?['terrainMaterial'] as const:['background','lighting','terrainMaterial'] as const).map(key=><label key={key}>{t(key==='terrainMaterial'?'material':key)}<select value={draft!.defaults[key]} onChange={event=>{if(draft)void commit({...draft,defaults:{...draft.defaults,[key]:event.target.value}} as EditableSceneSnapshot);}}>{(key==='background'?['plain','sky'] as const:key==='lighting'?['neutral','dusk'] as const:['solid','grass'] as const).map(value=><option key={value} value={value}>{t(value)}</option>)}</select></label>)}</fieldset></details>{!anchorResult&&!objectLoading&&!object&&current&&<details className="sw-details"><summary>{t('details')}</summary><p>{t('geometryNote')}</p>{currentModel&&<p>{currentModel.sourceNote}</p>}</details>}</>}
+      </>}</aside></div>
+      <div className="sw-footer"><IconBtn label={t('undo')} disabled={!editable||!history?.past.length} onClick={()=>{if(history)setHistory(undoScene(history));}}><Undo2 size={15}/></IconBtn><IconBtn label={t('redo')} disabled={!editable||!history?.future.length} onClick={()=>{if(history)setHistory(redoScene(history));}}><Redo2 size={15}/></IconBtn><span>{isLocalScene(snapshot!)?t('unanchored'):snapshot!.coordinateFrame.verticalDatum}</span><span className="sw-grow"/><Btn disabled={busy||!!anchorResult} onClick={()=>{routeControl.current?.manual();setFocus({token:Date.now(),instanceId:null});}}>{t('fit')}</Btn><Btn disabled={busy||!!anchorResult} onClick={()=>{routeControl.current?.manual();setViewCommand({token:Date.now(),view:draft!.initialView});}}>{t('resetView')}</Btn></div>
+      </>}
+      </>}
+    {modal==='create'&&<Modal title={t('create')} description={t('createHint')} onClose={()=>{if(!busy)setModal(null);}}><form onSubmit={event=>{event.preventDefault();void create();}} className="sw-form">{errorText&&<p role="alert">{errorText}</p>}<label>{en?'Project':'所属项目'}<select aria-label={en?'Project':'所属项目'} required value={createProject} disabled={busy} onChange={event=>setCreateProject(event.target.value)}><option value="">{en?'Select project':'请选择项目'}</option>{projectOptions.map(value=><option key={value.projectRef.projectCode} value={value.projectRef.projectCode}>{value.displayName} · {value.projectRef.projectCode}</option>)}</select></label><label>{en?'Description (optional)':'场景说明（选填）'}<textarea value={newDescription} disabled={busy} onChange={event=>setNewDescription(event.target.value)}/></label><label>{t('createName')}<input value={newName} onChange={event=>setNewName(event.target.value)} disabled={busy} autoFocus required/></label>{createAccess&&createAccess.role!=='admin'&&<p className="se-note">{en?'Project administrator access is required to create scenes.':'创建场景需要所选项目的管理员权限。'}</p>}<Btn primary disabled={busy||createAccess?.role!=='admin'} onClick={()=>void create()}>{t('create')}</Btn></form></Modal>}
+    {deleteTarget&&<Modal title={t('deleteScene')} description={t('deleteHint')} onClose={()=>{if(!busy)setDeleteTarget(null);}}><p>{deleteTarget.displayName}</p>{errorText&&<p role="alert">{errorText}</p>}<div className="sw-actions"><Btn disabled={busy} onClick={()=>setDeleteTarget(null)}>{t('cancel')}</Btn>{!!error&&<Btn disabled={busy} onClick={()=>{setDeleteTarget(null);void readList();}}>{t('reload')}</Btn>}<Btn primary disabled={busy||!(base?canWrite:list?.capabilities.canWrite)} onClick={()=>void changeLifecycle('delete',deleteTarget)}><Trash2 size={15}/>{busy?t('deleting'):t('deleteScene')}</Btn></div></Modal>}
+    {infoTarget&&!base&&<SceneBasicInfoDialog key={infoTarget} client={client} sceneId={infoTarget} projectName={project?.displayName} locale={locale} onClose={()=>setInfoTarget(null)} onSaved={()=>{setInfoTarget(null);setLifecycleNotice(t('saved'));void readList();}}/>}
+    {modal==='info'&&base&&draft&&<Modal title={en?'Scene basic information':'场景基本信息'} description={en?'Save the name, description, or thumbnail together with current scene changes.':'保存名称、说明、缩略图及当前场景修改。'} onClose={()=>{if(!busy){setInfoThumbFile(null);setModal(null);}}}><form className="sw-form" onSubmit={event=>{event.preventDefault();const name=info.name.trim();if(!name||Array.from(name).length>200||Array.from(info.description).length>2000){setError(new Error(t('invalidName')));return;}void(async()=>{try{const next=sceneInformationSnapshot(draft,info),sceneEdited=next.displayName!==draft.displayName||(next.description||'')!==(draft.description||'')||dirty||reviewDirty||saveUnknown;if(infoThumbFile){setBusy(true);setError(null);const abort=controller();try{const uploaded=await client.uploadSceneThumbnail(infoThumbFile,{sceneId:base.sceneId,expectedThumbnailRevision:base.thumbnail?.thumbnailRevision??null,clientRequestId:crypto.randomUUID()},abort.signal);if(!abort.signal.aborted){setBase(prev=>prev?{...prev,thumbnail:uploaded.thumbnail}:prev);setInfoThumbFile(null);}}finally{done(abort);if(mounted.current&&!sceneEdited)setBusy(false);}if(!sceneEdited){if(mounted.current)setModal(null);return;}}setHistory(previous=>previous?commitScene(previous,next):previous);await save(undefined,next);}catch(value){failed(value);}})();}}>{errorText&&<p role="alert">{errorText}</p>}<label>{en?'Project':'所属项目'}<input readOnly value={`${project?.displayName||base.projectCode} · ${base.projectCode}`}/></label><label>{en?'Scene name':'场景名称'}<input required disabled={!canWrite||busy||saveUnknown} value={info.name} onChange={event=>setInfo(value=>({...value,name:event.target.value}))}/></label><label>{en?'Description (optional)':'场景说明（选填）'}<textarea disabled={!canWrite||busy||saveUnknown} value={info.description} onChange={event=>setInfo(value=>({...value,description:event.target.value}))}/></label><SceneThumbnailField client={client} sceneId={base.sceneId} name={info.name||draft.displayName} thumbnail={base.thumbnail} pendingFile={infoThumbFile} disabled={!canWrite||busy||saveUnknown} locale={locale} onSelectFile={file=>{setInfoThumbFile(file);setError(null);}} onError={setError}/><small className="se-note">{en?'Name: 1–200 characters. Description: up to 2000 characters. Project ownership is fixed at creation.':'名称1—200字；说明最多2000字。所属项目在创建时确定。'}</small><dl className="cw-kv"><dt>{en?'Scene identity':'场景ID'}</dt><dd className="ov-mono">{base.sceneId}</dd>{base.createdAt&&<><dt>{en?'Created':'创建时间'}</dt><dd>{new Date(base.createdAt).toLocaleString(locale==='zh'?'zh-CN':'en-GB')}</dd></>}<dt>{en?'Last saved':'最近保存'}</dt><dd>{new Date(base.savedAt).toLocaleString(locale==='zh'?'zh-CN':'en-GB')}</dd></dl><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setInfoThumbFile(null);setModal(null);}}>{t('cancel')}</Btn><button className="ov-btn primary" type="submit" disabled={!canWrite||busy||environmentInvalid}>{busy?t('saving'):saveUnknown?t('retry'):t('save')}</button></div></form></Modal>}
+    {modal==='leave'&&<Modal title={t('leave')} description={t(saveUnknown?'leaveUnknown':'leaveHint')} onClose={()=>{if(!busy){setModal(null);leave.current=null;}}}><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setModal(null);leave.current=null;}}>{t('keepEditing')}</Btn><Btn disabled={busy} onClick={()=>{setModal(null);leave.current?.();leave.current=null;}}>{t('discard')}</Btn><Btn primary disabled={busy||!canWrite} onClick={()=>void save(anchorResult||undefined).then(ok=>{if(ok){leave.current?.();leave.current=null;}})}>{t('saveLeave')}</Btn></div></Modal>}
+    {modal==='conflict'&&<Modal title={t('conflict')} description={t('conflictHint')} onClose={()=>setModal(null)}><div className="sw-actions"><Btn onClick={()=>setModal(null)}>{t('keepEditing')}</Btn><Btn primary disabled={busy} onClick={()=>{if(base){setModal(null);void open(base.sceneId);}}}>{t('reload')}</Btn></div></Modal>}
+    {modal==='bindingReview'&&bindingReview&&base&&draft&&<SceneBindingReview api={api} check={bindingReview} instances={draft.instances} previousInstances={base.snapshot.instances} busy={busy} onClose={()=>{if(!busy){setModal(null);leave.current=null;}}} onConfirm={()=>{approvedRoots.current=structuredClone(bindingReview.rootBindingChanges||[]);void save(bindingReview).then(ok=>{if(ok&&leave.current){leave.current();leave.current=null;}});}}/>}
+    {modal==='engineeringReview'&&reviewCandidate&&<Modal title={et('reviewObject')} description={et('reviewObjectHint')} onClose={()=>{if(!busy){setModal(null);setReviewCandidate(null);}}}><div className="se-root-review"><strong>{reviewCandidate.item.displayName}</strong><p>{[...reviewCandidate.ancestors.path].reverse().map(row=>row.object.displayName).concat(reviewCandidate.item.displayName).join(' › ')}</p>{reviewCandidate.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setModal(null);setReviewCandidate(null);}}>{et('cancel')}</Btn><Btn primary disabled={busy} onClick={()=>{acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,reviewCandidate);if(object&&refKey(object.objectRef)===refKey(reviewCandidate.objectRef))setObject(reviewCandidate);if(rootObject&&refKey(rootObject.objectRef)===refKey(reviewCandidate.objectRef))setRootRead({identity:currentIdentity,value:reviewCandidate,reading:false});setReviewDirty(true);saveRequest.current=null;setModal(null);setReviewCandidate(null);setError(null);}}>{et('confirmReview')}</Btn></div></Modal>}
+    {modal==='replaceTerrain'&&candidate&&<Modal title={t('replaceTerrain')} description={t('replacementHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><label>{t('terrainStrategy')}<select value={terrainStrategy} onChange={event=>setTerrainStrategy(event.target.value as 'keep_height'|'resample_ground')}><option value="resample_ground">{t('resampleGround')}</option><option value="keep_height">{t('keepHeight')}</option></select></label><Btn primary onClick={()=>void previewReplacement({kind:'terrain',candidateTerrainVersionId:candidate.terrainVersionId,strategy:terrainStrategy})}>{t('previewReplacement')}</Btn></fieldset></Modal>}
+    {modal==='anchor'&&candidate&&<Modal title={t('anchor')} description={t('anchorHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><div className="sw-field-pair">{(['x','z','longitude','latitude','heading','offset'] as const).map(key=><label key={key}>{t(key==='heading'?'anchorHeading':key==='offset'?'offset':key)}<input type="number" step="any" value={anchor[key]} onChange={event=>setAnchor(value=>({...value,[key]:event.target.value}))}/></label>)}</div><label>{t('height')}<select value={anchor.strategy} onChange={event=>setAnchor(value=>({...value,strategy:event.target.value as GeographicAnchor['heightStrategy']}))}><option value="resample_each_ground">{t('resample')}</option><option value="keep_relative_to_anchor">{t('keepRelative')}</option></select></label><Btn primary onClick={()=>void previewAnchor()}>{t('anchorPreview')}</Btn></fieldset></Modal>}
+    {turbinePlacementModal&&<Modal className="sw-turbine-modal" title={locale==='zh'?`布置风机 · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`:`Place Turbine · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`} description={locale==='zh'?'已在三维地表选定机位落点，请选择要装配的模型形态版本':'Ground position selected. Choose representation model to place.'} onClose={()=>{if(!busy)setTurbinePlacementModal(null);}}>
+      <div className="sw-turbine-placement-dialog">
+        <p className="sw-turbine-modal-intro">
+          {locale==='zh'?'已在三维地表完成机位选点，请选择要装配的模型形态版本：':'Ground position selected. Choose the representation model to place:'}
+        </p>
+
+        <div className="sw-placement-loc-banner">
+          <div className="sw-placement-loc-coords">
+            <MapPin size={15} style={{color:'var(--primary)'}}/>
+            <span>{locale==='zh'?'机位坐标':'Coordinates'}:</span>
+            <strong>{turbinePoint?.position.mode==='geographic'
+              ?`${turbinePoint.position.longitude.toFixed(6)}°, ${turbinePoint.position.latitude.toFixed(6)}°`
+              :turbinePoint?.position.mode==='local'?`X: ${turbinePoint.position.xM.toFixed(2)} m · Z: ${turbinePoint.position.zM.toFixed(2)} m`:'—'}</strong>
+          </div>
+          <span className="sw-elev-pill">
+            {turbinePoint?`${turbinePoint.heightKind==='known_datum'?(locale==='zh'?'地形高程':'Elevation'):(locale==='zh'?'相对高度':'Relative height')} ${turbinePoint.heightM.toFixed(2)} m`:'—'}
+          </span>
+        </div>
+
+        {(turbinePlacementModal.turbine.ratedPowerKw||turbinePlacementModal.turbine.hubHeightM||turbinePlacementModal.turbine.rotorDiameterM||turbinePlacementModal.turbine.manufacturer)&&(
+          <div className="sw-placement-specs-grid">
+            {turbinePlacementModal.turbine.ratedPowerKw&&(
+              <div className="sw-placement-spec-card">
+                <span className="sw-spec-label">{locale==='zh'?'额定功率':'Rated Power'}</span>
+                <span className="sw-spec-value" style={{display:'flex',alignItems:'center',gap:4}}>
+                  <Zap size={12} style={{color:'var(--statusWarning)',flex:'none'}}/>
+                  {turbinePlacementModal.turbine.ratedPowerKw>=1000?`${(turbinePlacementModal.turbine.ratedPowerKw/1000).toFixed(1)} MW`:`${turbinePlacementModal.turbine.ratedPowerKw} kW`}
+                </span>
+              </div>
+            )}
+            {turbinePlacementModal.turbine.hubHeightM&&(
+              <div className="sw-placement-spec-card">
+                <span className="sw-spec-label">{locale==='zh'?'轮毂高度':'Hub Height'}</span>
+                <span className="sw-spec-value">{turbinePlacementModal.turbine.hubHeightM} m</span>
+              </div>
+            )}
+            {turbinePlacementModal.turbine.rotorDiameterM&&(
+              <div className="sw-placement-spec-card">
+                <span className="sw-spec-label">{locale==='zh'?'叶轮直径':'Rotor Dia'}</span>
+                <span className="sw-spec-value">{turbinePlacementModal.turbine.rotorDiameterM} m</span>
+              </div>
+            )}
+            {turbinePlacementModal.turbine.manufacturer&&(
+              <div className="sw-placement-spec-card">
+                <span className="sw-spec-label">{locale==='zh'?'整机厂商':'Manufacturer'}</span>
+                <span className="sw-spec-value">{turbinePlacementModal.turbine.manufacturer}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="sw-rep-choice-list" role="radiogroup" aria-label={locale==='zh'?'选择风机形态':'Select representation'}>
+          {turbinePlacementModal.turbine.appearanceModel&&(
+            <div
+              role="radio"
+              tabIndex={0}
+              aria-disabled={busy}
+              aria-checked={turbinePlacementModal.selectedType==='appearance'}
+              className={`sw-rep-choice-card ${turbinePlacementModal.selectedType==='appearance'?'selected':''}`}
+              onClick={()=>{if(!busy)setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v);}}
+              onKeyDown={e=>{if(!busy&&(e.key===' '||e.key==='Enter')){e.preventDefault();setTurbinePlacementModal(v=>v?{...v,selectedType:'appearance'}:v);}}}
+            >
+              <div className="sw-rep-card-thumb">
+                <ModelThumbnail
+                  api={client}
+                  version={turbinePlacementModal.turbine.appearanceModel}
+                  name={`${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode} · 外观版`}
+                  onStatus={()=>{}}
+                />
+              </div>
+              <div className="sw-rep-card-body">
+                <div className="sw-rep-card-header">
+                  <span className="sw-rep-card-title">{locale==='zh'?'外观版':'Appearance'}</span>
+                  <Badge tone="success">{locale==='zh'?'推荐 · 轻量外壳':'Recommended · Exterior'}</Badge>
+                </div>
+                <p className="sw-rep-card-desc">
+                  {locale==='zh'?'适合场景概览，加载成本以模型实际复杂度为准':'For scene overview; loading cost depends on model complexity'}
+                </p>
+                <div className="sw-rep-card-tags">
+                  <span className="sw-rep-card-tag">{locale==='zh'?'轻量低负载':'Low Memory'}</span>
+                  <span className="sw-rep-card-tag">{locale==='zh'?'场景概览':'Scene overview'}</span>
+                  <span className="sw-rep-card-tag">{locale==='zh'?'批量排布':'Fleet Scale'}</span>
+                </div>
+              </div>
+              <div className="sw-rep-card-radio">
+                <div className="sw-rep-card-radio-dot"/>
+              </div>
+            </div>
+          )}
+
+          {turbinePlacementModal.turbine.detailedModel&&(
+            <div
+              role="radio"
+              tabIndex={0}
+              aria-disabled={busy}
+              aria-checked={turbinePlacementModal.selectedType==='detailed'}
+              className={`sw-rep-choice-card ${turbinePlacementModal.selectedType==='detailed'?'selected':''}`}
+              onClick={()=>{if(!busy)setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v);}}
+              onKeyDown={e=>{if(!busy&&(e.key===' '||e.key==='Enter')){e.preventDefault();setTurbinePlacementModal(v=>v?{...v,selectedType:'detailed'}:v);}}}
+            >
+              <div className="sw-rep-card-thumb">
+                <ModelThumbnail
+                  api={client}
+                  version={turbinePlacementModal.turbine.detailedModel}
+                  name={`${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode} · 完整版`}
+                  onStatus={()=>{}}
+                />
+              </div>
+              <div className="sw-rep-card-body">
+                <div className="sw-rep-card-header">
+                  <span className="sw-rep-card-title">{locale==='zh'?'完整版':'Detailed'}</span>
+                  <Badge tone="info">{locale==='zh'?'内部精细构件':'Internal Assemblies'}</Badge>
+                </div>
+                <p className="sw-rep-card-desc">
+                  {locale==='zh'?'用于近景查看；透视与爆炸示意取决于当前模型内容':'For close-up viewing; X-ray and exploded schematics depend on actual model contents'}
+                </p>
+                <div className="sw-rep-card-tags">
+                  <span className="sw-rep-card-tag">{locale==='zh'?'BIM/机械构件':'Internal BIM'}</span>
+                  <span className="sw-rep-card-tag">{locale==='zh'?'X-Ray透视':'X-Ray'}</span>
+                  <span className="sw-rep-card-tag">{locale==='zh'?'爆炸分解':'Explosion'}</span>
+                </div>
+              </div>
+              <div className="sw-rep-card-radio">
+                <div className="sw-rep-card-radio-dot"/>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="sw-turbine-modal-actions">
+          <Btn disabled={busy} onClick={()=>setTurbinePlacementModal(null)}>{t('cancel')}</Btn>
+          <Btn primary disabled={busy||!turbinePoint} onClick={()=>void confirmTurbinePlacement()}><Check size={14}/>{locale==='zh'?'确认落位布置':'Confirm Placement'}</Btn>
+        </div>
+      </div>
+    </Modal>}
+  </section>;
+});

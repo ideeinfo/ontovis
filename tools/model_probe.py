@@ -17,6 +17,7 @@ IDENTITY = (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
 WIDTHS = {5120: ('b', 1), 5121: ('B', 1), 5122: ('h', 2),
           5123: ('H', 2), 5125: ('I', 4), 5126: ('f', 4)}
 DIMENSIONS = {'SCALAR': 1, 'VEC2': 2, 'VEC3': 3, 'VEC4': 4}
+IDENTITY_FIELDS = ('sourceModelKey', 'sourceElementId', 'placementId')
 
 
 class ProbeError(ValueError):
@@ -59,6 +60,20 @@ def strict_json(data: bytes) -> object:
         return json.loads(data, object_pairs_hook=pairs, parse_constant=invalid_constant, parse_float=finite_float)
     except (UnicodeError, ValueError, RecursionError) as error:
         raise ProbeError('INVALID_JSON', 'Invalid or excessively nested JSON.') from error
+
+
+def source_identity(extras):
+    if not isinstance(extras, dict) or 'ontoVis' not in extras:
+        return None, 'missing', [], []
+    claim = extras['ontoVis']
+    if not isinstance(claim, dict):
+        return None, 'invalid', [], ['ontoVis']
+    missing = [key for key in IDENTITY_FIELDS if key not in claim]
+    invalid = [key for key in IDENTITY_FIELDS if key in claim
+               and not (isinstance(claim[key], str) and claim[key].strip())]
+    state = 'invalid' if invalid else 'incomplete' if missing else 'unverified_claim'
+    return ({key: claim[key] for key in IDENTITY_FIELDS} if not missing and not invalid else None,
+            state, missing, invalid)
 
 
 def multiply(a, b):
@@ -277,21 +292,21 @@ class Glb:
         result = []
         for i, node in enumerate(self.array('nodes')):
             extras = node.get('extras') if isinstance(node.get('extras'), dict) else {}
-            claim = extras.get('ontoVis') if isinstance(extras.get('ontoVis'), dict) else {}
-            triple = {k: claim.get(k) for k in ('sourceModelKey', 'sourceElementId', 'placementId')}
-            complete = all(isinstance(v, str) and v.strip() for v in triple.values())
+            claim, state, missing, invalid = source_identity(extras)
             result.append({'componentKey': f'{self.sha256}:node:{i}', 'nodeIndex': i,
                            'keyStability': 'version_local', 'name': node.get('name'),
                            'componentLabel': extras.get('component'),
                            'legacySourceObjectId': extras.get('sourceObjectId'),
-                           'sourceIdentityClaim': triple if complete else None,
+                           'sourceExtrasPresent': 'extras' in node, 'sourceExtras': node.get('extras'),
+                           'sourceIdentityClaim': claim, 'sourceIdentityState': state,
+                           'sourceIdentityMissingFields': missing, 'sourceIdentityInvalidFields': invalid,
                            'sourceIdentityVerified': False, 'activeScene': i in self.worlds,
                            'meshPrimitiveCount': len(self.geometry.get(i, []))})
         counts = Counter(tuple(row['sourceIdentityClaim'].values()) for row in result if row['sourceIdentityClaim'])
         for row in result:
             claim = row['sourceIdentityClaim']
-            row['sourceIdentityState'] = ('missing' if not claim else
-                                          'collision' if counts[tuple(claim.values())] > 1 else 'unverified_claim')
+            if claim and counts[tuple(claim.values())] > 1:
+                row['sourceIdentityState'] = 'collision'
         return result
 
     def summary(self):
@@ -313,6 +328,47 @@ class Glb:
                 'legacyIdDistinctCount': len(legacy), 'legacyIdDuplicateValues': sum(n > 1 for n in legacy.values()),
                 'sourceIdentityStates': dict(Counter(row['sourceIdentityState'] for row in catalog)),
                 'animations': len(self.array('animations')), 'externalResourcesFetched': 0}
+
+
+def compare_identity_claims(previous: Glb, current: Glb) -> dict:
+    groups, unavailable = {}, []
+    for side, model in (('previous', previous), ('current', current)):
+        for row in model.catalog():
+            claim = row['sourceIdentityClaim']
+            if claim is None:
+                unavailable.append({'side': side, 'componentKey': row['componentKey'],
+                                    'state': row['sourceIdentityState'], 'activeScene': row['activeScene']})
+            else:
+                pair = groups.setdefault(tuple(claim[key] for key in IDENTITY_FIELDS),
+                                         {'previous': [], 'current': []})
+                pair[side].append(row)
+    entries = []
+    for identity, pair in sorted(groups.items()):
+        old, new = pair['previous'], pair['current']
+        state = ('collision' if len(old) > 1 or len(new) > 1 else
+                 'inactive' if any(not row['activeScene'] for row in old + new) else
+                 'current_only' if not old else 'previous_only' if not new else 'candidate')
+        entry = {'state': state, 'sourceIdentityClaim': dict(zip(IDENTITY_FIELDS, identity))}
+        for side, rows in pair.items():
+            entry[side] = [{key: row[key] for key in ('componentKey', 'nodeIndex', 'name', 'activeScene')}
+                           for row in rows]
+        if state == 'candidate':
+            # JSON comparison preserves boolean/number types, unlike Python's True == 1.
+            properties = [json.dumps([row['sourceExtrasPresent'], row['sourceExtras']],
+                                     ensure_ascii=False, sort_keys=True, allow_nan=False) for row in (old[0], new[0])]
+            entry['propertiesChanged'] = properties[0] != properties[1]
+            entry['nameChanged'] = old[0]['name'] != new[0]['name']
+        entries.append(entry)
+    counts = Counter(row['state'] for row in entries)
+    return {'schemaVersion': 1, 'status': 'review_required',
+            'previousSha256': previous.sha256, 'currentSha256': current.sha256,
+            'rule': 'Exact sourceModelKey/sourceElementId/placementId strings; no normalization or fallback.',
+            'sourceIdentityVerified': False, 'geometryCorrespondenceVerified': False,
+            'bindingMigrationApproved': False,
+            'counts': {state: counts[state] for state in ('candidate', 'collision', 'previous_only', 'current_only', 'inactive')},
+            'unavailableCounts': {side: dict(Counter(row['state'] for row in unavailable if row['side'] == side))
+                                  for side in ('previous', 'current')},
+            'entries': entries, 'unavailable': unavailable}
 
 
 def compare_mapping(source: Glb, derived: Glb, sidecar: dict, tolerance: float = 0.0001) -> dict:
@@ -408,18 +464,27 @@ def check_control_points(model: Glb, control: dict | None) -> dict:
 
 def run_probe(source_path: Path, output: Path, *, derived_path: Path | None = None,
               mapping_path: Path | None = None, source_sha256: str | None = None,
-              derived_sha256: str | None = None, control_points: Path | None = None) -> dict:
+              derived_sha256: str | None = None, control_points: Path | None = None,
+              previous_path: Path | None = None, previous_sha256: str | None = None) -> dict:
     output.mkdir(parents=True, exist_ok=False)
-    report = {'schemaVersion': 1, 'purpose': 'PREP-02 read-only model inspection',
+    report = {'schemaVersion': 2, 'purpose': 'PREP-02/Q-09 read-only model inspection',
               'createdAt': datetime.now(timezone.utc).isoformat(), 'status': 'failed',
               'releaseReadiness': {'eligible': False, 'G2Passed': False,
                                    'reasons': ['ENGINEERING_IDENTITY_UNVERIFIED', 'SITE_COORDINATES_UNVERIFIED',
                                                'LICENCE_UNVERIFIED', 'REVIEW_REQUIRED']}}
     try:
         require(bool(derived_path) == bool(mapping_path), 'INVALID_ARGUMENT', 'Derivative and mapping must be supplied together.')
+        require(previous_path is not None or previous_sha256 is None, 'INVALID_ARGUMENT',
+                'Previous fingerprint requires a previous source artifact.')
         source = Glb(source_path, source_sha256)
         report['source'] = source.summary()
         catalogs = {'source': source.catalog()}
+        identity_comparison = None
+        if previous_path is not None:
+            previous = Glb(previous_path, previous_sha256)
+            report['previous'] = previous.summary()
+            catalogs['previous'] = previous.catalog()
+            identity_comparison = compare_identity_claims(previous, source)
         checked_mapping = None
         if derived_path:
             derived = Glb(derived_path, derived_sha256)
@@ -440,7 +505,17 @@ def run_probe(source_path: Path, output: Path, *, derived_path: Path | None = No
         report['limitations'] = ['Static uncompressed TRIANGLES in the selected scene only; no decoders or resource downloads.',
                                  'Version-local keys only. Source-ID claims, hierarchy, equipment UIDs and permissions are not verified.',
                                  'This probe does not replace Khronos glTF Validator or runtime picking/rendering checks.']
-        (output / 'components.json').write_text(json.dumps(catalogs, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+        catalog_bytes = (json.dumps(catalogs, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode('utf-8')
+        (output / 'components.json').write_bytes(catalog_bytes)
+        report['catalog'] = {'file': 'components.json', 'sha256': hashlib.sha256(catalog_bytes).hexdigest(),
+                             'scope': 'All declared nodes, original extras and version-local keys; no engineering verification.'}
+        if identity_comparison is not None and report['status'] == 'passed':
+            candidate_bytes = (json.dumps(identity_comparison, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode('utf-8')
+            (output / 'identity-candidates.json').write_bytes(candidate_bytes)
+            report['identityComparison'] = {key: identity_comparison[key] for key in
+                                            ('status', 'previousSha256', 'currentSha256', 'counts', 'unavailableCounts',
+                                             'sourceIdentityVerified', 'geometryCorrespondenceVerified', 'bindingMigrationApproved')}
+            report['identityComparison'].update(file='identity-candidates.json', sha256=hashlib.sha256(candidate_bytes).hexdigest())
         if checked_mapping is not None and report['status'] == 'passed':
             (output / 'mapping-checked.json').write_text(json.dumps(checked_mapping, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
             report['mapping']['checkedSidecar'] = 'mapping-checked.json'
@@ -458,13 +533,16 @@ def main(argv=None) -> int:
     parser.add_argument('--mapping', type=Path)
     parser.add_argument('--source-sha256')
     parser.add_argument('--derived-sha256')
+    parser.add_argument('--previous-source', type=Path, help='Previous source artifact; compares identity claims only, not a geometry derivative.')
+    parser.add_argument('--previous-source-sha256')
     parser.add_argument('--control-points', type=Path, help='Source-model local reference JSON; never treated as survey approval.')
     parser.add_argument('--output', type=Path, required=True, help='New local output directory; existing directories are never replaced.')
     args = parser.parse_args(argv)
     try:
         report = run_probe(args.source, args.output, derived_path=args.derived, mapping_path=args.mapping,
                            source_sha256=args.source_sha256, derived_sha256=args.derived_sha256,
-                           control_points=args.control_points)
+                           control_points=args.control_points, previous_path=args.previous_source,
+                           previous_sha256=args.previous_source_sha256)
     except OSError:
         print('Cannot create a new output directory; existing output is never replaced.', file=sys.stderr)
         return 1
