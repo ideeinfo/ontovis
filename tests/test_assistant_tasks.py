@@ -112,7 +112,8 @@ class TaskTests(unittest.TestCase):
         summary = allowed.sources[0]['summary']
         self.assertNotIn(scene_id, summary)
         self.assertNotIn(revision, summary)
-        self.assertEqual(91, json.loads(summary)['items'][0]['instances'])
+        self.assertEqual([dict(name='Crystal Rig', version=revision[6:14], instances=91)],
+                         json.loads(summary)['items'])
 
     def test_project_knowledge_enters_fixed_release_and_keeps_pages_and_edge_provenance(self):
         from tests.test_assistant_knowledge import response

@@ -193,7 +193,7 @@ class ProjectTools:
                 revision=scene['headRevision']
                 self.results.append(dict(key=key,kind='scene',title=scene['displayName'],identifier=scene['sceneId'],
                     version=revision,instanceCount=scene['instanceCount'],reason='当前项目活动场景',simulated=False))
-                items.append(dict(result=key,name=redact(scene['displayName'],self.private)[:40],
+                items.append(dict(name=redact(scene['displayName'],self.private)[:40],
                     version=revision.removeprefix('scene:')[:8],instances=scene['instanceCount']))
             scope='当前项目活动场景目录，仅读取已保存版本和实例数'
             truncated=value['nextCursor'] is not None
