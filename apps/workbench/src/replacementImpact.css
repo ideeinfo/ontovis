@@ -2,7 +2,8 @@
 .ov-replacement-name{display:block;font-size:13px;font-weight:600;margin:0 0 8px;overflow-wrap:anywhere}
 .ov-replacement-comparison{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;margin:0 0 8px}
 .ov-replacement-comparison th,.ov-replacement-comparison td{padding:4px 8px;border-bottom:1px solid var(--borderSubtle);vertical-align:top;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
-.ov-replacement-comparison th{font-size:11px;color:var(--textSecondary);font-weight:400}
+.ov-replacement-comparison th{background:var(--surfaceRaised);font-size:11px;color:var(--textSecondary);font-weight:400}
+.ov-replacement-comparison tbody th{background:transparent}
 .ov-replacement-comparison th:first-child{width:22%;padding-left:0}
 .ov-replacement-comparison td:last-child,.ov-replacement-comparison th:last-child{padding-right:0}
 .ov-replacement-details{border-top:1px solid var(--borderSubtle);padding:8px 0 0;margin:8px 0 0;min-width:0}
@@ -16,6 +17,7 @@
 .ov-replacement-bindings{margin:12px 0;overflow-wrap:anywhere}
 .ov-replacement-bindings li>small{color:var(--statusWarning);margin-top:2px}
 .ov-replacement-component-keys{margin:4px 0;padding-left:18px;font-size:11px;overflow-wrap:anywhere}
+.ov-replacement-component-keys code{display:block;color:var(--textSecondary);white-space:normal}
 .ov-replacement-instances{list-style:none;margin:8px 0;padding:0;max-height:240px;overflow:auto;min-width:0}
 .ov-replacement-instances>li{padding:8px 0;border-bottom:1px solid var(--borderSubtle);min-width:0}
 .ov-replacement-instances>li:first-child{padding-top:0}

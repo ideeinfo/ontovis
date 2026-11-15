@@ -73,12 +73,15 @@ export function ReplacementImpact({result,base,models,objects}:Props) {
               <small>{t(binding.code==='COMPONENT_MISSING'?'impactBindingKeyMissing':
                 binding.code==='SOURCE_ID_AMBIGUOUS'?'impactBindingAmbiguous':'impactBindingReview')}</small>
               <details className="ov-replacement-details"><summary>{t('impactPreviousComponents')} · {binding.componentKeys.length}</summary>
-                <ul className="ov-replacement-component-keys">{binding.componentKeys.map(key=><li key={key} title={key}>{componentNames.get(key)||key}</li>)}</ul>
+                <ul className="ov-replacement-component-keys">{binding.componentKeys.map(key=>{
+                  const displayName=componentNames.get(key);
+                  return <li key={key}>{displayName&&displayName!==key&&<span>{displayName}</span>}<code>{key}</code></li>;
+                })}</ul>
               </details>
             </li>)}</ul></>:<p className="ov-replacement-caption">{t('impactNoAffectedBindings')}</p>}
         </section>
       </>}
-      <table className="ov-replacement-comparison ov-list-table"><thead><tr><th scope="col">{t('impactProperty')}</th><th scope="col">{t('impactOld')}</th><th scope="col">{t('impactNew')}</th></tr></thead><tbody>
+      <table className="ov-replacement-comparison"><thead><tr><th scope="col">{t('impactProperty')}</th><th scope="col">{t('impactOld')}</th><th scope="col">{t('impactNew')}</th></tr></thead><tbody>
         {metricRows.map(([label,before,after])=><tr key={label}><th scope="row">{t(label)}</th><td>{before}</td><td>{after}</td></tr>)}
       </tbody></table>
       <details className="ov-replacement-details"><summary>{t('impactVersions')}</summary><dl className="ov-replacement-facts">
