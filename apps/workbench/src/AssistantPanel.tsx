@@ -2,6 +2,8 @@ import {useEffect,useId,useMemo,useRef,useState} from 'react';
 import {Plus,RefreshCw,Send,Square,ChevronDown,History} from 'lucide-react';
 import {AssistantTaskResult} from './AssistantTaskResult';
 import {AssistantSceneViewer} from './AssistantSceneViewer';
+import {AssistantDeviceMaterials,type DeviceMaterialsTarget} from './AssistantDeviceMaterials';
+import {FixedDocumentPreview,type FixedDocumentTarget} from './FixedDocumentPreview';
 import type {AssistantSceneTarget} from './assistantScene';
 import {snapshotDigest,canApplyFreshTask,TASK_PROTOCOL,type PreparedTask} from './assistantTasks';
 import {AssistantRetrieval} from './AssistantRetrieval';
@@ -35,6 +37,8 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const [transferRun,setTransferRun]=useState<AssistantRun|null>(null);
  const [sourceView,setSourceView]=useState<{runId:string;reference:AssistantSource}|null>(null);
  const [sceneView,setSceneView]=useState<AssistantSceneTarget|null>(null);
+ const [deviceView,setDeviceView]=useState<DeviceMaterialsTarget|null>(null);
+ const [documentView,setDocumentView]=useState<FixedDocumentTarget|null>(null);
  const historyGeneration=useRef(0);
  const automatic=useRef<{runId:string;context:string}|null>(null),applying=useRef(false),applyTaskRef=useRef(onApplyTask);applyTaskRef.current=onApplyTask;
  const draftId=useRef(crypto.randomUUID()),execution=useRef<{runId:string;keys:string[];prepared:PreparedTask;savedRevision:number|null}|null>(null);
@@ -43,7 +47,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const context=`${api.epoch}:${api.revision}:${receipt?.analysisSessionId}:${receipt?.analysisRevision}`;
  const current=useRef(context);current.current=context;
  const alive=useRef(true),scope=useRef<AssistantApi|null>(null);
- useEffect(()=>{alive.current=true;automatic.current=null;setRun(null);setError(null);setPending(null);setSummaries(null);setConversation(null);setConversations([]);setTurns([]);setHasEarlier(false);setLoadingHistory(false);setTransferRun(null);setSourceView(null);setSceneView(null);historyGeneration.current++;setQuestion(initialQuestion??'');if(initialQuestion)onInitialQuestionUsed?.();
+ useEffect(()=>{alive.current=true;automatic.current=null;setRun(null);setError(null);setPending(null);setSummaries(null);setConversation(null);setConversations([]);setTurns([]);setHasEarlier(false);setLoadingHistory(false);setTransferRun(null);setSourceView(null);setSceneView(null);setDeviceView(null);setDocumentView(null);historyGeneration.current++;setQuestion(initialQuestion??'');if(initialQuestion)onInitialQuestionUsed?.();
   const fixed=new AssistantApi(api.assistantScope());scope.current=fixed;
   return()=>{alive.current=false;const previous=latest.current;if(running(previous))void fixed.cancel(previous!).catch(()=>{});};
  },[context]);
@@ -140,7 +144,9 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   <AssistantGraph service={service} cards={available} receipt={receipt} en={en} onFocus={onFocus}/>
   </section>}
   {!transcript.length&&!loadingHistory&&<div className="as-welcome"><strong>{t('从一个问题开始','Start with a question')}</strong><p>{t(snapshot?'可检索项目工单、资料和知识图谱；画布中的资料可作为补充依据。':'结合所选资料，整理已知情况、待验证假设、资料缺口和下一步核查。',snapshot?'Search project orders, documents and knowledge graphs; canvas materials provide additional context.':'Use selected evidence to organize facts and checks.')}</p><button type="button" disabled={locked} onClick={()=>{setQuestion(t('查找当前故障代码的历史工单，列出编号、版本和匹配依据。','Find historical orders for the current fault code, with identifiers, versions and match reasons.'));composerInput.current?.focus();}}>{t('查找相关历史工单','Find related work orders')}</button><button type="button" disabled={locked} onClick={()=>{setQuestion(t('现有资料能支持哪些信息链段？请列出未读取或待复核的连接。','Which parts of the information path are supported? List unread or unverified connections.'));composerInput.current?.focus();}}>{t('梳理信息链路与缺口','Review the information path and gaps')}</button></div>}
-  <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} key={item.runId} run={item} cards={cards} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/><AssistantTaskResult hasUnsaved={hasUnsaved} run={item} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined} onPage={index=>void taskPage(item,index)} onViewScene={setSceneView}/></div>)}</div>
+  <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} key={item.runId} run={item} cards={cards} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/><AssistantTaskResult hasUnsaved={hasUnsaved} run={item} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined} onPage={index=>void taskPage(item,index)} onViewScene={setSceneView} onViewDevice={setDeviceView} onViewDocument={setDocumentView}/></div>)}</div>
+  {deviceView&&<AssistantDeviceMaterials api={api} target={deviceView} en={en} onClose={()=>setDeviceView(null)}/>}
+  {documentView&&<FixedDocumentPreview api={api} item={documentView} en={en} onClose={()=>setDocumentView(null)}/>}
   {sceneView&&<AssistantSceneViewer api={api} target={sceneView} en={en} onClose={()=>setSceneView(null)}/>}
   {sourceView&&<AssistantSourceViewer api={api} {...sourceView} en={en} onClose={()=>setSourceView(null)}/>}
   {!queryOnly&&transferRun&&<AssistantWorkOrderDialog key={`${context}:${transferRun.runId}`} api={api} run={transferRun} cards={cards} en={en} preferredOrderId={preferredOrderId} faultCode={faultCode} enabled={canTransfer&&!locked} onClose={()=>setTransferRun(null)} onOpenOrder={onOpenOrder} onFocus={onFocus}/>}

@@ -35,7 +35,7 @@ def draft_history(body,connection,project):
     return value
 
 
-def validate_plan(value, *, scene_directory=False, adopted_models=False):
+def validate_plan(value, *, scene_directory=False, adopted_models=False, equipment_materials=False, processing_tasks=False):
     require(type(value) is dict and set(value)=={'intent','queries','actions'},'ASSISTANT_OUTPUT_INVALID',502)
     require(value['intent'] in ('query','edit') and type(value['queries']) is list and len(value['queries'])<=2
         and type(value['actions']) is list and len(value['actions'])<=8,'ASSISTANT_OUTPUT_INVALID',502)
@@ -43,12 +43,14 @@ def validate_plan(value, *, scene_directory=False, adopted_models=False):
     tools=set(QUERY_TOOLS)
     if scene_directory:tools.add('scenes')
     if adopted_models:tools.add('adopted_models')
+    if equipment_materials:tools.add('equipment_materials')
+    if processing_tasks:tools.add('processing_tasks')
     for q in value['queries']:
         require(type(q) is dict and set(q) in ({'tool','query','faultCode'},{'tool','query','faultCode','orderId'})
             and type(q['tool']) is str and q['tool'] in tools
             and all(type(q[k]) is str and len(q[k])<=200 for k in ('query','faultCode'))
             and type(q.get('orderId','')) is str and len(q.get('orderId',''))<=100,'ASSISTANT_TOOL_NOT_ALLOWED',422)
-        if q['tool'] in ('scenes','adopted_models'):
+        if q['tool'] in ('scenes','adopted_models','equipment_materials','processing_tasks'):
             require(value['intent']=='query' and not q['faultCode'] and not q.get('orderId'),'ASSISTANT_TOOL_NOT_ALLOWED',422)
     for a in value['actions']:
         require(type(a) is dict and set(a)=={'kind','targets','text','x','y'} and a['kind'] in ACTIONS
@@ -176,9 +178,11 @@ class ProjectTools:
                 photo=item.get('preview_kind')=='image'
                 if photo and 'photo' not in self.allowed:continue
                 selector=dict(documentId=item['id'],contentVersionId=item['current_version_id'])
+                preview=dict(selector,title=item['name'])
                 selector.update(dict(sourceType='project_document') if photo else dict(pageNumber=1))
                 self.results.append(dict(key='R'+str(len(self.results)+1),kind='photo' if photo else 'document',title=item['name'],
-                    identifier=item['id'],version=item['current_version_id'],reason='项目资料目录；未读取图面或全文',simulated=False,selector=selector))
+                    identifier=item['id'],version=item['current_version_id'],reason='项目资料目录；未读取图面或全文',
+                    simulated=False,selector=selector,documentPreview=preview))
             self.source('document',redact(json.dumps(dict(scope='资料目录元数据，未读取正文、图面或照片',
                 names=[r['name'] for r in value['items']]),ensure_ascii=False),self.private)[:1000])
             self.trace.append(dict(tool=tool,state='complete',count=len(value['items']),nextCursor=value.get('next_cursor'),filters=q))
@@ -186,6 +190,12 @@ class ProjectTools:
             require('document' in self.allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
             from .assistant_project_knowledge import query
             query(self,q)
+        elif tool=='equipment_materials':
+            from .assistant_device_materials import query
+            query(self,needle)
+        elif tool=='processing_tasks':
+            from .assistant_processing import query
+            query(self,needle)
         elif tool=='scenes':
             require('model' in self.allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
             require(callable(reader.scene_listing),'SCENE_UNAVAILABLE',503)
@@ -255,14 +265,22 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                         frame=c.get('frameId'),x=c['x'],y=c['y'],width=c['width'],height=c['height']) for c in draft['cards']],
             groups=[dict(key='G'+str(i+1),title=g['title'][:80],cards=[card_keys[c['id']] for c in draft['cards'] if c.get('frameId')==g['id']]) for i,g in enumerate(draft.get('frames',[]))],
             relations=[dict(key='L'+str(i+1),source=card_keys[r['from']],target=card_keys[r['to']],kind=r['kind'],origin=r['origin']) for i,r in enumerate(draft['relations'])])
-        allow_models='model' in policy['policy']['allowedKinds']
+        kinds=set(policy['policy']['allowedKinds'])
+        allow_models='model' in kinds
         scene_directory=allow_models and callable(getattr(reader,'scene_listing',None))
         adopted_models=allow_models and callable(getattr(reader,'adopted_model_listing',None))
+        equipment_materials='object' in kinds and bool({'document','photo'}&kinds)
+        processing_tasks='document' in kinds
         if scene_directory:
             context['sceneDirectory']=True
         if adopted_models:
             context['adoptedModelDirectory']=True
-        plan=validate_plan(model('plan',context,[])['plan'],scene_directory=scene_directory,adopted_models=adopted_models)
+        if equipment_materials:
+            context['equipmentMaterials']=True
+        if processing_tasks:
+            context['processingTasks']=True
+        plan=validate_plan(model('plan',context,[])['plan'],scene_directory=scene_directory,adopted_models=adopted_models,
+                           equipment_materials=equipment_materials,processing_tasks=processing_tasks)
         switches=set(service.get('settings',{}).get('tools',('selected_sources','engineering_neighborhood','manual_fault_lookup')))
         require(all(q['tool']!='graph' or 'engineering_neighborhood' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         require(all(q['tool']!='knowledge' or 'manual_fault_lookup' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)

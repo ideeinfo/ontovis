@@ -2,16 +2,34 @@ import type {AssistantRun} from './assistantApi';
 import {Btn} from './Primitives';
 import {taskActionNames} from './assistantTasks';
 import type {AssistantSceneTarget} from './assistantScene';
+import type {DeviceMaterialsTarget} from './AssistantDeviceMaterials';
+import type {FixedDocumentTarget} from './FixedDocumentPreview';
 
-export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,onViewScene,hasUnsaved=false}:{run:AssistantRun;en:boolean;locked:boolean;onExecute?:(keys:string[])=>void;onPage:(index:number)=>void;onHandoff?:()=>void;onViewScene?:(target:AssistantSceneTarget)=>void;hasUnsaved?:boolean}){
+const processingLabels:Record<string,[string,string]>={
+ drawing_batch:['图纸处理批次','Drawing processing batch'],drawing_recognition:['图纸识别','Drawing recognition'],
+ drawing_import:['图纸导入','Drawing import'],document_batch:['资料导入批次','Document import batch'],
+ document_source:['原文处理','Source processing'],document_generation:['知识生成','Knowledge generation'],
+ photo:['照片关联','Photo association'],knowledge_import:['知识导入','Knowledge import'],knowledge_release:['知识发布','Knowledge release'],
+ queued:['排队中','Queued'],running:['处理中','Running'],awaiting_input:['等待输入','Awaiting input'],completed:['处理已完成','Processing complete'],
+ failed:['处理失败','Processing failed'],cancelled:['已取消','Cancelled'],unknown:['状态待确认','Status unconfirmed'],
+ not_formed:['结果尚未形成','Result unavailable'],applied:['已应用','Applied'],pending_review:['结果待复核','Result pending review'],
+ available:['结果可查看','Result available'],source_ready:['原文已准备','Source ready'],published:['已发布','Published'],
+ superseded:['已被新版本替代','Superseded'],withdrawn:['已撤回','Withdrawn'],
+};
+
+export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,onViewScene,onViewDevice,onViewDocument,hasUnsaved=false}:{
+ run:AssistantRun;en:boolean;locked:boolean;onExecute?:(keys:string[])=>void;onPage:(index:number)=>void;onHandoff?:()=>void;
+ onViewScene?:(target:AssistantSceneTarget)=>void;onViewDevice?:(target:DeviceMaterialsTarget)=>void;
+ onViewDocument?:(target:FixedDocumentTarget)=>void;hasUnsaved?:boolean}){
  const task=run.result?.task;if(!task)return null;
  const t=(zh:string,english:string)=>en?english:zh;
- const names:Record<string,string>={work_orders:t('项目工单','Project work orders'),objects:t('工程对象','Objects'),graph:t('工程关系','Engineering graph'),knowledge:t('文档知识图谱','Document knowledge'),materials:t('项目资料','Materials'),scenes:t('项目场景','Project scenes'),adopted_models:t('项目采用模型','Project model adoption'),fixed_manual_neighborhood:t('固定发布版知识邻域','Fixed publication neighborhood'),selected_material:t('画布补充资料','Canvas context')};
+ const processingLabel=(key?:string)=>processingLabels[key??'']?.[en?1:0];
+ const names:Record<string,string>={work_orders:t('项目工单','Project work orders'),objects:t('工程对象','Objects'),graph:t('工程关系','Engineering graph'),knowledge:t('文档知识图谱','Document knowledge'),materials:t('项目资料','Materials'),scenes:t('项目场景','Project scenes'),adopted_models:t('项目采用模型','Project model adoption'),equipment_materials:t('安装设备目录','Installed equipment'),equipment_applicable_materials:t('设备适用资料','Applicable materials'),processing_tasks:t('资料处理任务','Processing tasks'),fixed_manual_neighborhood:t('固定发布版知识邻域','Fixed publication neighborhood'),selected_material:t('画布补充资料','Canvas context')};
  const states:Record<string,string>={complete:t('已读取','Read'),unavailable:t('读取失败','Unavailable'),budget_limited:t('预算已用尽 · 未读取','Budget reached · not read'),policy_excluded:t('项目策略未允许读取','Excluded by policy')};
  return <section className="as-task-result" aria-label={t('项目检索与操作','Project results and actions')}>
   {task.mode==='cockpit_query'&&onHandoff&&<Btn disabled={locked} onClick={onHandoff}>{t('转后台继续','Continue in workbench')}</Btn>}
   {!!task.results.length&&<><h4>{t('项目检索结果','Project results')} <span>{task.results.length}</span></h4><div className="as-project-results">{task.results.map(row=>{
-   const scene=row.kind==='scene',adopted=row.kind==='adopted_model',version=String(row.version);
+   const scene=row.kind==='scene',adopted=row.kind==='adopted_model',device=row.kind==='equipment_material_scope',version=String(row.version);
    return <article key={row.key}><div><strong>{row.title}</strong>
     {scene?<><small title={version}>{t('保存版本','Saved revision')} · {version.replace(/^scene:/,'').slice(0,8)}</small>
      <p>{row.instanceCount} {t('个实例','instances')}</p></>:adopted?<>
@@ -19,13 +37,24 @@ export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,on
      <p title={row.configurationRevision}>{row.configuration}</p>
      <small>{row.instanceCount? t('已保存场景共引用','References across saved scenes')+' '+row.instanceCount:t('暂无已保存场景引用','No saved scene references')}</small>
      {!!row.scenes?.length&&<ul className="as-model-uses">{row.scenes.map((item,index)=><li key={index}>{item.title} · {item.instanceCount} {t('个实例','instances')}</li>)}</ul>}
-     {row.moreScenes&&<small>{t('还有场景引用未展开','More saved scene references')}</small>}</>:<>
+     {row.moreScenes&&<small>{t('还有场景引用未展开','More saved scene references')}</small>}</>:
+     row.kind==='processing_task'?<>
+      <small>{processingLabel(row.processingKind)}</small>
+      <p>{processingLabel(row.state)} · {processingLabel(row.resultState)}{row.totalUnits!==undefined?' · '+row.completedUnits+'/'+row.totalUnits:''}</p>
+     </>:device?<small>{t('已登记安装设备','Registered installation')}</small>:
+     row.kind==='material_unavailable'?<small>{t('固定版本','Fixed version')} v{version} · {t('原文暂不可查看','Preview unavailable')}</small>:
+     row.documentPreview&&typeof row.version==='number'?<small>{t('设备适用资料','Applicable material')} · v{version}</small>:<>
      <small>{row.identifier} · r{row.version}{row.simulated?' · '+t('模拟记录','Simulation'):''}</small><p>{row.reason}{row.state?' · '+row.state:''}</p></>}
-    </div>{scene&&onViewScene&&<Btn disabled={locked} onClick={()=>onViewScene({sceneId:row.identifier,sceneRevision:version,title:row.title})}>{t('查看场景','View scene')}</Btn>}{!scene&&!adopted&&onExecute&&<Btn disabled={locked||!!task.receipts.length} onClick={()=>onExecute([row.key])}>{t('加入画布','Add to canvas')}</Btn>}</article>;
+    </div><div className="as-result-actions">
+     {scene&&onViewScene&&<Btn disabled={locked} onClick={()=>onViewScene({sceneId:row.identifier,sceneRevision:version,title:row.title})}>{t('查看场景','View scene')}</Btn>}
+     {device&&onViewDevice&&<Btn disabled={locked} onClick={()=>onViewDevice({entityUid:row.identifier,entityRevision:version,title:row.title})}>{t('查看设备资料','View materials')}</Btn>}
+     {row.documentPreview&&onViewDocument&&<Btn disabled={locked} onClick={()=>onViewDocument(row.documentPreview!)}>{t('查看原文','View source')}</Btn>}
+     {row.selector&&onExecute&&<Btn disabled={locked||!!task.receipts.length} onClick={()=>onExecute([row.key])}>{t('加入画布','Add to canvas')}</Btn>}
+    </div></article>;
   })}</div></>}
   {!!task.plan.actions.length&&<div className="as-proposed-actions"><h4>{t('画布操作','Canvas actions')}</h4>{hasUnsaved&&task.plan.actions.some(a=>a.kind==='save')&&<p>{t('当前还有未保存内容；执行将保存整张画布，包括这些已有修改。','This canvas has unsaved edits. Applying this plan saves the whole canvas, including those edits.')}</p>}<ul>{task.plan.actions.map((action,i)=><li key={i}>{taskActionNames[action.kind]?.[en?1:0]??action.kind}{action.targets.length?' · '+action.targets.join('、'):''}{action.text&&['rename','add_note','add_relation','update_note','append_note','rename_card','group_cards','rename_group','update_relation','add_support','add_contradiction','add_reference','restore_revision','set_window'].includes(action.kind)?' · '+action.text:''}</li>)}</ul>{task.mode==='cockpit_query'?<p>{t('驾驶舱仅查询。请转到后台执行这些操作。','Cockpit is query only. Open the workbench to execute these actions.')}</p>:onExecute&&<Btn primary disabled={locked||!!task.receipts.length} onClick={()=>onExecute([])}>{hasUnsaved&&task.plan.actions.some(a=>a.kind==='save')?t('应用并保存全部草稿','Apply and save entire draft'):t('执行画布操作','Apply canvas actions')}</Btn>}<small>{t('修改先进入草稿，可撤销；仅明确的保存指令会保存。','Edits enter the draft and can be undone. Saving requires an explicit instruction.')}</small></div>}
   {task.receipts.map(receipt=><div className="as-execution-receipt" role="status" key={receipt.operationId}><strong>{receipt.state==='saved'?t('画布已保存','Canvas saved'):receipt.saveRequested?t('执行时草稿已应用 · 保存未确认','Draft applied at execution · save unconfirmed'):t('已应用到草稿 · 执行时未保存','Applied to draft · unsaved at execution')}</strong>{receipt.items.map((item,i)=><p key={i}>{taskActionNames[item.kind]?.[en?1:0]??item.kind} · {item.label??item.identifier??item.restoredFrom??''} · {item.status==='already_present'?t('已存在，未重复添加','Already present; no duplicate'):item.status==='added'?t('已加入','Added'):t('已应用','Applied')}{item.simulated?' · '+t('保留模拟标记','Simulation retained'):''}</p>)}<small>{t('回执编号','Receipt')} {receipt.operationId.slice(0,8)} · r{receipt.analysisRevision} · {t('后续保存或撤销以画布为准','Later saves or undo follow the canvas state')}</small></div>)}
-  <details className="as-task-trace"><summary>{t('检索范围与过程','Search scope and process')} · {task.reads}/{task.readLimit}</summary><p>{t('项目资料与画布资料分别读取；同码工单不等于相同根因。','Project and canvas sources are read independently. Matching fault codes do not establish a shared root cause.')}</p>{task.trace.map((trace,i)=><div key={i}><span>{names[trace.tool]??trace.tool} · {states[trace.state]??trace.state}{trace.count!==undefined?' · '+trace.count:''}{trace.total!==undefined?' / '+trace.total:''}{trace.reason?' · '+trace.reason:''}</span>{trace.tool==='work_orders'&&trace.nextCursor!=null&&<Btn disabled={locked} onClick={()=>onPage(i)}>{t('继续查找','More results')}</Btn>}{trace.scope&&<small>{trace.tool==='scenes'?t(trace.scope,'Current project active scenes · saved revisions and instance counts'):trace.tool==='adopted_models'?t(trace.scope,'Current project adoption and saved scene references'):trace.scope}</small>}{trace.nextCursor!=null&&trace.tool!=='work_orders'&&<small>{t('还有项目结果未读取，可缩小查询范围继续查找','More project results remain unread; narrow the query to continue')}</small>}{trace.truncated&&<small>{trace.tool==='scenes'?t('还有匹配场景，可按更具体的名称查找','More scenes match; narrow the search by name'):trace.tool==='adopted_models'?t('结果已达到列出上限，可按配置名称继续查询','The result limit was reached. Narrow the search by configuration name.'):t('已达到本次邻域上限，未遍历全部关系','Neighborhood limit reached; not all relationships were read')}</small>}</div>)}</details>
+  <details className="as-task-trace"><summary>{t('检索范围与过程','Search scope and process')} · {task.reads}/{task.readLimit}</summary><p>{t('项目资料与画布资料分别读取；同码工单不等于相同根因。','Project and canvas sources are read independently. Matching fault codes do not establish a shared root cause.')}</p>{task.trace.map((trace,i)=><div key={i}><span>{names[trace.tool]??trace.tool} · {states[trace.state]??trace.state}{trace.count!==undefined?' · '+trace.count:''}{trace.total!==undefined?' / '+trace.total:''}{trace.reason?' · '+trace.reason:''}</span>{trace.tool==='work_orders'&&trace.nextCursor!=null&&<Btn disabled={locked} onClick={()=>onPage(i)}>{t('继续查找','More results')}</Btn>}{trace.scope&&<small>{trace.tool==='scenes'?t(trace.scope,'Current project active scenes · saved revisions and instance counts'):trace.tool==='adopted_models'?t(trace.scope,'Current project adoption and saved scene references'):trace.scope}</small>}{trace.nextCursor!=null&&trace.tool!=='work_orders'&&<small>{t('还有项目结果未读取，可缩小查询范围继续查找','More project results remain unread; narrow the query to continue')}</small>}{trace.truncated&&<small>{trace.tool==='scenes'?t('还有匹配场景，可按更具体的名称查找','More scenes match; narrow the search by name'):['equipment_materials','equipment_applicable_materials','processing_tasks'].includes(trace.tool)?t('仅列出本次读取范围','Only results within this read scope are shown'):trace.tool==='adopted_models'?t('结果已达到列出上限，可按配置名称继续查询','The result limit was reached. Narrow the search by configuration name.'):t('已达到本次邻域上限，未遍历全部关系','Neighborhood limit reached; not all relationships were read')}</small>}</div>)}</details>
   {task.graphs.map((entry,i)=>{
    const graph=entry.graph,engineering=entry.kind==='engineering';
    const nodes=(graph.nodes??[]) as {id?:string;local_id?:string;title?:string;statement?:string;kind?:string;source?:{release_id?:string;document?:{name:string};version?:{version_number:number}};payload?:{properties?:Record<string,{value:unknown}[]>}}[];

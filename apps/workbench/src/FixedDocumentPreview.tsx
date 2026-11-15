@@ -5,7 +5,9 @@ import {EquipmentApi,type EquipmentMaterial,type FixedDocument} from './equipmen
 import {Btn,Modal} from './Primitives';
 import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
 
-export function FixedDocumentPreview({api,item,en,onClose}:{api:WorkbenchApi;item:EquipmentMaterial;en:boolean;onClose:()=>void}){
+export type FixedDocumentTarget=Pick<EquipmentMaterial,'documentId'|'contentVersionId'|'title'>;
+
+export function FixedDocumentPreview({api,item,en,onClose}:{api:WorkbenchApi;item:FixedDocumentTarget;en:boolean;onClose:()=>void}){
  const service=useMemo(()=>new EquipmentApi(api),[api]);
  const [fixed,setFixed]=useState<FixedDocument|null>(null),[page,setPage]=useState(1),[image,setImage]=useState(''),[error,setError]=useState<unknown>(null),[retry,setRetry]=useState(0),[pending,setPending]=useState(false),[stopped,setStopped]=useState(false),[original,setOriginal]=useState(false);
  const files=useRef(new Map<string,{url:string;bytes:number}>()),active=useRef<AbortController|null>(null);

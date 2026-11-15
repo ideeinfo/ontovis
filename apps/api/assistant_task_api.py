@@ -102,7 +102,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
     require(task['mode']=='workbench','ASSISTANT_QUERY_ONLY',403)
     from . import assistant_canvas_tasks as operations
     keys=body.get('selectedKeys');require(type(keys) is list and len(keys)<=12 and len(set(keys))==len(keys) and all(type(k) is str for k in keys))
-    require(not any(row['kind'] in ('scene','adopted_model') and row['key'] in keys for row in task['results']),
+    require(not any(not row.get('selector') and row['key'] in keys for row in task['results']),
             'ASSISTANT_TOOL_NOT_ALLOWED',403)
     selection=digest(sorted(keys));prior=operations.load(runtime.store.library,record['id'],selection)
     if action=='task-ack':
