@@ -43,6 +43,9 @@ class AssistantDeviceAndProcessingTests(unittest.TestCase):
         self.assertEqual(4,doc['version'])
         self.assertNotIn('Private Photo',str(self.tools.sources))
         self.assertNotIn(self.document['documentId'],str(self.tools.sources))
+        answer=self.tools.catalogue_answer()
+        self.assertEqual([['E1'],['E2']],[entry['refs'] for entry in answer['observations']])
+        self.assertIn('1 份可查看固定原文',answer['observations'][-1]['text'])
 
     def test_ambiguous_equipment_and_changed_revision_never_open_material_catalogue(self):
         with patch('apps.api.assistant_device_materials.EquipmentReader') as reader:
@@ -78,6 +81,11 @@ class AssistantDeviceAndProcessingTests(unittest.TestCase):
         for value in ('Hidden photo','Removed document','private binding','private exception'):
             self.assertNotIn(value,evidence)
         self.assertTrue(self.tools.trace[0]['truncated'])
+        answer=self.tools.catalogue_answer()
+        self.assertEqual([],answer['hypotheses'])
+        self.assertEqual([],answer['nextSteps'])
+        self.assertEqual(['E1'],answer['observations'][0]['refs'])
+        self.assertTrue(answer['gaps'])
 
     def test_negotiate_each_tool_and_reject_provider_mutation(self):
         for kind in ('equipment_materials','processing_tasks'):

@@ -47,4 +47,6 @@ def query(tools, needle):
     tools.trace.append(dict(tool='processing_tasks',state='complete',count=len(records),scope=scope,truncated=more))
     summary = json.dumps(dict(scope=scope,columns=['标题','任务类型','处理状态','结果状态','已完成','总数'],
                               more=more,items=records),ensure_ascii=False,separators=(',',':'))
-    tools.source('document',summary)
+    observation = (f'本次查得 {len(records)} 条任务。结果卡分别列出处理状态和结果状态。'
+                   if records else '在本次读取范围内没有匹配的资料处理任务。')
+    tools.catalogue_source('document',summary,observation)

@@ -11,6 +11,7 @@ from .assistant_canvas_tasks import ACTIONS
 
 PROTOCOL='ontovis-engineering-tasks-v1'
 QUERY_TOOLS=('work_orders','objects','materials','graph','knowledge')
+CATALOGUE_TOOLS=('equipment_materials','processing_tasks')
 
 
 def snapshot(body, connection, project):
@@ -50,7 +51,7 @@ def validate_plan(value, *, scene_directory=False, adopted_models=False, equipme
             and type(q['tool']) is str and q['tool'] in tools
             and all(type(q[k]) is str and len(q[k])<=200 for k in ('query','faultCode'))
             and type(q.get('orderId','')) is str and len(q.get('orderId',''))<=100,'ASSISTANT_TOOL_NOT_ALLOWED',422)
-        if q['tool'] in ('scenes','adopted_models','equipment_materials','processing_tasks'):
+        if q['tool'] in ('scenes','adopted_models',*CATALOGUE_TOOLS):
             require(value['intent']=='query' and not q['faultCode'] and not q.get('orderId'),'ASSISTANT_TOOL_NOT_ALLOWED',422)
     for a in value['actions']:
         require(type(a) is dict and set(a)=={'kind','targets','text','x','y'} and a['kind'] in ACTIONS
@@ -96,6 +97,7 @@ class ProjectTools:
     def __init__(self,reader,guard,limit,allowed,private):
         self.reader,self.guard,self.limit,self.allowed,self.private=reader,guard,limit,set(allowed),private
         self.reads=0;self.sources=[];self.results=[];self.graphs=[];self.trace=[]
+        self.catalogue_observations=[]
 
     def read(self,operation):
         self.guard();require(self.reads<self.limit,'ASSISTANT_READ_LIMIT',409);self.reads+=1
@@ -108,6 +110,19 @@ class ProjectTools:
                  availability='available',evidenceRefId='')
         row.update(fields)
         self.sources.append(row);return row
+
+    def catalogue_source(self,kind,summary,observation):
+        source=self.source(kind,summary)
+        if source:
+            self.catalogue_observations.append(dict(text=observation,refs=[source['key']]))
+
+    def catalogue_answer(self):
+        gaps=[]
+        if any(trace['state']!='complete' for trace in self.trace):
+            gaps.append(dict(text='有读取未完成。可在检索过程查看原因。',refs=[]))
+        if any(trace.get('truncated') for trace in self.trace):
+            gaps.append(dict(text='只显示本轮读取的范围。可按更具体的名称继续查找。',refs=[]))
+        return dict(observations=self.catalogue_observations,hypotheses=[],gaps=gaps,nextSteps=[])
 
     def query(self,q):
         reader=self.reader;tool=q['tool'];needle=q['query'];fault=q['faultCode']
@@ -298,7 +313,10 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         trace=[dict(key=t['tool'],state=t['state']) for t in tools.trace]
         runtime.store.update(run_id,'reading',progress=trace,sources=tools.sources)
         evidence=[{k:s[k] for k in ('key','kind','summary')} for s in tools.sources]
-        if evidence:
+        catalogue_query=body['taskId']=='query' and plan['queries'] and all(q['tool'] in CATALOGUE_TOOLS for q in plan['queries'])
+        if catalogue_query:
+            answer=tools.catalogue_answer()
+        elif evidence:
             answer=validate_answer(model('answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'],{s['key'] for s in evidence})
         elif plan['intent']=='edit' and plan['actions'] and not plan['queries']:
             message='已列出画布操作计划，尚未执行。' if body['mode']=='workbench' else '已列出画布操作建议，可转后台执行；驾驶舱未修改画布。'

@@ -40,6 +40,39 @@ class TaskHttpTests(unittest.TestCase):
             snapshot=json.loads(self.body['snapshotJson']);snapshot['projectCode']='B'
             self.assertEqual(404,self.request('task-start',{**self.body,'snapshotJson':json.dumps(snapshot)})[0]);model.assert_not_called()
 
+    def test_processing_catalogue_retains_source_state_and_skips_answer_generation(self):
+        plan=dict(intent='query',queries=[dict(tool='processing_tasks',query='',faultCode='',orderId='')],actions=[])
+        model_reply=dict(plan=plan,usage={'total_tokens':31},modelCalls=1,engineeringConfirmation=False,
+                         purpose='ontovis_analysis',serviceRevision='a'*64)
+        task=dict(id=str(uuid4()),title='Fixed source task',kind='drawing_recognition',
+                  state='unknown',result_state='not_formed',source_available=True)
+        authority=fixture.ProjectsAuthority.request
+        def request(instance,method,path,body=None):
+            if path=='/api/v1/projects/Demo-PDS/processing-tasks?q=&cursor=0&limit=6':
+                self.assertEqual('GET',method)
+                return dict(items=[task],next_cursor=6)
+            return authority(instance,method,path,body)
+
+        with patch.object(fixture.ProjectsAuthority,'request',request), \
+             patch('apps.api.assistant_task_api.call_source',return_value=model_reply) as model:
+            status,started=self.request('task-start',self.body)
+            self.assertEqual(200,status,started)
+            for _ in range(60):
+                _,run=self.request('status',dict(runId=started['runId']))
+                if run['state'] not in ('reading','model','validating'):
+                    break
+                time.sleep(.01)
+            self.assertEqual('partial',run['state'],run)
+            self.assertEqual(1,model.call_count)
+        result=run['result']
+        self.assertEqual(1,result['modelCalls'])
+        self.assertEqual({'total_tokens':31},result['usage'])
+        self.assertEqual(('unknown','not_formed'),tuple(result['task']['results'][0][key] for key in ('state','resultState')))
+        self.assertEqual([],result['answer']['hypotheses'])
+        self.assertEqual([],result['answer']['nextSteps'])
+        self.assertEqual(['E1'],result['answer']['observations'][0]['refs'])
+        self.assertTrue(result['answer']['gaps'])
+
     def test_scene_candidate_cannot_create_a_draft_or_cross_project_scope(self):
         scene = dict(sceneId=str(uuid4()), displayName='Crystal Rig', headRevision='scene:' + str(uuid4()), instanceCount=91)
         self.body['mode'] = 'workbench'
