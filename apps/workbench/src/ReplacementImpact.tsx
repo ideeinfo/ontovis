@@ -1,10 +1,15 @@
 import {usePreferences} from './Preferences';
 import {sceneText, type SceneMessageKey} from './sceneMessages';
-import {sceneEngineeringText} from './sceneEngineeringMessages';
-import type {EditableSceneSnapshot, SceneCheck} from './sceneTypes';
+import {refKey,replacementBindingImpact} from './sceneEngineeringState';
+import type {SceneObjectContext, EngineeringRef} from './sceneEngineeringTypes';
+import type {ProjectModelVersion} from './resourceTypes';
+import type {SceneOpen,SceneCheck} from './sceneTypes';
 import './replacementImpact.css';
 
-export interface Props {result:SceneCheck;snapshot:EditableSceneSnapshot}
+export interface Props {
+  result:SceneCheck;base:SceneOpen;models:ReadonlyMap<string,ProjectModelVersion>;
+  objects:readonly (SceneObjectContext|null)[];
+}
 type Fields=Record<string,unknown>;
 const fields=(value:unknown):Fields|null=>value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Fields:null;
 const text=(value:unknown):string|null=>typeof value==='string'&&value.trim().length>0&&value.length<=512?value:null;
@@ -18,11 +23,16 @@ function identifiers(value:unknown):string[]|null {
 }
 
 /** A read-only rendering of service impact facts; missing fields never imply zero or success. */
-export function ReplacementImpact({result,snapshot}:Props) {
+export function ReplacementImpact({result,base,models,objects}:Props) {
   const {locale}=usePreferences(),t=(key:SceneMessageKey)=>sceneText(locale,key),unknown=t('impactUnknown');
   const impact=fields(fields(result.validation)?.impact),kind=impact?.kind;
-  const names=new Map(snapshot.instances.map(item=>[item.sceneModelInstanceId,item.displayName]));
+  const names=new Map(base.snapshot.instances.map(item=>[item.sceneModelInstanceId,item.displayName]));
   const name=(id:unknown)=>text(id)!==null?names.get(id as string)||t('impactUnknownModel'):t('impactUnknownModel');
+  const bindings=kind==='model_replacement'?replacementBindingImpact(base,result):null;
+  const oldVersion=bindings&&models.get(bindings.previous.modelVersionId);
+  const newVersion=bindings&&models.get(bindings.candidate.modelVersionId);
+  const objectName=(ref:EngineeringRef)=>objects.find(item=>item&&refKey(item.objectRef)===refKey(ref))?.item.displayName||ref.entityUid;
+  const componentNames=new Map(oldVersion?oldVersion.components.map(component=>[component.componentKey,component.displayName]):[]);
   const number=(value:unknown,signed=false)=>{
     if(!finite(value))return unknown;
     const magnitude=Math.abs(value),formatted=value===0?'0':magnitude<1e-6||magnitude>=1e9?value.toExponential(3):
@@ -49,13 +59,29 @@ export function ReplacementImpact({result,snapshot}:Props) {
   return <section className="ov-replacement-impact" aria-label={t('impactTitle')}>
     {kind==='model_replacement'?<>
       <strong className="ov-replacement-name">{name(impact?.sceneModelInstanceId)}</strong>
+      {bindings&&<>
+        <dl className="ov-replacement-facts ov-replacement-models">
+          <dt>{t('impactOldVersion')}</dt><dd title={bindings.previous.modelVersionId}>{oldVersion?.displayName&&oldVersion.displayName+' · '}{bindings.previous.modelVersionId.slice(0,8)}</dd>
+          <dt>{t('impactNewVersion')}</dt><dd title={bindings.candidate.modelVersionId}>{newVersion?.displayName&&newVersion.displayName+' · '}{bindings.candidate.modelVersionId.slice(0,8)}</dd>
+          <dt>{t('impactEquipmentBinding')}</dt><dd>{bindings.root?<><span title={bindings.root.entityUid}>{objectName(bindings.root)}</span><small>{t('impactBindingRetained')}</small></>:t('noGeometryBindings')}</dd>
+        </dl>
+        <section className="ov-replacement-bindings" aria-label={t('impactAffectedBindings')}>
+          <strong>{t('impactAffectedBindings')} · {bindings.bindings.length}</strong>
+          {bindings.bindings.length>0?<><p className="ov-replacement-caption">{t('impactBindingHint')}</p>
+            <ul className="ov-replacement-instances">{bindings.bindings.map(binding=><li key={refKey(binding.objectRef)}>
+              <strong title={binding.objectRef.entityUid}>{objectName(binding.objectRef)}</strong>
+              <small>{t(binding.code==='COMPONENT_MISSING'?'impactBindingKeyMissing':
+                binding.code==='SOURCE_ID_AMBIGUOUS'?'impactBindingAmbiguous':'impactBindingReview')}</small>
+              <details className="ov-replacement-details"><summary>{t('impactPreviousComponents')} · {binding.componentKeys.length}</summary>
+                <ul className="ov-replacement-component-keys">{binding.componentKeys.map(key=><li key={key} title={key}>{componentNames.get(key)||key}</li>)}</ul>
+              </details>
+            </li>)}</ul></>:<p className="ov-replacement-caption">{t('impactNoAffectedBindings')}</p>}
+        </section>
+      </>}
       <table className="ov-replacement-comparison ov-list-table"><thead><tr><th scope="col">{t('impactProperty')}</th><th scope="col">{t('impactOld')}</th><th scope="col">{t('impactNew')}</th></tr></thead><tbody>
         {metricRows.map(([label,before,after])=><tr key={label}><th scope="row">{t(label)}</th><td>{before}</td><td>{after}</td></tr>)}
       </tbody></table>
-      {result.validation.bindingIssues?.some(issue=>issue.kind==='model_version_changed'&&issue.sceneModelInstanceId===impact?.sceneModelInstanceId)&&<p className="ov-replacement-caption">{sceneEngineeringText(locale,'pendingLinks')} · {result.validation.bindingIssues.filter(issue=>issue.kind==='model_version_changed'&&issue.sceneModelInstanceId===impact?.sceneModelInstanceId).length}</p>}
       <details className="ov-replacement-details"><summary>{t('impactVersions')}</summary><dl className="ov-replacement-facts">
-        <dt>{t('impactOldVersion')}</dt><dd className="ov-replacement-identity">{text(old?.modelVersionId)||unknown}</dd>
-        <dt>{t('impactNewVersion')}</dt><dd className="ov-replacement-identity">{text(next?.modelVersionId)||unknown}</dd>
         <dt>{t('impactOldForward')}</dt><dd>{tuple(old?.forward)}</dd>
         <dt>{t('impactNewForward')}</dt><dd>{tuple(next?.forward)}</dd>
       </dl></details>

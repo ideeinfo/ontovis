@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {bindComponentKeys,changeRootBinding,engineeringReviews,refKey,reviewedForSave,reviewSelectedObject,
-  rootChangesForSave,SceneEngineeringStateError} from '../src/sceneEngineeringState.ts';
+  rootChangesForSave,replacementBindingImpact,SceneEngineeringStateError} from '../src/sceneEngineeringState.ts';
 
 const ref=(uid='CT-A',connection='connection-A',project='project-A')=>({ontobaseConnectionId:connection,projectCode:project,entityUid:uid});
 const expectation=(object=ref(),entity='entity:1',hierarchy='hierarchy:1',context='installation-A')=>({
@@ -19,6 +19,28 @@ const item=(id='instance-A',object=ref('root-A'),bindings=[{objectRef:ref(),comp
 const snapshot=(instances=[item()])=>({displayName:'合成布置',coordinateFrame:{mode:'local_plane',frameRevision:'frame:1',origin:[0,0,0],unit:'m',axes:'X_EAST_Y_UP_Z_SOUTH'},
   terrain:null,instances,initialView:{eye:[20,30,40],target:[0,0,0]},defaults:{background:'sky',lighting:'neutral',terrainMaterial:'solid'}});
 const throws=(run,code)=>assert.throws(run,error=>error instanceof SceneEngineeringStateError&&error.code===code);
+
+test('replacement impact lists newly removed bindings on the selected instance and retains its equipment',()=>{
+  const first=item(),second=item('instance-B');
+  const before={sceneId:'s1',sceneRevision:'scene:current',snapshot:snapshot([first,second])};
+  const candidate={...first,modelVersionId:'candidate-version',componentBindings:[]};
+  const removed={kind:'model_version_changed',sceneModelInstanceId:first.sceneModelInstanceId,objectRef:ref(),
+    code:'COMPONENT_MISSING',previousModelVersionId:first.modelVersionId,sourceSceneRevision:before.sceneRevision};
+  const impact={kind:'model_replacement',sceneModelInstanceId:first.sceneModelInstanceId,
+    oldModelVersionId:first.modelVersionId,newModelVersionId:candidate.modelVersionId};
+  const preview={sceneId:'s1',baseSceneRevision:before.sceneRevision,spatialChange:{kind:'model'},
+    proposedSnapshot:snapshot([candidate,second]),validation:{impact,bindingIssues:[
+      removed,{...removed,sceneModelInstanceId:'instance-B',code:'MIGRATION_REQUIRED'},
+      {...removed,sourceSceneRevision:'scene:historical',code:'MIGRATION_REQUIRED'},
+    ]}};
+  const result=replacementBindingImpact(before,preview);
+  assert.deepEqual(result.root,ref('root-A'));
+  assert.deepEqual(result.bindings,[{objectRef:ref(),componentKeys:['ct'],code:'COMPONENT_MISSING'}]);
+  assert.deepEqual(before.snapshot.instances,[first,second]);
+  assert.equal(replacementBindingImpact(before,{...preview,baseSceneRevision:'scene:old'}),null);
+  assert.equal(replacementBindingImpact(before,{...preview,proposedSnapshot:snapshot([{...candidate,rootBinding:null},second])}),null);
+  assert.equal(replacementBindingImpact(before,{...preview,proposedSnapshot:snapshot([{...candidate,componentBindings:first.componentBindings},second])}),null);
+});
 
 test('ref identity contains connection, project and UID without separator collisions',()=>{
   const keys=[ref(),ref('CT-A','connection-B'),ref('CT-A','connection-A','project-B'),ref('x|y','z'),ref('y','z|x')].map(refKey);

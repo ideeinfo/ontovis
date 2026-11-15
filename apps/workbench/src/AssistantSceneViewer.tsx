@@ -2,7 +2,7 @@ import {lazy,Suspense,useCallback,useEffect,useMemo,useRef,useState} from 'react
 import {ApiError,type WorkbenchApi} from './api';
 import {Btn,Modal} from './Primitives';
 import {SceneApi} from './sceneApi';
-import {openAssistantScene,type AssistantSceneTarget} from './assistantScene';
+import {canEditAssistantScene,openAssistantScene,type AssistantSceneTarget} from './assistantScene';
 import {cockpitInspectionScene} from './cockpitLocation';
 import {useCockpitLocation} from './useCockpitLocation';
 import {sceneLoadingIdentity,sceneLoadingPlan,scenePreparationStatus,type ScenePreparationState} from './sceneLoading';
@@ -12,7 +12,7 @@ const idle=()=>{};
 const preventMove=async()=>false;
 const visibility={};
 
-export function AssistantSceneViewer({api,target,en,onClose}:{api:WorkbenchApi;target:AssistantSceneTarget;en:boolean;onClose:()=>void}){
+export function AssistantSceneViewer({api,target,en,onClose,onEdit}:{api:WorkbenchApi;target:AssistantSceneTarget;en:boolean;onClose:()=>void;onEdit?:(target:AssistantSceneTarget)=>void}){
  const t=(zh:string,english:string)=>en?english:zh;
  const [opened,setOpened]=useState<Awaited<ReturnType<typeof openAssistantScene>>|null>(null);
  const [error,setError]=useState<unknown>(null),[reload,setReload]=useState(0);
@@ -57,6 +57,8 @@ export function AssistantSceneViewer({api,target,en,onClose}:{api:WorkbenchApi;t
    <header>
     <span title={target.sceneRevision}>{t('保存版本','Saved revision')} · {target.sceneRevision.replace(/^scene:/,'').slice(0,8)}</span>
     {scene&&scene.headRevision!==scene.sceneRevision&&<span>{t('历史版本','Historical revision')}</span>}
+    {onEdit&&scene&&canEditAssistantScene(scene,api.project?.projectCode,target)&&
+     <Btn onClick={()=>onEdit(target)}>{t('进入场景编辑','Open scene editor')}</Btn>}
     {!!instances.length&&<div className="as-scene-controls">
      <select aria-label={t('选择设备','Select equipment')} value={choice} disabled={locked} onChange={event=>setChoice(event.currentTarget.value)}>
       <option value="">{t('选择设备','Select equipment')}</option>

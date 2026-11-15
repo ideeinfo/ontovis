@@ -1,5 +1,5 @@
 import type {EngineeringExpectation, EngineeringRef, SceneObjectSelection} from './sceneEngineeringTypes';
-import type {EditableSceneSnapshot, GeometryValidation, RootBindingChange, SceneModelInstance} from './sceneTypes';
+import type {EditableSceneSnapshot, GeometryValidation, RootBindingChange, SceneCheck, SceneModelInstance, SceneOpen} from './sceneTypes';
 
 export type EngineeringReviews = ReadonlyMap<string, EngineeringExpectation>;
 type StateErrorCode = 'INVALID_REQUEST' | 'ENGINEERING_CHANGED' | 'COMPONENT_ALREADY_BOUND' | 'SCENE_LIMIT_EXCEEDED';
@@ -83,6 +83,28 @@ function rootChange(value:RootBindingChange):RootBindingChange {
   return structuredClone(value);
 }
 const nullableKey=(ref:EngineeringRef|null)=>ref===null?null:refKey(ref);
+
+export function replacementBindingImpact(base:Pick<SceneOpen,'sceneId'|'sceneRevision'|'snapshot'>,result:SceneCheck) {
+  if(result.spatialChange?.kind!=='model'||result.sceneId!==base.sceneId||result.baseSceneRevision!==base.sceneRevision)return null;
+  const impact=result.validation.impact as {kind?:string;sceneModelInstanceId?:string;oldModelVersionId?:string;newModelVersionId?:string}|undefined;
+  if(impact?.kind!=='model_replacement')return null;
+  const previous=base.snapshot.instances.find(item=>item.sceneModelInstanceId===impact.sceneModelInstanceId);
+  const candidate=result.proposedSnapshot.instances.find(item=>item.sceneModelInstanceId===impact.sceneModelInstanceId);
+  if(!previous||!candidate||previous.modelVersionId!==impact.oldModelVersionId||candidate.modelVersionId!==impact.newModelVersionId||
+     previous.modelVersionId===candidate.modelVersionId||candidate.componentBindings.length)return null;
+  const root=previous.rootBinding?.objectRef??null;
+  if(nullableKey(root)!==nullableKey(candidate.rootBinding?.objectRef??null))return null;
+  const issues=new Map<string,'COMPONENT_MISSING'|'MIGRATION_REQUIRED'|'SOURCE_ID_AMBIGUOUS'>();
+  for(const issue of result.validation.bindingIssues) {
+    if(issue.kind==='model_version_changed'&&issue.sceneModelInstanceId===previous.sceneModelInstanceId&&
+       issue.previousModelVersionId===previous.modelVersionId&&issue.sourceSceneRevision===base.sceneRevision)
+      issues.set(refKey(issue.objectRef),issue.code);
+  }
+  return {previous,candidate,root,bindings:previous.componentBindings.map(binding=>({
+    ...binding,code:issues.get(refKey(binding.objectRef))??'MIGRATION_REQUIRED',
+  }))};
+}
+
 const sameRootChange=(a:RootBindingChange,b:RootBindingChange)=>a.sceneModelInstanceId===b.sceneModelInstanceId&&
   nullableKey(a.from)===nullableKey(b.from)&&nullableKey(a.to)===nullableKey(b.to)&&
   a.clearOldComponentBindings===b.clearOldComponentBindings&&a.reviewedRemovedBindingsDigest===b.reviewedRemovedBindingsDigest;

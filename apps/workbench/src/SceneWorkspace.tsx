@@ -17,6 +17,7 @@ import {SceneApi} from './sceneApi';
 import {EquipmentApi,type EquipmentConfigurations} from './equipmentApi';
 import {legacyEntryInstance} from './legacySceneEntry';
 import {ReplacementImpact} from './ReplacementImpact';
+import {canEditAssistantScene,verifyAssistantScene} from './assistantScene';
 import {SceneObjectsPanel} from './SceneObjectsPanel';
 import {SceneInstanceLinks} from './SceneInstanceLinks';
 import {SceneBindingReview} from './SceneBindingReview';
@@ -28,7 +29,7 @@ import type {SceneAlarm} from './sceneAlarm';
 import {SceneBatchError,moveSceneInstances,pruneSceneGroups,selectSceneInstances,selectSceneScope,snapNumber,snapPoint} from './sceneOrganization';
 import {organizationError,organizationText} from './sceneOrganizationMessages';
 import {sceneEngineeringText} from './sceneEngineeringMessages';
-import {engineeringReviews,reviewSelectedObject,reviewedForSave,rootChangesForSave,changeRootBinding,bindComponentKeys,refKey} from './sceneEngineeringState';
+import {engineeringReviews,reviewSelectedObject,reviewedForSave,rootChangesForSave,changeRootBinding,bindComponentKeys,refKey,replacementBindingImpact} from './sceneEngineeringState';
 import type {EngineeringExpectation,SceneObjectContext,SceneLocation,SceneRepresentation} from './sceneEngineeringTypes';
 import type {SceneComponentPick,SceneComponentPickRequest} from './sceneComponentPick';
 import type {ComponentFocusRequest} from './sceneComponentFocus';
@@ -53,6 +54,7 @@ const SceneAlarmPanel=lazy(()=>import('./SceneAlarmPanel').then(module=>({defaul
 const SceneViewport=lazy(()=>import('./SceneViewport').then(module=>({default:module.SceneViewport})));
 const ResourcePanel=lazy(()=>import('./ResourcePanel').then(module=>({default:module.ResourcePanel})));
 export interface SceneWorkspaceHandle {requestLeave:(after:()=>void)=>void;cockpitEntry:()=>{sceneId:string;sceneRevision:string;instanceId:string|null;camera?:SceneView}|null}
+export interface SceneWorkspaceTarget {sceneId:string;sceneRevision?:string}
 const modelRef=(model:ProjectModelVersion):ModelResourceRef=>({modelAssetId:model.modelAssetId,modelVersionId:model.modelVersionId,contentRevision:model.contentRevision,sha256:model.sha256});
 type ReplacementOperation=Omit<Extract<SceneReplacementCheckRequest,{kind:'model'}>,'sceneId'|'expectedSceneRevision'|'snapshot'>|Omit<Extract<SceneReplacementCheckRequest,{kind:'terrain'}>,'sceneId'|'expectedSceneRevision'|'snapshot'>;
 const finite=(value:string)=>value.trim()!=='' && Number.isFinite(Number(value));
@@ -125,7 +127,7 @@ function ScenePlaceholderThumb({name,compact=false}:{name:string;compact?:boolea
   </svg>;
 }
 
-export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;suspended?:boolean;initialEntry?:LegacySceneEntryTarget|null;initialSceneId?:string;project?:ProjectSummary;onProjectCreated?:(project:ProjectSummary,sceneId:string)=>void;onProjectName?:(name:string)=>void;onConfigure?:()=>void}>(function SceneWorkspace({api,suspended=false,initialEntry,initialSceneId,project,onProjectCreated,onProjectName,onConfigure},ref) {
+export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;suspended?:boolean;initialEntry?:LegacySceneEntryTarget|null;initialScene?:SceneWorkspaceTarget;project?:ProjectSummary;onProjectCreated?:(project:ProjectSummary,sceneId:string)=>void;onProjectName?:(name:string)=>void;onConfigure?:()=>void}>(function SceneWorkspace({api,suspended=false,initialEntry,initialScene,project,onProjectCreated,onProjectName,onConfigure},ref) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof sceneText>[1])=>sceneText(locale,key);
   const et=(key:Parameters<typeof sceneEngineeringText>[1])=>sceneEngineeringText(locale,key);
   const it=(key:Parameters<typeof imageryText>[1])=>imageryText(locale,key);
@@ -145,7 +147,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
   const cameraControl=useRef<SceneCameraControl|null>(null),routeControl=useRef<SceneRouteControl|null>(null),placementInFlight=useRef(false);
   const [opening,setOpening]=useState(false),[metadataAttempt,setMetadataAttempt]=useState(0);
   const [metadataErrors,setMetadataErrors]=useState<{terrain:unknown;imagery:unknown}>({terrain:null,imagery:null});
-  const [entryPending,setEntryPending]=useState(!!initialEntry);
+  const [entryPending,setEntryPending]=useState(!!initialEntry||!!initialScene?.sceneRevision);
   const [editing,setEditing]=useState(false),[readOnly,setReadOnly]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null);
   const [left,setLeft]=useState<'content'|'resources'|'objects'>('content'),[side,setSide]=useState<'left'|'right'|null>(null);
   const [modal,setModal]=useState<'info'|'create'|'leave'|'conflict'|'anchor'|'replaceTerrain'|'bindingReview'|'engineeringReview'|null>(null),[newName,setNewName]=useState('');
@@ -302,7 +304,11 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
       await readList();
     }catch(value){if(!abort.signal.aborted)failed(value);}finally{done(abort);if(mounted.current)setBusy(false);}
   }
-  useEffect(()=>{if(initialEntry)void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry);else if(initialSceneId)void open(initialSceneId);else void readList();},[]);
+  useEffect(()=>{
+    if(initialEntry)void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry);
+    else if(initialScene)void open(initialScene.sceneId,initialScene.sceneRevision,undefined,!!initialScene.sceneRevision);
+    else void readList();
+  },[]);
   async function adopt(value:SceneOpen,instanceId?:string){
     savedAnalysis.current=null;
     routeControl.current?.cancel(false);setContinuous(false);setSnap({grid:0,angle:0});setInspectorTab('properties');
@@ -318,13 +324,19 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     setTerrain(null);
     setImageryVersion(null);setMetadataErrors({terrain:null,imagery:null});setMetadataAttempt(value=>value+1);
   }
-  async function open(sceneId:string,revision?:string,entry?:LegacySceneEntryTarget){
+  async function open(sceneId:string,revision?:string,entry?:LegacySceneEntryTarget,openForEditing=false){
     openRequest.current?.abort();objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setFocus(undefined);setComponentFocus(undefined);
     const token=++sequence.current,abort=controller();setBusy(true);setOpening(true);setError(null);
     openRequest.current=abort;
     try{const value=await client.open(sceneId,revision,abort.signal);if(mounted.current&&token===sequence.current&&!abort.signal.aborted){
       const required=entry||(base&&initialEntry?.sceneId===sceneId?{...initialEntry,sceneRevision:revision||value.sceneRevision}:undefined);
-      await adopt(value,required?legacyEntryInstance(value,required):undefined);if(mounted.current&&token===sequence.current)setEntryPending(false);
+      const target=openForEditing&&revision?{sceneId,sceneRevision:revision}:null;
+      if(target)verifyAssistantScene(value,api.project?.projectCode,target);
+      await adopt(value,required?legacyEntryInstance(value,required):undefined);
+      if(mounted.current&&token===sequence.current){
+        if(target&&canEditAssistantScene(value,api.project?.projectCode,target))setEditing(true);
+        setEntryPending(false);
+      }
     }}
     catch(value){if(token===sequence.current&&!abort.signal.aborted)failed(value);}finally{done(abort);if(openRequest.current===abort)openRequest.current=null;if(mounted.current&&token===sequence.current){setBusy(false);setOpening(false);}}
   }
@@ -649,17 +661,28 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
       const value=await client.replacementCheck({sceneId:base.sceneId,expectedSceneRevision:base.sceneRevision,
         snapshot:cloneSnapshot(draft),...operation},abort.signal);
       if(mounted.current&&token===sequence.current){syncWrite(value);if(!value.capabilities.canWrite)throw new ApiError(403,'SCENE_WRITE_FORBIDDEN');
+        if(operation.kind==='model'){
+          const impact=replacementBindingImpact(base,value);
+          if(!impact||impact.previous.sceneModelInstanceId!==operation.sceneModelInstanceId||
+             impact.candidate.modelVersionId!==operation.candidateModelVersionId)throw new ApiError(409,'SPATIAL_PRECHECK_INVALID');
+          setSide('right');
+        }
         beforeAnchorView.current=liveView.current;setAnchorResult(value);setLeft('content');setModal(null);setPreview(null);
         if(liveView.current)setViewCommand({token:Date.now(),view:structuredClone(liveView.current)});
       }
     }catch(value){failed(value);}finally{done(abort);if(editRequest.current===abort)editRequest.current=null;if(mounted.current&&token===sequence.current)setBusy(false);}
   }
-  function cancelAnchor(){if(saveInFlight.current||saveUnknown)return;setAnchorResult(null);if(beforeAnchorView.current)setViewCommand({token:Date.now(),view:beforeAnchorView.current});setCandidate(null);}
+  function cancelAnchor(){if(saveInFlight.current||saveUnknown)return;if(anchorResult?.spatialChange?.kind==='model')setSide(null);setAnchorResult(null);if(beforeAnchorView.current)setViewCommand({token:Date.now(),view:beforeAnchorView.current});setCandidate(null);}
   const organizationFailure=organizationError(locale,error);
   const memberNames=error instanceof SceneBatchError?error.instanceIds.flatMap(id=>{const item=draft?.instances.find(value=>value.sceneModelInstanceId===id);return item?[item.displayName]:[];}).join('、'):'';
   const errorText=organizationFailure?organizationFailure+(memberNames?`：${memberNames}`:''):error instanceof Error&&'code' in error&&error.code==='ENGINEERING_CHANGED'?et('reviewRequired'):error instanceof ApiError?imageryFailure(error,locale):error instanceof Error?('code' in error&&typeof error.code==='string'?failureMessage(new ApiError(422,error.code),locale):error.message):error?failureMessage(error,locale):'';
   const fields=(keys:('x'|'z'|'longitude'|'latitude'|'heading'|'height')[])=>keys.map(key=><label key={key}><span>{t(key==='height'?(position.heightMode==='relative'?'relativeHeight':position.heightMode==='ground'?'offset':'elevation'):key)}</span><input type="number" step="any" value={position[key]} onChange={event=>setPosition(value=>({...value,[key]:event.target.value}))}/></label>);
   const isAnchor=anchorResult?.spatialChange?.kind==='anchor',viewTerrain=anchorResult?.spatialChange&&anchorResult.spatialChange.kind!=='model'?candidate:terrain;
+  const isModelReplacement=anchorResult?.spatialChange?.kind==='model';
+  const replacementActions=anchorResult&&<>
+    <Btn disabled={busy||saveUnknown} onClick={cancelAnchor}>{t('cancel')}</Btn>
+    <Btn primary disabled={busy||!canWrite||saveUnknown} onClick={()=>void save(anchorResult)}>{t(isAnchor?'anchorSave':'confirmReplacement')}</Btn>
+  </>;
   const spatialDialog=modal==='anchor'||modal==='replaceTerrain';
   const locationReason=location?.reason==='INCOMPLETE_PHYSICAL_CHAIN'?'chainIncomplete':location?.reason==='NO_REPRESENTATION'?'noRepresentation':location?.reason==='BINDING_NEEDS_REVIEW'?'bindingNeedsReview':'resourceNotReady';
   const currentModel=internalModel?.modelVersionId===current?.modelVersionId?internalModel:null;
@@ -990,7 +1013,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
             setPending(null);
             setPreview(null);
           }}
-          onReplace={value=>{if(current)void previewReplacement({kind:'model',sceneModelInstanceId:current.sceneModelInstanceId,candidateModelVersionId:value.modelVersionId});}} onPlace={value=>{if(!editing&&canWrite)setEditing(true);modelCatalog.set(value.modelVersionId,value);setHints(prior=>({...prior,[value.modelVersionId]:modelRef(value)}));setPending({kind:'model',model:value});setPendingTurbine(null);setPreview(null);}}
+          onReplace={value=>{if(current){modelCatalog.set(value.modelVersionId,value);void previewReplacement({kind:'model',sceneModelInstanceId:current.sceneModelInstanceId,candidateModelVersionId:value.modelVersionId});}}} onPlace={value=>{if(!editing&&canWrite)setEditing(true);modelCatalog.set(value.modelVersionId,value);setHints(prior=>({...prior,[value.modelVersionId]:modelRef(value)}));setPending({kind:'model',model:value});setPendingTurbine(null);setPreview(null);}}
           onImageryReady={value=>{if(editable&&draft&&!isLocalScene(draft)){void commit({...draft,imagery:{imageryVersionId:value.imageryVersionId,expectedContentRevision:value.contentRevision,expectedReportSha256:value.expectedReportSha256,visible:true}}).then(ok=>{if(ok)setLeft('content');});}}}
           onPreview={value=>{if(value)modelCatalog.set(value.modelVersionId,value);routeControl.current?.cancel(false);cancelPlacement();setPreview(value);if(value)setSide(null);}} onTerrainReady={adoptTerrain} activeTerrainVersion={terrain}/></Suspense></div></>:<div className="sw-content-list"><div className="sw-model-selection"><label><ScopeCheckbox ids={draft?.instances.map(item=>item.sceneModelInstanceId)||[]} selectedIds={selectedIds} label={t('selectAllModels')} disabled={busy||routePlaying||!!anchorResult} onToggle={checked=>selectMany(selectSceneScope(selectedIds,draft?.instances.map(item=>item.sceneModelInstanceId)||[],checked))}/><span>{t('selectAllModels')}</span></label><Btn disabled={!selectedIds.length||busy||routePlaying||!!anchorResult} onClick={loadSelected}><Eye size={14}/>{t('loadSelected')}</Btn></div><div className="sw-content-row"><Layers size={15}/><span>{terrain?.displayName||t('noTerrain')}</span>{terrain&&<IconBtn label={terrainVisible?t('hide'):t('show')} onClick={()=>setTerrainVisible(value=>!value)}>{terrainVisible?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn>}</div>
           {draft?.imagery&&<section className="sw-imagery-layer"><div className="sw-content-row"><ImageIcon size={15}/><span>{imageryVersion?.displayName||it('loading')}</span><IconBtn label={(editing?draft.imagery.visible:imageryVisible)?it('hide'):it('show')} disabled={busy} onClick={()=>{if(editing&&draft.imagery)void commit({...draft,imagery:{...draft.imagery,visible:!draft.imagery.visible}});else setImageryVisible(v=>!v);}}>{(editing?draft.imagery.visible:imageryVisible)?<Eye size={14}/>:<EyeOff size={14}/>}</IconBtn>{editing&&<IconBtn label={it('remove')} disabled={!editable} onClick={()=>void commit({...draft,imagery:null})}><Trash2 size={14}/></IconBtn>}</div><small className="ov-resource-caption">{it('precision')}</small>{imageryVersion&&<ImageryFacts value={imageryVersion}/>}</section>}
@@ -1008,9 +1031,11 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
         {preview&&<div className="sw-floating"><span>{t('preview')} · {preview.displayName}</span><Btn onClick={()=>setPreview(null)}>{t('closePreview')}</Btn></div>}
         {pending&&<div className="sw-floating"><span>{t(pending.kind==='copy'?'copyHint':'placementHint')}</span><IconBtn label={t('cancel')} onClick={cancelPlacement}><X size={15}/></IconBtn></div>}
         {pendingTurbine&&<div className="sw-floating"><span>{locale==='zh'?`正在布置机型：${pendingTurbine.displayName||pendingTurbine.modelCode} —— 请在三维地表点击确定机位`:`Placing turbine: ${pendingTurbine.displayName||pendingTurbine.modelCode} — Click ground to place`}</span><IconBtn label={t('cancel')} onClick={cancelPlacement}><X size={15}/></IconBtn></div>}
-        {anchorResult&&<div className="sw-floating sw-anchor-result"><strong>{t(isAnchor?'anchorPending':'replacementPreview')}</strong><span>{t(isAnchor?'anchorImpact':'replacementHint')}</span><Btn disabled={busy||saveUnknown} onClick={cancelAnchor}>{t('cancel')}</Btn><Btn primary disabled={busy||!canWrite||saveUnknown} onClick={()=>void save(anchorResult)}>{t(isAnchor?'anchorSave':'confirmReplacement')}</Btn></div>}
-      </div><aside className="sw-inspector">{preview?<ModelComponentProperties version={preview} inspection={inspection}/>:<><div className="sw-inspector-title"><strong>{object?.item.displayName||current?.displayName||t('position')}</strong><button type="button" className="ov-icon-btn so-close" aria-label={ot('closePanel')} disabled={routePlaying} onClick={()=>setSide(null)}><X size={14}/></button>{current&&<IconBtn label={t('locate')} disabled={routePlaying} onClick={()=>selectInstance(current.sceneModelInstanceId,true)}><Focus size={15}/></IconBtn>}</div><div className="so-tabs" role="tablist" aria-label={ot('properties')}>{(['properties','batch','routesTab'] as const).map(value=><button type="button" role="tab" key={value} disabled={!!anchorResult} aria-selected={inspectorTab===value} onClick={()=>showTools(value)}>{ot(value)}</button>)}</div>
-        {anchorResult?<ReplacementImpact result={anchorResult} snapshot={draft!}/>:inspectorTab==='batch'?<SceneBatchPanel snapshot={draft!} editable={editable} selectedIds={selectedIds} onSelect={selectMany} onCommit={commit} onMove={moveBatch} onError={failed} continuous={continuous} onContinuous={value=>{setContinuous(value);if(!value)cancelPlacement();}} snap={snap} onSnap={setSnap}/>:inspectorTab==='routesTab'?<SceneRoutePanel snapshot={draft!} identity={JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,draft])} editable={editable} canPreview={!busy&&!preview&&!pending&&!anchorResult&&!saveUnknown} captureKind={internal&&location?.status==='located'&&location.componentKeys.length>0?'component':'overview'} captureInstanceId={internal&&location?.status==='located'?location.sceneModelInstanceId:null} analysisObjectName={object?.item.displayName||null} camera={cameraControl} control={routeControl} onCommit={commit} onError={failed} onPlaying={value=>{setRoutePlaying(value);if(value)setSide('right');}} beforePreview={async signal=>{if(!base)throw new ApiError(404,'NOT_FOUND_OR_FORBIDDEN');const value=await client.open(base.sceneId,base.sceneRevision,signal);if(signal.aborted)return;syncWrite(value);setUpdate(value.headRevision!==base.sceneRevision);}} onView={value=>{setComponentFocus(undefined);setViewCommand({token:Date.now(),view:value});}}/>:objectLoading?<p role="status">{et('loading')}</p>:object?<>
+        {anchorResult&&<div className="sw-floating sw-anchor-result"><strong>{t(isAnchor?'anchorPending':'replacementPreview')}</strong><span>{t(isAnchor?'anchorImpact':'replacementHint')}</span>
+          {isModelReplacement?<Btn className="sw-impact-reopen" onClick={()=>setSide('right')}>{t('impactTitle')}</Btn>:replacementActions}</div>}
+      </div><aside className="sw-inspector">{preview?<ModelComponentProperties version={preview} inspection={inspection}/>:<><div className="sw-inspector-title"><strong>{isModelReplacement?t('impactTitle'):object?.item.displayName||current?.displayName||t('position')}</strong><button type="button" className="ov-icon-btn so-close" aria-label={ot('closePanel')} disabled={routePlaying} onClick={()=>setSide(null)}><X size={14}/></button>{current&&<IconBtn label={t('locate')} disabled={routePlaying} onClick={()=>selectInstance(current.sceneModelInstanceId,true)}><Focus size={15}/></IconBtn>}</div>{!isModelReplacement&&<div className="so-tabs" role="tablist" aria-label={ot('properties')}>{(['properties','batch','routesTab'] as const).map(value=><button type="button" role="tab" key={value} disabled={!!anchorResult} aria-selected={inspectorTab===value} onClick={()=>showTools(value)}>{ot(value)}</button>)}</div>}
+        {anchorResult?<><ReplacementImpact result={anchorResult} base={base} models={modelCatalog} objects={[rootObject,object]}/>
+          {isModelReplacement&&<div className="sw-impact-actions">{replacementActions}</div>}</>:inspectorTab==='batch'?<SceneBatchPanel snapshot={draft!} editable={editable} selectedIds={selectedIds} onSelect={selectMany} onCommit={commit} onMove={moveBatch} onError={failed} continuous={continuous} onContinuous={value=>{setContinuous(value);if(!value)cancelPlacement();}} snap={snap} onSnap={setSnap}/>:inspectorTab==='routesTab'?<SceneRoutePanel snapshot={draft!} identity={JSON.stringify([api.epoch,api.revision,base?.sceneId,base?.sceneRevision,draft])} editable={editable} canPreview={!busy&&!preview&&!pending&&!anchorResult&&!saveUnknown} captureKind={internal&&location?.status==='located'&&location.componentKeys.length>0?'component':'overview'} captureInstanceId={internal&&location?.status==='located'?location.sceneModelInstanceId:null} analysisObjectName={object?.item.displayName||null} camera={cameraControl} control={routeControl} onCommit={commit} onError={failed} onPlaying={value=>{setRoutePlaying(value);if(value)setSide('right');}} beforePreview={async signal=>{if(!base)throw new ApiError(404,'NOT_FOUND_OR_FORBIDDEN');const value=await client.open(base.sceneId,base.sceneRevision,signal);if(signal.aborted)return;syncWrite(value);setUpdate(value.headRevision!==base.sceneRevision);}} onView={value=>{setComponentFocus(undefined);setViewCommand({token:Date.now(),view:value});}}/>:objectLoading?<p role="status">{et('loading')}</p>:object?<>
           <section className="sw-object-head" aria-label={et('ownObject')}><strong>{object.item.displayName}</strong><div className="se-link-status"><Badge>{et(object.item.reviewStatus==='confirmed'?'objectConfirmed':'objectUnreviewed')}</Badge>{object.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div>
             <Btn disabled={unsaved||busy||locating} onClick={()=>void locateObject()}><Focus size={14}/>{et(locating?'locating':'locate')}</Btn>{unsaved&&<p className="se-note">{et('saveToLocate')}</p>}
             {editable&&acceptedEngineering.current.has(refKey(object.objectRef))&&<Btn onClick={()=>void reviewObject(object)}>{et('reviewObject')}</Btn>}
