@@ -75,6 +75,10 @@
 .ad-inspector .as-panel .as-answer-group p{font-size:13px;color:var(--text);line-height:1.8}
 .as-turn-details,.as-turn-actions{padding:8px 0;border-top:1px solid var(--borderSubtle);margin-top:12px}
 .as-panel .as-turn-details>summary,.as-panel .as-turn-actions>summary{font-size:11px;color:var(--textSecondary)}
+.as-selected-read-list{list-style:none;padding:0;margin:8px 0 0}
+.as-selected-read-list li{display:flex;justify-content:space-between;align-items:baseline;gap:4px 12px;flex-wrap:wrap;padding:5px 0}
+.as-selected-read-list li>span{font-size:12px;overflow-wrap:anywhere}
+.as-selected-read-list li>small{font-size:11px;color:var(--textSecondary)}
 .as-turn-details .as-retrieval{border:0;padding:0;margin:8px 0}
 .as-panel .as-turn-actions .ap-actions{margin:8px 0}.as-panel .as-turn-actions .ov-btn{font-size:11px;padding:6px 8px}
 .as-progress{list-style:none;display:flex;padding:0;gap:6px;margin:10px 0;font-size:11px}

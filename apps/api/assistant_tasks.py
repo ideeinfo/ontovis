@@ -52,6 +52,37 @@ def validate_plan(value):
     return value
 
 
+def read_selected_evidence(tools, fixed):
+    from .assistant_graph import material_summary
+
+    receipts, skipped = [], {}
+    for ref, descriptor in fixed:
+        kind = ref['sourceKind']
+        receipt = dict(evidenceRefId=ref['evidenceRefId'], kind=kind)
+        receipts.append(receipt)
+        if kind not in tools.allowed:
+            state, reason = 'policy_excluded', 'ASSISTANT_TOOL_NOT_ALLOWED'
+        elif tools.reads >= tools.limit or len(tools.sources) >= 8:
+            state, reason = 'budget_limited', 'ASSISTANT_READ_LIMIT'
+        else:
+            try:
+                material = tools.read(lambda: material_summary(tools.reader, kind, descriptor, tools.private))
+                source = tools.source(kind, material.pop('summary'), sourceRevision=ref['sourceRevision'],
+                                      evidenceRefId=ref['evidenceRefId'], descriptor=descriptor, **material)
+                receipt.update(state='complete', sourceKey=source['key'],
+                               metadataOnly=kind in ('drawing','photo','model') or kind=='document' and not descriptor.get('knowledgeNodeId'))
+                continue
+            except PreviewError as error:
+                if error.status in (401,403):
+                    raise
+                state, reason = 'unavailable', error.code
+        receipt.update(state=state, reason=reason)
+        skipped[state,reason] = skipped.get((state,reason),0) + 1
+    tools.trace.extend(dict(tool='selected_material',state=state,reason=reason,count=count)
+                       for (state,reason),count in skipped.items())
+    return receipts
+
+
 class ProjectTools:
     def __init__(self,reader,guard,limit,allowed,private):
         self.reader,self.guard,self.limit,self.allowed,self.private=reader,guard,limit,set(allowed),private
@@ -193,27 +224,16 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         require(all(q['tool']!='graph' or 'engineering_neighborhood' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         require(all(q['tool']!='knowledge' or 'manual_fault_lookup' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         tools=ProjectTools(reader,guard,policy['policy']['reads'],policy['policy']['allowedKinds'],job.private)
+        prefer_selected=body.get('preferSelectedEvidence',False)
+        selected_reads=read_selected_evidence(tools,fixed) if prefer_selected else []
         for q in plan['queries']:
             try:tools.query(q)
             except PreviewError as error:
                 if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
-                tools.trace.append(dict(tool=q['tool'],state='unavailable',reason=error.code))
-        # Project tools get the read budget first; selected cards supply remaining analysis context.
-        for index,(ref,descriptor) in enumerate(fixed):
-            if tools.reads>=tools.limit or len(tools.sources)>=8:
-                tools.trace.append(dict(tool='selected_material',state='budget_limited',count=len(fixed)-index,reason='ASSISTANT_READ_LIMIT'))
-                break
-            if ref['sourceKind'] not in tools.allowed:
-                tools.trace.append(dict(tool='selected_material',state='policy_excluded',count=1,reason='ASSISTANT_TOOL_NOT_ALLOWED'))
-                continue
-            try:
-                from .assistant_graph import material_summary
-                material=tools.read(lambda:material_summary(reader,ref['sourceKind'],descriptor,job.private))
-                tools.source(ref['sourceKind'],material['summary'],sourceRevision=ref['sourceRevision'],
-                    evidenceRefId=ref['evidenceRefId'],descriptor=descriptor,**{k:v for k,v in material.items() if k!='summary'})
-            except PreviewError as error:
-                if error.status in (401,403):raise
-                tools.trace.append(dict(tool='selected_material',state='unavailable',reason=error.code))
+                state='budget_limited' if error.code=='ASSISTANT_READ_LIMIT' else 'unavailable'
+                tools.trace.append(dict(tool=q['tool'],state=state,reason=error.code))
+        if not prefer_selected:
+            selected_reads=read_selected_evidence(tools,fixed)
         trace=[dict(key=t['tool'],state=t['state']) for t in tools.trace]
         runtime.store.update(run_id,'reading',progress=trace,sources=tools.sources)
         evidence=[{k:s[k] for k in ('key','kind','summary')} for s in tools.sources]
@@ -228,7 +248,8 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             partial=any(t['state']!='complete' or t.get('truncated') or t.get('nextCursor') is not None for t in tools.trace),
             model=dict(taskId=service.get('taskId','analysis'),provider=service.get('provider'),modelId=service.get('modelId')),
             task=dict(mode=body['mode'],baseDigest=base,plan=plan,results=tools.results,graphs=tools.graphs,trace=tools.trace,
-                reads=tools.reads,readLimit=tools.limit,receipts=[],execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query'))
+                reads=tools.reads,readLimit=tools.limit,selectedReads=selected_reads,receipts=[],
+                execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query'))
         require(runtime.store.finish(run_id,'partial' if result['partial'] else 'complete',result,trace,tools.sources),
                 'ASSISTANT_CANCELLED',409)
     except PreviewError as error:

@@ -10,7 +10,7 @@ from tests import test_work_orders as orders_fixture
 from tests.test_assistant import answer
 from apps.api.assistant_service import AssistantRuntime
 from apps.api.assistant_store import DEFAULT,digest
-from apps.api.assistant_tasks import PROTOCOL,ProjectTools,validate_plan,snapshot
+from apps.api.assistant_tasks import PROTOCOL,ProjectTools,read_selected_evidence,validate_plan,snapshot
 from apps.api.assistant_canvas_tasks import build,load,retain,acknowledge
 from apps.api.authority import PreviewError
 
@@ -164,6 +164,65 @@ class TaskTests(unittest.TestCase):
         self.assertEqual('partial',result['state'],result)
         limited=[t for t in result['result']['task']['trace'] if t['state']=='budget_limited']
         self.assertEqual(3,limited[0]['count']);self.assertEqual(8,result['result']['task']['reads'])
+
+    def test_explicitly_selected_cards_keep_their_reads_in_both_modes(self):
+        from tests.test_assistant import Reader
+        runtime=AssistantRuntime(self.library,'source');self.addCleanup(runtime.close)
+        runtime.store.publish('Demo-PDS',self.actor,dict(requestId=str(uuid4()),expectedRevision=0,
+            policy={**DEFAULT,'enabled':True}),lambda:None)
+        reader=Reader();reader.orders=self.orders;reader.reader=self.reader.reader
+        fixed=[(dict(evidenceRefId=str(uuid4()),sourceKind=kind,sourceRevision='a'*64),{})
+               for kind in ('alarm','alarm','alarm','alarm','alarm','drawing')]
+        ids=[ref['evidenceRefId'] for ref,_ in fixed]
+        for mode in ('workbench','cockpit_query'):
+            with self.subTest(mode=mode):
+                body=dict(protocol=PROTOCOL,mode=mode,analysisSessionId=str(uuid4()),expectedAnalysisRevision=2,
+                    evidenceRefIds=ids,preferSelectedEvidence=True,requestId=str(uuid4()),
+                    question='比较勾选的资料，并查找同码工单',snapshotJson=json.dumps(board()),taskId='query')
+                calls=[]
+                def source(data,*_):
+                    calls.append(data)
+                    common=dict(usage={},modelCalls=1,engineeringConfirmation=False)
+                    if data['workflow']['phase']=='plan':
+                        return dict(**common,plan=dict(intent='query',queries=[dict(tool='work_orders',query='',faultCode='13001')],actions=[]))
+                    return dict(**common,answer=answer())
+                start=runtime.start(dict(project='Demo-PDS',owner=self.actor,sid='s'),body,runtime.store.policy('Demo-PDS'),
+                    dict(serviceRevision='a'*64,accessRevision='g',taskId='query',settings={}),lambda _:(fixed,reader),lambda *_:None,source)
+                deadline=time.monotonic()+3
+                while time.monotonic()<deadline:
+                    run=runtime.store.public(runtime.store.run('Demo-PDS',self.actor,start['runId']))
+                    if run['state'] not in ('reading','model','validating'):break
+                    time.sleep(.01)
+                self.assertEqual(ids,[row['evidenceRefId'] for row in run['sources'] if row['evidenceRefId']])
+                task=run['result']['task']
+                self.assertEqual(8,task['reads'])
+                self.assertEqual(3,len(task['results']))
+                self.assertEqual(ids,[row['evidenceRefId'] for row in task['selectedReads']])
+                self.assertTrue(all(row['state']=='complete' and row['sourceKey'] for row in task['selectedReads']))
+                self.assertTrue(task['selectedReads'][-1]['metadataOnly'])
+                self.assertEqual(2,len(calls))
+                self.assertEqual('query_only' if mode=='cockpit_query' else 'query',task['execution'])
+
+    def test_every_selected_card_reports_why_it_was_or_was_not_read(self):
+        kinds=['document','trend','photo','alarm','drawing']
+        fixed=[(dict(evidenceRefId=str(uuid4()),sourceKind=kind,sourceRevision='a'*64),{})
+               for kind in kinds]
+        tools=ProjectTools(self.reader,lambda:None,2,['document','trend','alarm','drawing'],())
+        def material(reader,kind,descriptor,private):
+            if kind=='trend':
+                raise PreviewError(409,'SOURCE_CHANGED')
+            return dict(summary='Selected document metadata')
+        with patch('apps.api.assistant_graph.material_summary',side_effect=material) as read:
+            result=read_selected_evidence(tools,fixed)
+        self.assertEqual(kinds,[row['kind'] for row in result])
+        self.assertEqual(['complete','unavailable','policy_excluded','budget_limited','budget_limited'],
+                         [row['state'] for row in result])
+        self.assertEqual(['SOURCE_CHANGED','ASSISTANT_TOOL_NOT_ALLOWED','ASSISTANT_READ_LIMIT','ASSISTANT_READ_LIMIT'],
+                         [row['reason'] for row in result[1:]])
+        self.assertTrue(result[0]['metadataOnly'])
+        self.assertEqual('E1',result[0]['sourceKey'])
+        self.assertEqual(2,read.call_count)
+
 
     def test_edit_only_has_pending_receipt_message_without_false_evidence_gap(self):
         runtime=AssistantRuntime(self.library,'source');self.addCleanup(runtime.close)

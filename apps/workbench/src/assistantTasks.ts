@@ -4,9 +4,13 @@ import type {DraftReceipt} from './analysisDraftState';
 export const TASK_PROTOCOL='ontovis-engineering-tasks-v1';
 export type TaskCandidate={key:string;kind:string;title:string;identifier:string;version:string|number;state?:string;faultCode?:string;simulated:boolean;reason:string};
 export type TaskReceipt={operationId:string;state:'applied_draft'|'saved';saveRequested?:boolean;analysisSessionId:string;analysisRevision:number;snapshotSha256:string;items:{kind:string;status:string;identifier?:string;cardId?:string;label?:string;historyDirection?:'undo'|'redo';restoredFrom?:string;simulated?:boolean}[]};
+export type SelectedEvidenceRead={evidenceRefId:string;kind:string}&(
+ {state:'complete';sourceKey:string;metadataOnly:boolean}|
+ {state:'budget_limited'|'policy_excluded'|'unavailable';reason:string}
+);
 export type EngineeringTask={mode:'workbench'|'cockpit_query';baseDigest:string;plan:{intent:'query'|'edit';queries:{tool:string;query:string;faultCode:string}[];actions:{kind:string;targets:string[];text:string;x:number|null;y:number|null}[]};
  results:TaskCandidate[];graphs:{kind:'engineering'|'knowledge';graph:Record<string,unknown>}[];trace:{tool:string;state:string;count?:number;total?:number;nextCursor?:number|string|null;reason?:string;truncated?:boolean;scope?:string}[];
- reads:number;readLimit:number;receipts:TaskReceipt[];execution:string};
+ reads:number;readLimit:number;selectedReads?:SelectedEvidenceRead[];receipts:TaskReceipt[];execution:string};
 export type PreparedTask={operationId:string;baseDigest:string;snapshot:CanvasSnapshot;receipts:TaskReceipt['items'];wantsSave:boolean;analysis:DraftReceipt;baseline:CanvasSnapshot|null;alreadyApplied?:boolean};
 export async function snapshotDigest(raw:string){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw)))].map(n=>n.toString(16).padStart(2,'0')).join('');}
 export function checkedTaskSnapshot(current:CanvasSnapshot,prepared:PreparedTask,scope:ProjectScope,baseJson:string){

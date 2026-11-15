@@ -11,7 +11,9 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
     if action=='task-start':
         fields={'protocol','mode','snapshotJson','analysisSessionId','expectedAnalysisRevision','evidenceRefIds','requestId','question',
             'conversationId','expectedConversationVersion','parentRunId','expectedPolicyRevision','expectedAccessRevision','expectedServiceRevision','taskId'}
-        require(set(body) in (fields,fields|{'historyJson'}) and body['protocol']==PROTOCOL and body['mode'] in ('workbench','cockpit_query'))
+        require(fields<=set(body)<=fields|{'historyJson','preferSelectedEvidence'}
+                and body['protocol']==PROTOCOL and body['mode'] in ('workbench','cockpit_query')
+                and type(body.get('preferSelectedEvidence',False)) is bool)
         identifier(body['analysisSessionId']);identifier(body['requestId'])
         require(type(body['expectedAnalysisRevision']) is int and 0<=body['expectedAnalysisRevision']<=1000)
         require(type(body['question']) is str and 0<len(body['question'].strip())<=1000 and '\0' not in body['question'])

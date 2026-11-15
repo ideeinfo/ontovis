@@ -20,6 +20,7 @@ class TaskHttpTests(unittest.TestCase):
         result=dict(plan=dict(intent='edit',queries=[],actions=[action('add_note',text='candidate')]),usage={},modelCalls=1,
                     engineeringConfirmation=False,purpose='ontovis_analysis',serviceRevision='a'*64)
         with patch('apps.api.assistant_task_api.call_source',return_value=result) as model:
+            self.body['preferSelectedEvidence']=True
             status,started=self.request('task-start',self.body);self.assertEqual(200,status,started)
             for _ in range(60):
                 status,run=self.request('status',dict(runId=started['runId']))
@@ -34,6 +35,7 @@ class TaskHttpTests(unittest.TestCase):
     def test_project_scope_and_extra_executable_fields_fail_before_model(self):
         with patch('apps.api.assistant_task_api.call_source') as model:
             self.assertEqual(422,self.request('task-start',{**self.body,'sql':'select 1'})[0])
+            self.assertEqual(422,self.request('task-start',{**self.body,'preferSelectedEvidence':'yes'})[0])
             snapshot=json.loads(self.body['snapshotJson']);snapshot['projectCode']='B'
             self.assertEqual(404,self.request('task-start',{**self.body,'snapshotJson':json.dumps(snapshot)})[0]);model.assert_not_called()
 
