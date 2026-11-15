@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
-import {AssistantApi,answerNote,assistantConversationMatches,assistantEvidenceKey,assistantMessage,assistantSendBlocker,filterEngineeringGraph,groupEngineeringEdges,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
+import {AssistantApi,answerNote,assistantActivityLabel,assistantConversationMatches,assistantEvidenceKey,assistantMessage,assistantRunActivity,assistantSendBlocker,filterEngineeringGraph,groupEngineeringEdges,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
 
 const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],reads:8,parallel:2,seconds:120};
 const view={revision:1,accessRevision:'grant',policy,service:{serviceRevision:'r'}};
@@ -128,6 +128,20 @@ test('only a conversation with the current mode can provide a parent turn',()=>{
   }
  }
  assert.match(assistantMessage(new ApiError(409,'ASSISTANT_CONVERSATION_MODE_CHANGED'),false),/当前界面/);
+});
+test('the run indicator follows server phases, status reads and terminal states',()=>{
+ const activity=(state,poll='reading')=>assistantRunActivity({state},false,false,poll);
+ assert.equal(assistantRunActivity(null,true,true,'reading'),'submitting');
+ assert.equal(assistantRunActivity(null,true,false,'reading'),'unconfirmed');
+ for(const state of ['reading','model','validating'])assert.equal(activity(state),state);
+ assert.equal(activity('model','retrying'),'retrying');
+ assert.equal(activity('model','paused'),'paused');
+ assert.equal(activity('cancel_requested'),'stopping');
+ for(const state of ['complete','partial','failed','cancelled','changed','interrupted']){
+  assert.equal(activity(state,'paused'),null);
+ }
+ assert.equal(assistantActivityLabel('validating',false),'正在校验引用');
+ assert.equal(assistantActivityLabel('validating',true),'Checking references');
 });
 test('graph filtering operates only on returned associations and preserves candidate status',()=>{
  const graph={nodes:[{id:'sensor',title:'温度变送器'},{id:'terminal',title:'X91端子排'},{id:'drawing',title:'机舱传感器图纸'}],relations:[

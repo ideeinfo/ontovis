@@ -12,7 +12,7 @@ import {Btn} from './Primitives';
 import {cancelled,type WorkbenchApi} from './api';
 import type {CanvasCard,CanvasSnapshot} from './analysisCanvas';
 import type {DraftReceipt} from './analysisDraftState';
-import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantConversationMatches,assistantEvidenceKey,assistantMessage,assistantSendBlocker,running,sourceLabels,materialRoles,watchAssistantRun,type AssistantConversation,type AssistantMode,type AssistantPolicyView,type AssistantRun,type AssistantSource} from './assistantApi';
+import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantConversationMatches,assistantEvidenceKey,assistantMessage,assistantSendBlocker,assistantRunActivity,assistantActivityLabel,running,sourceLabels,materialRoles,watchAssistantRun,type AssistantConversation,type AssistantMode,type AssistantPolicyView,type AssistantPollState,type AssistantRun,type AssistantSource} from './assistantApi';
 import {AssistantGraph} from './AssistantGraph';
 import {AssistantSourceViewer} from './AssistantSourceViewer';
 import {AssistantTurn} from './AssistantTurn';
@@ -29,7 +29,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const [selectionEditedIn,setSelectionEditedIn]=useState('');
  const [policyError,setPolicyError]=useState<unknown>(null),sendStatusId=useId();
  const [question,setQuestion]=useState(''),[run,setRun]=useState<AssistantRun|null>(null),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[reload,setReload]=useState(0),[summaries,setSummaries]=useState<AssistantSource[]|null>(null),[pending,setPending]=useState<string|null>(null);
- const [pollState,setPollState]=useState<'reading'|'retrying'|'paused'>('reading'),[pollReload,setPollReload]=useState(0);
+ const [pollState,setPollState]=useState<AssistantPollState>('reading'),[pollReload,setPollReload]=useState(0);
  const [conversations,setConversations]=useState<AssistantConversation[]>([]),[conversation,setConversation]=useState<AssistantConversation|null>(null),[turns,setTurns]=useState<AssistantRun[]>([]),[hasEarlier,setHasEarlier]=useState(false);
  const continuation=conversation&&assistantConversationMatches(conversation,mode)?conversation:null;
  const [loadingHistory,setLoadingHistory]=useState(false);
@@ -50,7 +50,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const current=useRef(context);current.current=context;
  const alive=useRef(true),scope=useRef<AssistantApi|null>(null);
  useEffect(()=>{alive.current=true;automatic.current=null;setRun(null);setError(null);setPending(null);setSummaries(null);setConversation(null);setConversations([]);setTurns([]);setHasEarlier(false);setLoadingHistory(false);setTransferRun(null);setSourceView(null);setSceneView(null);setDeviceView(null);setDocumentView(null);historyGeneration.current++;setQuestion(initialQuestion??'');if(initialQuestion)onInitialQuestionUsed?.();
-  const fixed=new AssistantApi(api.assistantScope());scope.current=fixed;
+  setPollState('reading');const fixed=new AssistantApi(api.assistantScope());scope.current=fixed;
   return()=>{alive.current=false;const previous=latest.current;if(running(previous))void fixed.cancel(previous!).catch(()=>{});};
  },[context]);
  useEffect(()=>{setSelected(previous=>previous.filter(id=>available.some(card=>card.source!.id===id)));setSummaries(null);},[inventory]);
@@ -96,7 +96,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
     expectedAccessRevision:view.accessRevision,expectedServiceRevision:effectiveService?.serviceRevision,taskId});
     if(!alive.current||current.current!==key){if(running(value))void fixed.cancel(value).catch(()=>{});return;}
     if(!continuation){setTurns([]);setHasEarlier(false);}
-    automatic.current={runId:value.runId,context:key};setRun(value);setPending(null);setQuestion('');
+    automatic.current={runId:value.runId,context:key};setRun(value);setPending(null);setQuestion('');setPollState('reading');
     if(value.conversationId){const head={conversationId:value.conversationId,title:continuation?.title||value.question||'分析',version:value.conversationVersion||1,headRunId:value.runId,analysisSessionId:value.analysisSessionId,analysisRevision:value.analysisRevision,updatedAt:new Date().toISOString(),mode};setConversation(head);setConversations(items=>[head,...items.filter(v=>v.conversationId!==head.conversationId)].slice(0,20));}
   }catch(e){if(alive.current&&current.current===key){setError(e);if(e&&typeof e==='object'&&'status'in e)setPending(null);}}
   finally{if(alive.current&&current.current===key)setBusy(false);}
@@ -130,10 +130,20 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  useEffect(()=>{const fresh=automatic.current;if(!fresh||!run||fresh.runId!==run.runId||fresh.context!==context||locked||queryOnly||!applyTaskRef.current||!['complete','partial'].includes(run.state))return;automatic.current=null;if(canApplyFreshTask(run.result?.task,true,hasUnsaved))void executeTask(run,[]);},[run?.runId,run?.state,busy,loadingHistory,executionPending]);
  async function taskPage(item:AssistantRun,index:number){setBusy(true);setError(null);try{const value=await api.request<AssistantRun>(ASSISTANT_ROOT+'/task-page',{runId:item.runId,traceIndex:index});setTurns(previous=>mergeConversationTurns(previous,value));if(run?.runId===item.runId)setRun(value);}catch(e){setError(e);}finally{setBusy(false);}}
  const metadataCount=available.filter(card=>selected.includes(card.source!.id)&&['drawing','photo','model3d'].includes(card.kind)).length;
- const composer=<div className="as-composer"><label className="as-question"><span className="as-visually-hidden">{t('继续提问','Continue the conversation')}</span><textarea ref={composerInput} aria-label={t('向分析助手提问','Ask the analysis assistant')} maxLength={1000} disabled={locked||focusedEarlier} value={question} placeholder={t(queryOnly?'查询本项目工单、工程关系或分析资料…':'查询项目资料，或告诉我如何修改当前画布…',queryOnly?'Ask about project orders, graphs or evidence…':'Find project evidence or edit this canvas…')} onChange={event=>{setQuestion(event.target.value);setSummaries(null);}}/></label>
+ const activity=assistantRunActivity(run,!!pending,busy,pollState);
+ const needsCheck=activity==='unconfirmed'||activity==='paused';
+ const composer=<div className="as-composer">
+  {activity&&<div className="as-run-status" data-activity={activity} data-waiting={needsCheck||undefined}>
+   <span className="as-run-status-marker" aria-hidden="true"/>
+   <div className="as-run-status-copy" role="status" aria-atomic="true" id={sendStatusId}><strong>{assistantActivityLabel(activity,en)}</strong>
+    {activity==='unconfirmed'&&<small>{t('检查运行可避免重复调用。','Check the run to avoid a duplicate call.')}</small>}
+   </div>
+   {needsCheck&&<Btn disabled={busy} onClick={()=>void inspectRun()}>{t('检查运行','Check run')}</Btn>}
+  </div>}
+  <label className="as-question"><span className="as-visually-hidden">{t('继续提问','Continue the conversation')}</span><textarea ref={composerInput} aria-label={t('向分析助手提问','Ask the analysis assistant')} maxLength={1000} disabled={locked||focusedEarlier} value={question} placeholder={t(queryOnly?'查询本项目工单、工程关系或分析资料…':'查询项目资料，或告诉我如何修改当前画布…',queryOnly?'Ask about project orders, graphs or evidence…':'Find project evidence or edit this canvas…')} onChange={event=>{setQuestion(event.target.value);setSummaries(null);}}/></label>
   <div className="as-compose-actions">{!queryOnly&&<select className="as-task" aria-label={t('助手任务','Assistant task')} value={taskId} disabled={locked} onChange={e=>{setTaskId(e.target.value as LlmTask);newConversation();}}>{(Object.keys(llmTaskNames) as LlmTask[]).map(id=><option value={id} key={id}>{llmTaskNames[id][en?1:0]}</option>)}</select>}<span className="as-compose-spacer"/>{active?<Btn disabled={busy||run?.state==='cancel_requested'} onClick={()=>void stop()}><Square size={14}/>{t('停止','Stop')}</Btn>:<Btn primary disabled={!!sendBlocker} aria-describedby={sendBlocker?sendStatusId:undefined} onClick={()=>void start()}><Send size={14}/>{t('发送','Send')}</Btn>}</div>
-  {sendBlocker&&sendBlocker!=='ASSISTANT_QUESTION_REQUIRED'&&<p className="ap-caption" role="status" id={sendStatusId}>{assistantMessage(sendBlocker,en)}{canRefreshService&&<button type="button" disabled={locked} onClick={refreshService}>{t('刷新服务','Refresh service')}</button>}</p>}
-  {sendBlocker==='ASSISTANT_QUESTION_REQUIRED'&&<span className="as-visually-hidden" id={sendStatusId}>{assistantMessage(sendBlocker,en)}</span>}
+  {!activity&&sendBlocker&&sendBlocker!=='ASSISTANT_QUESTION_REQUIRED'&&<p className="ap-caption" role="status" id={sendStatusId}>{assistantMessage(sendBlocker,en)}{canRefreshService&&<button type="button" disabled={locked} onClick={refreshService}>{t('刷新服务','Refresh service')}</button>}</p>}
+  {!activity&&sendBlocker==='ASSISTANT_QUESTION_REQUIRED'&&<span className="as-visually-hidden" id={sendStatusId}>{assistantMessage(sendBlocker,en)}</span>}
   <small>{t(snapshot?(queryOnly?'项目检索与问答 · 编辑可转后台执行':'项目检索与画布操作 · 修改可撤销'):'仅发送所选资料摘要 · 回答需核对原依据',snapshot?'Project tools · source and execution receipts retained':'Selected summaries only · verify answers against their sources')}</small></div>;
  return <div className="as-panel">{snapshot&&<div className="as-scope-heading"><span>{t('本项目 · 按需检索','This project · search on demand')}</span><span>{queryOnly?t('查询模式','Query only'):onApplyTask?t('后台编辑','Workbench editing'):t('只读画布','Read-only canvas')}</span></div>}<div className="as-toolbar"><button type="button" className="as-context-toggle" aria-expanded={contextOpen} onClick={()=>setContextOpen(v=>!v)}>{t(snapshot?'画布资料':'本次资料',snapshot?'Canvas materials':'Materials')} <b>{selected.length}</b>{!!metadataCount&&<small>{t(`${metadataCount}份仅元数据`,`${metadataCount} metadata only`)}</small>}<ChevronDown size={13}/></button><button type="button" aria-label={t('对话与服务','Conversations and service')} title={t('对话与服务','Conversations and service')} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(v=>!v)}><History size={15}/></button><button type="button" disabled={locked} onClick={newConversation}><Plus size={14}/>{t('新对话','New')}</button></div>
   <div className="as-scroll" ref={scrollArea} onScroll={e=>{const el=e.currentTarget;autoScroll.current=el.scrollHeight-el.scrollTop-el.clientHeight<60;}}>
@@ -165,9 +175,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {focusedEarlier&&<p className="ap-caption">{t('正在查看工单采纳的历史轮次。','Viewing the historical turn adopted by the work order.')}<Btn disabled={locked} onClick={()=>void openConversation(conversation!.conversationId)}>{t('打开完整对话后继续','Open full conversation to continue')}</Btn></p>}
   {conversation&&!continuation&&!focusedEarlier&&<p className="ap-caption">{t('正在查看存档。发送后将在当前界面开启新对话。','Viewing an archive. Sending starts a conversation in this workspace.')}</p>}
   {executionPending&&<div role="status"><p>{t('草稿已应用，正在等待服务端执行回执；不会重复修改画布。','Draft applied; waiting for the server receipt. Changes will not be repeated.')}</p><Btn disabled={busy} onClick={()=>void acknowledgeExecution()}>{t('核对执行回执','Check execution receipt')}</Btn></div>}
-  {pending&&busy&&<p role="status">{t('正在提交本轮问题…','Submitting this question…')}</p>}
-  {pending&&!busy&&<div><p>{t('请求结果尚未确认，请先检查运行，避免重复调用。','The start result is uncertain. Check the run before sending again.')}</p><Btn onClick={()=>void inspectRun()}>{t('检查运行','Check run')}</Btn></div>}
-  {!!error&&<div><p role="alert">{assistantMessage(error,en)}</p>{run&&!pending&&<><p className="ap-caption">{pollState==='retrying'?t('正在重试读取运行状态；不会重新调用模型。','Retrying the saved run status. The model will not be called again.'):t('可检查本次运行，读取已保存的回执。','Check this run to read its saved receipt.')}</p><Btn disabled={busy} onClick={()=>void inspectRun()}>{t('检查运行','Check run')}</Btn></>}</div>}
+  {!!error&&<div><p role="alert">{assistantMessage(error,en)}</p>{run&&!activity&&<><p className="ap-caption">{t('可检查本次运行，读取已保存的回执。','Check this run to read its saved receipt.')}</p><Btn disabled={busy} onClick={()=>void inspectRun()}>{t('检查运行','Check run')}</Btn></>}</div>}
   </div>
   {!queryOnly&&snapshot?.workflowOrderId&&question.trim()&&onOpenOrder&&canTransfer&&
     <Btn disabled={locked||busy} onClick={()=>onOpenOrder(snapshot.workflowOrderId!,question.trim())}>

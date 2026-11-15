@@ -24,6 +24,30 @@ export function assistantRunPhase(run:AssistantRun):'reading'|'model'|'validatin
  if(run.error==='ASSISTANT_NO_EVIDENCE')return 'reading';
  return null;
 }
+
+export type AssistantPollState='reading'|'retrying'|'paused';
+export function assistantRunActivity(run:AssistantRun|null,pending:boolean,busy:boolean,poll:AssistantPollState){
+ if(pending)return busy?'submitting':'unconfirmed';
+ if(!run||!running(run))return null;
+ if(poll!=='reading')return poll;
+ if(run.state==='cancel_requested')return 'stopping';
+ const phase=assistantRunPhase(run);
+ return phase==='complete'?null:phase;
+}
+
+const activityLabels={
+ submitting:['正在确认提交','Confirming submission'],
+ reading:['正在读取资料','Reading materials'],
+ model:['正在分析','Analyzing'],
+ validating:['正在校验引用','Checking references'],
+ stopping:['正在停止，等待确认','Stopping'],
+ retrying:['正在重试读取状态','Retrying status check'],
+ unconfirmed:['提交结果待确认','Submission unconfirmed'],
+ paused:['运行状态待确认','Run status unconfirmed']
+} as const;
+export function assistantActivityLabel(activity:keyof typeof activityLabels,en:boolean){
+ return activityLabels[activity][en?1:0];
+}
 export function defaultAssistantEvidence(cards:CanvasCard[]){
  const kinds=['alarm','object','document','trend','work_order','model3d','drawing','photo'];
  const selected:string[]=[];

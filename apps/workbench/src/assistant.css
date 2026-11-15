@@ -81,12 +81,26 @@
 .as-selected-read-list li>small{font-size:11px;color:var(--textSecondary)}
 .as-turn-details .as-retrieval{border:0;padding:0;margin:8px 0}
 .as-panel .as-turn-actions .ap-actions{margin:8px 0}.as-panel .as-turn-actions .ov-btn{font-size:11px;padding:6px 8px}
-.as-progress{list-style:none;display:flex;padding:0;gap:6px;margin:10px 0;font-size:11px}
-.as-progress>li{flex:1;min-width:0;padding:6px 0;color:var(--textSecondary);border-top:2px solid var(--borderSubtle)}
-.as-progress>li[data-state=active],.as-progress>li[data-state=done]{border-color:var(--primary);color:var(--primary)}
 .as-failure{border-left:2px solid var(--borderControl);padding:0 0 0 12px;margin:8px 0}
 .ad-inspector .as-failure>p{font-size:13px;color:var(--text);margin:0 0 8px}.as-failure .ov-btn{font-size:11px;padding:6px 9px}
 .as-composer{flex:none;padding:12px 16px 10px;border-top:1px solid var(--borderSubtle);background:var(--surface)}
+.as-run-status{
+  display:flex;align-items:center;gap:9px;min-height:35px;margin:0 0 9px;padding:5px 9px;
+  border:1px solid var(--borderSubtle);border-inline-start:3px solid var(--primary);
+  border-radius:6px;background:var(--selected);color:var(--onSelected);line-height:1.45;
+}
+.as-run-status-copy{flex:1;min-width:0}
+.as-run-status-copy strong{font-size:13px;font-weight:600}
+.as-run-status-copy small{display:block;font-size:11px;color:var(--textSecondary)}
+.as-run-status-marker{
+  box-sizing:border-box;flex:none;width:17px;height:17px;border:2px solid color-mix(in srgb,currentColor 28%,transparent);
+  border-top-color:currentColor;border-radius:50%;animation:as-run-spin 850ms linear infinite;
+}
+.as-run-status[data-waiting]{border-inline-start-color:var(--statusWarning);background:var(--warningSurface);color:var(--statusWarning)}
+.as-run-status[data-waiting] .as-run-status-marker{width:9px;height:9px;margin-inline:4px;border:0;background:currentColor;animation:none}
+.as-run-status>.ov-btn{font-size:11px;padding:4px 7px}
+@keyframes as-run-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.as-run-status-marker{animation:none}}
 .ad-inspector .as-composer>.as-question{display:block;margin:0;padding:0}
 .ad-inspector .as-composer .as-question>textarea{box-sizing:border-box;width:100%;min-height:76px;height:76px;max-height:140px;resize:vertical;padding:10px 12px;border-radius:7px;font-size:13px;line-height:1.6;background:var(--surface)}
 .as-compose-actions{display:flex;align-items:center;gap:8px;margin-top:8px}
