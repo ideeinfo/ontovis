@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 from tests import test_assistant_http as fixture
+from tests.test_assistant import answer
 from tests.test_assistant_tasks import board,action
 from apps.api.assistant_tasks import PROTOCOL
 
@@ -38,6 +39,33 @@ class TaskHttpTests(unittest.TestCase):
             self.assertEqual(422,self.request('task-start',{**self.body,'preferSelectedEvidence':'yes'})[0])
             snapshot=json.loads(self.body['snapshotJson']);snapshot['projectCode']='B'
             self.assertEqual(404,self.request('task-start',{**self.body,'snapshotJson':json.dumps(snapshot)})[0]);model.assert_not_called()
+
+    def test_scene_candidate_cannot_create_a_draft_or_cross_project_scope(self):
+        scene = dict(sceneId=str(uuid4()), displayName='Crystal Rig', headRevision='scene:' + str(uuid4()), instanceCount=91)
+        self.body['mode'] = 'workbench'
+        common = dict(usage={}, modelCalls=1, engineeringConfirmation=False, purpose='ontovis_analysis', serviceRevision='a'*64)
+        plan = dict(intent='query', queries=[dict(tool='scenes',query='Crystal Rig',faultCode='',orderId='')], actions=[])
+        listing = dict(items=[scene], snapshotRevision='list:3', nextCursor=None)
+        with patch('apps.api.assistant_task_api.call_source', side_effect=[{**common, 'plan':plan},{**common, 'answer':answer()}]) as model,\
+             patch('apps.api.scene_library.SceneLibrary.listing', return_value=listing) as scenes:
+            status, started = self.request('task-start', self.body)
+            self.assertEqual(200, status, started)
+            for _ in range(60):
+                _, run = self.request('status', dict(runId=started['runId']))
+                if run['state'] not in ('reading','model','validating'):
+                    break
+                time.sleep(.01)
+            self.assertEqual('complete', run['state'], run)
+            self.assertTrue(json.loads(model.call_args_list[0].args[2]['workflow']['context'])['sceneDirectory'])
+            self.assertEqual('Demo-PDS:admin', scenes.call_args.kwargs['access_revision'])
+            self.assertEqual('Crystal Rig', scenes.call_args.kwargs['q'])
+            self.assertEqual(91, run['result']['task']['results'][0]['instanceCount'])
+            self.assertEqual(404, self.request('status', dict(runId=run['runId']), project='B')[0])
+        selection = dict(runId=run['runId'], selectedKeys=['R1'], snapshotJson=self.body['snapshotJson'])
+        with patch('apps.api.assistant_task_api.analysis_store') as store:
+            status, rejected = self.request('task-prepare', selection)
+            self.assertEqual((403, 'ASSISTANT_TOOL_NOT_ALLOWED'), (status, rejected['code']))
+            store.assert_not_called()
 
     def test_history_scope_and_readonly_source_view_without_registration(self):
         wrong=json.loads(self.body['snapshotJson']);wrong['projectCode']='B'

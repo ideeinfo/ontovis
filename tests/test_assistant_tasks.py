@@ -4,7 +4,7 @@ import json
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 from tests import test_work_orders as orders_fixture
 from tests.test_assistant import answer
@@ -72,6 +72,47 @@ class TaskTests(unittest.TestCase):
         for plan in [dict(intent='query',queries=[],actions=[action('save')]),dict(intent='edit',queries=[dict(tool='http',query='x',faultCode='')],actions=[]),
                      dict(intent='edit',queries=[],actions=[action('run_sql')])]:
             with self.assertRaises(PreviewError):validate_plan(plan)
+
+    def test_scene_directory_needs_an_advertised_read_only_tool(self):
+        entry = dict(tool='scenes', query='Crystal Rig', faultCode='', orderId='')
+        plan = dict(intent='query', queries=[entry], actions=[])
+        with self.assertRaises(PreviewError):
+            validate_plan(plan)
+        self.assertEqual(plan, validate_plan(plan, scene_directory=True))
+        for invalid in ({**plan, 'intent': 'edit'},
+                        {**plan, 'queries': [{**entry, 'faultCode': '13001'}]}):
+            with self.assertRaises(PreviewError):
+                validate_plan(invalid, scene_directory=True)
+
+    def test_scene_directory_returns_one_bounded_authorized_read(self):
+        entry = dict(tool='scenes', query='Crystal Rig', faultCode='', orderId='')
+        scene_id, revision = str(uuid4()), 'scene:' + str(uuid4())
+        listing = self.reader.scene_listing = Mock(return_value={
+            'items': [dict(sceneId=scene_id, displayName='Crystal Rig', headRevision=revision, instanceCount=91)],
+            'snapshotRevision': 'directory:1', 'nextCursor': 'more-scenes',
+        })
+        for kinds, budget in ((['work_order'], 8), (['model'], 0)):
+            denied = ProjectTools(self.reader, lambda: None, budget, kinds, ())
+            with self.assertRaises(PreviewError):
+                denied.query(entry)
+        listing.assert_not_called()
+        guard = Mock()
+        allowed = ProjectTools(self.reader, guard, 2, ['model'], ())
+        allowed.query(entry)
+        listing.assert_called_once_with('Crystal Rig')
+        self.assertEqual(2, guard.call_count)
+        self.assertEqual(1, allowed.reads)
+        result = allowed.results[0]
+        self.assertEqual(('scene', scene_id, revision, 91),
+                         (result['kind'], result['identifier'], result['version'], result['instanceCount']))
+        self.assertNotIn('selector', result)
+        self.assertTrue(allowed.trace[0]['truncated'])
+        self.assertNotIn('nextCursor', allowed.trace[0])
+        self.assertEqual('directory:1', allowed.sources[0]['retrievalRevision'])
+        summary = allowed.sources[0]['summary']
+        self.assertNotIn(scene_id, summary)
+        self.assertNotIn(revision, summary)
+        self.assertEqual(91, json.loads(summary)['items'][0]['instances'])
 
     def test_project_knowledge_enters_fixed_release_and_keeps_pages_and_edge_provenance(self):
         from tests.test_assistant_knowledge import response

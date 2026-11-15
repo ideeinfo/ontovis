@@ -281,8 +281,12 @@ def request(sessions,sid,path,payload):
         workspace=sessions.registry.lookup(project);require(workspace is not None,'NOT_FOUND_OR_FORBIDDEN',404)
         local=sessions._workspace(workspace)
         orders=WorkOrders(local.library,project)
+        scene_listing=None
+        if local.scenes is not None and local.scenes.project_code==project:
+            def scene_listing(query):
+                return local.scenes.listing(actor,guard,access_revision=access['accessRevision'],q=query,limit=6)
         reader=AnalysisSourceReader(SceneEngineeringReader(row.authority,sessions.connection_id,project,guard),
-            sessions.shared.project_models,orders,guard,actor,scene_library=local.library)
+            sessions.shared.project_models,orders,guard,actor,scene_library=local.library,scene_listing=scene_listing)
         return fixed,reader
     if action in ('task-start','task-prepare','task-ack','task-page','task-source','task-source-preview','task-source-content'):
         from .assistant_task_api import handle

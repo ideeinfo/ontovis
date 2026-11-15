@@ -26,10 +26,11 @@ def matches_project_identifier(item, identifier, project_code):
 
 
 class AnalysisSourceReader:
-    def __init__(self, reader, models, orders, authorize, actor, *, scene_library=None):
+    def __init__(self, reader, models, orders, authorize, actor, *, scene_library=None, scene_listing=None):
         self.reader, self.models, self.orders, self.authorize, self.actor = reader, models, orders, authorize, actor
         self.photos = ScenePhotoReader(reader)
         self.scene_library = scene_library
+        self.scene_listing = scene_listing
 
     def _selection(self, selector, extra=()):
         draft.require(type(selector) is dict and set(selector) == {'entityUid', 'expectedEntityRevision', *extra})

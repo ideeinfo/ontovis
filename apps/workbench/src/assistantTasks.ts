@@ -2,7 +2,7 @@ import type {CanvasSnapshot,ProjectScope} from './analysisCanvas.ts';
 import {validateSnapshot} from './analysisCanvas.ts';
 import type {DraftReceipt} from './analysisDraftState';
 export const TASK_PROTOCOL='ontovis-engineering-tasks-v1';
-export type TaskCandidate={key:string;kind:string;title:string;identifier:string;version:string|number;state?:string;faultCode?:string;simulated:boolean;reason:string};
+export type TaskCandidate={key:string;kind:string;title:string;identifier:string;version:string|number;state?:string;faultCode?:string;instanceCount?:number;simulated:boolean;reason:string};
 export type TaskReceipt={operationId:string;state:'applied_draft'|'saved';saveRequested?:boolean;analysisSessionId:string;analysisRevision:number;snapshotSha256:string;items:{kind:string;status:string;identifier?:string;cardId?:string;label?:string;historyDirection?:'undo'|'redo';restoredFrom?:string;simulated?:boolean}[]};
 export type SelectedEvidenceRead={evidenceRefId:string;kind:string}&(
  {state:'complete';sourceKey:string;metadataOnly:boolean}|
