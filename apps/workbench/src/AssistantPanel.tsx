@@ -1,12 +1,13 @@
 import {useEffect,useId,useMemo,useRef,useState} from 'react';
 import {Plus,RefreshCw,Send,Square,ChevronDown,History} from 'lucide-react';
 import {AssistantTaskResult} from './AssistantTaskResult';
+import {AssistantSceneViewer} from './AssistantSceneViewer';
+import type {AssistantSceneTarget} from './assistantScene';
 import {snapshotDigest,canApplyFreshTask,TASK_PROTOCOL,type PreparedTask} from './assistantTasks';
 import {AssistantRetrieval} from './AssistantRetrieval';
 import type {SourceAnchor} from './analysisSources';
 import {Btn} from './Primitives';
-import {cancelled} from './api';
-import type {DraftApi} from './AnalysisWorkspace';
+import {cancelled,type WorkbenchApi} from './api';
 import type {CanvasCard,CanvasSnapshot} from './analysisCanvas';
 import type {DraftReceipt} from './analysisDraftState';
 import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantEvidenceKey,assistantMessage,assistantSendBlocker,running,sourceLabels,materialRoles,watchAssistantRun,type AssistantConversation,type AssistantPolicyView,type AssistantRun,type AssistantSource} from './assistantApi';
@@ -17,7 +18,7 @@ import {AssistantWorkOrderDialog} from './AssistantWorkOrderDialog';
 import './assistant.css';
 import {llmTaskNames,type LlmTask} from './llmSettings';
 
-export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,initialRunId,queryOnly=false,snapshot,onApplyTask,onHandoff,initialQuestion,onInitialQuestionUsed,hasUnsaved=false,historyJson}:{api:DraftApi&{assistantScope?:()=>DraftApi};cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string,record?:string)=>void;initialRunId?:string;queryOnly?:boolean;snapshot?:CanvasSnapshot;hasUnsaved?:boolean;historyJson?:string;initialQuestion?:string;onInitialQuestionUsed?:()=>void;onHandoff?:(run:AssistantRun)=>void;onApplyTask?:(prepared:PreparedTask,baseJson:string)=>Promise<number|null>}){
+export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,initialRunId,queryOnly=false,snapshot,onApplyTask,onHandoff,initialQuestion,onInitialQuestionUsed,hasUnsaved=false,historyJson}:{api:WorkbenchApi;cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string,record?:string)=>void;initialRunId?:string;queryOnly?:boolean;snapshot?:CanvasSnapshot;hasUnsaved?:boolean;historyJson?:string;initialQuestion?:string;onInitialQuestionUsed?:()=>void;onHandoff?:(run:AssistantRun)=>void;onApplyTask?:(prepared:PreparedTask,baseJson:string)=>Promise<number|null>}){
  const service=useMemo(()=>new AssistantApi(api),[api]);const t=(zh:string,english:string)=>en?english:zh;
  const [taskId,setTaskId]=useState<LlmTask>(queryOnly?'query':'analysis');
  const available=cards.filter((card,index,all)=>card.source&&all.findIndex(v=>v.source?.id===card.source!.id)===index),inventory=available.map(card=>card.source!.id).join(':');
@@ -33,6 +34,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const autoScroll=useRef(true);
  const [transferRun,setTransferRun]=useState<AssistantRun|null>(null);
  const [sourceView,setSourceView]=useState<{runId:string;reference:AssistantSource}|null>(null);
+ const [sceneView,setSceneView]=useState<AssistantSceneTarget|null>(null);
  const historyGeneration=useRef(0);
  const automatic=useRef<{runId:string;context:string}|null>(null),applying=useRef(false),applyTaskRef=useRef(onApplyTask);applyTaskRef.current=onApplyTask;
  const draftId=useRef(crypto.randomUUID()),execution=useRef<{runId:string;keys:string[];prepared:PreparedTask;savedRevision:number|null}|null>(null);
@@ -41,8 +43,8 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const context=`${api.epoch}:${api.revision}:${receipt?.analysisSessionId}:${receipt?.analysisRevision}`;
  const current=useRef(context);current.current=context;
  const alive=useRef(true),scope=useRef<AssistantApi|null>(null);
- useEffect(()=>{alive.current=true;automatic.current=null;setRun(null);setError(null);setPending(null);setSummaries(null);setConversation(null);setConversations([]);setTurns([]);setHasEarlier(false);setLoadingHistory(false);setTransferRun(null);setSourceView(null);historyGeneration.current++;setQuestion(initialQuestion??'');if(initialQuestion)onInitialQuestionUsed?.();
-  const fixed=new AssistantApi(api.assistantScope?.()??api);scope.current=fixed;
+ useEffect(()=>{alive.current=true;automatic.current=null;setRun(null);setError(null);setPending(null);setSummaries(null);setConversation(null);setConversations([]);setTurns([]);setHasEarlier(false);setLoadingHistory(false);setTransferRun(null);setSourceView(null);setSceneView(null);historyGeneration.current++;setQuestion(initialQuestion??'');if(initialQuestion)onInitialQuestionUsed?.();
+  const fixed=new AssistantApi(api.assistantScope());scope.current=fixed;
   return()=>{alive.current=false;const previous=latest.current;if(running(previous))void fixed.cancel(previous!).catch(()=>{});};
  },[context]);
  useEffect(()=>{setSelected(previous=>previous.filter(id=>available.some(card=>card.source!.id===id)));setSummaries(null);},[inventory]);
@@ -138,7 +140,8 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   <AssistantGraph service={service} cards={available} receipt={receipt} en={en} onFocus={onFocus}/>
   </section>}
   {!transcript.length&&!loadingHistory&&<div className="as-welcome"><strong>{t('从一个问题开始','Start with a question')}</strong><p>{t(snapshot?'可检索项目工单、资料和知识图谱；画布中的资料可作为补充依据。':'结合所选资料，整理已知情况、待验证假设、资料缺口和下一步核查。',snapshot?'Search project orders, documents and knowledge graphs; canvas materials provide additional context.':'Use selected evidence to organize facts and checks.')}</p><button type="button" disabled={locked} onClick={()=>{setQuestion(t('查找当前故障代码的历史工单，列出编号、版本和匹配依据。','Find historical orders for the current fault code, with identifiers, versions and match reasons.'));composerInput.current?.focus();}}>{t('查找相关历史工单','Find related work orders')}</button><button type="button" disabled={locked} onClick={()=>{setQuestion(t('现有资料能支持哪些信息链段？请列出未读取或待复核的连接。','Which parts of the information path are supported? List unread or unverified connections.'));composerInput.current?.focus();}}>{t('梳理信息链路与缺口','Review the information path and gaps')}</button></div>}
-  <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} key={item.runId} run={item} cards={cards} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/><AssistantTaskResult hasUnsaved={hasUnsaved} run={item} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined} onPage={index=>void taskPage(item,index)}/></div>)}</div>
+  <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} key={item.runId} run={item} cards={cards} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/><AssistantTaskResult hasUnsaved={hasUnsaved} run={item} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined} onPage={index=>void taskPage(item,index)} onViewScene={setSceneView}/></div>)}</div>
+  {sceneView&&<AssistantSceneViewer api={api} target={sceneView} en={en} onClose={()=>setSceneView(null)}/>}
   {sourceView&&<AssistantSourceViewer api={api} {...sourceView} en={en} onClose={()=>setSourceView(null)}/>}
   {!queryOnly&&transferRun&&<AssistantWorkOrderDialog key={`${context}:${transferRun.runId}`} api={api} run={transferRun} cards={cards} en={en} preferredOrderId={preferredOrderId} faultCode={faultCode} enabled={canTransfer&&!locked} onClose={()=>setTransferRun(null)} onOpenOrder={onOpenOrder} onFocus={onFocus}/>}
   {focusedEarlier&&<p className="ap-caption">{t('正在查看工单采纳的历史轮次。','Viewing the historical turn adopted by the work order.')}<Btn disabled={locked} onClick={()=>void openConversation(conversation!.conversationId)}>{t('打开完整对话后继续','Open full conversation to continue')}</Btn></p>}

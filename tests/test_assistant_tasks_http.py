@@ -67,6 +67,36 @@ class TaskHttpTests(unittest.TestCase):
             self.assertEqual((403, 'ASSISTANT_TOOL_NOT_ALLOWED'), (status, rejected['code']))
             store.assert_not_called()
 
+    def test_adopted_models_use_the_selected_project_and_remain_read_only(self):
+        self.body['mode'] = 'workbench'
+        version = str(uuid4())
+        listing = dict(items=[dict(configuration='Project choice',title='Exterior',identifier=str(uuid4()),
+            version=version,representation='appearance',state='active',instanceCount=0,scenes=[],moreScenes=False)],
+            snapshotRevision='fixed-models',total=1,truncated=False,sceneUsageTruncated=False)
+        plan = dict(intent='query',queries=[dict(tool='adopted_models',query='',faultCode='',orderId='')],actions=[])
+        response = dict(usage={},modelCalls=1,engineeringConfirmation=False,purpose='ontovis_analysis',serviceRevision='a'*64)
+        with (
+            patch('apps.api.assistant_task_api.call_source',side_effect=[{**response,'plan':plan},{**response,'answer':answer()}]) as model,
+            patch('apps.api.assistant_project_models.catalogue',return_value=listing) as directory,
+        ):
+            status, started = self.request('task-start',self.body)
+            self.assertEqual(200,status,started)
+            for _ in range(60):
+                _,run = self.request('status',dict(runId=started['runId']))
+                if run['state'] not in ('reading','model','validating'):
+                    break
+                time.sleep(.01)
+        self.assertEqual('complete',run['state'],run)
+        self.assertTrue(json.loads(model.call_args_list[0].args[2]['workflow']['context'])['adoptedModelDirectory'])
+        self.assertEqual('Demo-PDS',directory.call_args.args[2].project_code)
+        self.assertEqual('Demo-PDS:admin',directory.call_args.args[6])
+        self.assertEqual(version,run['result']['task']['results'][0]['version'])
+        selection = dict(runId=run['runId'],selectedKeys=['R1'],snapshotJson=self.body['snapshotJson'])
+        with patch('apps.api.assistant_task_api.analysis_store') as store:
+            status,error = self.request('task-prepare',selection)
+            self.assertEqual((403,'ASSISTANT_TOOL_NOT_ALLOWED'),(status,error['code']))
+            store.assert_not_called()
+
     def test_history_scope_and_readonly_source_view_without_registration(self):
         wrong=json.loads(self.body['snapshotJson']);wrong['projectCode']='B'
         self.assertEqual(404,self.request('task-start',{**self.body,'historyJson':json.dumps(dict(undo=wrong))})[0])

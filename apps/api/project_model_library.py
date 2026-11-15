@@ -355,6 +355,15 @@ class ProjectModelLibrary:
         self._content(value); authorize()
         return value
 
+    def fixed_version_metadata(self, version_id, authorize):
+        """Read catalogue fields without loading the fixed GLB."""
+        _require(callable(authorize)); authorize()
+        with self.library.connect() as db:
+            value = self._version(db, version_id)
+        authorize()
+        return {key:value[key] for key in ('modelAssetId','modelVersionId','displayName','contentRevision',
+                                         'representationType','assetState','assetRevision')}
+
     def content(self, version_id, expected_content_revision, expected_sha, authorize):
         _require(callable(authorize)); authorize()
         _text(expected_content_revision)

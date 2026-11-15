@@ -35,17 +35,20 @@ def draft_history(body,connection,project):
     return value
 
 
-def validate_plan(value, *, scene_directory=False):
+def validate_plan(value, *, scene_directory=False, adopted_models=False):
     require(type(value) is dict and set(value)=={'intent','queries','actions'},'ASSISTANT_OUTPUT_INVALID',502)
     require(value['intent'] in ('query','edit') and type(value['queries']) is list and len(value['queries'])<=2
         and type(value['actions']) is list and len(value['actions'])<=8,'ASSISTANT_OUTPUT_INVALID',502)
     require(value['intent']=='edit' or not value['actions'],'ASSISTANT_TOOL_NOT_ALLOWED',422)
-    tools=(*QUERY_TOOLS,'scenes') if scene_directory else QUERY_TOOLS
+    tools=set(QUERY_TOOLS)
+    if scene_directory:tools.add('scenes')
+    if adopted_models:tools.add('adopted_models')
     for q in value['queries']:
-        require(type(q) is dict and set(q) in ({'tool','query','faultCode'},{'tool','query','faultCode','orderId'}) and q['tool'] in tools
+        require(type(q) is dict and set(q) in ({'tool','query','faultCode'},{'tool','query','faultCode','orderId'})
+            and type(q['tool']) is str and q['tool'] in tools
             and all(type(q[k]) is str and len(q[k])<=200 for k in ('query','faultCode'))
             and type(q.get('orderId','')) is str and len(q.get('orderId',''))<=100,'ASSISTANT_TOOL_NOT_ALLOWED',422)
-        if q['tool']=='scenes':
+        if q['tool'] in ('scenes','adopted_models'):
             require(value['intent']=='query' and not q['faultCode'] and not q.get('orderId'),'ASSISTANT_TOOL_NOT_ALLOWED',422)
     for a in value['actions']:
         require(type(a) is dict and set(a)=={'kind','targets','text','x','y'} and a['kind'] in ACTIONS
@@ -201,6 +204,17 @@ class ProjectTools:
                                    truncated=truncated,snapshotRevision=value['snapshotRevision']))
             summary=json.dumps(dict(scope=scope,more=truncated,items=items),ensure_ascii=False,separators=(',',':'))
             self.source('model',summary,retrievalRevision=value['snapshotRevision'])
+        elif tool=='adopted_models':
+            require('model' in self.allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
+            require(callable(reader.adopted_model_listing),'MODEL_UNAVAILABLE',503)
+            from .assistant_project_models import SCOPE, summary
+            value=self.read(lambda:reader.adopted_model_listing(needle))
+            for row in value['items']:
+                self.results.append(dict(row,key='R'+str(len(self.results)+1),kind='adopted_model',
+                    reason='项目采用配置',simulated=False))
+            self.trace.append(dict(tool=tool,state='complete',count=len(value['items']),total=value['total'],scope=SCOPE,
+                truncated=value['truncated'] or value['sceneUsageTruncated'],snapshotRevision=value['snapshotRevision']))
+            self.source('model',summary(value,self.private),retrievalRevision=value['snapshotRevision'])
 
 
 def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
@@ -241,10 +255,14 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                         frame=c.get('frameId'),x=c['x'],y=c['y'],width=c['width'],height=c['height']) for c in draft['cards']],
             groups=[dict(key='G'+str(i+1),title=g['title'][:80],cards=[card_keys[c['id']] for c in draft['cards'] if c.get('frameId')==g['id']]) for i,g in enumerate(draft.get('frames',[]))],
             relations=[dict(key='L'+str(i+1),source=card_keys[r['from']],target=card_keys[r['to']],kind=r['kind'],origin=r['origin']) for i,r in enumerate(draft['relations'])])
-        scene_directory='model' in policy['policy']['allowedKinds'] and callable(getattr(reader,'scene_listing',None))
+        allow_models='model' in policy['policy']['allowedKinds']
+        scene_directory=allow_models and callable(getattr(reader,'scene_listing',None))
+        adopted_models=allow_models and callable(getattr(reader,'adopted_model_listing',None))
         if scene_directory:
             context['sceneDirectory']=True
-        plan=validate_plan(model('plan',context,[])['plan'],scene_directory=scene_directory)
+        if adopted_models:
+            context['adoptedModelDirectory']=True
+        plan=validate_plan(model('plan',context,[])['plan'],scene_directory=scene_directory,adopted_models=adopted_models)
         switches=set(service.get('settings',{}).get('tools',('selected_sources','engineering_neighborhood','manual_fault_lookup')))
         require(all(q['tool']!='graph' or 'engineering_neighborhood' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         require(all(q['tool']!='knowledge' or 'manual_fault_lookup' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
