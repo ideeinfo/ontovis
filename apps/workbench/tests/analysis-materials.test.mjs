@@ -76,6 +76,51 @@ test('canceling one shared image consumer leaves the other alive; closing cancel
  resolve(new Blob(['late']));await assert.rejects(pending,{name:'AbortError'});
 });
 
+test('opening a queued original promotes its shared transfer ahead of other thumbnails',async()=>{
+ const requests=[];
+ const sources=new AnalysisSources({request:(_path,body)=>new Promise(resolve=>requests.push({id:body.evidenceRefId,resolve}))},'session');
+ const load=id=>sources.file({id,revision:'fixed'});
+ const release=i=>requests[i].resolve(new Blob([requests[i].id]));
+ const left=load('left'),right=load('right');
+ const thumbnail=load('thumbnail'),automatic=load('original');
+ const opened=sources.file({id:'original',revision:'fixed'},undefined,undefined,'original',undefined,'foreground');
+ const pending=Promise.allSettled([left,right,thumbnail,automatic,opened]);
+ try{
+  await Promise.resolve();
+  assert.deepEqual(requests.map(row=>row.id),['left','right']);
+  release(0);await left;await Promise.resolve();
+  assert.deepEqual(requests.map(row=>row.id),['left','right','original']);
+  release(1);await right;await Promise.resolve();
+  assert.deepEqual(requests.map(row=>row.id),['left','right','original','thumbnail']);
+  release(2);release(3);
+  assert.equal(await opened,await automatic);
+  await thumbnail;
+ }finally{sources.dispose();requests.forEach((_,i)=>release(i));void pending;}
+});
+
+test('reopening immediately after cancellation starts a new shared original transfer',async()=>{
+ const requests=[];
+ const sources=new AnalysisSources({request:(_path,_body,signal)=>new Promise(resolve=>requests.push({signal,resolve}))},'session');
+ const ref={id:'original',revision:'fixed'},controller=new AbortController();
+ const canceled=sources.file(ref,undefined,controller.signal);
+ const canceledResult=assert.rejects(canceled,{name:'AbortError'});
+ await Promise.resolve();
+ controller.abort();
+ const reopened=sources.file(ref);
+ const outcome=reopened.catch(error=>error);
+ try{
+  await canceledResult;
+  assert.equal(requests.length,2);
+  assert.equal(requests[0].signal.aborted,true);
+  assert.equal(requests[1].signal.aborted,false);
+  requests[0].resolve(new Blob(['stale']));await Promise.resolve();await Promise.resolve();
+  const shared=sources.file(ref);
+  requests[1].resolve(new Blob(['current']));
+  assert.equal(await shared,await reopened);
+  assert.equal(requests.length,2);
+ }finally{sources.dispose();requests.forEach(row=>row.resolve(new Blob(['closed'])));void outcome;}
+});
+
 test('decoded image retention is bounded to two sources and released on close',async()=>{
  const original=globalThis.Image,images=[];
  globalThis.Image=class{constructor(){this.src='';images.push(this);}async decode(){}};

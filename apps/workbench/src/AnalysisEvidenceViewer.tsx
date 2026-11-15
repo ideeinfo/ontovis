@@ -43,11 +43,11 @@ export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{ca
   const [rowFocus,setRowFocus]=useState(0);
   useEffect(()=>{const abort=new AbortController();setLoading(true);setError(false);
     void sources.preview(card.source!,document?{cursor,graphScope,...(filter?{q:filter}:{}),...(node?{nodeId:node}:{})}:{section,cursor},abort.signal)
-      .then(value=>{if(!abort.signal.aborted){setPreview(value);if(!selected&&value.focusId)setSelected(value.focusId);if(!node&&value.focusId)setNode(value.focusId);}})
+      .then(value=>{if(!abort.signal.aborted){setPreview(value);if(!selected&&value.focusId)setSelected(value.focusId);if(document&&!node&&value.focusId)setNode(value.focusId);}})
       .catch(()=>{if(!abort.signal.aborted){setPreview(null);setError(true);}}).finally(()=>{if(!abort.signal.aborted)setLoading(false);});return()=>abort.abort();
   },[sources,card.source!.id,document,section,cursor,filter,reload,node,graphScope]);
   useEffect(()=>{if(document&&mode==='graph')return;const abort=new AbortController();setImage('');setImageError(false);
-    void sources.file(card.source!,source,abort.signal,'original',document?page:undefined).then(value=>{if(!abort.signal.aborted)setImage(value);}).catch(()=>{if(!abort.signal.aborted)setImageError(true);});return()=>abort.abort();
+    void sources.file(card.source!,source,abort.signal,'original',document?page:undefined,'foreground').then(value=>{if(!abort.signal.aborted)setImage(value);}).catch(()=>{if(!abort.signal.aborted)setImageError(true);});return()=>abort.abort();
   },[sources,card.source!.id,page,reload,mode]);
   const rows=preview?.[section as 'objects'|'ports'|'references'|'connections']||[];
   const chosen=rows.find(row=>row.id===selected),chosenNode=preview?.nodes?.find(row=>row.id===(node||preview.focusId));
