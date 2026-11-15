@@ -3,7 +3,7 @@ import {ArrowLeft,ArrowRight,Box,Cloud,Globe2,Info,Layers,LayoutDashboard,Maximi
 import logo from '../../../assets/brand/ONTOVis.png';
 import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
 import {usePreferences} from './Preferences';
-import {Btn,IconBtn,Modal} from './Primitives';
+import {Btn,ConfirmationDialog,IconBtn,Modal} from './Primitives';
 import type {ProjectSummary} from './projectTypes';
 import type {SceneView,SceneOpen} from './sceneTypes';
 import type {TerrainVersion,ImageryVersion,ProjectModelVersion} from './resourceTypes';
@@ -265,6 +265,10 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
    </div>}
   </Modal>}
   {alarms&&<Modal className="pc-alarm-dialog" title={t('模拟报警回放','Simulated alarm replay')} description={t('固定模拟回放，不代表项目现场报警。','Fixed simulated replay, not live project alarms.')} onClose={()=>setAlarms(false)}><Suspense fallback={<p role="status">{pending}</p>}><p className="pc-dialog-note">{t('模拟回放 · 非现场报警','Simulated replay · not field alarms')}</p><DataAlarms key={alarmSelection?`${alarmSelection.datasetId}:${alarmSelection.datasetRevision}`:'all'} initialDataset={alarmSelection} api={api} locale={locale} onAnalyze={analyze} onOpenWorkOrders={orders}/></Suspense></Modal>}
-  {leave&&<Modal title={t('修改尚未保存','Unsaved changes')} description={t('离开前处理未保存修改。','Resolve unsaved changes before leaving.')} onClose={()=>setLeave(null)}><p>{t('继续离开将放弃当前未保存的修改。','Leaving discards the current unsaved edits.')}</p><Btn onClick={()=>setLeave(null)}>{t('继续编辑','Keep editing')}</Btn><Btn onClick={()=>{const change=leave;setLeave(null);change();}}>{t('放弃修改并离开','Discard and leave')}</Btn></Modal>}
+  {leave&&<ConfirmationDialog title={t('修改尚未保存','Unsaved changes')}
+    description={t('离开会丢失当前修改。','Leaving discards the current edits.')}
+    cancelLabel={t('继续编辑','Keep editing')} onClose={()=>setLeave(null)}>
+    <Btn data-danger onClick={()=>{const change=leave;setLeave(null);change();}}>{t('放弃并离开','Discard and leave')}</Btn>
+  </ConfirmationDialog>}
  </div>;
 }

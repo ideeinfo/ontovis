@@ -7,7 +7,7 @@ import { ApiError, cancelled, failureMessage, WorkbenchApi } from './api';
 import type { ContextView, ModelView, ObjectView, SessionView } from './types';
 import type { MessageKey } from './messages';
 import { usePreferences } from './Preferences';
-import { Badge, Btn, IconBtn, Modal } from './Primitives';
+import { Badge, Btn, ConfirmationDialog, IconBtn, Modal } from './Primitives';
 import { ObjectsPanel } from './ObjectsPanel';
 import { ObjectHierarchy } from './ObjectHierarchy';
 import { objectCategory } from './objectCatalog';
@@ -312,7 +312,18 @@ export function Workbench() {
     </div></div>}
     {active&&project&&cockpitVisited&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><ProjectCockpit key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}`} api={api} project={project} active={cockpitOpen} initialEntry={cockpitEntry} onExit={closeCockpit} onAnalysisWorkspace={entry=>navigate('analysis',null,'',entry,()=>{setCockpitOpen(false);setReload(value=>value+1);})} onWorkspace={sceneId=>{setCockpitOpen(false);navigate('scene');setResourceScene(sceneId?{sceneId}:undefined);}}/></Suspense>}
     {active&&cockpitPicker&&<Modal className="pc-project-picker" title={locale==='zh'?'选择驾驶舱项目':'Choose a cockpit project'} description={locale==='zh'?'选择本人有权访问的项目。':'Select an accessible project.'} onClose={()=>setCockpitPicker(false)}><ProjectsPanel api={api} onSelect={chooseCockpitProject}/></Modal>}
-    {pendingOrderLeave&&<Modal title={page==='data'?(locale==='zh'?'天气配置尚未保存':'Unsaved weather settings'):page==='ai'?(locale==='zh'?'策略修改尚未生效':'Unapplied policy changes'):page==='hierarchy'?(locale==='zh'?'共享配置尚未保存':'Unsaved equipment configuration'):page==='analysis'?(locale==='zh'?'分析修改尚未保存':'Unsaved analysis changes'):(locale==='zh'?'诊断方案尚未保存':'Unsaved investigation')} description={locale==='zh'?'继续离开将放弃当前未保存的修改。':'Leaving discards the current unsaved edits.'} onClose={()=>setPendingOrderLeave(null)}><div className="wo-actions"><Btn onClick={()=>setPendingOrderLeave(null)}>{locale==='zh'?'继续编辑':'Continue editing'}</Btn><Btn onClick={()=>{const change=pendingOrderLeave;setPendingOrderLeave(null);setOrdersDirty(false);change();}}>{locale==='zh'?'放弃修改并离开':'Discard and leave'}</Btn></div></Modal>}
+    {pendingOrderLeave&&<ConfirmationDialog
+      title={page==='data'?(locale==='zh'?'天气配置尚未保存':'Unsaved weather settings'):
+        page==='ai'?(locale==='zh'?'AI 策略尚未生效':'Unapplied AI policy changes'):
+        page==='hierarchy'?(locale==='zh'?'设备配置尚未保存':'Unsaved equipment settings'):
+        page==='analysis'?(locale==='zh'?'分析修改尚未保存':'Unsaved analysis changes'):
+        (locale==='zh'?'工单修改尚未保存':'Unsaved work order changes')}
+      description={locale==='zh'?'离开会丢失当前修改。':'Leaving discards the current edits.'}
+      cancelLabel={locale==='zh'?'继续编辑':'Keep editing'} onClose={()=>setPendingOrderLeave(null)}>
+      <Btn data-danger onClick={()=>{const change=pendingOrderLeave;setPendingOrderLeave(null);setOrdersDirty(false);change();}}>
+        {locale==='zh'?'放弃并离开':'Discard and leave'}
+      </Btn>
+    </ConfirmationDialog>}
     {modal === 'login' && <Modal className="ov-login-dialog" title={t('signInTitle')} description={t('accountHint')} onClose={closeModal} onCloseAutoFocus={event=>{if(loginButton.current){event.preventDefault();loginButton.current.focus();}}}><form className="ov-simple-login" onSubmit={event => {event.preventDefault();void login();}}>
       <input aria-label={t('username')} placeholder={t('username')} autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required disabled={signingIn||signingOut}/><input aria-label={t('password')} placeholder={t('password')} type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={signingIn||signingOut}/>
       {(sessionCheck==='loading'||signingOut)&&!signingIn&&<p role="status">{t('loading')}</p>}

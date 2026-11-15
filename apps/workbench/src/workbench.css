@@ -3,3 +3,27 @@ html,body,#root{margin:0;height:100%;width:100%;overflow:hidden;background:var(-
 .ov-modal-root .ov-dialog{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);margin:0;display:block;width:min(520px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;background:var(--surface);border:1px solid var(--borderControl);border-radius:8px;box-shadow:0 12px 48px #0004}
 .ov-modal-root .ov-dialog>header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 16px;min-height:44px;border-bottom:1px solid var(--borderSubtle)}.ov-dialog-body{padding:16px}.ov-simple-login{display:flex;flex-direction:column;gap:12px}.ov-simple-login input{width:100%;min-height:36px;padding:8px;border:1px solid var(--borderControl);border-radius:4px;background:var(--background);color:var(--text)}.ov-simple-login p{font-size:12px;color:var(--warning)}
 .ov-modal-root .ov-dialog.ov-login-dialog{width:min(360px,calc(100vw - 32px));box-sizing:border-box}.ov-login-dialog .ov-dialog-body{padding:20px 28px 28px}.ov-modal-root .ov-login-dialog>header{padding:16px 20px 8px 28px;border-bottom:0}.ov-login-dialog .ov-simple-login input{box-sizing:border-box;padding:10px 12px;border-radius:6px;min-width:0}.ov-login-dialog .ov-simple-login>button[type=submit]{width:100%;justify-content:center;min-height:36px}.ov-login-dialog .ov-simple-login p{margin:0;overflow-wrap:anywhere}
+
+.ov-modal-root .ov-dialog.ov-confirm-dialog{width:min(440px,calc(100vw - 24px));max-height:calc(100dvh - 24px);color:var(--text)}
+.ov-modal-root .ov-confirm-dialog>header{padding:10px 14px 10px 18px}
+.ov-confirm-dialog>header h2{min-width:0;font-size:15px;line-height:1.45;overflow-wrap:anywhere}
+.ov-confirm-dialog>header .ov-icon-btn{flex:none}
+.ov-confirm-dialog .ov-dialog-body{padding:0}
+.ov-confirm-content{display:grid;gap:10px;padding:16px 18px 18px;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.ov-confirm-dialog .ov-confirm-subject{
+  padding:8px 10px;border:1px solid var(--borderSubtle);border-radius:5px;
+  color:var(--text);background:var(--surfaceRaised);font-weight:600;
+}
+.ov-confirm-warning{
+  display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:5px;
+  color:var(--statusWarning);background:var(--warningSurface);font-size:12px;
+}
+.ov-confirm-warning svg{flex:none;margin-top:2px}
+.ov-confirm-status{min-width:0;color:var(--statusCritical);font-size:12px}
+.ov-confirm-actions{
+  display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;
+  padding:12px 18px;border-top:1px solid var(--borderSubtle);background:var(--surfaceRaised);
+}
+.ov-confirm-actions .ov-btn{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.ov-confirm-actions .ov-btn[data-danger]{color:var(--statusCritical);background:var(--criticalSurface);border-color:var(--statusCritical)}
+.ov-confirm-actions .ov-btn[data-danger]:hover:not(:disabled){background:color-mix(in srgb,var(--statusCritical) 18%,var(--surface))}

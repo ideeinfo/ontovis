@@ -3,7 +3,7 @@ import type {ReactNode} from 'react';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Eye, FileUp, LayoutGrid, List, MapPin, Plus, RefreshCw, RotateCcw, Search, Trash2} from 'lucide-react';
 import {cancelled, type WorkbenchApi} from './api';
-import {Badge, Btn, IconBtn, Modal} from './Primitives';
+import {Badge, Btn, ConfirmationDialog, IconBtn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
 import {SceneApi} from './sceneApi';
 import {ResourceDetails} from './ResourceDetails';
@@ -423,11 +423,16 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         initialCenter={publicGeoCenter}
         onImported={result=>{setResourceRefresh(value=>value+1);setTab(result.terrainVersionId?'terrains':'imagery');}}/>
     </Modal>}
-    {deleteTarget&&<Modal title={text('删除模型','Delete model')} description={text('模型将移至回收站，已有场景与历史保留。','The model moves to the recycle bin. Existing scenes and history are retained.')} onClose={closeDelete}>
-      <p><strong>{deleteTarget.displayName}</strong></p><p className="ov-resource-caption">{text(`整个模型的 ${deleteTarget.versions.length} 个固定版本将移至回收站。已有场景和历史仍可打开，恢复后可再次选用。`,`All ${deleteTarget.versions.length} fixed versions move to the recycle bin. Existing scenes and history remain available; restore to use the model again.`)}</p>
-      {!!lifecycleError&&<p role="alert" className="ov-resource-error">{resourceFailure(lifecycleError,locale)}</p>}
-      <div className="ov-resource-actions end"><Btn disabled={lifecycleBusy} onClick={closeDelete}>{t('cancel')}</Btn>{!!lifecycleError&&<Btn disabled={lifecycleBusy} onClick={()=>{setDeleteTarget(null);setLifecycleError(null);void readCatalog();}}>{t('refresh')}</Btn>}<Btn primary disabled={!canManageLifecycle||lifecycleBusy} onClick={()=>void changeLifecycle('delete',deleteTarget)}><Trash2 size={14}/>{lifecycleBusy?t('saving'):text('删除模型','Delete model')}</Btn></div>
-    </Modal>}
+    {deleteTarget&&<ConfirmationDialog title={text('将模型移至回收站？','Move this model to the recycle bin?')}
+      subject={deleteTarget.displayName} closeDisabled={lifecycleBusy} onClose={closeDelete}
+      description={text(`共 ${deleteTarget.versions.length} 个版本。可从回收站恢复，已使用该模型的场景仍可打开。`,
+        `All ${deleteTarget.versions.length} versions can be restored from the recycle bin. Scenes using this model remain available.`)}
+      status={!!lifecycleError&&<p role="alert">{resourceFailure(lifecycleError,locale)}</p>}>
+      {!!lifecycleError&&<Btn disabled={lifecycleBusy} onClick={()=>{setDeleteTarget(null);setLifecycleError(null);void readCatalog();}}>{t('refresh')}</Btn>}
+      <Btn primary disabled={!canManageLifecycle||lifecycleBusy} onClick={()=>void changeLifecycle('delete',deleteTarget)}>
+        {lifecycleBusy?text('处理中…','Working…'):text('移至回收站','Move to recycle bin')}
+      </Btn>
+    </ConfirmationDialog>}
     {upload&&<Modal title={t(upload.asset?'appendVersion':'uploadModel')} description={t('glbLimit')} onClose={()=>{if(!uploading)setUpload(null);}}><div className="ov-resource-form">
       <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);setUploadError(null);requestId.current.reset();}}/></label>
       <p className="ov-resource-caption">{t('glbLimit')}</p>

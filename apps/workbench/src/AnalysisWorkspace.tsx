@@ -1,6 +1,6 @@
 import {useEffect,useId,useMemo,useRef,useState,type PointerEvent as ReactPointerEvent} from 'react';
 import {GitBranch,Hand,History,LayoutGrid,Maximize,MousePointer2,Pin,Plus,Save,Search,StickyNote,Trash2,Undo2,Redo2,X,ZoomIn,ZoomOut,PanelLeft,PanelRight,Copy,Group,RotateCcw,RefreshCw,Sparkles,TriangleAlert} from 'lucide-react';
-import {Btn,IconBtn,Modal} from './Primitives';
+import {Btn,ConfirmationDialog,IconBtn,Modal} from './Primitives';
 import {addManualRelation,frameBounds,selectedInBox,arrangeCards,fitViewport,moveCard,removeCard,resizeCard,RESIZE_HANDLES,zoomAt,type ResizeHandle,type CanvasSnapshot,type ProjectScope,type RelationKind,type CanvasCard,type CardView} from './analysisCanvas';
 import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle,sameDraftSnapshot,stepDraftHistory,assistantHistory,type AnalysisListItem,type DraftReceipt,type PendingDraft} from './analysisDraftState';
 import {RowActions,RowContext,type ListAction} from './ListMenus';
@@ -529,8 +529,24 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           {linkUnknown?t('检查工单更新','Check order update'):draft?.workflowOrderId?t('保存并采纳','Save and adopt'):t('保存并关联','Save and link')}</Btn>
       </div>
     </Modal>}
-    {deleteTarget&&<Modal title={t('移至回收站','Move to recycle bin')} description={deleteTarget.title} onClose={()=>{if(!busy)setDeleteTarget(null);}}><p>{t('画布将从正常列表移除，可以在回收站恢复。原有修订、资料引用和工单关联会保留。','The canvas leaves the active list and can be restored. Revisions, source references and work-order links are retained.')}</p>{receipt?.analysisSessionId===deleteTarget.analysisSessionId&&dirty&&<p>{t('当前未保存的修改不会保存。','Current unsaved changes will not be saved.')}</p>}<div className="ad-inline"><Btn disabled={busy} onClick={()=>setDeleteTarget(null)}>{t('取消','Cancel')}</Btn><Btn primary disabled={busy||uncertain} onClick={()=>void manageLifecycle(deleteTarget,'trash')}>{busy?t('处理中…','Working…'):lifecycleUnknown?t('重试移至回收站','Retry move'):t('移至回收站','Move to recycle bin')}</Btn></div></Modal>}
-    {leave&&<Modal title={t('修改尚未保存','Unsaved changes')} description={t('离开前处理当前修改','Handle changes before leaving')} onClose={()=>setLeave(null)}><p>{uncertain?t('保存结果尚未确认，建议先重试。','Save result is unknown; retry first.'):t('离开将放弃当前未保存的修改。','Leaving discards unsaved edits.')}</p><div className="ad-inline"><Btn onClick={()=>setLeave(null)}>{t('继续编辑','Keep editing')}</Btn><Btn disabled={busy} onClick={()=>{const action=leave;setLeave(null);pending.current=null;setUncertain(false);action();}}>{t('放弃修改并离开','Discard and leave')}</Btn><Btn primary disabled={!writable||busy} onClick={()=>void commit().then(ok=>{if(ok){setLeave(null);leave();}})}>{t('保存并继续','Save and continue')}</Btn></div></Modal>}
+    {deleteTarget&&<ConfirmationDialog title={t('将画布移至回收站？','Move this canvas to the recycle bin?')} subject={deleteTarget.title}
+      description={t('可从回收站恢复画布及其历史版本、资料引用和工单关联。','Restore the canvas from the recycle bin with its versions, source references and work-order links.')}
+      warning={receipt?.analysisSessionId===deleteTarget.analysisSessionId&&dirty?t('未保存的修改将丢失。','Unsaved edits will be lost.'):undefined}
+      status={lifecycleUnknown&&<p role="alert">{t('操作结果待确认。','Move status is unconfirmed.')}</p>}
+      closeDisabled={busy} onClose={()=>setDeleteTarget(null)}>
+      <Btn primary disabled={busy||uncertain} onClick={()=>void manageLifecycle(deleteTarget,'trash')}>
+        {busy?t('处理中…','Working…'):lifecycleUnknown?t('重试移入','Retry move'):t('移至回收站','Move to recycle bin')}
+      </Btn>
+    </ConfirmationDialog>}
+    {leave&&<ConfirmationDialog title={uncertain?t('保存结果待确认','Save status unconfirmed'):t('画布有未保存的修改','Unsaved canvas changes')}
+      subject={draft?.title} cancelLabel={t('继续编辑','Keep editing')} closeDisabled={busy} onClose={()=>setLeave(null)}
+      description={uncertain?t('可重试保存后继续。','Retry saving before continuing.'):t('保存后继续，或放弃本次修改。','Save to continue or discard these edits.')}
+      warning={uncertain?t('放弃会丢失本机修改。','Discarding clears the local edits.'):undefined}>
+      <Btn data-danger disabled={busy} onClick={()=>{const action=leave;setLeave(null);pending.current=null;setUncertain(false);action();}}>{t('放弃并离开','Discard and leave')}</Btn>
+      <Btn primary disabled={!writable||busy} onClick={()=>void commit().then(ok=>{if(ok){setLeave(null);leave();}})}>
+        {uncertain?t('重试保存并继续','Retry save and continue'):t('保存并继续','Save and continue')}
+      </Btn>
+    </ConfirmationDialog>}
     {reuseDialog&&draft&&<Modal title={t('分析复用说明','Analysis reuse details')} description={t('摘要与建议随当前分析版本保存','The summary and advice are saved with this analysis revision')} onClose={()=>setReuseDialog(null)}>
       <div className="wov-form">
         <div className="wov-form-row">

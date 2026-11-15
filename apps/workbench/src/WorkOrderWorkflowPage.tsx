@@ -1,7 +1,7 @@
 import {lazy, Suspense, useEffect, useMemo, useRef, useState} from 'react';
 import {ArrowRight, FileText, Paperclip, Plus, RefreshCw, Search} from 'lucide-react';
 import {ApiError, cancelled} from './api';
-import {Btn, Modal} from './Primitives';
+import {Btn, ConfirmationDialog, Modal} from './Primitives';
 import {WorkOrderRecords} from './WorkOrderRecords';
 import {WorkOrderAttachmentForm, WorkOrderAttachmentView} from './WorkOrderAttachments';
 import {WorkOrderAnalysisView} from './WorkOrderAnalysisView';
@@ -377,7 +377,26 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
       <div className="wov-form">{recordHistory.map(row=><article className="wov-record" key={row.recordRevision}>
         <small>r{row.recordRevision} · {row.editedBy||row.actor} · {orderRecordTime(row.editedAt||row.recordedAt,en)}</small><p>{row.text}</p>
       </article>)}</div></Modal>}
-    {dialog&&<Modal title={dialogTitle[dialog]} description={dialog==='new'?t('发起项目工单','Create project work order'):detail?.orderId||''} onClose={()=>!disabled&&setDialog(null)}>
+    {dialog==='archive'&&<ConfirmationDialog title={t('将工单归档？','Archive this work order?')}
+      subject={detail?`${detail.orderId} · ${detail.title}`:undefined} description={t('归档后可查看工单的处理记录和附件。','The order’s treatment records and attachments can be viewed after archiving.')}
+      status={errorView} closeDisabled={disabled} onClose={()=>setDialog(null)}>
+      <Btn primary disabled={disabled} onClick={()=>void update('archive')}>{t('归档工单','Archive order')}</Btn>
+    </ConfirmationDialog>}
+    {dialog==='remove'&&attachment&&<ConfirmationDialog title={t('将附件移出工单？','Remove this attachment from the order?')}
+      subject={`${attachment.title} · v${attachment.versionNumber}`}
+      description={t('需要时可从项目文档库重新添加。','Add it again from the project document library when needed.')}
+      status={errorView} closeDisabled={disabled} onClose={()=>setDialog(null)}>
+      <Btn data-danger disabled={disabled} onClick={()=>void update('detach',{attachmentId:attachment.attachmentId},()=>setAttachment(null))}>
+        {t('移出工单','Remove from order')}
+      </Btn>
+    </ConfirmationDialog>}
+    {dialog==='clear'&&<ConfirmationDialog title={t('取消采纳这份分析？','Clear the adopted analysis?')}
+      subject={candidateAdopted&&adopted?`${candidateAdopted.title} · r${adopted.analysisRevision}`:detail?.orderId}
+      description={t('可为此工单重新选择要采纳的分析。','You can choose another analysis for this order.')}
+      status={errorView} closeDisabled={disabled} onClose={()=>setDialog(null)}>
+      <Btn data-danger disabled={disabled} onClick={()=>void update('clear_analysis')}>{t('取消采纳','Clear adoption')}</Btn>
+    </ConfirmationDialog>}
+    {dialog&&dialog!=='archive'&&dialog!=='remove'&&dialog!=='clear'&&<Modal title={dialogTitle[dialog]} description={dialog==='new'?t('发起项目工单','Create project work order'):detail?.orderId||''} onClose={()=>!disabled&&setDialog(null)}>
       <div className="wov-form">
         {errorView}
         {dialog==='new'&&<>
@@ -415,8 +434,6 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
           <label>{t('原因','Reason')}<textarea value={reason} maxLength={1000} disabled={disabled} onChange={event=>setReason(event.target.value)}/></label>
           <Btn primary disabled={disabled||!reason.trim()} onClick={()=>void update(dialog,{reason:reason.trim()})}>{dialogTitle[dialog]}</Btn>
         </>}
-        {dialog==='archive'&&<><p>{workflow?.result?.text||t('归档保留现有处理记录。','Archiving keeps the saved treatment record.')}</p>
-          <Btn primary disabled={disabled} onClick={()=>void update('archive')}>{t('确认归档','Archive order')}</Btn></>}
         {dialog==='copy'&&detail&&<>
           {choice&&<small>{choice.title} · r{choice.analysisRevision}</small>}
           <label>{t('分析名称','Analysis name')}<input value={title} maxLength={120} disabled={disabled} onChange={event=>setTitle(event.target.value)}/></label>
@@ -430,9 +447,6 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
             onChange={event=>setReason(event.target.value)}/></label>
           <Btn primary disabled={disabled} onClick={()=>void update('adopt_analysis',{...fixedAnalysis(choice),reason:reason.trim()})}>
             {t('确认采纳此版本','Adopt this revision')}</Btn></>}
-        {dialog==='remove'&&attachment&&<><p>{attachment.title} · v{attachment.versionNumber}</p>
-          <Btn primary disabled={disabled} onClick={()=>void update('detach',{attachmentId:attachment.attachmentId},()=>setAttachment(null))}>{t('移出本单','Remove from this order')}</Btn></>}
-        {dialog==='clear'&&<Btn primary disabled={disabled} onClick={()=>void update('clear_analysis')}>{t('确认取消采纳','Clear adoption')}</Btn>}
       </div>
     </Modal>}
   </div>;
