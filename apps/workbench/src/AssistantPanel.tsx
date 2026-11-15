@@ -12,7 +12,7 @@ import {Btn} from './Primitives';
 import {cancelled,type WorkbenchApi} from './api';
 import type {CanvasCard,CanvasSnapshot} from './analysisCanvas';
 import type {DraftReceipt} from './analysisDraftState';
-import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantEvidenceKey,assistantMessage,assistantSendBlocker,running,sourceLabels,materialRoles,watchAssistantRun,type AssistantConversation,type AssistantPolicyView,type AssistantRun,type AssistantSource} from './assistantApi';
+import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantConversationMatches,assistantEvidenceKey,assistantMessage,assistantSendBlocker,running,sourceLabels,materialRoles,watchAssistantRun,type AssistantConversation,type AssistantMode,type AssistantPolicyView,type AssistantRun,type AssistantSource} from './assistantApi';
 import {AssistantGraph} from './AssistantGraph';
 import {AssistantSourceViewer} from './AssistantSourceViewer';
 import {AssistantTurn} from './AssistantTurn';
@@ -22,6 +22,7 @@ import {llmTaskNames,type LlmTask} from './llmSettings';
 
 export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,onEditScene,initialRunId,queryOnly=false,snapshot,onApplyTask,onHandoff,initialQuestion,onInitialQuestionUsed,hasUnsaved=false,historyJson}:{api:WorkbenchApi;cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string,record?:string)=>void;onEditScene?:(target:AssistantSceneTarget)=>void;initialRunId?:string;queryOnly?:boolean;snapshot?:CanvasSnapshot;hasUnsaved?:boolean;historyJson?:string;initialQuestion?:string;onInitialQuestionUsed?:()=>void;onHandoff?:(run:AssistantRun)=>void;onApplyTask?:(prepared:PreparedTask,baseJson:string)=>Promise<number|null>}){
  const service=useMemo(()=>new AssistantApi(api),[api]);const t=(zh:string,english:string)=>en?english:zh;
+ const mode:AssistantMode|null=snapshot?(queryOnly?'cockpit_query':'workbench'):null;
  const [taskId,setTaskId]=useState<LlmTask>(queryOnly?'query':'analysis');
  const available=cards.filter((card,index,all)=>card.source&&all.findIndex(v=>v.source?.id===card.source!.id)===index),inventory=available.map(card=>card.source!.id).join(':');
  const [view,setView]=useState<AssistantPolicyView|null>(null),[selected,setSelected]=useState<string[]>(()=>defaultAssistantEvidence(available));
@@ -30,6 +31,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const [question,setQuestion]=useState(''),[run,setRun]=useState<AssistantRun|null>(null),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[reload,setReload]=useState(0),[summaries,setSummaries]=useState<AssistantSource[]|null>(null),[pending,setPending]=useState<string|null>(null);
  const [pollState,setPollState]=useState<'reading'|'retrying'|'paused'>('reading'),[pollReload,setPollReload]=useState(0);
  const [conversations,setConversations]=useState<AssistantConversation[]>([]),[conversation,setConversation]=useState<AssistantConversation|null>(null),[turns,setTurns]=useState<AssistantRun[]>([]),[hasEarlier,setHasEarlier]=useState(false);
+ const continuation=conversation&&assistantConversationMatches(conversation,mode)?conversation:null;
  const [loadingHistory,setLoadingHistory]=useState(false);
  const [contextOpen,setContextOpen]=useState(false),[historyOpen,setHistoryOpen]=useState(false);
  const scrollArea=useRef<HTMLDivElement>(null),composerInput=useRef<HTMLTextAreaElement>(null);
@@ -44,7 +46,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const draftId=useRef(crypto.randomUUID()),execution=useRef<{runId:string;keys:string[];prepared:PreparedTask;savedRevision:number|null}|null>(null);
  const [executionPending,setExecutionPending]=useState(false);
  const latest=useRef<AssistantRun|null>(null);latest.current=run;
- const context=`${api.epoch}:${api.revision}:${receipt?.analysisSessionId}:${receipt?.analysisRevision}`;
+ const context=`${api.epoch}:${api.revision}:${receipt?.analysisSessionId}:${receipt?.analysisRevision}:${mode}`;
  const current=useRef(context);current.current=context;
  const alive=useRef(true),scope=useRef<AssistantApi|null>(null);
  useEffect(()=>{alive.current=true;automatic.current=null;setRun(null);setError(null);setPending(null);setSummaries(null);setConversation(null);setConversations([]);setTurns([]);setHasEarlier(false);setLoadingHistory(false);setTransferRun(null);setSourceView(null);setSceneView(null);setDeviceView(null);setDocumentView(null);historyGeneration.current++;setQuestion(initialQuestion??'');if(initialQuestion)onInitialQuestionUsed?.();
@@ -59,7 +61,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   return()=>{abort.abort();stop();};
  },[run?.runId,run?.state,context,reload,pollReload,busy]);
  useEffect(()=>{if(!receipt)return;const abort=new AbortController(),generation=historyGeneration.current,key=context;
-  setLoadingHistory(true);service.conversations(receipt.analysisSessionId,receipt.analysisRevision,abort.signal).then(async value=>{
+  setLoadingHistory(true);service.conversations(receipt.analysisSessionId,receipt.analysisRevision,abort.signal,mode??undefined).then(async value=>{
    if(abort.signal.aborted||current.current!==key||historyGeneration.current!==generation)return;setConversations(value.items);
    if(initialRunId){const chosen=await api.request<AssistantRun>(ASSISTANT_ROOT+'/status',{runId:initialRunId},abort.signal);
     if(abort.signal.aborted||current.current!==key||historyGeneration.current!==generation)return;
@@ -68,10 +70,10 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
     if(!queryOnly)setTaskId(chosen.taskId??'analysis');setConversation(head??null);setTurns([chosen]);setRun(chosen);setHasEarlier(false);return;
    }
    if(initialQuestion)return;
-   if(!value.items.length)return;const detail=await service.conversation(value.items[0].conversationId,undefined,abort.signal);
+   const recent=value.items.find(item=>assistantConversationMatches(item,mode));
+   if(!recent)return;const detail=await service.conversation(recent.conversationId,undefined,abort.signal);
    if(abort.signal.aborted||current.current!==key||historyGeneration.current!==generation)return;
-   // Saved analysis remains in Records; a query starts with its own conversation.
-   if(queryOnly&&detail.items.at(-1)?.taskId!=='query')return;
+   if(!assistantConversationMatches(detail,mode)||queryOnly&&detail.items.at(-1)?.taskId!=='query')return;
    if(!queryOnly)setTaskId(detail.items.at(-1)?.taskId??'analysis');setConversation(detail);setTurns(detail.items);setRun(detail.items.at(-1)??null);setHasEarlier(detail.hasEarlier);
   }).catch(e=>{if(!abort.signal.aborted&&!cancelled(e)&&historyGeneration.current===generation)setError(e);}).finally(()=>{if(!abort.signal.aborted&&current.current===key&&historyGeneration.current===generation)setLoadingHistory(false);});
   return()=>abort.abort();
@@ -88,17 +90,26 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  useEffect(()=>{if(autoScroll.current&&scrollArea.current)scrollArea.current.scrollTop=scrollArea.current.scrollHeight;},[run?.runId,run?.state,loadingHistory]);
  const selection=()=>({analysisSessionId:receipt!.analysisSessionId,expectedAnalysisRevision:receipt!.analysisRevision,evidenceRefIds:selected});
  async function start(){if((!receipt&&!snapshot)||!view||sendBlocker)return;autoScroll.current=true;const key=context,requestId=crypto.randomUUID(),fixed=scope.current!;historyGeneration.current++;setTurns(previous=>mergeConversationTurns(previous,run));setBusy(true);setError(null);setPending(requestId);setSummaries(null);
-  try{const value=await api.request<AssistantRun>(ASSISTANT_ROOT+(snapshot?'/task-start':'/start'),{...(snapshot?{protocol:TASK_PROTOCOL,mode:queryOnly?'cockpit_query':'workbench',...(!queryOnly&&historyJson?{historyJson}:{}),
+  try{const value=await api.request<AssistantRun>(ASSISTANT_ROOT+(snapshot?'/task-start':'/start'),{...(snapshot?{protocol:TASK_PROTOCOL,mode,...(!queryOnly&&historyJson?{historyJson}:{}),
    ...(receipt&&selected.length&&selectionEditedIn===context?{preferSelectedEvidence:true}:{}),
-   snapshotJson:JSON.stringify(snapshot),analysisSessionId:receipt?.analysisSessionId??draftId.current,expectedAnalysisRevision:receipt?.analysisRevision??0,evidenceRefIds:receipt?selected:[]}:selection()),requestId,question:question.trim(),conversationId:conversation?.conversationId??null,expectedConversationVersion:conversation?.version??0,parentRunId:conversation?.headRunId??null,expectedPolicyRevision:view.revision,
+   snapshotJson:JSON.stringify(snapshot),analysisSessionId:receipt?.analysisSessionId??draftId.current,expectedAnalysisRevision:receipt?.analysisRevision??0,evidenceRefIds:receipt?selected:[]}:selection()),requestId,question:question.trim(),conversationId:continuation?.conversationId??null,expectedConversationVersion:continuation?.version??0,parentRunId:continuation?.headRunId??null,expectedPolicyRevision:view.revision,
     expectedAccessRevision:view.accessRevision,expectedServiceRevision:effectiveService?.serviceRevision,taskId});
-    if(!alive.current||current.current!==key){if(running(value))void fixed.cancel(value).catch(()=>{});return;}automatic.current={runId:value.runId,context:key};setRun(value);setPending(null);setQuestion('');if(value.conversationId){const head={conversationId:value.conversationId,title:conversation?.title||value.question||'分析',version:value.conversationVersion||1,headRunId:value.runId,analysisSessionId:value.analysisSessionId,analysisRevision:value.analysisRevision,updatedAt:new Date().toISOString()};setConversation(head);setConversations(items=>[head,...items.filter(v=>v.conversationId!==head.conversationId)].slice(0,20));}
+    if(!alive.current||current.current!==key){if(running(value))void fixed.cancel(value).catch(()=>{});return;}
+    if(!continuation){setTurns([]);setHasEarlier(false);}
+    automatic.current={runId:value.runId,context:key};setRun(value);setPending(null);setQuestion('');
+    if(value.conversationId){const head={conversationId:value.conversationId,title:continuation?.title||value.question||'分析',version:value.conversationVersion||1,headRunId:value.runId,analysisSessionId:value.analysisSessionId,analysisRevision:value.analysisRevision,updatedAt:new Date().toISOString(),mode};setConversation(head);setConversations(items=>[head,...items.filter(v=>v.conversationId!==head.conversationId)].slice(0,20));}
   }catch(e){if(alive.current&&current.current===key){setError(e);if(e&&typeof e==='object'&&'status'in e)setPending(null);}}
   finally{if(alive.current&&current.current===key)setBusy(false);}
  }
  async function inspectRun(){if(!pending&&!run)return;const key=context;setBusy(true);setError(null);try{
   const value=pending?await api.request<AssistantRun>(ASSISTANT_ROOT+'/status',{requestId:pending}):await service.status(run!);
-  if(alive.current&&current.current===key){setRun(value);setPending(null);if(value.conversationId)setConversation({conversationId:value.conversationId,title:conversation?.title||value.question||'分析',version:value.conversationVersion||1,headRunId:value.runId,analysisSessionId:value.analysisSessionId,analysisRevision:value.analysisRevision,updatedAt:new Date().toISOString()});setPollState('reading');setPollReload(v=>v+1);}
+  if(alive.current&&current.current===key){
+   const sameConversation=conversation?.conversationId===value.conversationId;
+   if(pending){setQuestion('');if(!sameConversation){setTurns([]);setHasEarlier(false);}}
+   setRun(value);setPending(null);
+   if(value.conversationId)setConversation({conversationId:value.conversationId,title:(sameConversation&&conversation?.title)||value.question||'分析',version:value.conversationVersion||1,headRunId:value.runId,analysisSessionId:value.analysisSessionId,analysisRevision:value.analysisRevision,updatedAt:new Date().toISOString(),mode:value.mode});
+   setPollState('reading');setPollReload(v=>v+1);
+  }
  }catch(e){if(alive.current&&current.current===key)setError(e);}finally{if(alive.current&&current.current===key)setBusy(false);}}
  async function stop(){if(!run)return;setBusy(true);setError(null);try{setRun(await service.cancel(run));}catch(e){setError(e);}finally{setBusy(false);}}
  async function checkTurn(item:AssistantRun){const key=context;setBusy(true);setError(null);try{const value=await service.status(item);
@@ -109,7 +120,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const active=running(run),locked=busy||running(run)||loadingHistory||!!pending||executionPending;
  const effectiveService=view?.services?.[taskId]??view?.service;
  const limit=Math.min(view?.policy.reads??8,effectiveService?.settings?.readLimit??8);
- const taskMismatch=!!conversation&&!!run&&(run.taskId??'analysis')!==taskId;
+ const taskMismatch=!!continuation&&!!run&&(run.taskId??'analysis')!==taskId;
  const sendBlocker=assistantSendBlocker({busy,active,pending:!!pending||executionPending,loadingHistory,focusedEarlier,taskMismatch,hasReceipt:!!receipt,view,policyError,service:effectiveService,selectedCount:selected.length,question,projectTools:!!snapshot});
  const refreshService=()=>{setError(null);setReload(v=>v+1);};
  const canRefreshService=sendBlocker==='ASSISTANT_POLICY_READ_FAILED'||!!view&&view.policy.enabled&&!effectiveService?.enabled;
@@ -152,6 +163,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {sourceView&&<AssistantSourceViewer api={api} {...sourceView} en={en} onClose={()=>setSourceView(null)}/>}
   {!queryOnly&&transferRun&&<AssistantWorkOrderDialog key={`${context}:${transferRun.runId}`} api={api} run={transferRun} cards={cards} en={en} preferredOrderId={preferredOrderId} faultCode={faultCode} enabled={canTransfer&&!locked} onClose={()=>setTransferRun(null)} onOpenOrder={onOpenOrder} onFocus={onFocus}/>}
   {focusedEarlier&&<p className="ap-caption">{t('正在查看工单采纳的历史轮次。','Viewing the historical turn adopted by the work order.')}<Btn disabled={locked} onClick={()=>void openConversation(conversation!.conversationId)}>{t('打开完整对话后继续','Open full conversation to continue')}</Btn></p>}
+  {conversation&&!continuation&&!focusedEarlier&&<p className="ap-caption">{t('正在查看存档。发送后将在当前界面开启新对话。','Viewing an archive. Sending starts a conversation in this workspace.')}</p>}
   {executionPending&&<div role="status"><p>{t('草稿已应用，正在等待服务端执行回执；不会重复修改画布。','Draft applied; waiting for the server receipt. Changes will not be repeated.')}</p><Btn disabled={busy} onClick={()=>void acknowledgeExecution()}>{t('核对执行回执','Check execution receipt')}</Btn></div>}
   {pending&&busy&&<p role="status">{t('正在提交本轮问题…','Submitting this question…')}</p>}
   {pending&&!busy&&<div><p>{t('请求结果尚未确认，请先检查运行，避免重复调用。','The start result is uncertain. Check the run before sending again.')}</p><Btn onClick={()=>void inspectRun()}>{t('检查运行','Check run')}</Btn></div>}

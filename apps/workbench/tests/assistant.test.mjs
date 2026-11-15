@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
-import {AssistantApi,answerNote,assistantEvidenceKey,assistantMessage,assistantSendBlocker,filterEngineeringGraph,groupEngineeringEdges,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
+import {AssistantApi,answerNote,assistantConversationMatches,assistantEvidenceKey,assistantMessage,assistantSendBlocker,filterEngineeringGraph,groupEngineeringEdges,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
 
 const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],reads:8,parallel:2,seconds:120};
 const view={revision:1,accessRevision:'grant',policy,service:{serviceRevision:'r'}};
@@ -77,6 +77,21 @@ test('a capability denial in assistant settings does not discard an otherwise ac
  api.session('session');api.selectProject({ontobaseConnectionId:'source',projectCode:'A'});let denied=0;api.onProjectDenied=()=>denied++;
  await assert.rejects(api.request('/api/workbench/assistant/start',{}),e=>e.code==='ASSISTANT_RUN_FORBIDDEN');assert.equal(denied,0);
 });
+test('an assistant mode or tool denial stays local, while project revocation still leaves the project',async()=>{
+ const project={ontobaseConnectionId:'source',projectCode:'A'};
+ const api=new WorkbenchApi();
+ api.session('session');api.selectProject(project);const epoch=api.epoch;
+ let denied=0;api.onProjectDenied=()=>denied++;
+ for(const [action,code] of [['task-start','ASSISTANT_QUERY_ONLY'],['task-prepare','ASSISTANT_QUERY_ONLY'],
+    ['task-ack','ASSISTANT_TOOL_NOT_ALLOWED'],['task-start','ASSISTANT_RUN_FORBIDDEN']]){
+  api.transport=async()=>new Response(JSON.stringify({code}),{status:403});
+  await assert.rejects(api.request('/api/workbench/assistant/'+action,{}),error=>error.code===code);
+  assert.equal(api.epoch,epoch);assert.equal(denied,0);assert.deepEqual(api.project,project);
+ }
+ api.transport=async()=>new Response('{"code":"FORBIDDEN"}',{status:403});
+ await assert.rejects(api.request('/api/workbench/assistant/task-start',{}),error=>error.code==='FORBIDDEN');
+ assert.equal(denied,1);assert.ok(api.epoch>epoch);
+});
 const result={answer:{observations:[{text:'模拟读数偏高。',refs:['E1']}],hypotheses:[],gaps:[],nextSteps:[]},engineeringConfirmation:false};
 test('only validated terminal answers become reversible notes with fixed local reference identities',()=>{
  const run={state:'complete',result,sources:[{key:'E1',availability:'available',evidenceRefId:'fixed-ref',sourceRevision:'r1'}]};
@@ -94,14 +109,25 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
 test('conversation pages and UID graph use only the fixed owned analysis endpoints',async()=>{
  const calls=[],service=new AssistantApi({request:async(path,body,signal)=>{calls.push({path,body,signal});return {};}}),abort=new AbortController();
  await service.conversations('analysis',3,abort.signal);await service.conversation('conversation',4,abort.signal);await service.graph('analysis',3,'fixed-object',abort.signal);
- assert.deepEqual(calls.map(c=>c.path),['/api/workbench/assistant/conversations','/api/workbench/assistant/conversation','/api/workbench/assistant/graph']);
+ await service.conversations('analysis',3,abort.signal,'workbench');
+ assert.deepEqual(calls.map(c=>c.path),['/api/workbench/assistant/conversations','/api/workbench/assistant/conversation','/api/workbench/assistant/graph','/api/workbench/assistant/conversations']);
+ assert.deepEqual(calls[0].body,{analysisSessionId:'analysis',expectedAnalysisRevision:3});
  assert.deepEqual(calls[1].body,{conversationId:'conversation',beforeTurn:4});assert.deepEqual(calls[2].body,{analysisSessionId:'analysis',expectedAnalysisRevision:3,evidenceRefIds:['fixed-object']});
+ assert.deepEqual(calls[3].body,{analysisSessionId:'analysis',expectedAnalysisRevision:3,mode:'workbench'});
  assert.ok(calls.every(c=>c.signal===abort.signal));assert.ok(calls.every(c=>!c.path.includes('start')));
 });
 test('new turn receipts replace by run identity and preserve earlier conversation order',()=>{
  const before=[{runId:'second',conversationVersion:2,state:'model'},{runId:'first',conversationVersion:1,state:'complete'}];
  const merged=mergeConversationTurns(before,{runId:'second',conversationVersion:2,state:'complete'});
  assert.deepEqual(merged.map(v=>v.runId),['first','second']);assert.equal(merged[1].state,'complete');assert.equal(before[0].state,'model');
+});
+test('only a conversation with the current mode can provide a parent turn',()=>{
+ for(const mode of ['workbench','cockpit_query',null]){
+  for(const stored of ['workbench','cockpit_query',null,undefined]){
+   assert.equal(assistantConversationMatches({mode:stored},mode),mode===(stored??null));
+  }
+ }
+ assert.match(assistantMessage(new ApiError(409,'ASSISTANT_CONVERSATION_MODE_CHANGED'),false),/当前界面/);
 });
 test('graph filtering operates only on returned associations and preserves candidate status',()=>{
  const graph={nodes:[{id:'sensor',title:'温度变送器'},{id:'terminal',title:'X91端子排'},{id:'drawing',title:'机舱传感器图纸'}],relations:[

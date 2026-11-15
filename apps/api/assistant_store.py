@@ -143,27 +143,32 @@ class AssistantStore:
         turn=db.execute('select conversation_id,turn_no,parent_run_id from assistant_conversation_turns where run_id=?',(row['id'],)).fetchone()
         return {**row,**(dict(turn) if turn else {})}
 
-    def conversations(self,project,owner,analysis,revision):
+    def conversations(self,project,owner,analysis,revision,mode=None):
         identifier(analysis);require(type(revision) is int and 0<=revision<=1000)
         with self.library.connect() as db:
-            rows=db.execute('''select * from assistant_conversations where connection_id=? and project_code=? and owner=?
-                and analysis_id=? and (analysis_revision=? or exists (
-                    select 1 from assistant_runs r where r.id=head_run_id
-                    and json_extract(r.input_json,'$.protocol')='ontovis-engineering-tasks-v1'))
-                order by updated_at desc,id desc limit 20''',
-                (self.connection_id,project,owner,analysis,revision)).fetchall()
+            rows=db.execute('''select c.*,json_extract(r.input_json,'$.mode') as mode
+                from assistant_conversations c left join assistant_runs r on r.id=c.head_run_id
+                where c.connection_id=? and c.project_code=? and c.owner=? and c.analysis_id=?
+                and (c.analysis_revision=? or json_extract(r.input_json,'$.protocol')='ontovis-engineering-tasks-v1')
+                and (? is null or mode=? or (?='workbench' and mode is null))
+                order by case when ?='workbench' and mode is null then 1 else 0 end,
+                         c.updated_at desc,c.id desc limit 20''',
+                (self.connection_id,project,owner,analysis,revision,mode,mode,mode,mode)).fetchall()
         return [self.conversation_public(dict(r)) for r in rows]
 
     @staticmethod
     def conversation_public(row):
         return dict(conversationId=row['id'],title=row['title'],version=row['version'],headRunId=row['head_run_id'],
-                    analysisSessionId=row['analysis_id'],analysisRevision=row['analysis_revision'],updatedAt=row['updated_at'])
+                    analysisSessionId=row['analysis_id'],analysisRevision=row['analysis_revision'],updatedAt=row['updated_at'],
+                    mode=row['mode'])
 
     def conversation(self,project,owner,conversation_id,before=None):
         identifier(conversation_id)
         require(before is None or type(before) is int and 1<=before<=501)
         with self.library.connect() as db:
-            head=db.execute('select * from assistant_conversations where id=? and connection_id=? and project_code=? and owner=?',
+            head=db.execute('''select c.*,json_extract(r.input_json,'$.mode') as mode
+                from assistant_conversations c left join assistant_runs r on r.id=c.head_run_id
+                where c.id=? and c.connection_id=? and c.project_code=? and c.owner=?''',
                 (conversation_id,self.connection_id,project,owner)).fetchone()
             require(head is not None,'NOT_FOUND_OR_FORBIDDEN',404)
             rows=db.execute('''select r.*,t.conversation_id,t.turn_no,t.parent_run_id from assistant_conversation_turns t
@@ -212,9 +217,9 @@ class AssistantStore:
                     and head['version']==expected and head['head_run_id']==parent,'ASSISTANT_CONVERSATION_CHANGED',409)
                 previous=db.execute('select state,input_json from assistant_runs where id=?',(parent,)).fetchone()
                 require(previous is not None and previous['state'] not in ACTIVE,'ASSISTANT_BUSY',409)
-                require(json.loads(previous['input_json']).get('taskId','analysis')==body.get('taskId','analysis'),'LLM_CONVERSATION_TASK_CHANGED',409)
-                if body.get('protocol')=='ontovis-engineering-tasks-v1':
-                    require(json.loads(previous['input_json']).get('mode')==body['mode'],'ASSISTANT_QUERY_ONLY',403)
+                previous_input=json.loads(previous['input_json'])
+                require(previous_input.get('mode')==body.get('mode'),'ASSISTANT_CONVERSATION_MODE_CHANGED',409)
+                require(previous_input.get('taskId','analysis')==body.get('taskId','analysis'),'LLM_CONVERSATION_TASK_CHANGED',409)
             db.execute('insert into assistant_runs values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (run_id,self.connection_id,project,owner,body['requestId'],fingerprint,body['analysisSessionId'],body['expectedAnalysisRevision'],
                  policy_revision,service_revision,'reading',1,stamp,stamp,encoded(body),'[]','[]',None,None))
@@ -240,9 +245,10 @@ class AssistantStore:
 
     @staticmethod
     def public(row, *, hide=False):
+        body=json.loads(row['input_json'])
         return {'runId':row['id'],'state':row['state'],'version':row['version'],'createdAt':row['created_at'],'updatedAt':row['updated_at'],
-            'taskId':json.loads(row['input_json']).get('taskId','analysis'),
-            'question':json.loads(row['input_json']).get('question',''),
+            'taskId':body.get('taskId','analysis'),'mode':body.get('mode'),
+            'question':body.get('question',''),
             'conversationId':row.get('conversation_id'),'conversationVersion':row.get('turn_no',0),'parentRunId':row.get('parent_run_id'),
             'analysisSessionId':row['analysis_id'],'analysisRevision':row['analysis_revision'],'policyRevision':row['policy_revision'],
             'progress':[] if hide else json.loads(row['progress_json']),'sources':[] if hide else json.loads(row['sources_json']),

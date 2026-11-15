@@ -16,8 +16,6 @@ type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imag
 const MIB = 1024 * 1024;
 const writeOnlyDenials: Record<string, readonly string[]> = {
   WEATHER_WRITE_FORBIDDEN: ['/api/workbench/weather/save','/api/workbench/weather/test'],
-  ASSISTANT_RUN_FORBIDDEN: ['/api/workbench/assistant/start','/api/workbench/assistant/summary','/api/workbench/assistant/publish','/api/workbench/assistant/rollback','/api/workbench/assistant/cancel'],
-  ASSISTANT_TOOL_NOT_ALLOWED: ['/api/workbench/assistant/start','/api/workbench/assistant/summary'],
   ANALYSIS_WRITE_FORBIDDEN: ['/api/workbench/analysis-sessions/import-history','/api/workbench/analysis-sessions/evidence/register-batch','/api/workbench/analysis-sessions/start', '/api/workbench/analysis-sessions/copy', '/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/restore', '/api/workbench/analysis-sessions/evidence/register', '/api/workbench/analysis-sessions/link-work-order'],
   WORK_ORDER_WRITE_FORBIDDEN: ['/api/workbench/work-orders/seed-demo', '/api/workbench/work-orders/action',
     '/api/workbench/work-orders/create','/api/workbench/work-orders/workflow','/api/workbench/work-orders/members'],
@@ -232,11 +230,13 @@ export class WorkbenchApi {
       const data = await response.json().catch(() => ({}));
       guard();
       const code = data && typeof data.code === 'string' ? data.code : 'SOURCE_UNAVAILABLE';
-      const writeDenied = response.status === 403 && Object.hasOwn(writeOnlyDenials, code)
-        && writeOnlyDenials[code].includes(path);
+      const assistantDenied=path.startsWith('/api/workbench/assistant/')&&
+        ['ASSISTANT_RUN_FORBIDDEN','ASSISTANT_TOOL_NOT_ALLOWED','ASSISTANT_QUERY_ONLY'].includes(code);
+      const operationDenied = response.status === 403 && (assistantDenied ||
+        Object.hasOwn(writeOnlyDenials, code) && writeOnlyDenials[code].includes(path));
       if(response.status===403&&(path.startsWith('/api/workbench/projects')||sharedModels||path==='/api/workbench/resources/uses')){/* Resource/project access failures keep the authenticated identity. */}
-      else if(response.status===403&&!writeDenied&&scoped&&project){this.invalidate();this.onProjectDenied();}
-      else if (response.status === 401 || response.status === 403 && !writeDenied) {
+      else if(response.status===403&&!operationDenied&&scoped&&project){this.invalidate();this.onProjectDenied();}
+      else if (response.status === 401 || response.status === 403 && !operationDenied) {
         this.invalidate(); this.onDenied(response.status);
       }
       throw new ApiError(response.status, code);

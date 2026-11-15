@@ -40,6 +40,43 @@ class TaskHttpTests(unittest.TestCase):
             snapshot=json.loads(self.body['snapshotJson']);snapshot['projectCode']='B'
             self.assertEqual(404,self.request('task-start',{**self.body,'snapshotJson':json.dumps(snapshot)})[0]);model.assert_not_called()
 
+    def test_same_canvas_restores_only_the_current_mode_and_rejects_cross_mode_followups(self):
+        body = {**self.body, 'analysisSessionId': self.fixture.analysis, 'expectedAnalysisRevision': 1}
+        history = {k: body[k] for k in ('analysisSessionId', 'expectedAnalysisRevision')}
+        result = dict(plan=dict(intent='edit', queries=[], actions=[action('add_note', text='synthetic note')]),
+                      usage={}, modelCalls=1, engineeringConfirmation=False, purpose='ontovis_analysis',
+                      serviceRevision='a'*64)
+        def complete(mode):
+            status, started = self.request('task-start', {**body, 'requestId': str(uuid4()), 'mode': mode})
+            self.assertEqual(200, status, started)
+            for _ in range(60):
+                _, run = self.request('status', {'runId': started['runId']})
+                if run['state'] not in ('reading', 'model', 'validating'):
+                    break
+                time.sleep(.01)
+            self.assertEqual('complete', run['state'], run)
+            return run
+
+        with (patch('apps.api.assistant_task_api.call_source', return_value=result) as model,
+              patch('apps.api.assistant_task_api.analysis_store') as open_store):
+            store = open_store.return_value.__enter__.return_value
+            store.detail.return_value = {'lifecycle': 'active'}
+            store.schema_version = 2
+            workbench = complete('workbench')
+            cockpit = complete('cockpit_query')
+            for mode, run, foreign in [('workbench', workbench, cockpit), ('cockpit_query', cockpit, workbench)]:
+                status, listing = self.request('conversations', {**history, 'mode': mode})
+                self.assertEqual(200, status, listing)
+                self.assertEqual([(run['conversationId'], mode)], [(item['conversationId'], item['mode']) for item in listing['items']])
+                status, blocked = self.request('task-start', {**body, 'requestId': str(uuid4()), 'mode': mode,
+                    'conversationId': foreign['conversationId'], 'expectedConversationVersion': foreign['conversationVersion'],
+                    'parentRunId': foreign['runId']})
+                self.assertEqual((409, 'ASSISTANT_CONVERSATION_MODE_CHANGED'), (status, blocked['code']))
+            self.assertEqual(2, model.call_count)
+        self.assertEqual({workbench['conversationId'], cockpit['conversationId']},
+                         {item['conversationId'] for item in self.request('conversations', history)[1]['items']})
+        self.assertEqual(422, self.request('conversations', {**history, 'mode': 'invalid'})[0])
+
     def test_processing_catalogue_retains_source_state_and_skips_answer_generation(self):
         plan=dict(intent='query',queries=[dict(tool='processing_tasks',query='',faultCode='',orderId='')],actions=[])
         model_reply=dict(plan=plan,usage={'total_tokens':31},modelCalls=1,engineeringConfirmation=False,

@@ -59,12 +59,16 @@ export function policyChanges(current:AssistantPolicy,next:AssistantPolicy){
 export interface RetrievalTrace {version:1;plan:{tool:string;faultCode:string|null;operations:number};anchor:{nodeId:string;pageNumber:number}|null;tools:{tool:string;state:string;matches?:number;nodes?:number;relations?:number;truncated?:boolean}[]}
 export function assistantSourceAnchor(source:AssistantSource):SourceAnchor|null{const anchor=source.retrieval?.anchor;return source.kind==='document'&&source.retrieval?.version===1&&anchor&&typeof anchor.nodeId==='string'&&anchor.nodeId.length>0&&anchor.nodeId.length<=160&&Number.isInteger(anchor.pageNumber)&&anchor.pageNumber>=1?anchor:null;}
 export interface AssistantSource {title?:string;pageNumbers?:number[];descriptor?:Record<string,unknown>;retrieval?:RetrievalTrace;key:string;kind:string;evidenceRefId:string;sourceRevision?:string;summary?:string;availability?:string;reason?:string;summaryHash?:string;retrievalRevision?:string}
+export type AssistantMode=EngineeringTask['mode'];
 export interface AssistantRun {runId:string;state:string;version:number;analysisSessionId:string;analysisRevision:number;policyRevision:number;
- taskId?:LlmTask;
+ taskId?:LlmTask;mode?:AssistantMode|null;
  question?:string;conversationId?:string|null;conversationVersion?:number;parentRunId?:string|null;
  progress:{key:string;state:string}[];sources:AssistantSource[];error:string|null;result:null|{protocol?:string;task?:EngineeringTask;answer:Record<'observations'|'hypotheses'|'gaps'|'nextSteps',{text:string;refs:string[]}[]>;model?:{taskId?:LlmTask;execution?:'ontobase'|'ontovis';provider?:string;modelId?:string};usage:Record<string,number>;modelCalls:number;engineeringConfirmation:false;partial:boolean;context?:{includedTurns:number;skippedTurns:{runId:string;reason:string}[]}};}
-export interface AssistantConversation {conversationId:string;title:string;version:number;headRunId:string;analysisSessionId:string;analysisRevision:number;updatedAt:string}
+export interface AssistantConversation {conversationId:string;title:string;version:number;headRunId:string;analysisSessionId:string;analysisRevision:number;updatedAt:string;mode?:AssistantMode|null}
 export interface AssistantConversationDetail extends AssistantConversation {items:AssistantRun[];hasEarlier:boolean}
+export function assistantConversationMatches(conversation:Pick<AssistantConversation,'mode'>,mode:AssistantMode|null){
+ return (conversation.mode??null)===mode;
+}
 export interface EngineeringGraph {root:string;revision:string;truncated:boolean;gaps:string[];nodes:{id:string;kind:string;title:string;entityUid?:string;statement?:string;documentName?:string}[];
  relations:{id:string;source:string;target:string;type:string;status:string;provenance:{recordId:string;recordRevision:string;pageNumber?:number;drawingUid?:string;importId?:string;portIds?:string[]}}[]}
 export const relationLabels:Record<string,[string,string]>={DEFINITION_MEMBER:['柜内工程定义关系','Cabinet definition membership'],INSTANCE_OF:['安装对象采用定义','Instance of definition'],DRAWING_LOCATION:['图纸定位记录','Drawing location'],CANDIDATE_CONNECTION:['候选连接 · 待复核','Candidate connection · unreviewed'],KNOWLEDGE_MAPPING:['已确认文档知识映射','Confirmed document mapping']};
@@ -132,6 +136,7 @@ export function assistantMessage(error:unknown,en=false){
  if(code==='LLM_CONVERSATION_TASK_CHANGED')return en?'This conversation uses a different task. Start a new conversation for this task.':'当前对话属于另一任务，请为此任务新建对话。';
  const outcomes:Record<string,[string,string]>={
   ASSISTANT_QUERY_ONLY:['驾驶舱仅查询；请转后台执行画布操作。','Cockpit is query only. Open the workbench to edit the canvas.'],
+  ASSISTANT_CONVERSATION_MODE_CHANGED:['此对话属于另一个界面，请在当前界面开启新对话。','This conversation belongs to another workspace. Start a conversation here to continue.'],
   ASSISTANT_DRAFT_CHANGED:['画布已变化，请重新发送操作指令；当前修改保留。','The canvas changed. Send a new instruction; edits are retained.'],
   ASSISTANT_HISTORY_EMPTY:['当前没有可撤销或重做的修改。','There is no available undo or redo step.'],
   ASSISTANT_HISTORY_EXCLUSIVE:['撤销、重做或恢复历史需单独执行，可同时明确保存。','Run undo, redo or restoration separately; an explicit save may follow.'],
@@ -167,7 +172,9 @@ export class AssistantApi {
   requestId:crypto.randomUUID(),expectedRevision:view.revision,expectedAccessRevision:view.accessRevision,expectedServiceRevision:view.service.serviceRevision??null,
   ...(restoreRevision===undefined?{policy}:{restoreRevision})});}
  status(run:AssistantRun,signal?:AbortSignal){return this.api.request<AssistantRun>(ASSISTANT_ROOT+'/status',{runId:run.runId},signal);}
- conversations(analysisSessionId:string,expectedAnalysisRevision:number,signal?:AbortSignal){return this.api.request<{items:AssistantConversation[]}>(ASSISTANT_ROOT+'/conversations',{analysisSessionId,expectedAnalysisRevision},signal);}
+ conversations(analysisSessionId:string,expectedAnalysisRevision:number,signal?:AbortSignal,mode?:AssistantMode){
+  return this.api.request<{items:AssistantConversation[]}>(ASSISTANT_ROOT+'/conversations',{analysisSessionId,expectedAnalysisRevision,...(mode?{mode}:{})},signal);
+ }
  conversation(conversationId:string,beforeTurn?:number,signal?:AbortSignal){return this.api.request<AssistantConversationDetail>(ASSISTANT_ROOT+'/conversation',{conversationId,...(beforeTurn===undefined?{}:{beforeTurn})},signal);}
  graph(analysisSessionId:string,expectedAnalysisRevision:number,evidenceRefId:string,signal?:AbortSignal){return this.api.request<{graph:EngineeringGraph}>(ASSISTANT_ROOT+'/graph',{analysisSessionId,expectedAnalysisRevision,evidenceRefIds:[evidenceRefId]},signal);}
  async cancel(run:AssistantRun){try{return await this.api.request<AssistantRun>(ASSISTANT_ROOT+'/cancel',{runId:run.runId,expectedVersion:run.version});}

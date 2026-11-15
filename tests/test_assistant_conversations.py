@@ -81,6 +81,23 @@ class ConversationTests(unittest.TestCase):
         fresh=AssistantStore(self.library,'source');head,rows=fresh.conversation('P',self.owner,first['id'])
         self.assertEqual(before,(rows[0]['input_json'],rows[0]['result_json']));self.assertEqual(1,head['version'])
 
+    def test_current_mode_is_filtered_before_the_history_limit_and_legacy_history_remains_readable(self):
+        protocol = 'ontovis-engineering-tasks-v1'
+        workbench = self.complete(self.begin(self.body(protocol=protocol, mode='workbench')))
+        legacy = self.complete(self.begin())
+        for _ in range(21):
+            self.complete(self.begin(self.body(protocol=protocol, mode='cockpit_query')))
+        entries = self.store.conversations('P', self.owner, self.analysis, 1, 'workbench')
+        self.assertEqual([workbench['conversation_id'], legacy['conversation_id']], [item['conversationId'] for item in entries])
+        self.assertEqual(['workbench', None], [item['mode'] for item in entries])
+        self.assertEqual(20, len(self.store.conversations('P', self.owner, self.analysis, 1, 'cockpit_query')))
+        head, turns = self.store.conversation('P', self.owner, legacy['conversation_id'])
+        self.assertIsNone(head['mode'])
+        self.assertEqual(legacy['input_json'], turns[0]['input_json'])
+        with self.assertRaises(PreviewError) as blocked:
+            self.begin(self.follow(workbench))
+        self.assertEqual('ASSISTANT_CONVERSATION_MODE_CHANGED', blocked.exception.code)
+
     def test_memory_remaps_reference_keys_by_stable_material_id(self):
         source=dict(key='E1',kind='object',evidenceRefId=self.ref,sourceRevision='r',summaryHash='hash',retrievalRevision='graph',availability='available')
         row=self.complete(self.begin(),[source]);changed={**source,'key':'E7'}

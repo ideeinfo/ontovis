@@ -350,12 +350,15 @@ def request(sessions,sid,path,payload):
             return value
         return reply(runtime.start({'project':project,'owner':actor,'sid':sid,'private':(project,access.get('projectName'))},body,policy,selected,prepare,authorize,invoke))
     if action=='conversations':
-        require(set(body)=={'analysisSessionId','expectedAnalysisRevision'})
+        scope={'analysisSessionId','expectedAnalysisRevision'}
+        require(scope<=set(body)<=scope|{'mode'})
+        require('mode' not in body or body['mode'] in ('workbench','cockpit_query'))
         prepare_body=body;body={**body,'evidenceRefIds':[],**({'protocol':'ontovis-engineering-tasks-v1'} if body['expectedAnalysisRevision']==0 else {})}
         try:prepare(authorize)
         finally:body=prepare_body
         authorize(True)
-        return reply({'items':runtime.store.conversations(project,actor,body['analysisSessionId'],body['expectedAnalysisRevision'])})
+        return reply({'items':runtime.store.conversations(project,actor,body['analysisSessionId'],
+            body['expectedAnalysisRevision'],body.get('mode'))})
 
     validation_cache={};read_count=[0]
     def visible(record):
