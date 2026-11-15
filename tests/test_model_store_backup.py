@@ -22,21 +22,38 @@ from apps.api.imagery_library import ImageryLibrary
 
 
 class ModelStoreBackupTests(unittest.TestCase):
-    def test_project_model_credentials_are_paired_encrypted_and_recoverable(self):
+    def test_legacy_project_model_credentials_are_paired_encrypted_and_recoverable(self):
+        from cryptography.fernet import Fernet
         from apps.api.assistant_models import AssistantModels
         from apps.api.model_library import ModelLibrary
-        library=self.fixture.fixture.library;models=AssistantModels(library,'synthetic-source')
-        key='synthetic-backup-key-not-a-real-credential'
-        models.save('A','owner',dict(requestId=str(uuid4()),expectedRevision=0,expectedAccessRevision='grant',
-            change=dict(kind='provider',provider='openai',baseUrl='https://api.openai.com/v1',mode='managed',keyAction='replace',apiKey=key)),lambda:None)
-        before=self.source_state();receipt=self.snapshot();target=self.root/'restored-llm'
-        backup.restore_new(self.destination,target,receipt['manifestSha256'],service_stopped=True)
-        with library.connect() as db:scope=db.execute('select project_code,context_id from library').fetchone()
-        restored=AssistantModels(ModelLibrary(target/'workbench-library',*scope),'synthetic-source')
-        self.assertEqual(restored.credentials('A','openai')[1],key);self.assertEqual(self.source_state(),before)
-        self.assertNotIn(key,(target/'workbench-library/library.sqlite3').read_bytes().decode('latin1'))
-        (library.root/'llm-credentials.key').write_bytes(b'invalid-key')
-        self.reject(self.snapshot)
+
+        library = self.fixture.fixture.library
+        source, project, provider = 'synthetic-source', 'A', 'openai'
+        models = AssistantModels(library, source)
+        key = 'fixture-' + uuid4().hex
+        payload = dict(connection=source, project=project, provider=provider, key=key)
+        encrypted = Fernet(models._key(create=True)).encrypt(json.dumps(payload).encode()).decode()
+        config = models.read(project)['config']
+        config['providers'][provider]['credential'] = encrypted
+        config['tasks']['analysis'] = dict(provider=provider, modelId='fixture-model', enabled=True)
+        with library.connect() as db:
+            db.execute('insert into assistant_model_configs values (?, ?, ?, ?, ?, ?)',
+                       (source, project, 1, json.dumps(config), 'owner', '2026-11-01T00:00:00Z'))
+            scope = db.execute('select project_code,context_id from library').fetchone()
+
+        before = self.source_state()
+        receipt = self.snapshot()
+        target = self.root / 'restored-llm'
+        backup.restore_new(self.destination, target, receipt['manifestSha256'], service_stopped=True)
+        restored = AssistantModels(ModelLibrary(target / 'workbench-library', *scope), source)
+        recovered = restored.read(project)['config']['providers'][provider]['credential']
+        self.assertEqual(recovered, encrypted)
+        self.assertEqual(restored._secret(project, provider, recovered), key)
+        self.assertEqual(self.source_state(), before)
+        self.assertNotIn(key.encode(), (target / 'workbench-library/library.sqlite3').read_bytes())
+        (library.root / 'llm-credentials.key').write_bytes(b'invalid-key')
+        with self.assertRaisesRegex(backup.BackupError, '^INVALID_LLM_CREDENTIALS$'):
+            backup.snapshot(self.library, self.model, self.root / 'tampered-key-backup', service_stopped=True)
 
     def test_deleted_model_and_fixed_content_survive_paired_restore(self):
         from apps.api.model_library import ModelLibrary

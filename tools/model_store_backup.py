@@ -16,7 +16,12 @@ import shutil
 import sqlite3
 import stat
 import struct
+import sys
 from uuid import UUID
+
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from apps.api.storage_lease import storage_lease, StorageInUse
 
 
