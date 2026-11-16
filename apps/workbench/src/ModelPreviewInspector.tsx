@@ -1,8 +1,10 @@
 import {useCallback,useEffect,useId,useMemo,useRef,useState} from 'react';
 import {ArrowLeft,Box,ChevronDown,ChevronRight,Focus,Layers,RotateCcw,Search} from 'lucide-react';
 import {Btn} from './Primitives';
+import {ModelSourceReport} from './ModelSourceReport';
 import {usePreferences} from './Preferences';
 import {previewIdentity,type PreviewNode,type PreviewSelection,type PreviewStructure} from './modelPreviewTypes';
+import type {SceneApi} from './sceneApi';
 import type {ProjectModelVersion} from './resourceTypes';
 import './modelPreview.css';
 
@@ -86,14 +88,22 @@ export function ModelPreviewTools({inspection}:{inspection:PreviewController}){
   </div>;
 }
 
-export function ModelComponentProperties({version,inspection}:{version:ProjectModelVersion;inspection:PreviewController}){
+export function ModelComponentProperties({version,inspection,reportApi,onReportDenied}:{
+  version:ProjectModelVersion;inspection:PreviewController;reportApi?:SceneApi;onReportDenied?:()=>void;
+}){
   const {locale}=usePreferences(),text=(zh:string,en:string)=>locale==='zh'?zh:en,node=inspection.node;
+  const identity=previewIdentity(version);
+  const [reportNode,setReportNode]=useState<{identity:string;index:number}|null>(null);
+  useEffect(()=>setReportNode(null),[identity,reportApi]);
+  const sourceIndex=inspection.structure?.identity===identity&&node?.kind==='source'?node.nodeIndex:null;
   const number=(value:number)=>Number(value.toPrecision(6)).toLocaleString(locale==='zh'?'zh-CN':'en-GB',{maximumFractionDigits:6});
   const vector=(value:number[]|null)=>value?.map(number).join(' × ')??'—';
   const attributes=Object.entries(node?.attributes??{}).filter(([key])=>!key.startsWith('ontoVis')).slice(0,100);
   return <section className="mp-properties" aria-label={text('预览属性','Preview properties')}>
     <h3>{text(node?'构件属性':'模型属性',node?'Component properties':'Model properties')}</h3>
     {node?<><strong className="mp-name">{node.name}</strong><p className="mp-caption mp-path">{node.path.join(' / ')}</p>
+      {reportApi&&sourceIndex!==null&&<Btn aria-haspopup="dialog" onClick={()=>setReportNode({identity,index:sourceIndex})}>
+        {text('查看原始属性','View original properties')}</Btn>}
       <dl><dt>{text('所属模型','Model')}</dt><dd>{version.displayName}</dd><dt>{text('固定几何版本','Fixed geometry version')}</dt><dd title={version.modelVersionId}>{version.modelVersionId.slice(0,8)}</dd>
         <dt>{text('几何来源','Geometry source')}</dt><dd>{text(node.kind==='proxy'?'示意代理几何':node.kind==='metadata'?'仅元数据，无几何':'源模型节点',node.kind==='proxy'?'Schematic proxy':node.kind==='metadata'?'Metadata only, no geometry':'Source model node')}</dd>
         <dt>{text('源节点编号','Source node index')}</dt><dd>{node.nodeIndex??'—'}</dd>
@@ -109,5 +119,8 @@ export function ModelComponentProperties({version,inspection}:{version:ProjectMo
       {attributes.length>0&&<details><summary>{text('源自定义属性','Source custom attributes')} · {attributes.length}</summary><dl>{attributes.map(([key,value])=><div className="mp-attribute" key={key}><dt>{key}</dt><dd>{(typeof value==='string'?value:JSON.stringify(value))?.slice(0,1200)}</dd></div>)}</dl></details>}
     </>:<><strong className="mp-name">{version.displayName}</strong><p>{text('从左侧构件树或三维模型中选择构件，查看其属性。','Select a component in the tree or the 3D model to inspect its properties.')}</p></>}
     <p className="mp-caption">{text('属性来自源模型，不确认现场设备身份、物理关系或工程精度。','Properties come from the source model and do not confirm installed identity, physical relationships or engineering accuracy.')}</p>
+    {reportApi&&reportNode?.identity===identity&&<ModelSourceReport key={identity} api={reportApi} version={version}
+      initialNodeIndex={reportNode.index} navigation={{structure:inspection.structure,locate:id=>{inspection.choose(id);setReportNode(null);}}}
+      onClose={()=>setReportNode(null)} onPrivateDenied={()=>{setReportNode(null);onReportDenied?.();}}/>}
   </section>;
 }

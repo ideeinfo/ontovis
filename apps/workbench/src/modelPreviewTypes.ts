@@ -13,3 +13,9 @@ export interface PreviewStructure {identity:string;roots:string[];nodes:PreviewN
 export interface PreviewSelection {identity:string;nodeId:string|null;display:PreviewDisplay;focusToken:number}
 export const previewIdentity=(version:ProjectModelVersion|null|undefined)=>version?
   JSON.stringify([version.modelAssetId,version.modelVersionId,version.contentRevision,version.sha256]):'';
+
+export function locatableSourceNode(structure:PreviewStructure|null,version:ProjectModelVersion,index:number){
+  if(!structure||structure.identity!==previewIdentity(version))return null;
+  const matches=structure.nodes.filter(node=>node.kind==='source'&&node.nodeIndex===index);
+  return matches.length===1&&matches[0].bounds?matches[0]:null;
+}

@@ -5,6 +5,7 @@ import {failureMessage} from './api';
 import {Btn} from './Primitives';
 import {usePreferences} from './Preferences';
 import {ResourcePanel} from './ResourcePanel';
+import {SceneApi} from './sceneApi';
 import {ModelComponentTree,ModelComponentProperties,ModelPreviewTools,useModelPreview} from './ModelPreviewInspector';
 import type {ProjectModelVersion} from './resourceTypes';
 import type {LocalSceneSnapshot,ModelResourceRef,SceneView} from './sceneTypes';
@@ -21,6 +22,7 @@ const emptyRefs:ModelResourceRef[]=[],emptyVisibility:Record<string,boolean>={};
 export function ProjectModelCenter({api,onOpenScene,onConfigure,suspended=false}:{api:WorkbenchApi;onOpenScene:(sceneId?:string,projectRef?:ProjectRef)=>void;onConfigure?:()=>void;suspended?:boolean}) {
   const {locale}=usePreferences(),text=(zh:string,en:string)=>locale==='zh'?zh:en;
   const [preview,setPreview]=useState<ProjectModelVersion|null>(null),[error,setError]=useState<unknown>(null);
+  const client=useMemo(()=>new SceneApi(api),[api]);
   const lastView=useRef<SceneView|null>(null);
   const restoredView=useMemo(()=>lastView.current,[preview?.modelVersionId,api.epoch,api.revision]);
   const snapshot=useMemo(()=>({...previewScene,initialView:restoredView||previewScene.initialView}),[restoredView]);
@@ -46,7 +48,8 @@ export function ProjectModelCenter({api,onOpenScene,onConfigure,suspended=false}
         <p className="pm-note">{text('资源预览；现场设备身份、安装位置和工程精度需另行核实。','Resource preview; installed identity, placement and engineering accuracy require separate verification.')}</p>
       </div>
       <aside className="pm-inspector" aria-label={text(inspection.node?'构件属性':'模型属性',inspection.node?'Component properties':'Model properties')}>
-        {preview&&inspection.node&&<ModelComponentProperties version={preview} inspection={inspection}/>}
+        {preview&&inspection.node&&<ModelComponentProperties version={preview} inspection={inspection}
+          reportApi={suspended?undefined:client} onReportDenied={()=>show(null)}/>}
         <div className="mp-resource-details" hidden={!!inspection.node}><header><strong>{text('模型属性','Model properties')}</strong></header>
         {preview&&<p className="mp-caption">{text('选择构件查看其属性。','Select a component to inspect its properties.')}</p>}
         <div className="pm-resource-details" ref={setDetailsTarget}/><p className="pm-properties-empty">{text('选择模型资源查看属性','Select a model resource to view its properties')}</p></div>

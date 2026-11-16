@@ -7,6 +7,7 @@ import ts from 'typescript';
 import {ApiError,WorkbenchApi,cancelled} from '../src/api.ts';
 import {SceneApi} from '../src/sceneApi.ts';
 import * as inspection from '../src/modelInspection.ts';
+import * as preview from '../src/modelPreviewTypes.ts';
 import {ResourceRequestGate,privateDenial} from '../src/resourceForms.ts';
 
 const version={modelVersionId:'fixed-v1',contentRevision:'content:1',sha256:'a'.repeat(64),displayName:'合成设备',calibrationState:'verified'};
@@ -56,18 +57,18 @@ test('session invalidation rejects a completed late inspection response',async()
   await assert.rejects(pending,error=>cancelled(error));
 });
 
-function mount(){
+function mount(overrides={}){
   const states=[],memos=[],effects=[],requests=[];let si,mi,ei,dirty,tree,closed=0,denied=0;
   const hooks={useState(initial){const i=si++;if(!(i in states))states[i]=initial;return [states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;dirty=true;}];},
     useMemo(fn,deps){const i=mi++;if(!memos[i]||deps.some((v,j)=>!Object.is(v,memos[i].deps[j])))memos[i]={deps,value:fn()};return memos[i].value;},
     useEffect(fn,deps){const i=ei++,old=effects[i];if(!old||deps.some((v,j)=>!Object.is(v,old.deps[j])))effects[i]={fn,deps,pending:true,cleanup:old?.cleanup};}};
   const require=createRequire(import.meta.url),dependencies={react:hooks,'./api':{ApiError,cancelled},'./Primitives':{Btn:'button',Modal:'dialog'},
     './Preferences':{usePreferences:()=>({locale:'zh'})},'./resourceForms':{ResourceRequestGate,privateDenial,resourceFailure:error=>error?.code??'',resourceCalibrationKey:value=>value},
-    './resourceMessages':{resourceText:(_locale,key)=>key},'./modelInspection':inspection,'./modelSourceReport.css':{}};
+    './resourceMessages':{resourceText:(_locale,key)=>key},'./modelInspection':inspection,'./modelPreviewTypes':preview,'./modelSourceReport.css':{}};
   const source=readFileSync(new URL('../src/ModelSourceReport.tsx',import.meta.url),'utf8');
   const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText,exports={};
   new Function('require','exports',compiled)(name=>dependencies[name]??require(name),exports);
-  const props={version,api:{modelInspection(_version,signal){return new Promise((resolve,reject)=>requests.push({signal,resolve,reject}));}},onClose(){closed++;},onPrivateDenied(){denied++;}};
+  const props={version,api:{modelInspection(_version,signal){return new Promise((resolve,reject)=>requests.push({signal,resolve,reject}));}},onClose(){closed++;},onPrivateDenied(){denied++;},...overrides};
   const nodes=()=>{const found=[];function walk(value){if(Array.isArray(value)){value.forEach(walk);return;}if(!value||typeof value!=='object')return;found.push(value);walk(value.props?.children);}walk(tree);return found;};
   function render(){let rounds=0;do{assert.ok(rounds++<20);dirty=false;si=mi=ei=0;tree=exports.ModelSourceReport(props);for(const effect of effects)if(effect.pending){effect.pending=false;effect.cleanup?.();effect.cleanup=effect.fn();}}while(dirty);}
   render();return {requests,nodes,props,render,get closed(){return closed;},get denied(){return denied;},
@@ -97,5 +98,28 @@ test('production report bounds its list, preserves null and escapes all original
     view.nodes().find(node=>node.type==='button'&&node.props.children==='再显示50项').props.onClick();view.render();assert.equal(rows().length,100);
     view.nodes().find(node=>node.type==='input').props.onChange({target:{value:'没有匹配'}});view.render();assert.equal(rows().length,0);
     view.nodes().find(node=>node.type==='button'&&node.props.children==='清除筛选').props.onClick();view.render();assert.equal(rows().length,50);
+  }finally{view.destroy();}
+});
+
+test('a picked node beyond the first page opens directly and only active geometry enables navigation',async()=>{
+  const calls=[];
+  const geometry=index=>({id:`node:${index}`,kind:'source',nodeIndex:index,bounds:[[0,0,0],[1,1,1]]});
+  const structure={identity:preview.previewIdentity(version),nodes:[geometry(80),geometry(81)]};
+  const view=mount({initialNodeIndex:80,navigation:{structure,locate:id=>calls.push(id)}});
+  const button=text=>view.nodes().find(node=>node.type==='button'&&node.props.children===text);
+  const search=()=>view.nodes().find(node=>node.type==='input');
+  try{
+    view.requests[0].resolve(fixture(101));await view.settle();
+    assert.equal(search().props.value,'#80');
+    assert.equal(view.nodes().filter(node=>node.type==='button'&&Object.hasOwn(node.props,'aria-pressed')).length,1);
+    button('在三维中定位').props.onClick();
+    assert.deepEqual(calls,['node:80']);
+    search().props.onChange({target:{value:'#81'}});view.render();
+    assert.equal(button('在三维中定位'),undefined);
+    search().props.onChange({target:{value:'#80'}});view.render();
+    view.props.navigation={...view.props.navigation,structure:{...structure,identity:'old-preview'}};view.render();
+    assert.equal(button('在三维中定位'),undefined);
+    button('显示全部节点').props.onClick();view.render();
+    assert.equal(search().props.value,'');
   }finally{view.destroy();}
 });

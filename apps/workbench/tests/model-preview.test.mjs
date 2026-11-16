@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import {WorkbenchApi} from '../src/api.ts';
 import {SceneResourceCache,cloneModel,modelSourceNode} from '../src/sceneResourceCache.ts';
 import {ModelPreviewInspection} from '../src/modelPreview.ts';
-import {previewIdentity} from '../src/modelPreviewTypes.ts';
+import {locatableSourceNode,previewIdentity} from '../src/modelPreviewTypes.ts';
 
 const digest=bytes=>createHash('sha256').update(new Uint8Array(bytes)).digest('hex');
 function glb(change=()=>{}) {
@@ -60,6 +60,22 @@ test('source hierarchy, original names, transforms, groups and safe identities s
   assert.equal(meshList(f.root)[0].userData.ontoVisNodeIndex,0,'Forged extras cannot supply preview identity');
   assert.equal(modelSourceNode(meshList(f.resource.scene)[0]).index,0);
   f.inspection.dispose();f.cache.dispose();
+});
+
+test('report navigation matches only an unambiguous source node with geometry in the exact preview',async()=>{
+  const f=await fixture(d=>{d.scenes[0].nodes.push(2);d.nodes.push({name:'Name only'},{name:'Outside scene',mesh:0});});
+  try{
+    const {structure}=f.inspection;
+    assert.equal(locatableSourceNode(structure,f.version,1)?.id,'node:1');
+    assert.equal(locatableSourceNode(structure,f.version,2),null);
+    assert.equal(locatableSourceNode(structure,f.version,3),null);
+    for(const field of ['modelAssetId','modelVersionId','contentRevision','sha256'])
+      assert.equal(locatableSourceNode(structure,{...f.version,[field]:'different'},1),null);
+    const source=structure.nodes.find(node=>node.id==='node:1');
+    const duplicate={...structure,nodes:[...structure.nodes,{...source,id:'duplicate'}]};
+    assert.equal(locatableSourceNode(duplicate,f.version,1),null);
+    assert.equal(locatableSourceNode({...structure,nodes:[{...source,kind:'proxy'}]},f.version,1),null);
+  }finally{f.inspection.dispose();f.cache.dispose();}
 });
 
 test('ghosting every other part leaves source, textures and other instances untouched; exact originals restore',async()=>{

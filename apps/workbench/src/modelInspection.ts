@@ -58,6 +58,7 @@ export function sourceIdentityLabel(state:SourceIdentityState,locale:string){
 }
 export function filterSourceNodes(nodes:ModelSourceNode[],query:string,state:SourceIdentityState|'',scope:'all'|'active'|'inactive'){
   const search=query.trim().toLocaleLowerCase();
+  const index=/^#\d+$/.test(search)?Number(search.slice(1)):null;
   return nodes.filter(node=>(!state||node.sourceIdentityState===state)&&(scope==='all'||node.activeScene===(scope==='active'))
-    &&`${node.nodeIndex} ${node.name??''} ${JSON.stringify(node.sourceIdentityClaim)}`.toLocaleLowerCase().includes(search));
+    &&(index===null?`${node.nodeIndex} ${node.name??''} ${JSON.stringify(node.sourceIdentityClaim)}`.toLocaleLowerCase().includes(search):node.nodeIndex===index));
 }

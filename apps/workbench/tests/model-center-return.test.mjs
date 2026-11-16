@@ -3,6 +3,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import ts from 'typescript';
+import {SceneApi} from '../src/sceneApi.ts';
 
 function mount(){
   const states=[],refs=[],memos=[];let si,ri,mi,tree;
@@ -11,7 +12,7 @@ function mount(){
     useRef(initial){return refs[ri++]||={current:initial};},
     useMemo(fn,deps){const i=mi++,old=memos[i];if(!old||deps.some((v,j)=>!Object.is(v,old.deps[j])))memos[i]={value:fn(),deps};return memos[i].value;}};
   const require=createRequire(import.meta.url),empty=()=>null;
-  const dependencies={react:hooks,'./api':{failureMessage:empty},'./Primitives':{Btn:empty},'./Preferences':{usePreferences:()=>({locale:'zh'})},
+  const dependencies={react:hooks,'./api':{failureMessage:empty},'./sceneApi':{SceneApi},'./Primitives':{Btn:empty},'./Preferences':{usePreferences:()=>({locale:'zh'})},
     './ResourcePanel':{ResourcePanel:empty},'./ModelPreviewInspector':{ModelComponentTree:empty,ModelComponentProperties:empty,ModelPreviewTools:empty,useModelPreview:()=>({})},'./projectModelCenter.css':{}};
   const source=readFileSync(new URL('../src/ProjectModelCenter.tsx',import.meta.url),'utf8');
   const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
