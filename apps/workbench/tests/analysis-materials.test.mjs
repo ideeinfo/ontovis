@@ -140,6 +140,39 @@ test('screen previews, originals and document pages never share the wrong byte c
  assert.deepEqual(calls.slice(2).map(c=>c.body.options.pageNumber),[48,49]);sources.dispose();
 });
 
+test('a canceled original leaves the preview available and the retry reads the original again',async()=>{
+ const originals=[];
+ let previews=0;
+ const sources=new AnalysisSources({request:(path,_body,signal)=>{
+  if(path.endsWith('/preview-content')){previews++;return Promise.resolve(new Blob(['preview']));}
+  return new Promise(resolve=>originals.push({resolve,signal}));
+ }},'session');
+ const ref={id:'photo',revision:'fixed'};
+ const controller=new AbortController();
+ try{
+  const preview=await sources.file(ref,undefined,undefined,'preview');
+  const pending=sources.file(ref,undefined,controller.signal,'original',undefined,'foreground');
+  const canceled=assert.rejects(pending,{name:'AbortError'});
+  await Promise.resolve();
+  controller.abort();
+  await canceled;
+  assert.equal(originals[0].signal.aborted,true);
+  assert.equal(await sources.file(ref,undefined,undefined,'preview'),preview);
+  originals[0].resolve(new Blob(['late original']));
+  const retry=sources.file(ref,undefined,undefined,'original',undefined,'foreground');
+  await Promise.resolve();
+  assert.equal(originals.length,2);
+  originals[1].resolve(new Blob(['current original']));
+  const original=await retry;
+  assert.notEqual(original,preview);
+  assert.equal(await sources.file(ref),original);
+  assert.equal(previews,1);
+ }finally{
+  originals.forEach(row=>row.resolve(new Blob(['closed'])));
+  sources.dispose();
+ }
+});
+
 test('relationship lookup uses owned fixed handles and deduplicates copied card views',async()=>{
  const calls=[];const sources=new AnalysisSources({request:async(path,body)=>{calls.push({path,body});return {items:[],gaps:[]};}},'session');
  await sources.relationships([{id:'one',revision:'r1'},{id:'one',revision:'r1'},{id:'two',revision:'r2'}]);

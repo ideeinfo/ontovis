@@ -12,7 +12,7 @@ import {objectCategory,objectLocationLabel} from './objectCatalog';
 import {trendDomain,trendSegments,type SimulatedTrend} from './simulatedAlarms';
 import {AnalysisSources,type EvidenceDetail,type EvidenceSource,type SourceAnchor,type Recommendation} from './analysisSources';
 import type {CanvasCard,CardView,ImageView,ModelView} from './analysisCanvas';
-import type {WorkbenchApi} from './api';
+import {ApiError,type WorkbenchApi} from './api';
 import type {ProjectModelVersion} from './resourceTypes';
 import type {FixedDocument} from './equipmentApi';
 import './workOrders.css';
@@ -44,34 +44,57 @@ type Props={card:CanvasCard;sources:AnalysisSources;en:boolean;active:boolean;on
   onAdoptDocumentVersion?:(source:EvidenceSource,version:FixedDocument,page:number)=>Promise<boolean>};
 const refKey=(card:CanvasCard)=>card.source?.id+':'+card.source?.revision;
 export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,en,active,onActivate,onDeactivate,onOpen,onRelated,onPage,onTrend,onAvailability,onView,cursor,onCursor,anchor,onAddMaterial,onUpdateWorkOrder,onAdoptDocumentVersion,full=false,viewOnly=false}:Props){
-  const [detail,setDetail]=useState<EvidenceDetail|null>(null),[image,setImage]=useState(''),[error,setError]=useState(false),[retry,setRetry]=useState(0),[slow,setSlow]=useState(false),[authorized,setAuthorized]=useState(''),[cancelled,setCancelled]=useState(false);
+  const [detail,setDetail]=useState<EvidenceDetail|null>(null),[image,setImage]=useState<{url:string;original:boolean}|null>(null),[error,setError]=useState(false),[retry,setRetry]=useState(0),[slow,setSlow]=useState(false),[authorized,setAuthorized]=useState(''),[cancelled,setCancelled]=useState(false);
   const [original,setOriginal]=useState(false),[imagePending,setImagePending]=useState(false),[progressOpen,setProgressOpen]=useState(false);
+  const [imageError,setImageError]=useState(false),[imageRetry,setImageRetry]=useState(0);
   const [orderAttachment,setOrderAttachment]=useState<FixedAttachment|null>(null),[orderBasis,setOrderBasis]=useState(false);
   useEffect(()=>{setProgressOpen(false);setOrderAttachment(null);setOrderBasis(false);},[refKey(card)]);
-  const authorizationKey=card.source!.id+':'+active+':'+retry;
+  const authorizationKey=refKey(card)+':'+active+':'+retry;
   const ref=card.source!;
-  useEffect(()=>{let live=true;setDetail(null);setAuthorized('');setImage('');setError(false);setSlow(false);setCancelled(false);
+  const fullPhoto=full&&card.kind==='photo';
+  useEffect(()=>{let live=true;setDetail(null);setAuthorized('');setImage(null);setError(false);setSlow(false);setCancelled(false);setImagePending(false);setImageError(false);
     const timer=setTimeout(()=>{if(live)setSlow(true);},3000);
     void sources.detail(ref).then(value=>{if(live){setDetail(value);setAuthorized(authorizationKey);onAvailability?.(ref.id,value.availability);if(value.source?.samples)onTrend?.(card.id,value.source as SimulatedTrend);}}).catch(()=>{if(live){setError(true);onAvailability?.(ref.id,'unavailable');}}).finally(()=>clearTimeout(timer));
     return()=>{live=false;clearTimeout(timer);};
   },[sources,ref.id,ref.revision,retry,active]);
   useEffect(()=>{let live=true;const abort=new AbortController();if(cancelled||authorized!==authorizationKey||!active||detail?.availability!=='available'||!['photo','drawing','document'].includes(card.kind)||full&&['drawing','document'].includes(card.kind))return;
-    setImagePending(true);const timer=setTimeout(()=>{if(live)setSlow(true);},3000);
-    void sources.file(ref,detail.source,abort.signal,card.kind==='photo'&&!original?'preview':'original').then(url=>{if(live){setImage(url);setSlow(false);}}).catch(()=>{if(live)setError(true);}).finally(()=>{clearTimeout(timer);if(live)setImagePending(false);});
+    setImagePending(true);setImageError(false);setSlow(false);
+    const timer=setTimeout(()=>{if(live)setSlow(true);},3000);
+    void sources.file(ref,detail.source,abort.signal,card.kind==='photo'&&!original?'preview':'original',undefined,fullPhoto?'foreground':'background')
+      .then(url=>{if(live)setImage({url,original});})
+      .catch(problem=>{
+        if(!live)return;
+        if(!fullPhoto){setError(true);return;}
+        if(problem instanceof ApiError&&[401,403,404,409,410].includes(problem.status)){
+          const availability=problem.status===401||problem.status===403?'restricted':'changed';
+          setImage(null);setDetail({...detail,availability,reason:problem.code});onAvailability?.(ref.id,availability);
+        }else setImageError(true);
+      }).finally(()=>{clearTimeout(timer);if(live){setImagePending(false);setSlow(false);}});
     return()=>{live=false;abort.abort();clearTimeout(timer);};
-  },[active,sources,detail,ref.id,retry,card.kind,authorized,authorizationKey,cancelled,full,original]);
+  },[active,sources,detail,ref.id,retry,card.kind,authorized,authorizationKey,cancelled,full,original,imageRetry]);
+  function cancelImage(){setCancelled(true);setImagePending(false);setSlow(false);}
+  function retryImage(){
+    if(fullPhoto){setCancelled(false);setImageError(false);setImageRetry(value=>value+1);}
+    else setRetry(value=>value+1);
+  }
   const value=detail?.source;
   if(error||detail&&detail.availability!=='available')return <div className="ac-source-state" role="status"><strong>{detail?.availability==='restricted'?(en?'Access removed':'资料访问已撤销'):(en?'Source temporarily unavailable':'资料暂时不可用')}</strong><small>{detail?.reason}</small><Btn onClick={()=>setRetry(v=>v+1)}><RefreshCw size={13}/>{en?'Retry':'重试'}</Btn></div>;
   if(!value)return <div className="ac-source-state" role="status">{slow?(en?'The source is slow. You can continue with other cards.':'来源读取较慢，可继续操作其他卡片。'):(en?'Loading source…':'正在读取资料…')}<Btn onClick={()=>setRetry(v=>v+1)}>{en?'Retry':'重新读取'}</Btn></div>;
   if(full&&['drawing','document'].includes(card.kind))return <Suspense fallback={<p role="status">{en?'Loading viewer…':'正在载入查看器…'}</p>}><EvidenceViewer key={refKey(card)} card={card} source={value} sources={sources} en={en}
     anchor={anchor} onAdd={onAddMaterial} onAdoptVersion={viewOnly?undefined:onAdoptDocumentVersion}/></Suspense>;
   const asset=['photo','drawing','document'].includes(card.kind);
+  const imageStatus=cancelled?(en?'Loading cancelled':'已取消加载'):imageError?(en?'Image could not load':'图片读取失败'):
+    slow?(en?'Image transfer is slow.':'图片传输较慢。'):
+    original?(en?'Loading original image…':'正在加载原图…'):(en?'Loading image…':'正在载入图片…');
   return <div className={`ac-source ac-source-${card.kind}`} data-canvas-inner>
-    {!viewOnly&&<div className="ac-source-toolbar"><small>{card.historical?(en?'Historical reference':'历史参考'):en?'Fixed source':'固定来源'}{value.versionNumber?' · v'+value.versionNumber:''}</small>
-      {card.kind==='photo'&&full&&<Btn aria-pressed={original} onClick={()=>setOriginal(v=>!v)}>{original?(en?'Fast preview':'快速预览'):(en?'Original image':'查看原图')}</Btn>}
+    {(!viewOnly||fullPhoto)&&<div className="ac-source-toolbar"><small>{card.historical?(en?'Historical reference':'历史参考'):en?'Fixed source':'固定来源'}{value.versionNumber?' · v'+value.versionNumber:''}</small>
+      {fullPhoto&&<Btn onClick={()=>{setCancelled(false);setImageError(false);setOriginal(v=>!v);}}>{original?(en?'Fast preview':'快速预览'):(en?'Original image':'查看原图')}</Btn>}
       {!full&&<div className="ac-preview-controls">{active&&<IconBtn label={(en?'Collapse preview: ':'收起预览：')+card.title} onClick={onDeactivate}><ChevronUp size={14}/></IconBtn>}<Btn onClick={onOpen}><ExternalLink size={13}/>{en?'Expand':'展开查看'}</Btn></div>}</div>}
     {card.kind==='photo'&&<small>{value.sourceType==='project_document'?(en?'Project photo · no object location claimed':'项目照片 · 未声明对象定位'):value.photoPurpose==='field_record'?(en?'Device field photo':'本机现场照片'):(en?'Shared object location photo':'共享对象定位照片')}</small>}
-    {full&&card.kind==='photo'&&!!image&&imagePending&&<small role="status">{original?(en?'Loading original image…':'正在加载原图…'):(en?'Loading preview…':'正在加载预览…')}</small>}
+    {fullPhoto&&image&&(imagePending||cancelled||imageError)&&<div className="ac-source-toolbar">
+      <small role="status">{imageStatus}</small>
+      {imagePending?<Btn onClick={cancelImage}>{en?'Cancel':'取消加载'}</Btn>:<Btn onClick={retryImage}>{en?'Retry image':'重试图片'}</Btn>}
+    </div>}
     {card.kind==='model3d'&&anchor?.referenceKind&&<p className="ac-reference-notice" role="status">{anchor.referenceKind==='name_candidate'?(en?'Viewing a matching-name candidate; no active object binding is established.':'当前查看同名构件候选，尚未建立该对象的有效绑定。'):(en?'Viewing a historical binding from a recycled scene.':'当前按回收站场景中的历史绑定定位，仅作参考。')}</p>}
     {card.kind==='object'&&<><strong>{value.item?.displayName||card.title}</strong><p>{value.item?.identifiers?.filter(i=>i.role==='primary').map(i=>i.value).join(' · ')}</p>
       <p>{en?'Engineering category':'工程分类'}：{objectCategory({objectKind:value.item?.objectKind||'unknown',classification:value.item?.classification},en?'en':'zh')}</p>
@@ -101,7 +124,7 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     {!viewOnly&&card.kind==='document'&&<label className="ac-page">{en?'Page':'页码'}<input type="number" min={1} max={value.pageCount||1} aria-label={en?'Document page':'文档页码'} value={value.pageNumber||1} onChange={event=>{const page=Number(event.target.value);if(page>=1&&page<=(value.pageCount||1))onPage?.(page,value);}}/><span>/ {value.pageCount}</span>{value.newerVersionAvailable&&<small>{en?'Newer version available; this card retains its selected version.':'已有新版，此卡保持所选版本。'}</small>}</label>}
     {!viewOnly&&card.kind==='document'&&!!value.outline?.length&&<select aria-label={en?'Document section':'文档章节'} value={value.outline.find(row=>row.page===value.pageNumber)?.page||''} onChange={event=>onPage?.(Number(event.target.value),value)}><option value="" disabled>{en?'Go to section':'定位章节'}</option>{value.outline.map((row,i)=><option key={i} value={row.page}>{row.title}</option>)}</select>}
     {!active&&card.kind==='drawing'&&<small>{en?'Objects, ports and drawing references':'展开查看对象、端口与图纸引用'}</small>}{!active&&card.kind==='document'&&<small>{value.knowledgeNodeId?(en?'Published knowledge graph and source evidence':'已发布知识图谱与对应原文'):(en?'Document pages and knowledge graph':'展开查看全文、目录与知识图谱')}</small>}{asset&&active&&!value.selector&&card.kind==='photo'&&<small>{en?'Whole image; no object region provided':'显示整图；来源未提供对象区域'}</small>}
-    {asset&&(active?(image?<div className="ac-photo-view"><WorkOrderPhotoViewport embedded key={ref.id+':'+original} focusZoom={card.kind==='photo'?undefined:null} focusFraction={full ? .35 : .2} initialView={anchor||viewOnly&&!full?undefined:card.view as ImageView|undefined} onViewChange={onView} image={image} decodedImage={sources.decodedImage(image)} selector={anchor?.selector||value.selector||null} label={card.title} regionLabel={card.kind==='photo'?objectLocationLabel(value.item,en?'en':'zh'):undefined} en={en} onError={()=>setError(true)}/></div>:<div className="ac-source-state" role="status">{cancelled?(en?'Loading cancelled':'已取消加载'):slow?(en?'Transfer is taking longer. Retry or continue other work.':'图片传输较慢，可以重试或继续操作其他资料。'):(en?'Loading image…':'正在载入图片…')}<Btn onClick={()=>setRetry(v=>v+1)}>{en?'Retry':'重试'}</Btn>{!cancelled&&<Btn onClick={()=>setCancelled(true)}>{en?'Cancel':'取消加载'}</Btn>}</div>):<Btn className="ac-open-media" onClick={onActivate}>{en?'Open '+materialNames[card.kind]:'打开'+materialNames[card.kind]}</Btn>)}
+    {asset&&(active?(image?<div className="ac-photo-view"><WorkOrderPhotoViewport embedded key={ref.id+':'+image.original} focusZoom={card.kind==='photo'?undefined:null} focusFraction={full ? .35 : .2} initialView={anchor||viewOnly&&!full?undefined:card.view as ImageView|undefined} onViewChange={viewOnly?undefined:onView} image={image.url} decodedImage={sources.decodedImage(image.url)} selector={anchor?.selector||value.selector||null} label={card.title} regionLabel={card.kind==='photo'?objectLocationLabel(value.item,en?'en':'zh'):undefined} en={en} onError={()=>setError(true)}/></div>:<div className="ac-source-state" role="status">{imageStatus}<Btn onClick={retryImage}>{en?'Retry':'重试'}</Btn>{!cancelled&&!imageError&&<Btn onClick={cancelImage}>{en?'Cancel':'取消加载'}</Btn>}</div>):<Btn className="ac-open-media" onClick={onActivate}>{en?'Open '+materialNames[card.kind]:'打开'+materialNames[card.kind]}</Btn>)}
     {card.kind==='model3d'&&(active?<Suspense fallback={<p role="status">{en?'Loading viewer…':'正在载入查看器…'}</p>}><ModelCard full={full} componentKeys={anchor?.componentKeys} minimal={viewOnly&&!full} api={sources.api as WorkbenchApi} version={value as ProjectModelVersion} en={en} initialView={anchor?undefined:card.view as ModelView|undefined} onView={onView}/></Suspense>:<><p>{value.displayName||card.title}</p><Btn onClick={onActivate}>{en?'Activate 3D':'启用三维查看'}</Btn></>)}
   </div>;
 },(a,b)=>a.card.id===b.card.id&&a.card.kind===b.card.kind&&a.card.title===b.card.title&&a.card.historical===b.card.historical&&a.viewOnly===b.viewOnly
