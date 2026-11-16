@@ -143,12 +143,13 @@ class WorkbenchSessions(UserSessions):
         elif path in ('/api/workbench/equipment/shared-photos/query','/api/workbench/equipment/shared-photos/regions','/api/workbench/equipment/shared-photos/content'):
             target=reader.prefix+'/equipment/shared-photos/'+path.rsplit('/',1)[1]
             if path.endswith('/content'):
-                full_resolution = body.get('representation') == 'full_resolution'
+                from .analysis_media import FULL_PHOTO_REPRESENTATIONS, PHOTO_LIMIT, full_resolution_photo
+                representation = body.get('representation')
+                full_resolution = representation in FULL_PHOTO_REPRESENTATIONS
                 request = {**body, 'representation': 'original'} if full_resolution else body
                 authorize()
                 value = row.authority.photo(target, request, None)
                 if full_resolution:
-                    from .analysis_media import PHOTO_LIMIT, full_resolution_photo
                     from .fixed_documents import FixedDocuments
                     projection = None
                     if len(value['content']) >= PHOTO_LIMIT:
@@ -156,7 +157,7 @@ class WorkbenchSessions(UserSessions):
                         if fixed['sourceSha256'] != value['sha256']:
                             raise PreviewError(409, 'CONTENT_CHANGED')
                         projection = fixed['mediaProjection']
-                    value = full_resolution_photo(value, projection)
+                    value = full_resolution_photo(value, projection, prefer_avif=representation == 'full_resolution_avif')
             else:value=reader._request('POST',target,body)
         elif path=='/api/workbench/equipment/photo-candidates':
             if set(body)-{'cursor'}:raise PreviewError(422,'INVALID_REQUEST')

@@ -97,13 +97,13 @@ def upload(reader, action, body, *, stream=None, length=None):
     })
 
 
-def content(reader, attachment, *, page=None, full_resolution=False):
+def content(reader, attachment, *, page=None, photo_representation=None):
     selector = {k: attachment[k] for k in ('documentId', 'contentVersionId')}
     if page is not None:
         require(attachment['previewAvailable'], 'document_preview_unavailable', 409)
         return FixedDocuments(reader).content({
             **selector, 'sourceSha256': attachment['sourceSha256'], 'pageNumber': page,
-            **({'representation': 'full_resolution'} if full_resolution else {}),
+            **({'representation': photo_representation} if photo_representation is not None else {}),
         })
     fixed = fixed_metadata(reader, selector)
     require(fixed['sourceSha256'] == attachment['sourceSha256'], 'SOURCE_CHANGED', 409)

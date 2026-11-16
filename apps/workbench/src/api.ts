@@ -15,6 +15,19 @@ export interface BinaryDescriptor {
 }
 type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk' | 'sceneThumbnail' | 'workOrderPart';
 const MIB = 1024 * 1024;
+let avifDecodeSupport: Promise<boolean> | undefined;
+
+function browserCanDecodeAvif(): Promise<boolean> {
+  if (typeof Image === 'undefined' || typeof Image.prototype.decode !== 'function') return Promise.resolve(false);
+  if (!avifDecodeSupport) {
+    const probe = new Image();
+    // Synthetic 2 by 2 image. Browser support is checked without a network request.
+    probe.src = 'data:image/avif;base64,AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADrbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAAAAAAAOcGl0bQAAAAAAAQAAAB5pbG9jAAAAAEQAAAEAAQAAAAEAAAETAAAAKQAAAChpaW5mAAAAAAABAAAAGmluZmUCAAAAAAEAAGF2MDFDb2xvcgAAAABqaXBycAAAAEtpcGNvAAAAFGlzcGUAAAAAAAAAAgAAAAIAAAAQcGl4aQAAAAADCAgIAAAADGF2MUOBAAwAAAAAE2NvbHJuY2x4AAEADQAGgAAAABdpcG1hAAAAAAAAAAEAAQQBAoMEAAAAMW1kYXQSAAoIGAA2iAhoNCAyGxTHh4ZlAgggnkEAAJBL1zDBZ1s+B9EDHftHQA==';
+    avifDecodeSupport = probe.decode().then(() => probe.naturalWidth === 2 && probe.naturalHeight === 2, () => false);
+  }
+  return avifDecodeSupport;
+}
+
 const writeOnlyDenials: Record<string, readonly string[]> = {
   WEATHER_WRITE_FORBIDDEN: ['/api/workbench/weather/save','/api/workbench/weather/test'],
   ANALYSIS_WRITE_FORBIDDEN: ['/api/workbench/analysis-sessions/import-history','/api/workbench/analysis-sessions/evidence/register-batch','/api/workbench/analysis-sessions/start', '/api/workbench/analysis-sessions/copy', '/api/workbench/analysis-sessions/create', '/api/workbench/analysis-sessions/save', '/api/workbench/analysis-sessions/restore', '/api/workbench/analysis-sessions/evidence/register', '/api/workbench/analysis-sessions/link-work-order'],
@@ -35,14 +48,17 @@ const writeOnlyDenials: Record<string, readonly string[]> = {
     '/api/workbench/public-geodata/start', '/api/workbench/public-geodata/cancel'],
 };
 
-async function binaryResponse(response: Response, descriptor: BinaryDescriptor, revision: string, guard: () => void, verifyDigest=true) {
+async function binaryResponse(response: Response, descriptor: BinaryDescriptor, revision: string,
+  guard: () => void, verifyDigest=true, photoAvif=false) {
   const refuse = async (status: number, code: string): Promise<never> => {
     await response.body?.cancel().catch(() => {});
     throw new ApiError(status, code);
   };
   const mime = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() || '';
   const allowed = typeof descriptor.mime === 'string' ? [descriptor.mime] : descriptor.mime;
-  if (response.headers.get('X-Session-Revision') !== revision || !(allowed as readonly string[]).includes(mime)) {
+  const compatible = (allowed as readonly string[]).includes(mime)
+    || photoAvif && descriptor.fixedPhoto && mime === 'image/avif';
+  if (response.headers.get('X-Session-Revision') !== revision || !compatible) {
     return refuse(502, 'SOURCE_UNAVAILABLE');
   }
   const digestHeader = response.headers.get('X-Content-SHA256');
@@ -53,7 +69,8 @@ async function binaryResponse(response: Response, descriptor: BinaryDescriptor, 
   if (expectedLength !== null && (!Number.isSafeInteger(expectedLength) || expectedLength < 0)) {
     return refuse(502, 'SOURCE_UNAVAILABLE');
   }
-  if (expectedLength !== null && expectedLength > descriptor.maxBytes) return refuse(413, 'CONTENT_LIMIT_EXCEEDED');
+  const maxBytes = mime === 'image/avif' ? Math.min(descriptor.maxBytes, 3_999_999) : descriptor.maxBytes;
+  if (expectedLength !== null && expectedLength > maxBytes) return refuse(413, 'CONTENT_LIMIT_EXCEEDED');
   let blob: Blob;
   if (response.body) {
     const reader = response.body.getReader();
@@ -64,7 +81,7 @@ async function binaryResponse(response: Response, descriptor: BinaryDescriptor, 
         const next = await reader.read(); guard();
         if (next.done) break;
         bytes += next.value.byteLength;
-        if (bytes > descriptor.maxBytes) throw new ApiError(413, 'CONTENT_LIMIT_EXCEEDED');
+        if (bytes > maxBytes) throw new ApiError(413, 'CONTENT_LIMIT_EXCEEDED');
         chunks.push(new Uint8Array(next.value).buffer);
       }
     } catch (error) {
@@ -76,7 +93,7 @@ async function binaryResponse(response: Response, descriptor: BinaryDescriptor, 
     blob = await response.blob();
   }
   guard();
-  if (blob.size > descriptor.maxBytes) throw new ApiError(413, 'CONTENT_LIMIT_EXCEEDED');
+  if (blob.size > maxBytes) throw new ApiError(413, 'CONTENT_LIMIT_EXCEEDED');
   if (blob.type !== mime || expectedLength !== null && blob.size !== expectedLength) throw new ApiError(502, 'SOURCE_UNAVAILABLE');
   if(verifyDigest){
     const bytes = await blob.arrayBuffer(); guard();
@@ -193,7 +210,12 @@ export class WorkbenchApi {
     guard();
     const sharedModels=path.startsWith('/api/workbench/resources/model');
     const scoped=path.startsWith('/api/workbench/')&&!path.startsWith('/api/workbench/projects')&&!sharedModels;
-    const json = body ? JSON.stringify({...body,...(scoped&&project?{projectRef:project}:{}), expectedSessionRevision: revision}) : undefined;
+    const originalPhoto = body && 'representation' in body && body.representation === 'full_resolution'
+      && (image === 'source' || typeof image === 'object' && image.fixedPhoto === true);
+    const photoAvif = originalPhoto ? await browserCanDecodeAvif() : false;
+    guard();
+    const json = body ? JSON.stringify({...body,...(photoAvif?{representation:'full_resolution_avif'}:{}),
+      ...(scoped&&project?{projectRef:project}:{}), expectedSessionRevision: revision}) : undefined;
     const headers:Record<string,string> = body ? {'Content-Type':'application/json'} : {};
     if (upload) {
       if (upload.kind === 'sceneThumbnail') {
@@ -247,12 +269,14 @@ export class WorkbenchApi {
     // Fixed photo bytes are already verified by the same-origin server. Keep
     // revision/header/size checks, without copying and hashing the image again.
     if (typeof image === 'object') return await binaryResponse(response, image, revision, guard,
-      path!=='/api/workbench/objects/photos/content') as T;
+      path!=='/api/workbench/objects/photos/content', photoAvif) as T;
     if (image) {
       const blob = await response.blob();
       guard();
-      if (response.headers.get('X-Session-Revision') !== revision || (image==='source'?!['image/png','image/jpeg','image/webp','model/gltf-binary'].includes(blob.type):blob.type !== (image === 'model' ? 'model/gltf-binary' : 'image/png'))
-          || blob.size > 20 * 1024 * 1024) throw new ApiError(502, 'SOURCE_UNAVAILABLE');
+      const types = image==='source'?['image/png','image/jpeg','image/webp','model/gltf-binary']:[image === 'model' ? 'model/gltf-binary' : 'image/png'];
+      if (photoAvif) types.push('image/avif');
+      if (response.headers.get('X-Session-Revision') !== revision || !types.includes(blob.type)
+          || blob.size > 20 * 1024 * 1024 || blob.type==='image/avif'&&blob.size>=4_000_000) throw new ApiError(502, 'SOURCE_UNAVAILABLE');
       return blob as T;
     }
     const data = await response.json();

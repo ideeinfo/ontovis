@@ -121,14 +121,15 @@ class ScenePhotoReader(SceneEvidenceReader):
 
     def content(self, payload):
         if type(payload) is dict and 'representation' in payload:
-            _require(payload['representation'] in ('display','preview','full_resolution'),'INVALID_REQUEST',422)
+            from .analysis_media import FULL_PHOTO_REPRESENTATIONS, PHOTO_LIMIT, full_resolution_photo
+            representation = payload['representation']
+            _require(representation in ('display', 'preview', *FULL_PHOTO_REPRESENTATIONS), 'INVALID_REQUEST', 422)
             body={key:value for key,value in payload.items() if key!='representation'}
-            if payload['representation']=='preview':
+            if representation=='preview':
                 from .analysis_source_reader import AnalysisSourceReader
                 from .analysis_media import photo_preview
                 return photo_preview(AnalysisSourceReader(self.reader,None,None,self.reader.authorize,''),body)
-            if payload['representation'] == 'full_resolution':
-                from .analysis_media import PHOTO_LIMIT, full_resolution_photo
+            if representation in FULL_PHOTO_REPRESENTATIONS:
                 from .fixed_documents import FixedDocuments
                 value = self.content(body)
                 projection = None
@@ -144,7 +145,7 @@ class ScenePhotoReader(SceneEvidenceReader):
                     projection = fixed['mediaProjection']
                     if item['selector']['kind'] == 'spherical_region':
                         projection = 'spherical_equirectangular'
-                value = full_resolution_photo(value, projection)
+                value = full_resolution_photo(value, projection, prefer_avif=representation == 'full_resolution_avif')
                 self.reader.authorize()
                 return value
             return self.content(body)

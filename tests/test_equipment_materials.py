@@ -117,6 +117,7 @@ class FixedMaterialTests(unittest.TestCase):
         # The same cached content is returned byte-for-byte for a fixed spherical version.
         source.version['media_projection'] = 'spherical_equirectangular'
         self.assertEqual(reader.content(request)['content'], data)
+        self.assertEqual(reader.content(request | {'representation': 'full_resolution_avif'})['content'], data)
         source.version['media_projection'] = None
         source.document['kind'] = 'other'
         self.assertEqual(reader.content(request)['content'], data)
@@ -124,6 +125,36 @@ class FixedMaterialTests(unittest.TestCase):
         with self.assertRaises(PreviewError) as error:
             reader.content(request)
         self.assertEqual(error.exception.status, 410)
+
+    def test_avif_is_a_separate_full_resolution_representation_with_a_compatible_fallback(self):
+        from PIL import Image, features
+        from apps.api.analysis_media import encode_full_resolution
+
+        source = DocumentReader()
+        source.document['kind'] = 'photo'
+        source.version['preview_kind'] = 'image'
+        size = (1600, 1000)
+        raw = BytesIO()
+        Image.frombytes('RGB', size, Random(17).randbytes(size[0] * size[1] * 3)).save(raw, 'PNG')
+        original = raw.getvalue()
+        digest = sha256(original).hexdigest()
+        source_value = {'content': original, 'mediaType': 'image/png', 'sha256': digest}
+        source.authority.document_page.return_value = source_value
+        reader = FixedDocuments(source)
+        body = dict(documentId=DOC, contentVersionId=VERSION, sourceSha256='a' * 64)
+        fallback = reader.content({**body, 'representation': 'full_resolution'})
+        variant = reader.content({**body, 'representation': 'full_resolution_avif'})
+        for value in (fallback, variant):
+            self.assertEqual(value['fixedPhotoSha256'], digest)
+            self.assertEqual(value['sha256'], sha256(value['content']).hexdigest())
+            self.assertLess(len(value['content']), 4_000_000)
+            with Image.open(BytesIO(value['content'])) as image:
+                self.assertEqual(image.size, size)
+        self.assertEqual(variant['mediaType'], 'image/avif' if features.check('avif') else 'image/jpeg')
+        self.assertEqual(fallback['mediaType'], 'image/jpeg')
+        with patch('PIL.features.check', return_value=False):
+            self.assertEqual(encode_full_resolution(source_value, prefer_avif=True),
+                             (fallback['content'], fallback['mediaType']))
 
     def test_ordinary_photo_registers_whole_image_and_never_claims_old_object_region(self):
         reader=DocumentReader();reader.version['preview_kind']='image'

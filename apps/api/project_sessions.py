@@ -22,6 +22,7 @@ from .demo_faults import DEMO_PROJECT
 from .scene_engineering import SceneEngineeringReader
 from .scene_photos import ScenePhotoReader
 from .simulation_stream import SimulationStreams
+from .analysis_media import FULL_PHOTO_REPRESENTATIONS
 
 
 METHODS = ('scene_request', 'scene_thumbnail_upload', 'scene_object_request', 'equipment_request', 'resource_request', 'resource_upload',
@@ -649,15 +650,15 @@ class ProjectSessions(UserSessions):
                             value = photo_preview(reader, descriptor)
                 elif action in ('evidence/detail', 'evidence/content'):
                     request = body
-                    full_resolution = False
+                    photo_representation = None
                     if action == 'evidence/content' and 'representation' in body:
-                        require(body['representation'] == 'full_resolution')
-                        full_resolution = True
+                        photo_representation = body['representation']
+                        require(photo_representation in FULL_PHOTO_REPRESENTATIONS)
                         request = {key: value for key, value in body.items() if key != 'representation'}
                     reference, descriptor = sources.descriptor(actor, request, guard)
                     release_store()
                     if action == 'evidence/content':
-                        value = reader.content(reference['sourceKind'], descriptor, full_resolution=full_resolution)
+                        value = reader.content(reference['sourceKind'], descriptor, photo_representation=photo_representation)
                     else:
                         try:
                             value = {**reference, 'availability': 'available', 'source': reader.read(reference['sourceKind'], descriptor)}

@@ -72,6 +72,7 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             self.assertEqual((read[0],read[1]['availability']),(200,'available'));self.assertIsNone(read[1]['source']['selector'])
             self.assertEqual(self.read_bytes(ROOT+'/evidence/content',payload),PNG)
             self.assertEqual(self.read_bytes(ROOT+'/evidence/content',payload|{'representation':'full_resolution'}),PNG)
+            self.assertEqual(self.read_bytes(ROOT+'/evidence/content',payload|{'representation':'full_resolution_avif'}),PNG)
             self.assertEqual(self.request(ROOT+'/evidence/content',payload|{'representation':'other'})[0],422)
             self.assertTrue(self.read_bytes(ROOT+'/evidence/preview-content',payload).startswith(b'\xff\xd8\xff'))
             self.assertEqual(self.request(ROOT+'/evidence/relationships',self.body(analysisSessionId=created['analysisSessionId'],evidenceRefIds=[ref['evidenceRefId']]))[1]['items'],[])

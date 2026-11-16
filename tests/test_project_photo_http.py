@@ -106,6 +106,9 @@ class ProjectPhotoHttpTests(unittest.TestCase):
         self.assertEqual((status, result), (200, raw))
         self.assertEqual(headers['X-Fixed-Photo-SHA256'], body['expectedDisplayRevision'])
         self.assertEqual(headers['X-Content-SHA256'], old_headers['X-Content-SHA256'])
+        status, compatible, alternate = self.request(ROOT+'content', {**body, 'representation': 'full_resolution_avif'})
+        self.assertEqual((status, compatible), (200, raw))
+        self.assertEqual(alternate['X-Fixed-Photo-SHA256'], body['expectedDisplayRevision'])
         self.assertEqual(headers['Cache-Control'], 'no-store')
         self.assertEqual(self.request(ROOT+'content', {**body, 'representation': 'full_resolution'}, client=False)[0], 401)
 

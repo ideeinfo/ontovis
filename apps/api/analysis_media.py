@@ -12,6 +12,7 @@ _render = threading.Semaphore(1)
 MAX_CACHE = 32 * 1024 * 1024
 PHOTO_LIMIT = 4_000_000
 PHOTO_PIXEL_LIMIT = 90_000_000
+FULL_PHOTO_REPRESENTATIONS = ('full_resolution', 'full_resolution_avif')
 
 
 def derived(key, generate):
@@ -56,16 +57,17 @@ def photo_image(source):
     except (OSError,ValueError):raise PreviewError(502,'SOURCE_UNAVAILABLE') from None
 
 
-def full_resolution_photo(source, projection=None):
+def full_resolution_photo(source, projection=None, *, prefer_avif=False):
     """Return display bytes at the fixed pixel dimensions, with a separate digest."""
     value = source
     if projection is None and len(source['content']) >= PHOTO_LIMIT:
-        value = derived(('full-resolution-photo-v1', source['sha256']), lambda: encode_full_resolution(source))
+        key = ('full-resolution-avif-v1' if prefer_avif else 'full-resolution-photo-v1', source['sha256'])
+        value = derived(key, lambda: encode_full_resolution(source, prefer_avif=prefer_avif))
     return {**value, 'fixedPhotoSha256': source['sha256']}
 
 
-def encode_full_resolution(source):
-    from PIL import Image
+def encode_full_resolution(source, *, prefer_avif=False):
+    from PIL import Image, features
 
     try:
         with Image.open(BytesIO(source['content'])) as image:
@@ -95,6 +97,16 @@ def encode_full_resolution(source):
                 format_name, mime = 'JPEG', 'image/jpeg'
                 options.update(optimize=True, progressive=True)
             pixels = image if image.mode == mode else image.convert(mode)
+            # The compatibility path preserves browser-managed EXIF orientation and alpha.
+            if prefer_avif and not transparent and orientation in (None, 1) and features.check('avif'):
+                avif = BytesIO()
+                try:
+                    pixels.save(avif, 'AVIF', quality=54, speed=9, max_threads=2,
+                                icc_profile=options.get('icc_profile'))
+                    if 0 < avif.tell() < PHOTO_LIMIT:
+                        return avif.getvalue(), 'image/avif'
+                except (OSError, ValueError):
+                    pass
             for quality in (86, 78, 70, 62, 54, 46, 38, 30, 22, 14, 8, 4, 1):
                 output = BytesIO()
                 pixels.save(output, format_name, quality=quality, **options)

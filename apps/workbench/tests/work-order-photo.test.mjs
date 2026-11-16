@@ -103,3 +103,37 @@ test('full-resolution delivery checks the fixed photo digest separately from the
   fixedHeader=fixed;contentHeader='unavailable';
   await assert.rejects(api.content(path,{},descriptor),e=>e.code==='RESOURCE_CHANGED');
 });
+
+test('AVIF is negotiated only for a full-resolution photo and a browser that can decode it',async()=>{
+  const previousImage=globalThis.Image;
+  let decodes=0;
+  let returned='image/jpeg';
+  const requests=[];
+  const sha='a'.repeat(64);
+  const api=new WorkbenchApi(async(_path,init)=>{
+    requests.push(JSON.parse(init.body).representation);
+    return new Response(new Uint8Array([1]),{headers:{'Content-Type':returned,'X-Session-Revision':'r1',
+      'X-Content-SHA256':'b'.repeat(64),'X-Fixed-Photo-SHA256':sha}});
+  });
+  api.session('r1');
+  const path='/api/workbench/objects/photos/content';
+  const full={representation:'full_resolution'};
+  const fixed={mime:['image/jpeg'],maxBytes:1024,sha256:sha,fixedPhoto:true};
+  try{
+    globalThis.Image=undefined;
+    await api.content(path,full,fixed);
+    globalThis.Image=class {
+      naturalWidth=2;
+      naturalHeight=2;
+      async decode(){decodes++;}
+    };
+    returned='image/avif';
+    assert.equal((await api.content(path,full,fixed)).type,'image/avif');
+    assert.equal((await api.request(path,full,undefined,'source')).type,'image/avif');
+    await assert.rejects(api.request(path,{representation:'preview'},undefined,'source'),e=>e.code==='SOURCE_UNAVAILABLE');
+    returned='image/jpeg';
+    await api.content(path,full,fixed);
+    assert.equal(decodes,1);
+    assert.deepEqual(requests,['full_resolution','full_resolution_avif','full_resolution_avif','preview','full_resolution_avif']);
+  }finally{globalThis.Image=previousImage;}
+});

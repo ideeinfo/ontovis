@@ -2,6 +2,7 @@
 from urllib.parse import urlencode
 
 from . import analysis_drafts as d
+from .analysis_media import FULL_PHOTO_REPRESENTATIONS, full_resolution_photo
 
 
 class FixedDocuments:
@@ -37,17 +38,19 @@ class FixedDocuments:
             newerVersionAvailable=document['current_version_id'] != version_id, sourceType='project_document', selector=None)
 
     def content(self, body):
-        d.require(type(body) is dict and body.get('representation','display') in ('preview','display','full_resolution'),'INVALID_REQUEST',422)
+        d.require(type(body) is dict, 'INVALID_REQUEST', 422)
+        representation = body.get('representation', 'display')
+        d.require(representation in ('preview', 'display', *FULL_PHOTO_REPRESENTATIONS), 'INVALID_REQUEST', 422)
         fixed = self.metadata({key:value for key,value in body.items() if key!='representation'})
         path = self.reader.prefix + '/documents/' + fixed['documentId'] + '/content?' + urlencode({
             'version_id': fixed['contentVersionId'], 'rendition': 'display', 'page': fixed['pageNumber']})
         def read():return self.reader.authority.document_page(path,photo=fixed['kind']=='photo')
-        if fixed['kind']=='photo' and body.get('representation')=='preview':
+        if fixed['kind']=='photo' and representation=='preview':
             from .analysis_media import derived,photo_image
             return derived(('project-photo-4096-jpeg-82',getattr(self.reader,'connection_id',''),self.reader.prefix,
                 fixed['documentId'],fixed['contentVersionId'],fixed['sourceSha256']),lambda:photo_image(read()))
         value = read()
-        if fixed['documentKind'] == 'photo' and fixed['kind'] == 'photo' and body.get('representation') == 'full_resolution':
-            from .analysis_media import full_resolution_photo
-            value = full_resolution_photo(value, fixed['mediaProjection'])
+        if fixed['documentKind'] == 'photo' and fixed['kind'] == 'photo' and representation in FULL_PHOTO_REPRESENTATIONS:
+            value = full_resolution_photo(value, fixed['mediaProjection'],
+                                          prefer_avif=representation == 'full_resolution_avif')
         return value
