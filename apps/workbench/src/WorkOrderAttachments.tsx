@@ -137,7 +137,8 @@ export function WorkOrderAttachmentView({api, order, item, en, onClose}:{
   useEffect(()=>{
     if(!item.previewAvailable)return;
     const abort=new AbortController();let url='';setPicture('');setLoading(true);setError(null);
-    void api.request<Blob>(ATTACHMENTS+'/content',{...body,pageNumber:page},abort.signal,'source')
+    void api.request<Blob>(ATTACHMENTS+'/content',{...body,pageNumber:page,
+      ...(item.previewKind==='image'?{representation:'full_resolution'}:{})},abort.signal,'source')
       .then(blob=>{if(!abort.signal.aborted){url=URL.createObjectURL(blob);setPicture(url);}})
       .catch(value=>{if(!abort.signal.aborted)setError(value);})
       .finally(()=>{if(!abort.signal.aborted)setLoading(false);});

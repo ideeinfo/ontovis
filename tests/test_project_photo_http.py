@@ -98,6 +98,17 @@ class ProjectPhotoHttpTests(unittest.TestCase):
         self.account().after = lambda: Source.permissions['member'].pop('Demo-PDS')
         self.assertEqual(self.request(ROOT+'content', body)[0], 403)
 
+    def test_full_resolution_keeps_small_photo_bytes_and_exposes_fixed_digest(self):
+        body = self.body(True)
+        status, raw, old_headers = self.request(ROOT+'content', body)
+        self.assertEqual(status, 200)
+        status, result, headers = self.request(ROOT+'content', {**body, 'representation': 'full_resolution'})
+        self.assertEqual((status, result), (200, raw))
+        self.assertEqual(headers['X-Fixed-Photo-SHA256'], body['expectedDisplayRevision'])
+        self.assertEqual(headers['X-Content-SHA256'], old_headers['X-Content-SHA256'])
+        self.assertEqual(headers['Cache-Control'], 'no-store')
+        self.assertEqual(self.request(ROOT+'content', {**body, 'representation': 'full_resolution'}, client=False)[0], 401)
+
     def test_logout_while_source_reads_discards_the_late_photo(self):
         entered, release = Event(), Event()
         self.account().after = lambda: (entered.set(), release.wait(3))

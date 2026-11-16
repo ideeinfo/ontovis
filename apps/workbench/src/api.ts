@@ -11,6 +11,7 @@ export class ApiError extends Error {
 
 export interface BinaryDescriptor {
   mime: 'model/gltf-binary' | 'application/octet-stream' | 'image/png' | readonly ('image/png'|'image/jpeg'|'image/webp')[]; maxBytes: number; sha256: string;
+  fixedPhoto?: true;
 }
 type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk' | 'sceneThumbnail' | 'workOrderPart';
 const MIB = 1024 * 1024;
@@ -44,7 +45,9 @@ async function binaryResponse(response: Response, descriptor: BinaryDescriptor, 
   if (response.headers.get('X-Session-Revision') !== revision || !(allowed as readonly string[]).includes(mime)) {
     return refuse(502, 'SOURCE_UNAVAILABLE');
   }
-  if (response.headers.get('X-Content-SHA256') !== descriptor.sha256) return refuse(409, 'RESOURCE_CHANGED');
+  const digestHeader = response.headers.get('X-Content-SHA256');
+  const fixedDigest = descriptor.fixedPhoto ? response.headers.get('X-Fixed-Photo-SHA256') : digestHeader;
+  if (fixedDigest !== descriptor.sha256 || descriptor.fixedPhoto && !/^[a-f0-9]{64}$/.test(digestHeader||'')) return refuse(409, 'RESOURCE_CHANGED');
   const length = response.headers.get('Content-Length');
   const expectedLength = length === null ? null : /^\d+$/.test(length) ? Number(length) : NaN;
   if (expectedLength !== null && (!Number.isSafeInteger(expectedLength) || expectedLength < 0)) {
@@ -79,7 +82,7 @@ async function binaryResponse(response: Response, descriptor: BinaryDescriptor, 
     const bytes = await blob.arrayBuffer(); guard();
     const digest = await crypto.subtle.digest('SHA-256', bytes); guard();
     const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
-    if (sha256 !== descriptor.sha256) throw new ApiError(409, 'RESOURCE_CHANGED');
+    if (sha256 !== digestHeader) throw new ApiError(409, 'RESOURCE_CHANGED');
   }
   return blob;
 }
@@ -280,6 +283,7 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     DIAGNOSTIC_OBJECT_UNRESOLVED:['该完整主位号尚无唯一可读取对象，请核对项目定义和资料。','This full primary tag has no unique readable object. Review the project definition.'],
     CABINET_MEMBERSHIP_UNRESOLVED:['该对象尚未登记到所选柜体，请先在OntoBase核对归属。','This object has no recorded membership in the selected cabinet. Review it in OntoBase.'],
     PHOTO_SOURCE_UNAVAILABLE:['固定照片读取接口暂不可用，请稍后重新读取。','Fixed photo references are temporarily unavailable. Reload later.'],
+    PHOTO_FULL_RESOLUTION_LIMIT:['暂时无法将原尺寸图片压缩到 4 MB 以下。','A full-resolution image under 4 MB is unavailable.'],
     RENDITION_UNAVAILABLE:['该固定版本的照片显示或区域不可用，未替换为其他版本。','The fixed photo display or region is unavailable. No replacement was opened.'],
     PROJECT_REQUIRED:['请先选择所属项目。','Select a project first.'],
     PROJECT_SCOPE_MISMATCH:['项目范围不一致，请返回项目目录重新选择。','The project scope changed. Select the project again.'],

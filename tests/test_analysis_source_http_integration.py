@@ -59,7 +59,7 @@ class AnalysisSourceHttpTests(unittest.TestCase):
     def test_project_document_photo_registers_and_reads_without_object_or_region(self):
         from tests.test_equipment_materials import DocumentReader, DOC, VERSION, PNG
         from tools.analysis_draft_backup import export_package, validate_package
-        created,_=self.create();fixed=DocumentReader();fixed.version['preview_kind']='image'
+        created,_=self.create();fixed=DocumentReader();fixed.version['preview_kind']='image';fixed.document['kind']='photo'
         original=self.source.request
         def source(account,method,path,body=None):
             if '/documents/' in path:return fixed._request(method,path,body)
@@ -71,6 +71,8 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             read=self.request(ROOT+'/evidence/detail',payload)
             self.assertEqual((read[0],read[1]['availability']),(200,'available'));self.assertIsNone(read[1]['source']['selector'])
             self.assertEqual(self.read_bytes(ROOT+'/evidence/content',payload),PNG)
+            self.assertEqual(self.read_bytes(ROOT+'/evidence/content',payload|{'representation':'full_resolution'}),PNG)
+            self.assertEqual(self.request(ROOT+'/evidence/content',payload|{'representation':'other'})[0],422)
             self.assertTrue(self.read_bytes(ROOT+'/evidence/preview-content',payload).startswith(b'\xff\xd8\xff'))
             self.assertEqual(self.request(ROOT+'/evidence/relationships',self.body(analysisSessionId=created['analysisSessionId'],evidenceRefIds=[ref['evidenceRefId']]))[1]['items'],[])
             package=export_package(self.urls[0]);validate_package(package)

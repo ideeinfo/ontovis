@@ -86,3 +86,20 @@ test('verified photo transport keeps headers and size checks without a second br
   headerSha=sha;length=String(bytes.length+1);
   await assert.rejects(api.content('/api/workbench/objects/photos/content',{},descriptor),e=>e.code==='SOURCE_UNAVAILABLE');
 });
+
+test('full-resolution delivery checks the fixed photo digest separately from the delivered bytes',async()=>{
+  const bytes=new TextEncoder().encode('compressed fixture');
+  const digest=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex');
+  const fixed='a'.repeat(64);
+  let fixedHeader=fixed,contentHeader=digest;
+  const api=new WorkbenchApi(async()=>new Response(bytes,{headers:{'Content-Type':'image/jpeg','X-Session-Revision':'r1',
+    'X-Content-SHA256':contentHeader,'X-Fixed-Photo-SHA256':fixedHeader}}));
+  api.session('r1');
+  const path='/api/workbench/objects/photos/content';
+  const descriptor={mime:['image/jpeg'],maxBytes:1024,sha256:fixed,fixedPhoto:true};
+  assert.equal((await api.content(path,{},descriptor)).size,bytes.length);
+  fixedHeader='b'.repeat(64);
+  await assert.rejects(api.content(path,{},descriptor),e=>e.code==='RESOURCE_CHANGED');
+  fixedHeader=fixed;contentHeader='unavailable';
+  await assert.rejects(api.content(path,{},descriptor),e=>e.code==='RESOURCE_CHANGED');
+});

@@ -160,7 +160,8 @@ export class AnalysisSources{
           if(this.disposed||abort.signal.aborted)throw new DOMException('Closed','AbortError');
           const route=representation==='preview'||pageNumber?'/evidence/preview-content':'/evidence/content';
           const blob=await this.api.request<Blob>(ANALYSIS_ROOT+route,{
-            analysisSessionId:this.sessionId,evidenceRefId:ref.id,...(pageNumber?{options:{pageNumber}}:{})
+            analysisSessionId:this.sessionId,evidenceRefId:ref.id,...(pageNumber?{options:{pageNumber}}:
+              representation==='original'?{representation:'full_resolution'}:{})
           },abort.signal,'source');
           if(this.disposed||abort.signal.aborted)throw new DOMException('Closed','AbortError');
           const url=URL.createObjectURL(blob);

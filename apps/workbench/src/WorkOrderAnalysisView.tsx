@@ -34,7 +34,8 @@ export function WorkOrderAnalysisView({api, fixed, en, canShare, canEdit, onEdit
       if(abort.signal.aborted)return;
       setSource(value.source);
       if(['photo','drawing','document'].includes(card.kind)){
-        const blob=await api.request<Blob>(ORDER_ROOT+'/analysis-source',{...body,content:true},abort.signal,'source');
+        const blob=await api.request<Blob>(ORDER_ROOT+'/analysis-source',{...body,content:true,
+          ...(card.kind==='photo'?{representation:'full_resolution'}:{})},abort.signal,'source');
         if(!abort.signal.aborted){url=URL.createObjectURL(blob);setPicture(url);}
       }
     }).catch(value=>{if(!abort.signal.aborted)setError(value);})

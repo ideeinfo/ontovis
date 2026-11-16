@@ -121,12 +121,32 @@ class ScenePhotoReader(SceneEvidenceReader):
 
     def content(self, payload):
         if type(payload) is dict and 'representation' in payload:
-            _require(payload['representation'] in ('display','preview'),'INVALID_REQUEST',422)
+            _require(payload['representation'] in ('display','preview','full_resolution'),'INVALID_REQUEST',422)
             body={key:value for key,value in payload.items() if key!='representation'}
             if payload['representation']=='preview':
                 from .analysis_source_reader import AnalysisSourceReader
                 from .analysis_media import photo_preview
                 return photo_preview(AnalysisSourceReader(self.reader,None,None,self.reader.authorize,''),body)
+            if payload['representation'] == 'full_resolution':
+                from .analysis_media import PHOTO_LIMIT, full_resolution_photo
+                from .fixed_documents import FixedDocuments
+                value = self.content(body)
+                projection = None
+                if len(value['content']) >= PHOTO_LIMIT:
+                    fields = SELECTION_FIELDS | ({'photoPurpose'} if 'photoPurpose' in body else set())
+                    rows = self._resolve_selected({key: body[key] for key in fields})['items']
+                    item = next((row for row in rows if row['evidenceRef'] == body['evidenceRef']), None)
+                    _require(item is not None and item['sourceRevision'] == body['expectedSourceRevision']
+                        and item['contentVersionId'] == body['expectedContentVersionId']
+                        and item['sourceSha256'] == body['expectedSourceSha256'] and item['selector'] is not None
+                        and item['selector']['displayRevision'] == body['expectedDisplayRevision'], 'SOURCE_CHANGED', 409)
+                    fixed = FixedDocuments(self.reader).metadata({key: item[key] for key in ('documentId','contentVersionId','sourceSha256')})
+                    projection = fixed['mediaProjection']
+                    if item['selector']['kind'] == 'spherical_region':
+                        projection = 'spherical_equirectangular'
+                value = full_resolution_photo(value, projection)
+                self.reader.authorize()
+                return value
             return self.content(body)
         _require(type(payload) is dict and (set(payload)-{'photoPurpose'}) == SELECTION_FIELDS | PHOTO_FIELDS, 'INVALID_REQUEST', 422)
         body = self._selection({key: payload[key] for key in SELECTION_FIELDS | ({'photoPurpose'} if 'photoPurpose' in payload else set())})

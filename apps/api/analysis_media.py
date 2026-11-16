@@ -1,4 +1,4 @@
-"""Small display derivatives; source bytes and oriented coordinates stay intact."""
+"""Photo and drawing display derivatives with bounded rendering and caching."""
 from collections import OrderedDict
 from io import BytesIO
 import hashlib
@@ -10,6 +10,8 @@ _cache = OrderedDict()
 _lock = threading.Lock()
 _render = threading.Semaphore(1)
 MAX_CACHE = 32 * 1024 * 1024
+PHOTO_LIMIT = 4_000_000
+PHOTO_PIXEL_LIMIT = 90_000_000
 
 
 def derived(key, generate):
@@ -46,12 +48,61 @@ def photo_image(source):
     from PIL import Image, ImageOps
     try:
         with Image.open(BytesIO(source['content'])) as image:
-            if image.width * image.height > 90_000_000:raise PreviewError(413,'CONTENT_SIZE_LIMIT')
+            if image.width * image.height > PHOTO_PIXEL_LIMIT:raise PreviewError(413,'CONTENT_SIZE_LIMIT')
             output=BytesIO();display=ImageOps.exif_transpose(image).convert('RGB')
             display.thumbnail((4096,4096),Image.Resampling.LANCZOS)
             display.save(output,'JPEG',quality=82,optimize=True,progressive=True)
             return output.getvalue(),'image/jpeg'
     except (OSError,ValueError):raise PreviewError(502,'SOURCE_UNAVAILABLE') from None
+
+
+def full_resolution_photo(source, projection=None):
+    """Return display bytes at the fixed pixel dimensions, with a separate digest."""
+    value = source
+    if projection is None and len(source['content']) >= PHOTO_LIMIT:
+        value = derived(('full-resolution-photo-v1', source['sha256']), lambda: encode_full_resolution(source))
+    return {**value, 'fixedPhotoSha256': source['sha256']}
+
+
+def encode_full_resolution(source):
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(source['content'])) as image:
+            xmp = image.info.get('xmp') or image.info.get('XML:com.adobe.xmp') or b''
+            if isinstance(xmp, str):
+                xmp = xmp.encode()
+            if b'ns.google.com/photos/1.0/panorama/' in xmp:
+                return source['content'], source['mediaType']
+            if image.width * image.height > PHOTO_PIXEL_LIMIT or getattr(image, 'n_frames', 1) != 1:
+                raise PreviewError(413, 'PHOTO_FULL_RESOLUTION_LIMIT')
+
+            transparent = 'A' in image.getbands() or 'transparency' in image.info
+            mode = 'RGBA' if transparent else 'L' if image.mode == 'L' else 'RGB'
+            options = {}
+            orientation = image.getexif().get(274)
+            if orientation in range(2, 9):
+                exif = Image.Exif()
+                exif[274] = orientation
+                options['exif'] = exif.tobytes()
+            profile = image.info.get('icc_profile')
+            if profile and image.mode in ('L', 'RGB', 'RGBA', 'P'):
+                options['icc_profile'] = profile
+            if transparent:
+                format_name, mime = 'WEBP', 'image/webp'
+                options.update(method=4, alpha_quality=100)
+            else:
+                format_name, mime = 'JPEG', 'image/jpeg'
+                options.update(optimize=True, progressive=True)
+            pixels = image if image.mode == mode else image.convert(mode)
+            for quality in (86, 78, 70, 62, 54, 46, 38, 30, 22, 14, 8, 4, 1):
+                output = BytesIO()
+                pixels.save(output, format_name, quality=quality, **options)
+                if output.tell() < PHOTO_LIMIT:
+                    return output.getvalue(), mime
+    except (OSError, ValueError, Image.DecompressionBombError):
+        raise PreviewError(502, 'SOURCE_UNAVAILABLE') from None
+    raise PreviewError(413, 'PHOTO_FULL_RESOLUTION_LIMIT')
 
 
 def drawing_image(source):

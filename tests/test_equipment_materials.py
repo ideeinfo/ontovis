@@ -1,7 +1,9 @@
 """Read-only material relay, fixed documents and ordinary analysis-photo contracts."""
 import copy
+from hashlib import sha256
 from io import BytesIO
 from email.message import Message
+from random import Random
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -84,6 +86,44 @@ class FixedMaterialTests(unittest.TestCase):
         with self.assertRaises(PreviewError):fixed.content(body)
         self.assertEqual(source.authority.document_page.call_count,2)
         with self.assertRaises(PreviewError):fixed.content(body|{'representation':'arbitrary'})
+
+    def test_full_resolution_photo_compresses_only_normal_photos_and_keeps_pixel_dimensions(self):
+        from PIL import Image
+
+        source = DocumentReader()
+        source.document['kind'] = 'photo'
+        source.version['preview_kind'] = 'image'
+        size = (1600, 1000)
+        exif = Image.Exif()
+        exif[274] = 6
+        raw = BytesIO()
+        Image.frombytes('RGB', size, Random(42).randbytes(size[0] * size[1] * 3)).save(raw, 'PNG', exif=exif)
+        data = raw.getvalue()
+        fixed_sha = sha256(data).hexdigest()
+        self.assertGreater(len(data), 4_000_000)
+        source.authority.document_page.return_value = {'content': data, 'mediaType': 'image/png', 'sha256': fixed_sha}
+        reader = FixedDocuments(source)
+        body = dict(documentId=DOC, contentVersionId=VERSION, sourceSha256='a' * 64)
+        request = {**body, 'representation': 'full_resolution'}
+        compressed = reader.content(request)
+        self.assertLess(len(compressed['content']), 4_000_000)
+        self.assertEqual(compressed['sha256'], sha256(compressed['content']).hexdigest())
+        self.assertEqual(compressed['fixedPhotoSha256'], fixed_sha)
+        self.assertNotEqual(compressed['sha256'], fixed_sha)
+        with Image.open(BytesIO(compressed['content'])) as image:
+            self.assertEqual(image.size, size)
+            self.assertEqual(image.getexif()[274], 6)
+        self.assertEqual(reader.content(body)['content'], data)
+        # The same cached content is returned byte-for-byte for a fixed spherical version.
+        source.version['media_projection'] = 'spherical_equirectangular'
+        self.assertEqual(reader.content(request)['content'], data)
+        source.version['media_projection'] = None
+        source.document['kind'] = 'other'
+        self.assertEqual(reader.content(request)['content'], data)
+        source.document['status'] = 'recycled'
+        with self.assertRaises(PreviewError) as error:
+            reader.content(request)
+        self.assertEqual(error.exception.status, 410)
 
     def test_ordinary_photo_registers_whole_image_and_never_claims_old_object_region(self):
         reader=DocumentReader();reader.version['preview_kind']='image'

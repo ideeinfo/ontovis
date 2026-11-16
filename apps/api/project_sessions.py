@@ -648,10 +648,16 @@ class ProjectSessions(UserSessions):
                             from .analysis_media import photo_preview
                             value = photo_preview(reader, descriptor)
                 elif action in ('evidence/detail', 'evidence/content'):
-                    reference, descriptor = sources.descriptor(actor, body, guard)
+                    request = body
+                    full_resolution = False
+                    if action == 'evidence/content' and 'representation' in body:
+                        require(body['representation'] == 'full_resolution')
+                        full_resolution = True
+                        request = {key: value for key, value in body.items() if key != 'representation'}
+                    reference, descriptor = sources.descriptor(actor, request, guard)
                     release_store()
                     if action == 'evidence/content':
-                        value = reader.content(reference['sourceKind'], descriptor)
+                        value = reader.content(reference['sourceKind'], descriptor, full_resolution=full_resolution)
                     else:
                         try:
                             value = {**reference, 'availability': 'available', 'source': reader.read(reference['sourceKind'], descriptor)}

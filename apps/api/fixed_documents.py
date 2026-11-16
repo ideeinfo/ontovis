@@ -32,11 +32,12 @@ class FixedDocuments:
         d.require('sourceSha256' not in body or body['sourceSha256'] == sha, 'SOURCE_CHANGED', 409)
         return dict(documentId=document_id, contentVersionId=version_id, sourceSha256=sha,
             title=document['name'], kind='pdf' if kind == 'pdf' else 'photo', documentKind=document.get('kind'),
+            mediaProjection=version.get('media_projection'),
             pageNumber=page, pageCount=pages, versionNumber=version['version_number'],
             newerVersionAvailable=document['current_version_id'] != version_id, sourceType='project_document', selector=None)
 
     def content(self, body):
-        d.require(type(body) is dict and body.get('representation','display') in ('preview','display'),'INVALID_REQUEST',422)
+        d.require(type(body) is dict and body.get('representation','display') in ('preview','display','full_resolution'),'INVALID_REQUEST',422)
         fixed = self.metadata({key:value for key,value in body.items() if key!='representation'})
         path = self.reader.prefix + '/documents/' + fixed['documentId'] + '/content?' + urlencode({
             'version_id': fixed['contentVersionId'], 'rendition': 'display', 'page': fixed['pageNumber']})
@@ -45,4 +46,8 @@ class FixedDocuments:
             from .analysis_media import derived,photo_image
             return derived(('project-photo-4096-jpeg-82',getattr(self.reader,'connection_id',''),self.reader.prefix,
                 fixed['documentId'],fixed['contentVersionId'],fixed['sourceSha256']),lambda:photo_image(read()))
-        return read()
+        value = read()
+        if fixed['documentKind'] == 'photo' and fixed['kind'] == 'photo' and body.get('representation') == 'full_resolution':
+            from .analysis_media import full_resolution_photo
+            value = full_resolution_photo(value, fixed['mediaProjection'])
+        return value

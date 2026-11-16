@@ -125,8 +125,8 @@ export function WorkOrders({api,locale='zh',initialQuery='',onDirtyChange,onAnal
       const blob=await api.content('/api/workbench/objects/photos/content',{entityUid:location.item.entityUid,expectedEntityRevision:location.item.entityRevision,
         installationContextId:location.item.installationContextId,expectedHierarchyRevision:location.context?.hierarchyRevision??null,
         evidenceRef:photo.evidenceRef,expectedSourceRevision:photo.sourceRevision,expectedContentVersionId:photo.contentVersionId,
-        expectedSourceSha256:photo.sourceSha256,expectedDisplayRevision:photo.selector.displayRevision},
-        {mime:['image/png','image/jpeg','image/webp'],maxBytes:20*1024*1024,sha256:photo.selector.displayRevision},abort.signal);
+        expectedSourceSha256:photo.sourceSha256,expectedDisplayRevision:photo.selector.displayRevision,representation:'full_resolution'},
+        {mime:['image/png','image/jpeg','image/webp'],maxBytes:20*1024*1024,sha256:photo.selector.displayRevision,fixedPhoto:true},abort.signal);
       if(!abort.signal.aborted){picture.current=URL.createObjectURL(blob);setImage(picture.current);}
     }catch(value){if(!abort.signal.aborted&&!cancelled(value))setPhotoError(value);}finally{if(!abort.signal.aborted)setReading(false);}
   }

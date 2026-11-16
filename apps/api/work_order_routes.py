@@ -88,13 +88,15 @@ def request(sessions, sid, row, project, access, action, body, *, stream=None, l
         return workflow.record_history(orders, body)
     if action == 'attachments/content':
         required = {'orderId', 'orderRevision', 'snapshotSha256', 'attachmentId'}
-        require(required <= set(body) <= required | {'pageNumber'})
+        require(required <= set(body) <= required | {'pageNumber', 'representation'})
+        if 'representation' in body:
+            require(body['representation'] == 'full_resolution' and type(body.get('pageNumber')) is int)
         attachment_id = identifier(body['attachmentId'])
         fixed = orders.fixed_snapshot({k: body[k] for k in ('orderId', 'orderRevision', 'snapshotSha256')})
         attachment = next((item for item in fixed.get('workflow', {}).get('attachments', [])
                            if item['attachmentId'] == attachment_id), None)
         require(attachment, 'WORK_ORDER_ATTACHMENT_NOT_FOUND', 404)
-        return attachments.content(reader, attachment, page=body.get('pageNumber'))
+        return attachments.content(reader, attachment, page=body.get('pageNumber'), full_resolution='representation' in body)
     if action.startswith('attachments/'):
         require({'orderId', 'expectedOrderRevision', 'uploadId'} <= set(body))
         def check_order():

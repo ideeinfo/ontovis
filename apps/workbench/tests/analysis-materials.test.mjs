@@ -137,6 +137,7 @@ test('screen previews, originals and document pages never share the wrong byte c
  assert.notEqual(a,b);assert.equal(await sources.file(ref,source,undefined,'preview'),a);
  const first=await sources.file({id:'doc',revision:'fixed'},undefined,undefined,'original',48),second=await sources.file({id:'doc',revision:'fixed'},undefined,undefined,'original',49);
  assert.notEqual(first,second);assert.equal(calls.length,4);assert.ok(calls[0].path.endsWith('/preview-content'));assert.ok(calls[1].path.endsWith('/content'));
+ assert.equal(calls[0].body.representation,undefined);assert.equal(calls[1].body.representation,'full_resolution');
  assert.deepEqual(calls.slice(2).map(c=>c.body.options.pageNumber),[48,49]);sources.dispose();
 });
 

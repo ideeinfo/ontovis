@@ -367,7 +367,9 @@ def request(sessions, engineering, orders, library, action, body, actor_id, acto
                     require(share_row(orders, fixed, item['ownerId']), 'NOT_FOUND_OR_FORBIDDEN', 404)
                 return {k: v for k, v in item.items() if k != 'ownerId'}
             require(action == 'analysis-source')
-            require({*FIXED, 'evidenceRefId'} <= set(body) <= {*FIXED, 'evidenceRefId', 'pageNumber', 'content'})
+            require({*FIXED, 'evidenceRefId'} <= set(body) <= {*FIXED, 'evidenceRefId', 'pageNumber', 'content', 'representation'})
+            if 'representation' in body:
+                require(body['representation'] == 'full_resolution' and body.get('content') is True)
             evidence_id = drafts.identifier(body['evidenceRefId'])
             value = values.get(evidence_id)
             require(value, 'NOT_FOUND_OR_FORBIDDEN', 404)
@@ -377,7 +379,7 @@ def request(sessions, engineering, orders, library, action, body, actor_id, acto
                 if 'pageNumber' in body:
                     require(kind == 'document' and type(body['pageNumber']) is int)
                     descriptor = {**descriptor, 'pageNumber': body['pageNumber']}
-                result = reader.content(kind, descriptor)
+                result = reader.content(kind, descriptor, full_resolution='representation' in body)
             else:
                 result = {'evidenceRefId': evidence_id, 'sourceKind': kind, 'sourceRevision': revision,
                           'availability': 'available', 'source': reader.read(kind, descriptor)}

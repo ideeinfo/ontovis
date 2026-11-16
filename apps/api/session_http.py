@@ -58,7 +58,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             try: self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError): pass
 
-        def image(self, data, revision, media_type='image/png', sha256=None):
+        def image(self, data, revision, media_type='image/png', sha256=None, fixed_photo_sha256=None):
             self.send_response(200)
             for key, value in (('Content-Type',media_type), ('Content-Length',str(len(data))),
                                ('Cache-Control','no-store'), ('X-Content-Type-Options','nosniff'),
@@ -66,9 +66,15 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 self.send_header(key, value)
             if sha256 is not None:
                 self.send_header('X-Content-SHA256', sha256)
+            if fixed_photo_sha256 is not None:
+                self.send_header('X-Fixed-Photo-SHA256', fixed_photo_sha256)
             self.end_headers()
             try: self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError): pass
+
+        def source_image(self, value):
+            return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'],
+                              value.get('fixedPhotoSha256'))
 
         def simulation_stream(self, sid, payload):
             subscription = sessions.simulation_stream(sid, payload)
@@ -300,17 +306,17 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             if parts.path in analysis_paths:
                 value = sessions.analysis_request(sid, parts.path, payload)
                 if parts.path.endswith(('/evidence/content', '/evidence/preview-content')):
-                    return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'])
+                    return self.source_image(value)
                 return self.reply(200, value)
             if parts.path in work_order_paths:
                 value = sessions.work_order_request(sid, parts.path, payload)
                 if parts.path.endswith('/attachments/content') or 'content' in value and parts.path.endswith('/analysis-source'):
-                    return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'])
+                    return self.source_image(value)
                 return self.reply(200, value)
             if parts.path in equipment_paths:
                 value=sessions.equipment_request(sid,parts.path,payload)
                 if parts.path.endswith(('/shared-photos/content','/materials/content')):
-                    return self.image(value['content'],value['sessionRevision'],value['mediaType'],value['sha256'])
+                    return self.source_image(value)
                 return self.reply(200,value)
             if parts.path in scene_paths:
                 value = sessions.scene_request(sid, parts.path, payload)
@@ -324,7 +330,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 if parts.path.endswith(('/evidence/content','/evidence/related/content')):
                     return self.image(value['content'], value['sessionRevision'], 'image/png', value['imageSha256'])
                 if parts.path.endswith('/photos/content'):
-                    return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'])
+                    return self.source_image(value)
                 return self.reply(200, value)
             if parts.path in resource_paths:
                 value = sessions.resource_request(sid, parts.path, payload)

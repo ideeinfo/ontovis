@@ -185,14 +185,17 @@ class AnalysisSourceReader:
             raise PreviewError(503, 'ANALYSIS_SOURCE_NOT_CONNECTED')
         self.authorize(); return value
 
-    def content(self, kind, descriptor):
+    def content(self, kind, descriptor, *, full_resolution=False):
         validate_descriptor(kind, descriptor); self.authorize()
         if kind == 'photo':
             if descriptor.get('sourceType')=='project_document':
                 from .fixed_documents import FixedDocuments
-                value=FixedDocuments(self.reader).content({key:descriptor[key] for key in ('documentId','contentVersionId','sourceSha256')})
+                body = {key: descriptor[key] for key in ('documentId', 'contentVersionId', 'sourceSha256')}
+                if full_resolution:
+                    body['representation'] = 'full_resolution'
+                value = FixedDocuments(self.reader).content(body)
                 self.authorize();return value
-            return self.photos.content(descriptor)
+            return self.photos.content({**descriptor, 'representation': 'full_resolution'} if full_resolution else descriptor)
         if kind == 'drawing':
             if 'drawingUid' in descriptor:
                 from .analysis_preview import drawing_bytes
