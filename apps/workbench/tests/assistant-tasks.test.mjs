@@ -1,10 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkedTaskSnapshot,snapshotDigest,canApplyFreshTask} from '../src/assistantTasks.ts';
+import {adoptedModelTarget,checkedTaskSnapshot,snapshotDigest,canApplyFreshTask} from '../src/assistantTasks.ts';
 import {assistantSendBlocker} from '../src/assistantApi.ts';
 import {blankAnalysisDraft} from '../src/analysisDraftState.ts';
 import {assistantEntrySeed} from '../src/analysisSources.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'Demo-PDS'};
+test('the adopted model viewer uses the fixed pair returned by the catalogue',()=>{
+ const row={key:'R1',title:'配置模型',identifier:'asset-9',version:'fixed-version-2',kind:'adopted_model',simulated:false,reason:''};
+ assert.deepEqual(adoptedModelTarget(row),{modelAssetId:'asset-9',modelVersionId:'fixed-version-2',title:'配置模型'});
+ for(const invalid of [{kind:'scene'},{kind:'model'},{version:2},{identifier:''},{version:''}]){
+  assert.equal(adoptedModelTarget({...row,...invalid}),null);
+ }
+});
 test('a cockpit handoff stays on its target canvas and does not replay after consumption',()=>{
  const entry={analysisSessionId:'target',analysisRevision:8,assistantQuestion:'Add the matching order',openLatest:true};
  assert.deepEqual(assistantEntrySeed(entry,null),{});

@@ -1,15 +1,17 @@
-import {lazy,Suspense,useEffect,useRef,useState} from 'react';
+import {lazy,Suspense,useEffect,useMemo,useRef,useState} from 'react';
 import {ModelComponentTree,ModelComponentProperties,ModelPreviewTools,useModelPreview} from './ModelPreviewInspector';
 import type {ProjectModelVersion} from './resourceTypes';
 import type {LocalSceneSnapshot,ModelResourceRef} from './sceneTypes';
 import type {WorkbenchApi} from './api';
 import type {ModelView} from './analysisCanvas';
 import type {SceneCameraControl} from './SceneViewport';
+import {SceneApi} from './sceneApi';
 const SceneViewport=lazy(()=>import('./SceneViewport').then(module=>({default:module.SceneViewport})));
 const scene:LocalSceneSnapshot={displayName:'',coordinateFrame:{mode:'local_plane',frameRevision:'analysis-preview',origin:[0,0,0],unit:'m',axes:'X_EAST_Y_UP_Z_SOUTH'},terrain:null,instances:[],initialView:{eye:[300,200,300],target:[0,60,0]},defaults:{background:'plain',lighting:'neutral',terrainMaterial:'solid'}};
 const refs:ModelResourceRef[]=[],visibility:Record<string,boolean>={},ignore=()=>{},noMove=async()=>false;
-export function AnalysisModelCard({api,version,en,initialView,onView,full=false,minimal=false,componentKeys=[]}:{api:WorkbenchApi;version:ProjectModelVersion;en:boolean;initialView?:ModelView;onView?:(value:ModelView)=>void;full?:boolean;minimal?:boolean;componentKeys?:string[]}){
+export function AnalysisModelCard({api,version,en,initialView,onView,full=false,minimal=false,inspectSource=false,componentKeys=[]}:{api:WorkbenchApi;version:ProjectModelVersion;en:boolean;initialView?:ModelView;onView?:(value:ModelView)=>void;full?:boolean;minimal?:boolean;inspectSource?:boolean;componentKeys?:string[]}){
   const inspection=useModelPreview(version),[error,setError]=useState<unknown>(null);
+  const reportApi=useMemo(()=>inspectSource?new SceneApi(api):undefined,[api,inspectSource]);
   const camera=useRef<SceneCameraControl|null>(null),initial=useRef(initialView),interacted=useRef(false),timer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),lastView=useRef<ModelView|null>(null);
   const change=useRef(onView),selected=useRef(inspection.selection.nodeId);change.current=onView;selected.current=inspection.selection.nodeId;
   function flushView(){clearTimeout(timer.current);const value=lastView.current;lastView.current=null;if(value)change.current?.(value);}
@@ -37,6 +39,6 @@ export function AnalysisModelCard({api,version,en,initialView,onView,full=false,
         onPreviewStructure={inspection.ready} onPreviewPick={(identity,id)=>{interacted.current=true;inspection.pick(identity,id);}} onSelect={ignore} onPoint={ignore} onMove={noMove} onViewChange={saveView} onError={setError}/>
     </Suspense></div>{!!error&&<p role="alert">{en?'Model unavailable. Retry opening this card.':'模型暂时不可用，请重新打开。'}</p>}
     {!minimal&&<small>{en?'Source geometry / schematic proxies retain their original precision.':'源几何及示意代理保持原精度，不代表现场确认。'}</small>}</div>
-    {full&&<ModelComponentProperties version={version} inspection={inspection}/>}
+    {full&&<ModelComponentProperties version={version} inspection={inspection} reportApi={reportApi}/>}
   </div>;
 }
