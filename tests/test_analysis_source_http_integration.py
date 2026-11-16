@@ -123,6 +123,60 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             self.assertIn('version_id='+VERSION,binary.call_args.args[0]);self.assertIn('page=3',binary.call_args.args[0])
             self.assertEqual(self.request(ROOT+'/evidence/detail',payload)[1]['source']['pageNumber'],2)
 
+    def test_comparing_and_adopting_another_document_version_preserves_saved_history(self):
+        from tests.test_equipment_materials import DocumentReader, DOC, VERSION
+        created, _ = self.create()
+        fixed = DocumentReader()
+        current = fixed.document['current_version_id']
+        current_item = dict(fixed.version, id=current, version_number=3, source_sha256='c'*64)
+        original = self.source.request
+
+        def source(account, method, path, body=None):
+            if path.endswith('/navigation'):
+                return {'outline': []}
+            if path.endswith('/versions/'+current):
+                return {'item': current_item}
+            if '/documents/' in path:
+                return fixed._request(method, path, body)
+            return original(account, method, path, body)
+
+        def register(revision, selector):
+            status, value, *_ = self.request(ROOT+'/evidence/register', self.body(
+                analysisSessionId=created['analysisSessionId'], expectedAnalysisRevision=revision,
+                requestId=str(uuid4()), sourceKind='document', selector=selector))
+            self.assertEqual(status, 200, value)
+            return value
+
+        def save(snapshot, revision):
+            return self.request(ROOT+'/save', self.body(analysisSessionId=created['analysisSessionId'],
+                expectedAnalysisRevision=revision, requestId=str(uuid4()), snapshot=snapshot))
+
+        with patch.object(self.source, 'request', source):
+            old = register(1, dict(documentId=DOC, contentVersionId=VERSION, pageNumber=2))
+            snapshot = dict(self.value(), schemaVersion=2)
+            card = dict(id=str(uuid4()), kind='document', title='Synthetic manual', x=16, y=32,
+                        width=340, height=360, pinned=False)
+            card['source'] = dict(self.body()['projectRef'], system='ontobase', id=old['evidenceRefId'],
+                                  revision=old['sourceRevision'])
+            snapshot['cards'].append(card)
+            self.assertEqual(save(snapshot, 1)[1]['analysisRevision'], 2)
+
+            basis = self.request(ROOT+'/evidence/detail', self.reference(created, old))[1]['source']
+            compared = self.request('/api/workbench/equipment/materials/metadata', self.body(
+                documentId=DOC, contentVersionId=basis['currentContentVersionId']))
+            self.assertEqual(compared[0], 200, compared[1])
+            self.assertEqual(compared[1]['sourceSha256'], 'c'*64)
+            self.assertEqual(self.detail(created)[1]['snapshot']['cards'][-1]['source'], card['source'])
+
+            adopted = register(2, dict(documentId=DOC, contentVersionId=current, sourceSha256='c'*64, pageNumber=3))
+            updated = deepcopy(snapshot)
+            updated['cards'][-1]['source'].update(id=adopted['evidenceRefId'], revision=adopted['sourceRevision'])
+            self.assertEqual(save(updated, 2)[1]['analysisRevision'], 3)
+            history = self.request(ROOT+'/detail', self.body(analysisSessionId=created['analysisSessionId'], analysisRevision=2))
+            self.assertEqual(history[1]['snapshot'], snapshot)
+            detail = self.request(ROOT+'/evidence/detail', self.reference(created, adopted))[1]['source']
+            self.assertEqual((detail['contentVersionId'], detail['pageNumber']), (current, 3))
+
     def test_recommendation_continuation_is_read_only_and_bound_to_current_login_and_source_page(self):
         from tools.analysis_draft_backup import export_package
         target={'item':{'entityUid':'cabinet','entityRevision':'r7'},'context':None}

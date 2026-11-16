@@ -6,7 +6,7 @@ import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecy
 import {RowActions,RowContext,type ListAction} from './ListMenus';
 import {AnalysisMaterialPanel} from './AnalysisMaterialPanel';
 import {materialPosition,relatedMaterialSection,withPrimaryAlarm,mergeRecommendations} from './analysisMaterials';
-import {AnalysisSources,ANALYSIS_ROOT,analysisEntryRequest,assistantEntrySeed,setCardPreviewOpen,type AnalysisEntry,type Recommendation,type Recommendations,type EvidenceSource,type SourceAnchor} from './analysisSources';
+import {AnalysisSources,ANALYSIS_ROOT,analysisEntryRequest,assistantEntrySeed,documentVersionChoice,keepFixedDocumentCard,setCardPreviewOpen,type AnalysisEntry,type Recommendation,type Recommendations,type EvidenceSource,type SourceAnchor} from './analysisSources';
 import {AnalysisSourceCard,AnalysisTrend,materialNames} from './AnalysisSourceCard';
 import {useSourceRelations,SourceRelationLines,SourceRelationDetails,type CardSourceRelation} from './AnalysisSourceRelations';
 import type {SimulatedTrend} from './simulatedAlarms';
@@ -20,6 +20,7 @@ import {AnalysisTimeWindowForm} from './AnalysisTrendTimeForm';
 import {intersectTimeWindows,timeWindowLabel,timeZoneLabel,type TimeWindow} from './analysisTimeWindow';
 import {WorkOrderReferenceView} from './WorkOrderReferenceView';
 import type {WorkbenchApi} from './api';
+import type {FixedDocument} from './equipmentApi';
 
 export interface DraftApi {revision:string;epoch:number;project:ProjectScope|null;request<T>(path:string,body?:object,signal?:AbortSignal,image?:boolean|'model'|'source'):Promise<T>;content?:import('./api').WorkbenchApi['content']}
 type Detail=DraftReceipt&{snapshot:CanvasSnapshot;capabilities?:{canEditAssignedOrder?:boolean}};
@@ -259,9 +260,11 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     catch(value){if(!abort.signal.aborted&&scope===recommendationScope.current)failure(value);}finally{
       if(moreRequest.current===abort)moreRequest.current=null;
       if(!abort.signal.aborted&&alive.current&&scope===recommendationScope.current)setRecommendLoading(false);}}
-  async function addSource(item:Recommendation,replaceId?:string,position?:{x:number;y:number}){return addSources([item],replaceId,position);}
-  async function addSources(items:Recommendation[],replaceId?:string,position?:{x:number;y:number}){
-    const snapshot=current.current;if(!snapshot||!editable)return;let version=receipt;
+  async function addSource(item:Recommendation,choice?:{replaceId?:string;updateVersion?:boolean},position?:{x:number;y:number}){return addSources([item],choice,position);}
+  async function addSources(items:Recommendation[],choice?:{replaceId?:string;updateVersion?:boolean},position?:{x:number;y:number}){
+    const snapshot=current.current,replaceId=choice?.replaceId;
+    if(!snapshot||!editable||replaceId&&!snapshot.cards.some(card=>card.id===replaceId))return;
+    let version=receipt;
     if(!version){if(!await commit()||!lastCommitted.current)return;version=lastCommitted.current;}
     const abort=new AbortController();request.current=abort;setBusy(true);setError(null);let next=snapshot;let added=0;let addedId='';const failed:string[]=[];
     try{const references=new Map<string,{evidenceRefId:string;sourceRevision:string}>();
@@ -269,6 +272,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
         analysisSessionId:version.analysisSessionId,expectedAnalysisRevision:version.analysisRevision,
         items:items.slice(start,start+12).map(item=>({key:item.key,requestId:crypto.randomUUID(),sourceKind:item.kind,selector:item.selector}))},abort.signal);
         result.items.forEach(item=>{if(item.reference)references.set(item.key,item.reference);});}
+      if(choice?.updateVersion&&current.current!==snapshot)return;
       for(const item of items){if(!replaceId&&next.cards.length>=50)break;
       try{const ref=references.get(item.key);if(!ref){failed.push(item.title);continue;}
         if(!alive.current||abort.signal.aborted)return;const kind=item.kind==='model'?'model3d':item.kind;
@@ -279,7 +283,8 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
         const point=position||materialPosition(next.viewport,{x:panel+((board?.clientWidth||800)-panel)/2-170*next.viewport.zoom,y:(board?.clientHeight||600)/2-height/2*next.viewport.zoom});
         const card:CanvasCard={id,kind,title:item.title,x:Math.min(20000,point.x+added*28),y:Math.min(20000,point.y+added*28),width:340,height,pinned:false,
           source:{...api.project!,system:['object','drawing','document','photo'].includes(item.kind)?'ontobase':'ontovis',id:ref.evidenceRefId,revision:ref.sourceRevision}};
-        next={...next,schemaVersion:2,cards:replaceId?next.cards.map(old=>old.id===id?{...old,source:card.source}:old):[...next.cards,card]};if(!replaceId)next=withPrimaryAlarm(next,item);added++;addedId=id;setSelected(id);setMulti([id]);
+        next={...next,schemaVersion:2,cards:replaceId?next.cards.map(old=>old.id===id?{...old,source:card.source,
+          ...(choice?.updateVersion?{view:undefined}:{})}:old):[...next.cards,card]};if(!replaceId)next=withPrimaryAlarm(next,item);added++;addedId=id;setSelected(id);setMulti([id]);
         if(['photo','drawing','document','model'].includes(item.kind))setOpenPreviews(open=>setCardPreviewOpen(open,id,true));
       }catch(value){if([401,403].includes(status(value))||abort.signal.aborted)throw value;failed.push(item.title);}}
       if(added)apply(next);setChosen([]);setNotice(failed.length?t(`已加入${added}项；${failed.length}项未加入，可重试`,`Added ${added}; ${failed.length} failed`):added?t(`已加入${added}项资料`,`Added ${added} materials`):t('资料已在画布中','Material already on canvas'));return addedId;
@@ -297,7 +302,20 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     catch(value){failure(value);}finally{if(!abort.signal.aborted)setBusy(false);}}
   function chooseRelated(value:EvidenceSource){if(!value.item)return;setRelatedLabel(value.item.displayName||t('所选对象','Selected object'));setRelated({entityUid:value.item.entityUid,expectedEntityRevision:value.item.entityRevision});setSection(relatedMaterialSection(value.item.objectScope));setRecommendQuery('');setRecommendFilter(undefined);setChosen([]);setExpanded('');setExpandedAnchor(null);setMaterialsOpen(true);setRight(false);}
   function changePage(card:CanvasCard,page:number,value:EvidenceSource){if(!value.documentId||!value.contentVersionId||!value.sourceSha256)return;
-    void addSource({key:card.id,kind:'document',title:card.title,reason:'指定文档页',selector:{documentId:value.documentId,contentVersionId:value.contentVersionId,sourceSha256:value.sourceSha256,pageNumber:page}},card.id);}
+    void addSource({key:card.id,kind:'document',title:card.title,reason:'指定文档页',selector:{documentId:value.documentId,contentVersionId:value.contentVersionId,sourceSha256:value.sourceSha256,pageNumber:page}},{replaceId:card.id});}
+  async function adoptDocumentVersion(card:CanvasCard,source:EvidenceSource,version:FixedDocument,page:number){
+    const live=current.current?.cards.find(value=>value.id===card.id);
+    if(!editable||live?.kind!=='document'||!live.source||!card.source
+      ||live.source.id!==card.source.id||live.source.revision!==card.source.revision)return false;
+    const item=documentVersionChoice(source,version,page);
+    if(!item)return false;
+    const separate=keepFixedDocumentCard(live,source);
+    const id=await addSource(item,{replaceId:separate?undefined:live.id,updateVersion:true});
+    if(!id)return false;
+    setExpandedAnchor(null);setExpanded(id);
+    setNotice(t('已采用对照版本，保存后生成新的分析修订。','Compared version selected. Save to create a new analysis revision.'));
+    return true;
+  }
   pageAction.current=changePage;
   viewAction.current=(id,view)=>{const value=current.current;if(!editable||!value)return;
     setDraft({...value,cards:value.cards.map(card=>card.id===id?{...card,view}:card)});};
@@ -394,7 +412,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   function fit(){if(draft&&canvas.current)setDraft({...draft,viewport:fitViewport(draft.cards,canvas.current.clientWidth,canvas.current.clientHeight)});}
   function zoom(factor:number){if(draft&&canvas.current)setDraft({...draft,viewport:zoomAt(draft.viewport,draft.viewport.zoom*factor,canvas.current.clientWidth/2,canvas.current.clientHeight/2)});}
   function undoChange(reverse=false){if(!draft||!editable)return;const step=stepDraftHistory(draft,{undo,redo},reverse?'redo':'undo');if(!step)return;
-    current.current=step.snapshot;setDraft(step.snapshot);setUndo(step.history.undo);setRedo(step.history.redo);}
+    current.current=step.snapshot;setDraft(step.snapshot);setUndo(step.history.undo);setRedo(step.history.redo);setNotice('');}
   function label(card:CanvasCard){return card.kind==='analysis'||referenceState[card.source!.id]==='available'?card.title:referenceState[card.source!.id]==='restricted'?t('资料访问已撤销','Access removed'):materialNames[card.kind]+t(' · 待读取',' · pending');}
   const errorText=error instanceof Error&&!code(error)?error.message:en?'The request could not be completed. Your local edits are retained.':zhError[code(error)]||'暂时无法完成请求，请重试。';
   const statuses=[['analyzing','分析中','Analyzing'],['awaiting_field_check','待现场核查','Awaiting field check'],['awaiting_expert_review','待复核','Awaiting review']];
@@ -407,12 +425,13 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   async function addAndOpen(item:Recommendation){const id=await addSource(item);if(id){setExpandedAnchor(null);setExpanded(id);}}
   async function loadOrderProgress(card:CanvasCard,item:Recommendation){
     if(card.historical&&current.current&&current.current.cards.length>=50)return false;
-    const loaded=await addSources([item],card.historical?undefined:card.id);
+    const loaded=await addSources([item],card.historical?undefined:{replaceId:card.id});
     if(loaded)setNotice(card.historical?t('最新工单进展已加入，原历史资料保留。请保存画布。','Latest progress added. The historical card remains fixed. Save the canvas.'):
       t('已载入工单进展，保存为新修订后可继续分析。','Order progress loaded. Save a new revision to continue analysis.'));
     return !!loaded;
   }
   const sourceContent=(card:CanvasCard,full=false)=>sources&&<AnalysisSourceCard key={card.id+(full?':full':':inline')} card={card} sources={sources} en={en} full={full} anchor={full?expandedAnchor:null} onAddMaterial={editable?item=>void addAndOpen(item):undefined} onUpdateWorkOrder={editable&&card.kind==='work_order'?item=>loadOrderProgress(card,item):undefined} active={full||openPreviews.has(card.id)}
+    onAdoptDocumentVersion={full&&card.kind==='document'&&writable&&!fixed&&!archived?(source,version,page)=>adoptDocumentVersion(card,source,version,page):undefined}
     onActivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,true))} onDeactivate={()=>setOpenPreviews(open=>setCardPreviewOpen(open,card.id,false))} onOpen={()=>openSource(card)} onRelated={value=>{setSelected(card.id);chooseRelated(value);}} onPage={(page,value)=>pageAction.current(card,page,value)}
     onAvailability={(id,state)=>setReferenceState(previous=>previous[id]===state?previous:{...previous,[id]:state})}
     onView={view=>viewAction.current(card.id,view)} cursor={card.historical?undefined:trendCursor} onCursor={card.historical?undefined:setTrendCursor}

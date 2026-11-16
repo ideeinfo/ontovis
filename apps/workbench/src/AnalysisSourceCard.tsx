@@ -14,6 +14,7 @@ import {AnalysisSources,type EvidenceDetail,type EvidenceSource,type SourceAncho
 import type {CanvasCard,CardView,ImageView,ModelView} from './analysisCanvas';
 import type {WorkbenchApi} from './api';
 import type {ProjectModelVersion} from './resourceTypes';
+import type {FixedDocument} from './equipmentApi';
 import './workOrders.css';
 import './dataAlarms.css';
 import './analysisMaterials.css';
@@ -39,9 +40,10 @@ export function AnalysisTrend({trends,en,cursor,onCursor}:{trends:SimulatedTrend
       return <p key={i} data-series={i}>{en?trend.metricId:({sensor_temperature:'传感器温度',reference_temperature:'独立参照温度',supply_voltage:'供电电压',device_feedback:'状态反馈',overcurrent:'过流信号'} as Record<string,string>)[trend.metricId]||trend.metricId} · {trend.unit==='degC'?'°C':trend.unit}{sample&&<output> · {sample.value??'—'} · {sample.quality} · {new Date(sample.sourceTime).toLocaleTimeString(en?'en-GB':'zh-CN',{timeZone:'UTC'})} UTC</output>}<br/><small>{trend.timeFrom} — {trend.timeTo} · UTC</small></p>;})}
   </div>;
 }
-type Props={card:CanvasCard;sources:AnalysisSources;en:boolean;active:boolean;onActivate:()=>void;onDeactivate:()=>void;onOpen:()=>void;onRelated?:(value:EvidenceSource)=>void;onPage?:(page:number,value:EvidenceSource)=>void;onTrend?:(id:string,value:SimulatedTrend)=>void;onAvailability?:(id:string,state:string)=>void;full?:boolean;viewOnly?:boolean;onView?:(view:CardView)=>void;cursor?:number|null;onCursor?:(value:number|null)=>void;anchor?:SourceAnchor|null;onAddMaterial?:(item:Recommendation)=>void;onUpdateWorkOrder?:(item:Recommendation)=>Promise<boolean>};
+type Props={card:CanvasCard;sources:AnalysisSources;en:boolean;active:boolean;onActivate:()=>void;onDeactivate:()=>void;onOpen:()=>void;onRelated?:(value:EvidenceSource)=>void;onPage?:(page:number,value:EvidenceSource)=>void;onTrend?:(id:string,value:SimulatedTrend)=>void;onAvailability?:(id:string,state:string)=>void;full?:boolean;viewOnly?:boolean;onView?:(view:CardView)=>void;cursor?:number|null;onCursor?:(value:number|null)=>void;anchor?:SourceAnchor|null;onAddMaterial?:(item:Recommendation)=>void;onUpdateWorkOrder?:(item:Recommendation)=>Promise<boolean>;
+  onAdoptDocumentVersion?:(source:EvidenceSource,version:FixedDocument,page:number)=>Promise<boolean>};
 const refKey=(card:CanvasCard)=>card.source?.id+':'+card.source?.revision;
-export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,en,active,onActivate,onDeactivate,onOpen,onRelated,onPage,onTrend,onAvailability,onView,cursor,onCursor,anchor,onAddMaterial,onUpdateWorkOrder,full=false,viewOnly=false}:Props){
+export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,en,active,onActivate,onDeactivate,onOpen,onRelated,onPage,onTrend,onAvailability,onView,cursor,onCursor,anchor,onAddMaterial,onUpdateWorkOrder,onAdoptDocumentVersion,full=false,viewOnly=false}:Props){
   const [detail,setDetail]=useState<EvidenceDetail|null>(null),[image,setImage]=useState(''),[error,setError]=useState(false),[retry,setRetry]=useState(0),[slow,setSlow]=useState(false),[authorized,setAuthorized]=useState(''),[cancelled,setCancelled]=useState(false);
   const [original,setOriginal]=useState(false),[imagePending,setImagePending]=useState(false),[progressOpen,setProgressOpen]=useState(false);
   const [orderAttachment,setOrderAttachment]=useState<FixedAttachment|null>(null),[orderBasis,setOrderBasis]=useState(false);
@@ -61,7 +63,8 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
   const value=detail?.source;
   if(error||detail&&detail.availability!=='available')return <div className="ac-source-state" role="status"><strong>{detail?.availability==='restricted'?(en?'Access removed':'资料访问已撤销'):(en?'Source temporarily unavailable':'资料暂时不可用')}</strong><small>{detail?.reason}</small><Btn onClick={()=>setRetry(v=>v+1)}><RefreshCw size={13}/>{en?'Retry':'重试'}</Btn></div>;
   if(!value)return <div className="ac-source-state" role="status">{slow?(en?'The source is slow. You can continue with other cards.':'来源读取较慢，可继续操作其他卡片。'):(en?'Loading source…':'正在读取资料…')}<Btn onClick={()=>setRetry(v=>v+1)}>{en?'Retry':'重新读取'}</Btn></div>;
-  if(full&&['drawing','document'].includes(card.kind))return <Suspense fallback={<p role="status">{en?'Loading viewer…':'正在载入查看器…'}</p>}><EvidenceViewer card={card} source={value} sources={sources} en={en} anchor={anchor} onAdd={onAddMaterial}/></Suspense>;
+  if(full&&['drawing','document'].includes(card.kind))return <Suspense fallback={<p role="status">{en?'Loading viewer…':'正在载入查看器…'}</p>}><EvidenceViewer key={refKey(card)} card={card} source={value} sources={sources} en={en}
+    anchor={anchor} onAdd={onAddMaterial} onAdoptVersion={viewOnly?undefined:onAdoptDocumentVersion}/></Suspense>;
   const asset=['photo','drawing','document'].includes(card.kind);
   return <div className={`ac-source ac-source-${card.kind}`} data-canvas-inner>
     {!viewOnly&&<div className="ac-source-toolbar"><small>{card.historical?(en?'Historical reference':'历史参考'):en?'Fixed source':'固定来源'}{value.versionNumber?' · v'+value.versionNumber:''}</small>

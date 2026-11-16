@@ -14,6 +14,33 @@ from tests import test_work_orders as orders
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_document_comparison_target_does_not_replace_or_requery_the_fixed_version(self):
+        document_id, fixed_id, current_id = (str(uuid4()) for _ in range(3))
+        descriptor = dict(documentId=document_id, contentVersionId=fixed_id, sourceSha256='a'*64, pageNumber=3)
+        document = dict(name='Synthetic versioned PDF', status='active', kind='manual', current_version_id=current_id)
+        version = dict(source_sha256='a'*64, preview_kind='pdf', page_count=6, version_number=1)
+        prefix = '/api/v1/projects/P/documents/' + document_id
+        responses = {prefix: {'item': document}, prefix+'/versions/'+fixed_id: {'item': version},
+                     prefix+'/versions/'+fixed_id+'/navigation': {'outline': []}}
+        read = Mock(side_effect=lambda _, path: responses[path])
+        authorize = Mock()
+        source = AnalysisSourceReader(SimpleNamespace(prefix='/api/v1/projects/P', _request=read),
+                                      None, None, authorize, 'owner')
+        result = source.read('document', descriptor)
+        self.assertEqual(result['currentContentVersionId'], current_id)
+        self.assertTrue(result['newerVersionAvailable'])
+        self.assertEqual({key: result[key] for key in descriptor}, descriptor)
+        self.assertEqual([call.args[1] for call in read.call_args_list], list(responses))
+        self.assertEqual(authorize.call_count, 2)
+        for target in (None, fixed_id):
+            document['current_version_id'] = target
+            result = source.read('document', descriptor)
+            self.assertFalse(result['newerVersionAvailable'])
+            self.assertNotIn('currentContentVersionId', result)
+        document['status'] = 'recycled'
+        with self.assertRaises(PreviewError):
+            source.read('document', descriptor)
+
     def test_browser_catalogue_can_include_one_fixed_replay_without_changing_plain_catalogue(self):
         self.assertEqual(sim.browser_catalogue('Demo-PDS', {}), sim.catalogue('Demo-PDS'))
         for code in sim.PROFILES:

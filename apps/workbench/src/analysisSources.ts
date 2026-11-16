@@ -1,5 +1,5 @@
 import type {DraftApi} from './AnalysisWorkspace';
-import type {SourceRef} from './analysisCanvas';
+import type {CanvasCard,SourceRef} from './analysisCanvas';
 import type {ProjectModelVersion} from './resourceTypes';
 import type {PhotoSelector} from './workOrderTypes';
 import type {Investigation,DiagnosticNode} from './workOrderTypes';
@@ -7,6 +7,7 @@ import type {ObjectClassification} from './types';
 import type {SimulatedTrend,SimulatedDataset,SimulatedAlarm} from './simulatedAlarms';
 import type {WorkOrderReferenceEntry} from './workOrderReferences';
 import type {Workflow} from './workOrderWorkflow';
+import type {FixedDocument} from './equipmentApi';
 
 export const ANALYSIS_ROOT='/api/workbench/analysis-sessions';
 export type AnalysisEntry={projectOnly:true}|{entityUid:string;expectedEntityRevision:string;timeTo:string}|{datasetId:string;datasetRevision:string}|{orderId:string}|{analysisSessionId:string;analysisRevision:number;assistantRunId?:string;assistantQuestion?:string;openLatest?:true}|{newDraft:true}|WorkOrderReferenceEntry;
@@ -29,7 +30,7 @@ export type Recommendation={key:string;kind:SourceKind;title:string;reason:strin
 export type Recommendations={items:Recommendation[];nextOffset:number|null;nextCursor?:string|null;gaps:string[];dataset:SimulatedDataset|null;order?:'relevance'|'source'};
 export type EvidenceSource=Partial<Omit<ProjectModelVersion,'state'> & SimulatedTrend>&{
   title?:string;pageNumber?:number;pageCount?:number;versionNumber?:number;newerVersionAvailable?:boolean;
-  documentId?:string;contentVersionId?:string;sourceSha256?:string;selector?:PhotoSelector|null;
+  documentId?:string;contentVersionId?:string;currentContentVersionId?:string;sourceSha256?:string;selector?:PhotoSelector|null;
   photoPurpose?:'object_location'|'field_record';sourceType?:'project_document';equipmentEntityUid?:string|null;
   outline?:{title:string;page:number}[];
   knowledgeReleaseId?:string;knowledgeNodeId?:string;
@@ -48,6 +49,19 @@ export type DrawingClassification={code:string;revisionId?:string;tableRevision?
 export type PreviewRow={id:string;title:string;identifier?:string;owner?:string;ownerId?:string|null;objectType?:string|null;classification?:DrawingClassification|null;bbox?:{x:number;y:number;width:number;height:number}|null;pathPoints?:Array<{x:number;y:number}>|null;state?:string;properties?:Record<string,unknown>;sourceInstanceId?:string;selector?:Record<string,string>;targetTitle?:string;targetDrawingUid?:string;targetRevision?:string;reason?:string;semantics?:string;entityUid?:string};
 export type KnowledgeNode={id:string;kind:string;title:string;statement:string;faultCode?:string;properties:Record<string,string>};
 export type SourcePreview={kind:string;title?:string;drawingUid?:string;drawingNumber?:string;pageNumber?:number;sourceRevision?:string;focusId?:string;selector?:PhotoSelector|null;gaps:string[];nextCursor:number|null;total?:number;objects?:PreviewRow[];ports?:PreviewRow[];connections?:PreviewRow[];references?:PreviewRow[];nodes?:KnowledgeNode[];relations?:{id:string;from:string;to:string;label:string}[];evidence?:{id:string;text:string;page:number;bbox:PreviewRow['bbox'];renditionId?:string}[];scope?:Record<string,unknown>;limitations?:Record<string,unknown>;releaseId?:string};
+
+export function documentVersionChoice(source:EvidenceSource,version:FixedDocument,page:number):Recommendation|null {
+  if(!source.newerVersionAvailable||!source.contentVersionId||version.kind!=='pdf'||version.documentId!==source.documentId
+    ||version.contentVersionId!==source.currentContentVersionId||version.contentVersionId===source.contentVersionId
+    ||!Number.isInteger(page)||!Number.isInteger(version.pageCount)||page<1||page>Math.min(version.pageCount,10000)
+    ||!/^[a-f0-9]{64}$/.test(version.sourceSha256))return null;
+  return {key:version.contentVersionId,kind:'document',title:version.title,reason:'',selector:{documentId:version.documentId,
+    contentVersionId:version.contentVersionId,sourceSha256:version.sourceSha256,pageNumber:page}};
+}
+
+export function keepFixedDocumentCard(card:CanvasCard,source:EvidenceSource):boolean {
+  return !!(card.historical||source.knowledgeReleaseId||source.knowledgeNodeId);
+}
 
 export function setCardPreviewOpen(current:ReadonlySet<string>,id:string,open:boolean):ReadonlySet<string>{
   if(current.has(id)===open)return current;

@@ -41,8 +41,8 @@ export interface FixedDocument {documentId:string;contentVersionId:string;source
 export interface EquipmentModelAttributes {available:boolean;reason:string|null;model:EquipmentModel|null;relation:'equipment'|'assembly'|null;equipmentName?:string;fields:ApplicationBundle['template']['fields'];values:PropertyValue[]}
 export interface EquipmentAttributeForm {available:boolean;reason:string|null;model:EquipmentModel|null;scope?:{source:string;name:string;classificationCode:string};fields:ApplicationBundle['template']['fields'];values:PropertyValue[];modelAttributes?:EquipmentModelAttributes}
 export class EquipmentApi {
-  private api:WorkbenchApi;
-  constructor(api:WorkbenchApi){this.api=api;}
+  private readonly api:Pick<WorkbenchApi,'request'>;
+  constructor(api:Pick<WorkbenchApi,'request'>){this.api=api;}
   catalogue(q='',cursor:string|null=null,signal?:AbortSignal){return this.api.request<EquipmentCatalogue>(ROOT,{q,cursor,limit:50,rootsOnly:true},signal);}
   configurations(signal?:AbortSignal){return this.api.request<EquipmentConfigurations>(ROOT+'/configurations',{},signal);}
   resolve(entityUids:string[],signal?:AbortSignal){return this.api.request<{items:EquipmentRecord[]}>(ROOT+'/resolve',{entityUids},signal);}

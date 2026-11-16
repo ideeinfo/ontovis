@@ -158,10 +158,13 @@ class AnalysisSourceReader:
             version = self.reader._request('GET', prefix + '/versions/' + descriptor['contentVersionId'])['item']
             draft.require(version['source_sha256'] == descriptor['sourceSha256'], 'SOURCE_CHANGED', 409)
             draft.require(version['preview_kind'] == 'pdf' and 1 <= descriptor['pageNumber'] <= (version.get('page_count') or 0), 'ANALYSIS_DOCUMENT_PAGE_UNAVAILABLE', 409)
+            current_version = document.get('current_version_id')
             value = {'title': document['name'], 'documentId': descriptor['documentId'], 'contentVersionId': descriptor['contentVersionId'],
                 'pageNumber': descriptor['pageNumber'], 'pageCount': version['page_count'], 'versionNumber': version['version_number'],
                 'sourceSha256': version['source_sha256'], 'mediaType': 'application/pdf', 'kind': document['kind'],
-                'newerVersionAvailable': document['current_version_id'] != descriptor['contentVersionId']}
+                'newerVersionAvailable': bool(isinstance(current_version, str) and current_version and current_version != descriptor['contentVersionId'])}
+            if value['newerVersionAvailable']:
+                value['currentContentVersionId'] = current_version
             navigation = self.reader._request('GET',prefix+'/versions/'+descriptor['contentVersionId']+'/navigation')
             value['outline'] = [{'title':row['title'],'page':row['page']}
                 for row in navigation.get('outline',[])[:200]

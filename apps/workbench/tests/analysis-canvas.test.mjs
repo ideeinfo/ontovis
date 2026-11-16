@@ -1,9 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {validateSnapshot,moveCard,removeCard,addManualRelation,arrangeCards,fitViewport,zoomAt,visibleSource} from '../src/analysisCanvas.ts';
+import {documentVersionChoice,keepFixedDocumentCard} from '../src/analysisSources.ts';
 const scope={ontobaseConnectionId:'fixture-connection',projectCode:'Demo-PDS'};
 const card=(id,x=0,y=0,pinned=false)=>({id,kind:'object',title:'合成对象',x,y,width:300,height:200,pinned,source:{system:'ontobase',...scope,id:'fixture-'+id,revision:'fixture-r1'}});
 const initial=()=>({schemaVersion:1,...scope,title:'温度报警排查',status:'analyzing',context:{objectIds:['fixture-a'],eventId:'fixture-event',workOrderId:'fixture-order',timeFrom:'2026-10-25T00:00:00Z',timeTo:'2026-10-25T02:00:00Z',timezone:'Asia/Shanghai'},cards:[card('a'),card('b',350)],relations:[],viewport:{x:24,y:24,zoom:1}});
+test('adopting a compared document uses only its fixed document, exact version, digest and selected page',()=>{
+  const source={documentId:'manual-a',contentVersionId:'v1',currentContentVersionId:'v2',newerVersionAvailable:true};
+  const version={documentId:'manual-a',contentVersionId:'v2',kind:'pdf',sourceSha256:'b'.repeat(64),pageCount:4,title:'同名手册'};
+  assert.deepEqual(documentVersionChoice(source,version,2)?.selector,
+    {documentId:'manual-a',contentVersionId:'v2',sourceSha256:'b'.repeat(64),pageNumber:2});
+  for(const valid of [{...version,documentId:'manual-b'},{...version,contentVersionId:'v3'},
+    {...version,contentVersionId:'v1'},{...version,kind:'photo'},{...version,sourceSha256:'changed'}]){
+    assert.equal(documentVersionChoice(source,valid,2),null);
+  }
+  for(const page of [0,1.5,5,NaN])assert.equal(documentVersionChoice(source,version,page),null);
+  assert.equal(documentVersionChoice({...source,newerVersionAvailable:false},version,2),null);
+});
+test('historical references and published knowledge keep their existing fixed cards when adopting a version',()=>{
+  const document={...card('document'),kind:'document'};
+  assert.equal(keepFixedDocumentCard(document,{}),false);
+  assert.equal(keepFixedDocumentCard(document,{knowledgeReleaseId:'fixed-release'}),true);
+  assert.equal(keepFixedDocumentCard(document,{knowledgeNodeId:'fixed-node'}),true);
+  assert.equal(keepFixedDocumentCard({...document,historical:true},{}),true);
+});
 test('canvas references are fixed to the current project and a declared revision',()=>{
   const value=initial();assert.deepEqual(validateSnapshot(value,scope),[]);
   assert.ok(validateSnapshot(value,{...scope,projectCode:'another'}).length);

@@ -5,7 +5,9 @@ import {Btn} from './Primitives';
 import {WorkOrderPhotoViewport} from './WorkOrderPhotoViewport';
 import {DrawingContentList} from './DrawingContentList';
 import {drawingObjectLocationLabel} from './drawingGroups';
-import {AnalysisSources,type EvidenceSource,type KnowledgeNode,type PreviewRow,type SourceAnchor,type SourcePreview,type Recommendation} from './analysisSources';
+import {AnalysisSources,keepFixedDocumentCard,type EvidenceSource,type KnowledgeNode,type PreviewRow,type SourceAnchor,type SourcePreview,type Recommendation} from './analysisSources';
+import {FixedDocumentPreview} from './FixedDocumentPreview';
+import type {FixedDocument} from './equipmentApi';
 import type {CanvasCard} from './analysisCanvas';
 import type {PhotoSelector} from './workOrderTypes';
 
@@ -31,7 +33,9 @@ function KnowledgeGraph({nodes,relations,selected,onSelect}:{nodes:KnowledgeNode
   </div></div>;
 }
 
-export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{card:CanvasCard;source:EvidenceSource;sources:AnalysisSources;en:boolean;anchor?:SourceAnchor|null;onAdd?:(item:Recommendation)=>void}){
+export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd,onAdoptVersion}:{card:CanvasCard;source:EvidenceSource;
+  sources:AnalysisSources;en:boolean;anchor?:SourceAnchor|null;onAdd?:(item:Recommendation)=>void;
+  onAdoptVersion?:(source:EvidenceSource,version:FixedDocument,page:number)=>Promise<boolean>}){
   const t=(zh:string,eng:string)=>en?eng:zh;
   const document=card.kind==='document';
   const [section,setSection]=useState('objects'),[mode,setMode]=useState(document&&source.knowledgeNodeId&&!anchor?.pageNumber?'graph':'page');
@@ -41,6 +45,11 @@ export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{ca
   const [citation,setCitation]=useState<PhotoSelector|null>(null);
   const [graphScope,setGraphScope]=useState('related');
   const [rowFocus,setRowFocus]=useState(0);
+  const [comparing,setComparing]=useState(false);
+  const compareTarget=document&&source.newerVersionAvailable&&source.documentId&&source.currentContentVersionId
+    &&source.currentContentVersionId!==source.contentVersionId&&source.versionNumber!=null&&source.pageNumber!=null
+    ?{documentId:source.documentId,contentVersionId:source.currentContentVersionId,title:source.title||card.title,
+      versionNumber:source.versionNumber,pageNumber:source.pageNumber}:null;
   useEffect(()=>{const abort=new AbortController();setLoading(true);setError(false);
     void sources.preview(card.source!,document?{cursor,graphScope,...(filter?{q:filter}:{}),...(node?{nodeId:node}:{})}:{section,cursor},abort.signal)
       .then(value=>{if(!abort.signal.aborted){setPreview(value);if(!selected&&value.focusId)setSelected(value.focusId);if(document&&!node&&value.focusId)setNode(value.focusId);}})
@@ -61,7 +70,7 @@ export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{ca
       ??evidence.find(row=>row.text&&row.text.trim().length>5&&chosenNode?.statement?.includes(row.text.trim()))??evidence[0];
     if(first)showEvidence(first);else setMode('page');};
   const showSection=(value:string)=>{setSection(value);setSelected('');setCursor(0);setFilter('');setQuery('');};
-  return <div className="ac-evidence-viewer">
+  return <><div className="ac-evidence-viewer">
     <aside className="ac-preview-list">
       <header><strong>{t(document?'文档导航':'图纸内容',document?'Document navigation':'Drawing content')}</strong></header>
       {document?<><Tabs.Root value={mode} onValueChange={setMode}><Tabs.List className="ac-preview-tabs"><Tabs.Trigger value="page"><BookOpen size={14}/>{t('正文','Pages')}</Tabs.Trigger><Tabs.Trigger value="graph"><GitBranch size={14}/>{t('知识图谱','Knowledge graph')}</Tabs.Trigger></Tabs.List></Tabs.Root>
@@ -76,7 +85,8 @@ export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{ca
       {loading&&<small role="status">{t('正在读取内容…','Loading content…')}</small>}{error&&<div role="alert">{t('来源读取失败','Source unavailable')}<Btn onClick={()=>setReload(v=>v+1)}><RefreshCw size={13}/>{t('重试','Retry')}</Btn></div>}
       {preview?.nextCursor!=null&&<Btn onClick={()=>setCursor(preview.nextCursor!)}>{t('下一页','Next page')}</Btn>}{cursor>0&&<Btn onClick={()=>setCursor(0)}><ArrowLeft size={13}/>{t('返回首批','First page')}</Btn>}
     </aside>
-    <main className="ac-preview-main"><div className="ac-preview-heading"><strong>{document?(mode==='graph'?t('文档知识图谱','Document knowledge graph'):t(`第 ${page} 页`,`Page ${page}`)):preview?.title||card.title}</strong><small>{document?source.knowledgeReleaseId?t('已发布知识','Published knowledge'):t('固定文档版本','Fixed document version'):preview?.drawingNumber}</small></div>
+    <main className="ac-preview-main"><div className="ac-preview-heading"><strong>{document?(mode==='graph'?t('文档知识图谱','Document knowledge graph'):t(`第 ${page} 页`,`Page ${page}`)):preview?.title||card.title}</strong><small>{document?source.knowledgeReleaseId?t('已发布知识','Published knowledge'):t('固定文档版本','Fixed document version'):preview?.drawingNumber}</small>
+      {compareTarget&&<Btn onClick={()=>setComparing(true)}>{t('对照版本','Compare versions')}</Btn>}</div>
       {document&&mode==='graph'?<KnowledgeGraph nodes={preview?.nodes||[]} relations={preview?.relations||[]} selected={node||preview?.focusId||''} onSelect={chooseNode}/>:image?<div className="ac-photo-view"><WorkOrderPhotoViewport key={`${card.source!.id}:${page}`} embedded focusZoom={null} focusFraction={.35} image={image} decodedImage={sources.decodedImage(image)} selector={selector} label={card.title} regionLabel={!document&&section==='objects'?drawingObjectLocationLabel(chosen,en):undefined} en={en} onError={()=>setImageError(true)}
         isPort={!document&&section==='ports'} connectionPath={!document&&section==='connections'&&chosen?.pathPoints?chosen.pathPoints:null}
         regions={rows.filter((row):row is PreviewRow&{bbox:NonNullable<PreviewRow['bbox']>}=>!!row.bbox).map(row=>({id:row.id,title:row.title,bbox:row.bbox}))} onRegion={id=>{setSelected(id);setQuery('');setRowFocus(value=>value+1);}}/></div>:<div className="ac-source-state" role="status">{imageError?t('图像读取失败，可重试','Image unavailable; retry'):t('正在载入页面…','Loading page…')}<Btn onClick={()=>setReload(v=>v+1)}>{t('重试','Retry')}</Btn></div>}
@@ -91,5 +101,9 @@ export function AnalysisEvidenceViewer({card,source,sources,en,anchor,onAdd}:{ca
         {chosen.selector&&onAdd&&<Btn primary onClick={()=>onAdd?.({key:chosen.id,kind:'drawing',title:chosen.targetTitle||chosen.title,reason:chosen.reason||t('图纸中的已登记引用','Recorded drawing reference'),selector:chosen.selector!})}><ExternalLink size={14}/>{t('打开引用图纸并放入画布','Open referenced drawing')}</Btn>}
       </>:<p>{t('选择图面中的对象，或从左侧列表交叉定位。','Select an object on the drawing or in the list.')}</p>}
     </aside>
-  </div>;
+  </div>
+    {comparing&&compareTarget&&<FixedDocumentPreview api={sources.api} item={compareTarget} en={en} onClose={()=>setComparing(false)}
+      comparison={{versionNumber:compareTarget.versionNumber,pageNumber:compareTarget.pageNumber,
+        addAsNew:keepFixedDocumentCard(card,source),onUse:onAdoptVersion?(version,page)=>onAdoptVersion(source,version,page):undefined}}/>}
+  </>;
 }
