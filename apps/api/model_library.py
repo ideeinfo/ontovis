@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import time
 from threading import BoundedSemaphore
 from uuid import UUID, uuid4
 from .authority import PreviewError
@@ -127,15 +128,38 @@ class ModelLibrary:
             if not isinstance(body[key],str) or not 0 < len(body[key].strip()) <= limit or any(ord(c)<32 for c in body[key]): raise PreviewError(422,'INVALID_REQUEST')
         if body['rightsDeclared'] is not True: raise PreviewError(422,'MODEL_RIGHTS_REQUIRED')
 
-    def process(self, path):
+    def process(self, path, *, cancelled=None):
+        args = [sys.executable, '-m', 'apps.api.model_validation', str(path)]
+        options = dict(cwd=Path(__file__).resolve().parents[2], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
-            result = subprocess.run([sys.executable,'-m','apps.api.model_validation',str(path)],
-                cwd=Path(__file__).resolve().parents[2], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=12)
+            if cancelled is None:
+                result = subprocess.run(args, **options, timeout=12)
+                output, code = result.stdout, result.returncode
+            else:
+                with subprocess.Popen(args, **options) as child:
+                    deadline = time.monotonic() + 12
+                    try:
+                        while True:
+                            if cancelled():
+                                raise PreviewError(409, 'MODEL_JOB_CANCELLED')
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise subprocess.TimeoutExpired(args, 12)
+                            try:
+                                output, _ = child.communicate(timeout=min(remaining, .15))
+                                code = child.returncode
+                                break
+                            except subprocess.TimeoutExpired:
+                                continue
+                    finally:
+                        if child.returncode is None:
+                            child.kill()
+                            child.communicate()
         except subprocess.TimeoutExpired: raise PreviewError(422,'MODEL_LIMIT_EXCEEDED') from None
-        if len(result.stdout)>512*1024 or result.returncode not in (0,2): raise PreviewError(422,'MODEL_LIMIT_EXCEEDED')
-        try: value = json.loads(result.stdout)
+        if len(output)>512*1024 or code not in (0,2): raise PreviewError(422,'MODEL_LIMIT_EXCEEDED')
+        try: value = json.loads(output)
         except (ValueError,UnicodeError): raise PreviewError(422,'INVALID_MODEL') from None
-        if result.returncode: raise PreviewError(422,value.get('code','INVALID_MODEL'))
+        if code: raise PreviewError(422,value.get('code','INVALID_MODEL'))
         return value
 
     def save_upload(self, path, body, actor, result, authorize):

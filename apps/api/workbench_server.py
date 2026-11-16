@@ -22,6 +22,7 @@ from apps.api.session_http import handler_type
 from apps.api.model_assets import ModelAsset
 from apps.api.model_library import ModelLibrary
 from apps.api.project_model_library import ProjectModelLibrary
+from apps.api.model_upload_jobs import ModelUploadJobs
 from apps.api.model_resource_metadata import ModelResourceMetadata, MAX_METADATA_BYTES, MAX_METADATA_REQUEST_BYTES
 from apps.api.model_thumbnails import ModelThumbnails, ThumbnailRenderer, MAX_PNG_BYTES
 from apps.api.model_validation import MAX_BYTES
@@ -48,7 +49,7 @@ from apps.api.equipment_reader import EquipmentReader
 class WorkbenchSessions(UserSessions):
     def __init__(self, base_url, project_code, installation_context_id, *, model_root=None, library_root=None, terrain_python=None,
                  terrain_max_upload_bytes=MAX_TERRAIN_BYTES, ontobase_connection_id='ontobase-primary',
-                 thumbnail_renderer=None, thumbnail_node=None, thumbnail_browser=None, **kwargs):
+                 thumbnail_renderer=None, thumbnail_node=None, thumbnail_browser=None, enable_model_jobs=True, **kwargs):
         if type(terrain_max_upload_bytes) is not int or not 8 <= terrain_max_upload_bytes <= MAX_TERRAIN_BYTES:
             raise ValueError('Invalid configured terrain upload limit')
         if any(value is not None for value in (thumbnail_renderer, thumbnail_node, thumbnail_browser)) and not all(
@@ -67,6 +68,7 @@ class WorkbenchSessions(UserSessions):
         self.model = ModelAsset(Path(model_root), project_code, self.context_id) if model_root else None
         self.library = ModelLibrary(Path(library_root),project_code,self.context_id) if library_root else None
         self.project_models = ProjectModelLibrary(self.library) if self.library else None
+        self.model_upload_jobs = ModelUploadJobs(self.project_models) if self.project_models and enable_model_jobs else None
         self.model_inspection = ModelInspection(self.project_models) if self.project_models else None
         self.model_metadata = ModelResourceMetadata(self.project_models) if self.project_models else None
         self.thumbnails = ModelThumbnails(self.project_models,
@@ -335,6 +337,8 @@ class WorkbenchSessions(UserSessions):
             'canDeleteModels': access.get('role') == 'admin', 'modelLifecycleWriteVersion': 1,
             'canGenerateThumbnails': self.thumbnails is not None and access.get('role') == 'admin',
             'calibrationRequiredForGeographicPlacement': True, 'automaticLegacyAdoption': False}
+        if self.model_upload_jobs is not None:
+            value['capabilities']['modelUploadJobVersion'] = 1
         limits = ProjectModelLibrary.capabilities()
         value['limits'] = {key: limits[key] for key in ('maxUploadBytes', 'maxVersions', 'maxLibraryBytes')}
         value['limits'].update({'maxMetadataHeaderBytes': 8192,
@@ -342,6 +346,11 @@ class WorkbenchSessions(UserSessions):
             'maxResourceMetadataBytes': MAX_METADATA_BYTES, 'maxResourceMetadataRequestBytes': MAX_METADATA_REQUEST_BYTES,
             'maxThumbnailBytes': MAX_PNG_BYTES})
         return value
+
+    def model_upload_response(self, value, row, access):
+        if value['result'] is not None:
+            value['result'] = self.resource_response(value['result'], row, access)
+        return self.resource_response(value, row, access)
 
     def resource_authorization(self, sid, payload, *, writing, read_capabilities=True):
         if hasattr(self, 'model_authorization'):
@@ -353,8 +362,24 @@ class WorkbenchSessions(UserSessions):
         if self.project_models is None:
             raise PreviewError(503, 'MODEL_UNAVAILABLE')
         metadata = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
+        job_version = metadata.pop('processingJobVersion', None)
+        if 'processingJobVersion' in payload and (type(job_version) is not int or job_version != 1):
+            raise PreviewError(422, 'INVALID_REQUEST')
         authorize = self.model_definition_guard(sid, metadata, authorize)
-        value = self.project_models.upload(stream, length, metadata, actor, authorize)
+        if job_version == 1:
+            if self.model_upload_jobs is None:
+                raise PreviewError(503, 'MODEL_PROCESSING_UNAVAILABLE')
+            def on_ready(value):
+                if self.thumbnails is not None:
+                    try:
+                        self.thumbnails.automatic(value, actor, authorize)
+                    except (OSError, PreviewError):
+                        pass
+            value = self.model_upload_jobs.start(stream, length, metadata, actor, authorize, on_ready)
+            authorize()
+            return self.model_upload_response(value, row, access)
+        value = self.project_models.upload(stream, length, metadata, actor, authorize,
+            require_unclaimed=self.model_upload_jobs.require_unclaimed if self.model_upload_jobs else None)
         if self.thumbnails is not None: self.thumbnails.automatic(value, actor, authorize)
         authorize()
         return self.resource_response(value, row, access)
@@ -377,13 +402,22 @@ class WorkbenchSessions(UserSessions):
                            '/api/workbench/resources/model/preserve-legacy-display',
                            '/api/workbench/resources/model/metadata/save', '/api/workbench/resources/model/info/save',
                            '/api/workbench/resources/model/delete', '/api/workbench/resources/model/restore',
-                           '/api/workbench/resources/model/thumbnail/ensure')
+                           '/api/workbench/resources/model/thumbnail/ensure',
+                           '/api/workbench/resources/model/upload-job/cancel')
         row, authorize, access, actor = self.resource_authorization(sid, payload,
             writing=writing, read_capabilities=not path.endswith('/content'))
         if self.project_models is None or self.scenes is None:
             raise PreviewError(503, 'MODEL_UNAVAILABLE')
+        if '/upload-job' in path and self.model_upload_jobs is None:
+            raise PreviewError(503, 'MODEL_PROCESSING_UNAVAILABLE')
         body = {key: value for key, value in payload.items() if key != 'expectedSessionRevision'}
-        if path == '/api/workbench/resources/models' and set(body).issubset(
+        if path == '/api/workbench/resources/model/upload-job' and set(body) == {'jobId'}:
+            value = self.model_upload_jobs.status(body['jobId'], actor, authorize)
+            return self.model_upload_response(value, row, access)
+        elif path == '/api/workbench/resources/model/upload-job/cancel' and set(body) == {'jobId', 'expectedJobRevision'}:
+            value = self.model_upload_jobs.cancel(body['jobId'], body['expectedJobRevision'], actor, authorize)
+            return self.model_upload_response(value, row, access)
+        elif path == '/api/workbench/resources/models' and set(body).issubset(
                 {'q', 'purpose', 'cursor', 'expectedLibraryRevision', 'limit', 'state'}):
             options = dict(body)
             if 'expectedLibraryRevision' in options:

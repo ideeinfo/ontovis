@@ -562,7 +562,7 @@ class ProjectModelLibrary:
                  'MODEL_LIBRARY_FULL', 413)
 
     def _commit(self, path, metadata, actor, authorize, result, *, action, payload_digest,
-                calibration=None, source_version_id=None, legacy_source=False):
+                calibration=None, source_version_id=None, legacy_source=False, record_ready=None):
         identifier, asset_id, now = str(uuid4()), metadata.get('modelAssetId') or str(uuid4()), _now()
         target = self.library.root / 'files' / (identifier + '.glb')
         committed = published = False
@@ -572,6 +572,8 @@ class ProjectModelLibrary:
                 prior = self._prior(db, actor, action, metadata['clientRequestId'], payload_digest)
                 if prior is not None:
                     authorize(); self._content(prior)
+                    if record_ready:
+                        record_ready(db, prior)
                     return prior
                 if legacy_source: self._legacy_source(db, metadata)
                 _require(self.library.revision(db) == metadata['expectedLibraryRevision'], 'MODEL_LIBRARY_CHANGED', 409)
@@ -633,6 +635,8 @@ class ProjectModelLibrary:
                     legacy = self._preservation_source(db, self._version(db, source_version_id))
                     _require(calibration['sourceModelVersionId'] == legacy['id']
                              and calibration['sourceSha256'] == legacy['sha256'], 'RESOURCE_CHANGED', 409)
+                if record_ready:
+                    record_ready(db, value)
                 db.commit(); committed = True
                 return value
         except OSError:
@@ -640,30 +644,47 @@ class ProjectModelLibrary:
         finally:
             if published and not committed: target.unlink(missing_ok=True)
 
-    def upload(self, stream, length, metadata, actor, authorize):
+    def _stage_upload(self, stream, length, metadata, *, prefix='project-upload-'):
+        path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=self.library.root / 'temporary', prefix=prefix, suffix='.glb', delete=False) as file:
+                path = Path(file.name)
+                remaining, digest = length, hashlib.sha256()
+                while remaining:
+                    chunk = stream.read(min(65536, remaining))
+                    _require(type(chunk) is bytes and 0 < len(chunk) <= min(65536, remaining), 'INVALID_MODEL')
+                    file.write(chunk)
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+                file.flush()
+                os.fsync(file.fileno())
+            sha = digest.hexdigest()
+            payload = hashlib.sha256(_canonical({'metadata': metadata, 'sha256': sha, 'bytes': length}).encode()).hexdigest()
+            return path, sha, payload
+        except BaseException:
+            if path:
+                path.unlink(missing_ok=True)
+            raise
+
+    def upload(self, stream, length, metadata, actor, authorize, *, require_unclaimed=None):
         metadata = self.upload_metadata(metadata); actor = _text(actor)
         _require(callable(authorize)); authorize()
         _require(type(length) is int and 24 <= length <= MAX_BYTES, 'MODEL_LIMIT_EXCEEDED', 413)
         if not self.library.slots.acquire(blocking=False): raise PreviewError(429, 'MODEL_BUSY')
         path = None
         try:
-            with tempfile.NamedTemporaryFile(dir=self.library.root / 'temporary', prefix='project-upload-', suffix='.glb', delete=False) as file:
-                path = Path(file.name); remaining, digest = length, hashlib.sha256()
-                while remaining:
-                    chunk = stream.read(min(65536, remaining))
-                    _require(type(chunk) is bytes and 0 < len(chunk) <= min(65536, remaining), 'INVALID_MODEL')
-                    file.write(chunk); digest.update(chunk); remaining -= len(chunk)
-                file.flush(); os.fsync(file.fileno())
-            payload_digest = hashlib.sha256(_canonical({'metadata': metadata, 'sha256': digest.hexdigest(), 'bytes': length}).encode()).hexdigest()
+            path, digest, payload_digest = self._stage_upload(stream, length, metadata)
             authorize()
             with self.library.connect() as db:
                 prior = self._prior(db, actor, 'upload', metadata['clientRequestId'], payload_digest)
+                if prior is None and require_unclaimed:
+                    require_unclaimed(db, actor, metadata['clientRequestId'])
             if prior is not None:
                 self._content(prior); authorize()
                 return prior
             authorize()
             result = self.library.process(path)
-            _require(result['sha256'] == digest.hexdigest() and result['report']['bytes'] == length, 'RESOURCE_CHANGED', 409)
+            _require(result['sha256'] == digest and result['report']['bytes'] == length, 'RESOURCE_CHANGED', 409)
             return self._commit(path, metadata, actor, authorize, result, action='upload', payload_digest=payload_digest)
         except OSError:
             raise PreviewError(503, 'MODEL_STORAGE_UNAVAILABLE') from None

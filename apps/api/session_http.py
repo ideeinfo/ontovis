@@ -246,6 +246,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             resource_paths = ('/api/workbench/resources/models', '/api/workbench/resources/model',
                               '/api/workbench/project-turbine-definitions',
                               '/api/workbench/resources/model/inspection',
+                              '/api/workbench/resources/model/upload-job', '/api/workbench/resources/model/upload-job/cancel',
                               '/api/workbench/resources/model/content', '/api/workbench/resources/model/calibrate',
                               '/api/workbench/resources/model/preserve-legacy-display',
                               '/api/workbench/resources/uses', '/api/workbench/resources/models/legacy',

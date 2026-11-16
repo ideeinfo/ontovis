@@ -1,5 +1,5 @@
 import type {ModelResourceMetadata} from './modelResourceMetadata';
-import type {ModelLifecycleRequest,ModelLifecycleResult} from './resourceTypes';
+import type {ModelLifecycleRequest,ModelLifecycleResult,ModelUploadJob} from './resourceTypes';
 import {ApiError, type WorkbenchApi} from './api.ts';
 import {checkedModelInspection} from './modelInspection.ts';
 import type {SceneCheck, SceneCheckRequest, SceneCreateRequest, SceneHead, SceneList, SceneListRequest,
@@ -126,6 +126,16 @@ export class SceneApi {
   }
   uploadModel(file: Blob, metadata: UploadModelMetadata, signal?: AbortSignal) {
     return this.api.uploadModel<ProjectModelWrite>(file, metadata, signal);
+  }
+  startModelUpload(file:Blob,metadata:UploadModelMetadata,signal:AbortSignal) {
+    return this.api.uploadModel<ModelUploadJob>(file,{...metadata,processingJobVersion:1},signal);
+  }
+  modelUploadJob(jobId:string,signal:AbortSignal) {
+    return this.api.request<ModelUploadJob>(ROOT+'resources/model/upload-job',{jobId},signal);
+  }
+  cancelModelUpload(job:ModelUploadJob,signal:AbortSignal) {
+    return this.api.request<ModelUploadJob>(ROOT+'resources/model/upload-job/cancel',
+      {jobId:job.jobId,expectedJobRevision:job.jobRevision},signal);
   }
   calibrateModel(body: CalibrateModelRequest, signal?: AbortSignal) {
     return this.api.request<ProjectModelWrite>(ROOT + 'resources/model/calibrate', body, signal);

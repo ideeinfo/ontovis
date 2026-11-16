@@ -7,6 +7,9 @@ from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
+import time
 from threading import Event, Thread
 import unittest
 from unittest.mock import patch
@@ -109,6 +112,135 @@ class ProjectModelHttpTests(unittest.TestCase):
     def expect(self, response, status, code):
         self.assertEqual(response[0], status, response[1])
         self.assertEqual(response[1], {'code': code})
+
+    def job(self, identifier, **kwargs):
+        return self.request('/api/workbench/resources/model/upload-job', {'jobId': identifier}, **kwargs)
+
+    def cancel_job(self, value, **kwargs):
+        return self.request('/api/workbench/resources/model/upload-job/cancel',
+            {'jobId': value['jobId'], 'expectedJobRevision': value['jobRevision']}, **kwargs)
+
+    def finish_job(self, identifier):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            status, value, _ = self.job(identifier)
+            self.assertEqual(status, 200, value)
+            if value['state'] in ('ready', 'failed', 'cancelled'):
+                return value
+            time.sleep(.01)
+        self.fail('Model job did not reach a terminal state')
+
+    def require_free_slot(self):
+        self.assertTrue(self.sessions.library.slots.acquire(timeout=5))
+        self.sessions.library.slots.release()
+
+    def test_upload_job_commits_once_and_late_cancel_returns_the_saved_version(self):
+        metadata = self.metadata(processingJobVersion=1)
+        start, result, _ = self.upload(metadata)
+        self.assertEqual(start, 200, result)
+        self.assertEqual(result['state'], 'queued')
+        job = self.finish_job(result['jobId'])
+        self.require_free_slot()
+        self.assertEqual(job['state'], 'ready', job)
+        self.assertEqual(job['result']['report']['triangles'], 3)
+        self.assertTrue(job['result']['capabilities']['canCalibrate'])
+        self.assertEqual(self.content(job['result'])[1], self.data)
+        self.assertEqual(self.upload(metadata)[1]['result']['modelVersionId'], job['result']['modelVersionId'])
+        self.assertEqual(self.cancel_job(result)[1]['state'], 'ready')
+        self.assertEqual(len(self.listing()[1]['items'][0]['versions']), 1)
+        self.expect(self.upload({**metadata, 'sourceNote': 'different'}), 409, 'REQUEST_CONFLICT')
+        appended = self.upload(self.metadata(processingJobVersion=1, modelAssetId=job['result']['modelAssetId']))[1]
+        newer = self.finish_job(appended['jobId'])
+        self.require_free_slot()
+        self.assertEqual(newer['state'], 'ready')
+        self.assertEqual(newer['result']['modelAssetId'], job['result']['modelAssetId'])
+        self.assertNotEqual(newer['result']['modelVersionId'], job['result']['modelVersionId'])
+        self.assertEqual(self.content(job['result'])[1], self.data)
+
+    def test_owned_cancel_wins_against_late_validation_and_releases_the_slot(self):
+        entered, release = Event(), Event()
+        original = self.sessions.library.process
+        def delayed(path, *, cancelled=None):
+            entered.set()
+            release.wait(5)
+            return original(path)
+        metadata = self.metadata(processingJobVersion=1)
+        with patch.object(self.sessions.library, 'process', side_effect=delayed):
+            begun = self.upload(metadata)[1]
+            self.assertTrue(entered.wait(3))
+            try:
+                running = self.job(begun['jobId'])[1]
+                self.assertEqual(running['state'], 'processing')
+                self.expect(self.cancel_job(begun), 409, 'JOB_CHANGED')
+                other = self.login('fixture-other-admin')
+                self.expect(self.job(running['jobId'], client=other), 404, 'MODEL_JOB_NOT_FOUND')
+                self.expect(self.cancel_job(running, client=other), 404, 'MODEL_JOB_NOT_FOUND')
+                receipt = self.cancel_job(running)[1]
+                self.assertEqual(receipt['state'], 'cancelled')
+                self.assertEqual(self.cancel_job(running)[1], receipt)
+            finally:
+                release.set()
+            self.require_free_slot()
+        self.assertEqual(self.job(receipt['jobId'])[1]['state'], 'cancelled')
+        self.assertEqual(self.listing()[1]['items'], [])
+        self.assertEqual(list((self.sessions.library.root/'temporary').glob('model-job-*')), [])
+        self.assertEqual(self.upload(metadata)[1]['state'], 'cancelled')
+        self.expect(self.upload({key: value for key, value in metadata.items() if key != 'processingJobVersion'}),
+                    409, 'REQUEST_CONFLICT')
+
+    def test_cancel_reaps_the_validation_process(self):
+        entered, processes = Event(), []
+        open_process = subprocess.Popen
+        def slow(_args, **options):
+            child = open_process([sys.executable, '-c', 'import time; time.sleep(8)'], **options)
+            processes.append(child)
+            entered.set()
+            return child
+        with patch('apps.api.model_library.subprocess.Popen', side_effect=slow):
+            job = self.upload(self.metadata(processingJobVersion=1))[1]
+            self.assertTrue(entered.wait(3))
+            current = self.job(job['jobId'])[1]
+            self.assertEqual(self.cancel_job(current)[1]['state'], 'cancelled')
+            self.require_free_slot()
+        self.assertIsNotNone(processes[0].returncode)
+        self.assertEqual(self.listing()[1]['items'], [])
+
+    def test_upload_job_revalidates_write_rights_after_processing(self):
+        entered, release = Event(), Event()
+        original = self.sessions.library.process
+        def delayed(path, *, cancelled=None):
+            entered.set()
+            release.wait(5)
+            return original(path)
+        with patch.object(self.sessions.library, 'process', side_effect=delayed):
+            started = self.upload(self.metadata(processingJobVersion=1))[1]
+            try:
+                self.assertTrue(entered.wait(3))
+                self.authority().role = 'reader'
+            finally:
+                release.set()
+            result = self.finish_job(started['jobId'])
+            self.require_free_slot()
+        self.assertEqual((result['state'], result['errorCode']), ('failed','MODEL_WRITE_FORBIDDEN'))
+        self.assertEqual(self.listing()[1]['items'], [])
+
+    def test_interrupted_job_recovery_keeps_legacy_files_and_clears_only_its_stage(self):
+        from apps.api.model_upload_jobs import ModelUploadJobs
+        identifier = str(uuid4())
+        library = self.sessions.library
+        with library.connect() as db:
+            db.execute("insert into project_model_upload_jobs values (?,?,?,'processing',2,null)",
+                ('fixture-admin', identifier, 'a' * 64))
+        temporary = library.root/'temporary'
+        stage, legacy = temporary/'model-job-fixture.glb', temporary/'project-upload-fixture.glb'
+        stage.write_bytes(b'job')
+        legacy.write_bytes(b'old')
+        reopened = ModelUploadJobs(self.sessions.project_models)
+        status = reopened.status(identifier, 'fixture-admin', lambda: None)
+        self.assertEqual((status['state'], status['jobRevision'], status['errorCode']),
+                         ('failed',3,'PROCESSING_INTERRUPTED'))
+        self.assertFalse(stage.exists())
+        self.assertEqual(legacy.read_bytes(), b'old')
 
     def test_real_upload_append_calibration_and_fixed_content_without_default_installation(self):
         self.assertIsNone(self.sessions.model)

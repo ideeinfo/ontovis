@@ -74,6 +74,25 @@ test('resource upload wrappers preserve source declarations and idempotency keys
   assert.equal(calls[0].path,'/api/workbench/resources/model/upload');assert.equal(calls[1].path,'/api/workbench/terrains/upload');
 });
 
+test('model job upload, status and cancellation remain scoped to the connection and use the same ID', async()=>{
+  const calls=[];
+  const transport=new WorkbenchApi(async(path,options)=>{calls.push({path,options});return json({sessionRevision:'session:1'});});
+  transport.session('session:1');
+  transport.selectProject({ontobaseConnectionId:'source',projectCode:'other-site'});
+  const api=new SceneApi(transport),signal=new AbortController().signal,file=new Blob(['x'.repeat(32)]);
+  const metadata={clientRequestId:'upload-id',expectedLibraryRevision:'library:1',displayName:'合成模型'};
+  await api.startModelUpload(file,metadata,signal);
+  await api.modelUploadJob('upload-id',signal);
+  await api.cancelModelUpload({jobId:'upload-id',jobRevision:2},signal);
+  assert.deepEqual(calls.map(item=>item.path),['/api/workbench/resources/model/upload',
+    '/api/workbench/resources/model/upload-job','/api/workbench/resources/model/upload-job/cancel']);
+  assert.deepEqual(JSON.parse(Buffer.from(calls[0].options.headers['X-Model-Metadata'],'base64').toString('utf8')),
+    {...metadata,processingJobVersion:1,expectedSessionRevision:'session:1'});
+  assert.deepEqual(JSON.parse(calls[1].options.body),{jobId:'upload-id',expectedSessionRevision:'session:1'});
+  assert.deepEqual(JSON.parse(calls[2].options.body),{jobId:'upload-id',expectedJobRevision:2,expectedSessionRevision:'session:1'});
+  assert.ok(calls.every(item=>item.options.signal===signal));
+});
+
 test('fixed model and terrain artifact reads carry content fingerprints and return verified private bytes', async () => {
   const data = new TextEncoder().encode('fixed resource bytes'),sha = await sha256(data),calls = [];
   const transport = new WorkbenchApi(async(path,options) => {

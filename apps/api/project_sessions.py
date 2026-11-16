@@ -210,7 +210,7 @@ class ProjectSessions(UserSessions):
                 raise
             service = self.shared if self.registry.path(workspace) == self.shared.library.root else WorkbenchSessions(
                 self.base_url, workspace['project_code'], workspace['legacy_context_id'],
-                library_root=self.registry.path(workspace), ontobase_connection_id=self.connection_id, **self.options)
+                library_root=self.registry.path(workspace), ontobase_connection_id=self.connection_id, enable_model_jobs=False, **self.options)
             try:
                 self.registry.bind(workspace, service.library)
                 if service is not self.shared:
@@ -415,7 +415,7 @@ class ProjectSessions(UserSessions):
 
     @staticmethod
     def _close(service):
-        for name in ('public_geodata', 'terrains', 'thumbnails'):
+        for name in ('public_geodata', 'terrains', 'model_upload_jobs', 'thumbnails'):
             item = getattr(service, name, None)
             if item:
                 item.close()

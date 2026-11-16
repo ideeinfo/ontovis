@@ -2,7 +2,7 @@ import {createPortal} from 'react-dom';
 import type {ReactNode} from 'react';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Eye, FileUp, LayoutGrid, List, MapPin, Plus, RefreshCw, RotateCcw, Search, Trash2} from 'lucide-react';
-import {cancelled, type WorkbenchApi} from './api';
+import {ApiError,cancelled, type WorkbenchApi} from './api';
 import {Badge, Btn, ConfirmationDialog, IconBtn, Modal} from './Primitives';
 import {usePreferences} from './Preferences';
 import {SceneApi} from './sceneApi';
@@ -16,7 +16,7 @@ import {PublicGeoDataPanel} from './PublicGeoDataPanel';
 import {publicGeoMessages} from './publicGeoMessages';
 import type {PublicGeoCenter} from './publicGeoForm';
 import {imageryText} from './imageryMessages';
-import type {ImageryVersion} from './resourceTypes';
+import type {ImageryVersion,ModelUploadJob} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
   validateResourceFile, writeDenial, modelPlacementIssue, placementModelVersion, resourceCalibrationKey, type ModelResourceSelection} from './resourceForms';
 import {resourceText} from './resourceMessages';
@@ -37,6 +37,7 @@ export interface Props {
   onPlaceTurbine?:(turbine:ProjectTurbineDefinition)=>void;
 }
 const purposes=['equipment','simplified_scene','environment'] as const;
+const jobRunning=(job:ModelUploadJob)=>job.state==='queued'||job.state==='processing';
 
 export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,publicGeoCenter,onImageryReady,geographic=false,modelSelection,onModelSelected,projectCode,onEnterEdit,onPlaceTurbine}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
@@ -65,6 +66,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const [upload,setUpload]=useState<{asset?:ProjectModelAsset;revision:string}|null>(null);
   const [file,setFile]=useState<File|null>(null),[name,setName]=useState(''),[use,setUse]=useState<ModelPurpose>('equipment');
   const [source,setSource]=useState(''),[uploading,setUploading]=useState(false);
+  const [pendingUpload,setPendingUpload]=useState<{id:string;job:ModelUploadJob|null;canResubmit?:boolean}|null>(null),[cancelling,setCancelling]=useState(false);
   const [uploadError,setUploadError]=useState<unknown>(null),[notice,setNotice]=useState('');
   const [privacyEpoch,setPrivacyEpoch]=useState(0);
   const [privateUnavailable,setPrivateUnavailable]=useState(false);
@@ -77,6 +79,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const initialSelection=useRef(modelSelection),cardIntent=useRef(0);
   const cardCallbacks=useRef({canPlace,onPreview,onPlace,onEnterEdit,onPlaceTurbine});cardCallbacks.current={canPlace,onPreview,onPlace,onEnterEdit,onPlaceTurbine};
   const canUpload=!!catalog?.capabilities.canUpload&&!denied;
+  const uploadLocked=uploading||!!pendingUpload;
   const canCalibrate=!!catalog?.capabilities.canCalibrate&&!!version?.capabilities.canCalibrate&&version.assetState!=='deleted'&&!denied;
   const canManageLifecycle=catalog?.capabilities.modelLifecycleWriteVersion===1&&catalog.capabilities.canDeleteModels===true&&!denied;
   const selectedAsset=catalog?.items.find(item=>item.modelAssetId===assetId);
@@ -94,6 +97,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();setCatalog(null);setVersion(null);setAssetId(null);setVersionId('');
     previewCallback.current(null);setUpload(null);setFile(null);setName('');setSource('');setError(null);setUploadError(null);
     setLoading(false);setDetailLoading(false);setUploading(false);setPrivacyEpoch(previous=>previous+1);
+    setPendingUpload(null);setCancelling(false);
     setPrivateUnavailable(true);
     initialSelection.current=null;onModelSelected?.(null);
     setLegacy(null);setLegacyError(null);setLegacyOpen(false);setExisting(null);setImportError(null);setImporting(false);setLegacyLoading(false);
@@ -218,10 +222,58 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
     if(!catalog||!canUpload||asset?.assetState==='deleted'||lifecycleBusy)return;
     setUpload({asset,revision:catalog.libraryRevision});setName(asset?.displayName||'');setUse(asset?.purpose||'equipment');
     setSelectedTurbineUid(asset?.definitionEntityUid||'');setRepresentationType(asset?.representationType||'appearance');
-    setSource('');setFile(null);setUploadError(null);setNotice('');requestId.current.reset();
+    setSource('');setFile(null);setUploadError(null);setNotice('');setPendingUpload(null);requestId.current.reset();
+  }
+  function finishUpload(value:ProjectModelWrite) {
+    setPendingUpload(null);setUpload(null);setFile(null);setName('');setSource('');setSelectedTurbineUid('');
+    setRepresentationType('appearance');updated(value);
+  }
+  async function followUpload(id:string,request:ReturnType<ResourceRequestGate['start']>,initial?:ModelUploadJob) {
+    const deadline=performance.now()+60000;
+    let value=initial??await client.modelUploadJob(id,request.signal);
+    while(request.isCurrent()){
+      if(value.jobId!==id)throw new ApiError(502,'MODEL_JOB_STATUS_UNKNOWN');
+      if(!jobRunning(value)){
+        if(value.state==='ready'&&value.result){finishUpload(value.result);return;}
+        setPendingUpload(null);requestId.current.reset();
+        if(value.state==='cancelled'){setNotice(text('处理已取消，可重新提交。','Processing cancelled. You can resubmit.'));return;}
+        throw new ApiError(422,value.errorCode??'MODEL_PROCESSING_UNAVAILABLE');
+      }
+      setPendingUpload({id,job:value});
+      if(performance.now()>=deadline)throw new ApiError(502,'MODEL_JOB_STATUS_UNKNOWN');
+      await new Promise<void>(resolve=>setTimeout(resolve,850));
+      if(!request.isCurrent())return;
+      value=await client.modelUploadJob(id,request.signal);
+    }
+  }
+  async function continueUpload(cancelJob=false) {
+    if(!pendingUpload||cancelling)return;
+    const {id,job}=pendingUpload;
+    if(cancelJob&&(!job||!canUpload))return;
+    const request=uploadGate.start();setUploading(true);setCancelling(cancelJob);setUploadError(null);setNotice('');
+    try{
+      let receipt:ModelUploadJob|undefined;
+      if(cancelJob&&job){
+        try{receipt=await client.cancelModelUpload(job,request.signal);}
+        catch(value){
+          if(!(value instanceof ApiError)||value.code!=='JOB_CHANGED')throw value;
+          receipt=await client.modelUploadJob(id,request.signal);
+          if(request.isCurrent()&&jobRunning(receipt))receipt=await client.cancelModelUpload(receipt,request.signal);
+        }
+      }
+      if(request.isCurrent())await followUpload(id,request,receipt);
+    }catch(value){
+      if(request.isCurrent()){
+        if(!job&&value instanceof ApiError&&value.code==='MODEL_JOB_NOT_FOUND'){
+          setPendingUpload({id,job:null,canResubmit:true});
+          setNotice(text('暂未查到提交，可重试同一次上传。','Submission has not been found. You can retry the same upload.'));
+        }else failed(value,true);
+      }
+    }finally{if(request.isCurrent()){setUploading(false);setCancelling(false);}}
   }
   async function uploadModel() {
-    if(!upload||!canUpload||uploading)return;
+    const retrying=pendingUpload?.canResubmit===true;
+    if(!upload||!canUpload||uploading||(pendingUpload&&!retrying))return;
     try {
       if(!file)throw new ResourceFormError('modelFileInvalid');
       validateResourceFile(file,'model',catalog?.limits.maxUploadBytes);
@@ -232,11 +284,25 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         modelCode:chosenTurbine?.modelCode,
         representationType:selectedTurbineUid?representationType:undefined,
       },upload.revision,'',upload.asset);
-      const clientRequestId=requestId.current.forPayload(draft,`${file.name}:${file.size}:${file.lastModified}`);
+      const clientRequestId=pendingUpload?.id??requestId.current.forPayload(draft,`${file.name}:${file.size}:${file.lastModified}`);
       const request=uploadGate.start();setUploading(true);setUploadError(null);setNotice('');
+      const asynchronous=retrying||catalog?.capabilities.modelUploadJobVersion===1;
       try {
-        const value=await client.uploadModel(file,{...draft,clientRequestId},request.signal);
-        if(request.isCurrent()){setUpload(null);setFile(null);setName('');setSource('');setSelectedTurbineUid('');setRepresentationType('appearance');updated(value);}
+        if(asynchronous){
+          setPendingUpload({id:clientRequestId,job:null});
+          let receipt:ModelUploadJob;
+          try{receipt=await client.startModelUpload(file,{...draft,clientRequestId},request.signal);}
+          catch(value){
+            if(request.isCurrent()&&value instanceof ApiError&&value.status>=400&&value.status<500){
+              setPendingUpload(retrying?{id:clientRequestId,job:null,canResubmit:true}:null);
+            }
+            throw value;
+          }
+          if(request.isCurrent())await followUpload(clientRequestId,request,receipt);
+        }else{
+          const value=await client.uploadModel(file,{...draft,clientRequestId},request.signal);
+          if(request.isCurrent())finishUpload(value);
+        }
       }catch(value){if(request.isCurrent())failed(value,true);}
       finally{if(request.isCurrent())setUploading(false);}
     }catch(value){failed(value,true);}
@@ -433,11 +499,11 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         {lifecycleBusy?text('处理中…','Working…'):text('移至回收站','Move to recycle bin')}
       </Btn>
     </ConfirmationDialog>}
-    {upload&&<Modal title={t(upload.asset?'appendVersion':'uploadModel')} description={t('glbLimit')} onClose={()=>{if(!uploading)setUpload(null);}}><div className="ov-resource-form">
-      <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploading} onChange={event=>{setFile(event.target.files?.[0]||null);setUploadError(null);requestId.current.reset();}}/></label>
+    {upload&&<Modal title={t(upload.asset?'appendVersion':'uploadModel')} description={t('glbLimit')} closeDisabled={uploading} onClose={()=>setUpload(null)}><div className="ov-resource-form">
+      <label>{t('chooseGlb')}<input type="file" accept=".glb,model/gltf-binary" disabled={uploadLocked} onChange={event=>{setFile(event.target.files?.[0]||null);setUploadError(null);requestId.current.reset();}}/></label>
       <p className="ov-resource-caption">{t('glbLimit')}</p>
       {turbines.some(item=>item.definitionEntityUid)&&<label>{text('工程对象定义（可选）','Engineering object definition (optional)')}
-        <select value={selectedTurbineUid} disabled={uploading||!!upload.asset} onChange={event=>{
+        <select value={selectedTurbineUid} disabled={uploadLocked||!!upload.asset} onChange={event=>{
           const uid=event.target.value;
           setSelectedTurbineUid(uid);
           const chosen=turbines.find(t=>t.definitionEntityUid===uid);
@@ -451,7 +517,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         </select>
       </label>}
       <label>{text('模型形态设置','Model representation type')}
-        <select value={representationType} disabled={uploading} onChange={event=>{
+        <select value={representationType} disabled={uploadLocked} onChange={event=>{
           const rep=event.target.value as 'appearance'|'detailed';
           setRepresentationType(rep);
           const chosen=turbines.find(t=>t.definitionEntityUid===selectedTurbineUid);
@@ -464,14 +530,21 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
           <option value="detailed">{text('完整版（含内部机械构件 · 支持特写透视与包围盒爆炸）','Detailed (internal components & explosion)')}</option>
         </select>
       </label>
-      <label>{t('displayName')}<input value={name} maxLength={120} disabled={uploading||!!upload.asset} onChange={event=>setName(event.target.value)}/></label>
-      <label>{t('purpose')}<select value={use} disabled={uploading||!!upload.asset} onChange={event=>setUse(event.target.value as ModelPurpose)}>{purposes.map(value=><option key={value} value={value}>{t(value)}</option>)}</select></label>
-      <label>{t('sourceNote')}<textarea value={source} rows={3} maxLength={2000} disabled={uploading} onChange={event=>setSource(event.target.value)}/></label>
+      <label>{t('displayName')}<input value={name} maxLength={120} disabled={uploadLocked||!!upload.asset} onChange={event=>setName(event.target.value)}/></label>
+      <label>{t('purpose')}<select value={use} disabled={uploadLocked||!!upload.asset} onChange={event=>setUse(event.target.value as ModelPurpose)}>{purposes.map(value=><option key={value} value={value}>{t(value)}</option>)}</select></label>
+      <label>{t('sourceNote')}<textarea value={source} rows={3} maxLength={2000} disabled={uploadLocked} onChange={event=>setSource(event.target.value)}/></label>
       {!!uploadError&&<p className="ov-resource-error" role="alert">{resourceFailure(uploadError,locale)}</p>}
       {notice&&<p className="ov-resource-caption" role="status">{notice}</p>}
-      {uploading&&<p className="ov-resource-caption" role="status">{t('uploadingModel')}</p>}
-      {!!uploadError&&<Btn disabled={uploading||loading} onClick={()=>void updateFormLibrary()}>{t('readLibrary')}</Btn>}
-      <div className="ov-resource-actions end"><Btn disabled={uploading} onClick={()=>setUpload(null)}>{t('cancel')}</Btn><Btn primary disabled={uploading||!file||!canUpload} onClick={()=>void uploadModel()}><FileUp size={14}/>{t(uploading?'uploadingModel':'submitModel')}</Btn></div>
+      {uploading&&<p className="ov-resource-caption" role="status">{cancelling?text('正在取消处理…','Cancelling processing…'):
+        pendingUpload?.job?text('文件已上传，正在校验模型…','File uploaded. Validating the model…'):t('uploadingModel')}</p>}
+      {pendingUpload&&!uploading&&!notice&&<p className="ov-resource-caption" role="status">{text('处理结果待确认。','Processing result is unconfirmed.')}</p>}
+      {!!uploadError&&!pendingUpload&&<Btn disabled={uploading||loading} onClick={()=>void updateFormLibrary()}>{t('readLibrary')}</Btn>}
+      <div className="ov-resource-actions end">
+        <Btn disabled={uploading} onClick={()=>setUpload(null)}>{pendingUpload?text('关闭','Close'):t('cancel')}</Btn>
+        {pendingUpload?.job&&canUpload&&<Btn disabled={cancelling} onClick={()=>void continueUpload(true)}>{text('取消处理','Cancel processing')}</Btn>}
+        {pendingUpload&&<Btn primary={!pendingUpload.canResubmit} disabled={uploading} onClick={()=>void continueUpload()}>{text('检查状态','Check status')}</Btn>}
+        {(!pendingUpload||pendingUpload.canResubmit)&&<Btn primary disabled={uploading||!file||!canUpload} onClick={()=>void uploadModel()}><FileUp size={14}/>{pendingUpload?text('重试上传','Retry upload'):t(uploading?'uploadingModel':'submitModel')}</Btn>}
+      </div>
     </div></Modal>}
     {existing&&<Modal title={t('useExisting')} description={t('existingDescription')} onClose={()=>{if(!importing)setExisting(null);}}><div className="ov-resource-form">
       <strong>{existing.model.displayName}</strong><p className="ov-resource-caption">{t('existingDescription')}</p>

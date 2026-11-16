@@ -98,6 +98,7 @@ export interface ResourceCapabilities {
   canGenerateThumbnails?:boolean;
   canEditInfo?:boolean;
   canDeleteModels?:boolean;modelLifecycleWriteVersion?:1;
+  modelUploadJobVersion?:1;
 }
 export interface ResourceLimits {
   maxUploadBytes: number; maxVersions: number; maxLibraryBytes: number;
@@ -130,6 +131,8 @@ export interface ModelLifecycleResult extends ResourceResponse {
 }
 export type ProjectModel = ProjectModelVersion & ResourceResponse;
 export type ProjectModelWrite = ProjectModel & {libraryRevision: string; assetRevision: string};
+export type ModelUploadJob={jobId:string;jobRevision:number;state:'queued'|'processing'|'ready'|'failed'|'cancelled';
+  errorCode:string|null;result:ProjectModelWrite|null};
 export interface ModelInfoRequest {
   modelAssetId:string;modelVersionId:string;expectedAssetRevision:string;clientRequestId:string;
   displayName:string;purpose:ModelPurpose;description:string;
