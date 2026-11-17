@@ -169,7 +169,7 @@ class WorkbenchDeploymentTests(unittest.TestCase):
         self.assertIn('add_header Cache-Control $ontovis_public_asset_cache_control always;', nginx)
         self.assertEqual(nginx.count('add_header Cache-Control'), 1)
 
-    def test_embedded_model_images_can_be_fetched_without_allowing_external_connections(self):
+    def test_only_local_and_fixed_photo_connections_are_allowed(self):
         nginx = (ROOT / 'deploy/nginx-workbench.conf').read_text()
         policies = re.findall(r'add_header Content-Security-Policy "([^"]+)" always;', nginx)
         self.assertEqual(len(policies), 1)
@@ -180,7 +180,7 @@ class WorkbenchDeploymentTests(unittest.TestCase):
                 self.assertNotIn(tokens[0], directives)
                 directives[tokens[0]] = set(tokens[1:])
         # Three's ImageBitmapLoader uses fetch(blob:), governed by connect-src, not img-src.
-        self.assertEqual(directives['connect-src'], {"'self'", 'blob:'})
+        self.assertEqual(directives['connect-src'], {"'self'", 'blob:', 'https://vis-media.ontobase.ai'})
         self.assertTrue({"'self'", 'blob:', 'data:'}.issubset(directives['img-src']))
         for name in ('default-src', 'script-src', 'media-src', 'base-uri'):
             self.assertEqual(directives[name], {"'self'"})

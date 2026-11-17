@@ -5,6 +5,7 @@ No spatial-demo assets, OntoBase business writes or arbitrary proxy.
 """
 from __future__ import annotations
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -777,14 +778,30 @@ class WorkbenchSessions(UserSessions):
                 fixed_models.update({item['modelVersionId']: (item['sha256'], item['contentRevision']) for item in opened['resourceRefs']})
                 fixed_terrains.update({item['terrainVersionId']: item for item in opened.get('terrainRefs', [])})
                 validate_resources(opened['snapshot'])
-                selected = reader.context_for_object(selected_ref['entityUid'])
-                target=selected;shared_mapping=None;inherited=False
                 choice=body.get('representationChoice')
                 source_choice=choice
+                prefer_detailed = body.get('preferDetailed', False)
                 from .scene_representation import location_projection
-                projected,uses=location_projection(opened,choice,body.get('preferDetailed',False),
-                    self.equipment_store(),EquipmentReader(reader).resolve,model_details,authorize)
-                if body.get('preferDetailed'):
+
+                def project_location():
+                    return location_projection(opened, choice, prefer_detailed,
+                        self.equipment_store(), EquipmentReader(reader).resolve, model_details, authorize)
+
+                if prefer_detailed:
+                    # The selected object and the adopted model each need their own current proof.
+                    with ThreadPoolExecutor(max_workers=1) as worker:
+                        selection = worker.submit(reader.context_for_object, selected_ref['entityUid'])
+                        try:
+                            projected, uses = project_location()
+                        except PreviewError:
+                            selection.result()
+                            raise
+                        selected = selection.result()
+                else:
+                    selected = reader.context_for_object(selected_ref['entityUid'])
+                    projected, uses = project_location()
+                target=selected;shared_mapping=None;inherited=False
+                if prefer_detailed:
                     original=next((item for item in opened['snapshot']['instances']
                                    if item['sceneModelInstanceId']==source_choice['sceneModelInstanceId']
                                    and item['modelVersionId']==source_choice['modelVersionId']),None)
@@ -809,7 +826,7 @@ class WorkbenchSessions(UserSessions):
                             shared_mapping={'configurationId':use['configurationId'],'configurationRevision':use['configurationRevision'],
                                 'equipmentEntityUid':use['equipmentEntityUid'],'definitionObjectRef':mapping['objectRef']}
                 value = SceneLocationResolver(model_details).resolve(projected, target, body['contextEpoch'],choice)
-                if body.get('preferDetailed') and value['status']=='located' and choice and value['sceneModelInstanceId']==choice['sceneModelInstanceId']:
+                if prefer_detailed and value['status']=='located' and choice and value['sceneModelInstanceId']==choice['sceneModelInstanceId']:
                     instance=next(item for item in projected['snapshot']['instances'] if item['sceneModelInstanceId']==choice['sceneModelInstanceId'])
                     model=model_details(instance['modelVersionId'])
                     value['representation']={'sourceModelVersionId':source_choice['modelVersionId'],'instance':instance,

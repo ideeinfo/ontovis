@@ -20,7 +20,7 @@ test('equipment photos accept JPEG previews and PNG originals with the fixed ref
     assert.equal(sent.path,'/api/workbench/objects/photos/content');
     assert.deepEqual(sent.body,{...selection,evidenceRef:photo.evidenceRef,expectedSourceRevision:photo.sourceRevision,
       expectedContentVersionId:photo.contentVersionId,expectedSourceSha256:photo.sourceSha256,
-      expectedDisplayRevision:photo.selector.displayRevision,representation:full?'display':'preview',
+      expectedDisplayRevision:photo.selector.displayRevision,representation:full?'full_resolution':'preview',
       projectRef:project,expectedSessionRevision:'session:1'});
   }
 });

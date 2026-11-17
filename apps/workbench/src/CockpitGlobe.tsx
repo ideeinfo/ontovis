@@ -92,17 +92,17 @@ export function CockpitGlobe({points,active,en,light,flight,focusTarget,onSelect
   return()=>{disposed=true;cancelAnimationFrame(frame);resize.disconnect();document.removeEventListener('visibilitychange',refresh);media.removeEventListener('change',refresh);controls.removeEventListener('change',change);controls.removeEventListener('start',start);controls.removeEventListener('end',end);controls.dispose();geometry.dispose();material.dispose();glowMaterial.dispose();cloudMaterial.dispose();texture?.dispose();renderer.domElement.removeEventListener('webglcontextlost',lost);renderer.dispose();renderer.forceContextLoss();renderer.domElement.remove();runtime.current=null;};
  },[]);
  useEffect(()=>{
-  if(!focusTarget||focusTarget.token===lastFocusToken.current)return;
-  lastFocusToken.current=focusTarget.token;
+  if(!active||!focusTarget||focusTarget.token===lastFocusToken.current)return;
   const targetGroup=groups.find(g=>g.points.some(p=>p.sceneId===focusTarget.sceneId));
   if(targetGroup){
+   lastFocusToken.current=focusTarget.token;
    setSelected(targetGroup.id);
    setSelectedScene(focusTarget.sceneId);
    const currentDistance=runtime.current?.distance()??3.65,height=runtime.current?.height()??900;
    const targetDistance=globeClusterFocusDistance(targetGroup,height);
    runtime.current?.focus(targetGroup.longitude,targetGroup.latitude,Math.min(currentDistance,targetDistance));
   }else{setSelected('');setSelectedScene('');}
- },[focusTarget,groups]);
+ },[active,focusTarget,groups]);
  useEffect(()=>{runtime.current?.refresh();},[active,light,flight,groups,paused,selectedGroup]);
  useEffect(()=>{if(!active){setSelected('');setSelectedScene('');onSelectScene?.('');}},[active]);
  return <section className={`pc-globe-view${fallback?' is-fallback':''}`} aria-label={en?'Project globe':'项目地球'}>

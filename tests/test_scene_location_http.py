@@ -8,8 +8,11 @@ import json
 import math
 from threading import Event, Thread
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
+from apps.api import scene_representation
+from apps.api.scene_engineering import SceneEngineeringReader
 from tests import test_scene_bindings_http as bindings
 from tests import test_scene_engineering as engineering
 
@@ -96,6 +99,41 @@ class SceneLocationHttpTests(unittest.TestCase):
             self.assertEqual(preferred[key],normal[key])
         self.assertEqual(preferred['representation']['sourceModelVersionId'],choice['modelVersionId'])
         self.assertEqual(self.counts(),before)
+
+    def test_detail_location_checks_selection_and_representation_concurrently(self):
+        scene, _ = self.bound_scene()
+        instance = scene['snapshot']['instances'][0]
+        choice = {key: instance[key] for key in ('sceneModelInstanceId', 'modelVersionId')}
+        opened, reading_selection, reading_projection = Event(), Event(), Event()
+        saved_open = self.sessions.scenes.open
+        saved_context = SceneEngineeringReader.context_for_object
+        saved_projection = scene_representation.location_projection
+
+        def open_scene(*args, **kwargs):
+            result = saved_open(*args, **kwargs)
+            opened.set()
+            return result
+
+        def read_context(reader, uid, *args, **kwargs):
+            if opened.is_set() and uid == engineering.CHILD:
+                reading_selection.set()
+                if not reading_projection.wait(2):
+                    raise bindings.PreviewError(503, 'SOURCE_UNAVAILABLE')
+            return saved_context(reader, uid, *args, **kwargs)
+
+        def read_projection(*args, **kwargs):
+            reading_projection.set()
+            if not reading_selection.wait(2):
+                raise bindings.PreviewError(503, 'SOURCE_UNAVAILABLE')
+            return saved_projection(*args, **kwargs)
+
+        with patch.object(self.sessions.scenes, 'open', open_scene), \
+                patch.object(SceneEngineeringReader, 'context_for_object', read_context), \
+                patch.object(scene_representation, 'location_projection', read_projection):
+            result = self.location(scene, choice=choice, preferDetailed=True)
+        self.assertEqual(result['status'], 'located')
+        self.assertEqual(result['selectedObject']['entityUid'], engineering.CHILD)
+        self.assertEqual(result['representation']['sourceModelVersionId'], choice['modelVersionId'])
 
     def test_multiple_representations_require_exact_instance_and_version_choice(self):
         scene, _ = self.bound_scene(); candidate = copy.deepcopy(scene['snapshot'])
@@ -210,6 +248,8 @@ class SceneLocationHttpTests(unittest.TestCase):
 
     def test_logout_during_selected_object_read_discards_late_geometry(self):
         scene, _ = self.bound_scene(); before = self.counts()
+        instance = scene['snapshot']['instances'][0]
+        choice = {key: instance[key] for key in ('sceneModelInstanceId', 'modelVersionId')}
         account = self.authority(); entered, release = Event(), Event(); reads = 0
         def delay(source, method, path, body):
             nonlocal reads
@@ -219,7 +259,8 @@ class SceneLocationHttpTests(unittest.TestCase):
                     entered.set(); release.wait(4)
         account.engineering.after = delay
         result = []
-        worker = Thread(target=lambda: result.append(self.locate(scene))); worker.start()
+        worker = Thread(target=lambda: result.append(self.locate(scene, choice=choice, preferDetailed=True)))
+        worker.start()
         try:
             self.assertTrue(entered.wait(3))
             self.assertEqual(self.request('/api/session/logout')[0], 200)
