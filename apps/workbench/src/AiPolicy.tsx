@@ -1,0 +1,41 @@
+import {useEffect,useMemo,useState} from 'react';
+import {History,RefreshCw} from 'lucide-react';
+import {Btn,Modal} from './Primitives';
+import {cancelled} from './api';
+import type {DraftApi} from './AnalysisWorkspace';
+import {AssistantApi,assistantMessage,policyChanges,policyProblems,sourceLabels,type AssistantPolicy,type AssistantPolicyView} from './assistantApi';
+import './aiPolicy.css';
+import {LlmConfiguration} from './LlmConfiguration';
+
+export function AiPolicy({api,en,onDirtyChange}:{api:DraftApi;en:boolean;onDirtyChange?:(dirty:boolean)=>void}){
+ const service=useMemo(()=>new AssistantApi(api),[api]);
+ const [tab,setTab]=useState<'models'|'policy'>('models');
+ const [view,setView]=useState<AssistantPolicyView|null>(null),[draft,setDraft]=useState<AssistantPolicy|null>(null),[preview,setPreview]=useState('');
+ const [history,setHistory]=useState<Awaited<ReturnType<AssistantApi['history']>>|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null),[notice,setNotice]=useState(''),[reload,setReload]=useState(0);
+ const differences=draft&&view?policyChanges(view.policy,draft):[],dirty=differences.length>0;
+ useEffect(()=>{onDirtyChange?.(dirty);return()=>onDirtyChange?.(false);},[dirty,onDirtyChange]);
+ useEffect(()=>{const abort=new AbortController();setBusy(true);setError(null);setView(null);setDraft(null);
+  service.policy(abort.signal).then(value=>{if(!abort.signal.aborted){setView(value);setDraft(structuredClone(value.policy));setPreview('');}}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setError(e);}).finally(()=>{if(!abort.signal.aborted)setBusy(false);});return()=>abort.abort();
+ },[service,api.epoch,api.revision,reload]);
+ const t=(zh:string,english:string)=>en?english:zh;
+ async function check(){if(!draft)return;setBusy(true);setError(null);try{const result=await service.preview(draft);setPreview(JSON.stringify(result.policy));setDraft(result.policy);setNotice(t('有效配置已校验，可使配置生效。','Effective settings checked. You can apply them.'));}catch(e){setError(e);}finally{setBusy(false);}}
+ async function publish(restore?:number){if(!view||!draft)return;setBusy(true);setError(null);try{await service.publish(view,draft,restore);const value=await service.policy();setView(value);setDraft(structuredClone(value.policy));setPreview('');setHistory(null);setNotice(t('配置已生效','Policy applied')+' · r'+value.revision);}catch(e){setError(e);}finally{setBusy(false);}}
+ const changed=(value:Partial<AssistantPolicy>)=>{setDraft(current=>current?{...current,...value}:null);setPreview('');setNotice('');};
+ return <section className="ap-page" aria-label={t('项目 AI 策略','Project AI policy')}>
+  <div className="ap-topbar"><nav className="llm-tabs" aria-label={t('AI 策略设置','AI policy settings')}><button type="button" aria-pressed={tab==='models'} disabled={dirty} onClick={()=>setTab('models')}>{t('AI 能力','AI capabilities')}</button><button type="button" aria-pressed={tab==='policy'} onClick={()=>setTab('policy')}>{t('项目限制','Project limits')}</button></nav><span className="ap-caption">{t('模型连接由 OntoBase 统一管理','Model connections managed in OntoBase')}</span></div>
+  {tab==='models'?<>{view&&!view.policy.enabled&&<p className="ap-caption">{t('项目助手尚未启用，可在“项目限制”中开启。','The project assistant is off. Enable it in Project limits.')}</p>}<LlmConfiguration api={api} en={en} onDirtyChange={onDirtyChange} onSaved={()=>setReload(v=>v+1)}/></>:<>
+  {notice&&<p role="status">{notice}</p>}{!!error&&<p role="alert">{assistantMessage(error,en)}</p>}{busy&&!view&&<p role="status">{t('正在读取策略…','Loading policy…')}</p>}
+  <header className="llm-overview"><p>{t('所有 AI 能力共同遵守的资料与运行边界。','Shared evidence and run limits for every AI capability.')}</p><Btn disabled={busy||dirty} onClick={()=>setReload(v=>v+1)}><RefreshCw size={14}/>{t('刷新','Refresh')}</Btn></header>
+  {view&&draft&&<section className="ap-policy-card"><header className="llm-heading"><div><h2>{t('资料与运行范围','Evidence and run scope')}</h2><p>{t('各项能力在这些项目限制内运行。','Each capability runs within these project limits.')}</p></div><label className="llm-clear"><input type="checkbox" checked={draft.enabled} disabled={!view.canManage||busy} onChange={e=>changed({enabled:e.target.checked})}/>{t('允许发起分析','Allow analysis requests')}</label></header>
+   {!view.service.enabled&&<p className="ap-caption">{assistantMessage(view.service.reason||'ASSISTANT_SERVICE_UNAVAILABLE',en)}</p>}
+   <div className="ap-policy-sections"><section><h3>{t('只读资料','Read-only sources')}</h3><div className="ap-kinds">{Object.entries(sourceLabels).map(([kind,label])=><label className="ap-check" key={kind}><input type="checkbox" checked={draft.allowedKinds.includes(kind)} disabled={!view.canManage||busy} onChange={e=>changed({allowedKinds:e.target.checked?[...draft.allowedKinds,kind].sort():draft.allowedKinds.filter(v=>v!==kind)})}/>{label[en?1:0]}</label>)}</div>
+   <p className="ap-caption">{t('仅发送所选资料的脱敏文本摘要；不发送原图、照片像素或整库。','Only redacted text summaries of selected materials are sent; original images and whole libraries are excluded.')}</p></section>
+   <section><h3>{t('运行预算','Run budget')}</h3><div className="ap-fields">{([['reads',t('最多读取','Maximum reads'),1,8],['parallel',t('并行读取','Parallel reads'),1,2],['seconds',t('硬时限（秒）','Time limit (s)'),10,120]] as const).map(([key,label,min,max])=><label className="llm-field" key={key}>{label}<input aria-label={label} type="number" min={min} max={max} value={draft[key]} disabled={!view.canManage||busy} onChange={e=>changed({[key]:Number(e.target.value)})}/></label>)}</div><p className="ap-caption">{t('能力设置同时受这些上限约束，以更严格的限制为准。','Capability settings also respect these limits; the stricter value applies.')}</p>
+   <details className="ap-policy-summary"><summary>{t('配置摘要与固定规则','Settings summary and fixed rules')}</summary><dl><dt>{t('运行','Run')}</dt><dd>{draft.enabled?t('用户显式发起','Explicit user request'):t('关闭','Off')}</dd><dt>{t('读取上限','Read limit')}</dt><dd>{draft.reads} / {draft.parallel} {t('并行','parallel')}</dd><dt>{t('模型调用','Model call')}</dt><dd>{t('每次1次，最多1800输出token','One call; 1,800 output tokens')}</dd><dt>{t('硬时限','Time limit')}</dt><dd>{draft.seconds} s</dd></dl><p className="ap-caption">{t('项目限制与平台规则取交集。引用校验、质量和模拟标记保持；结论确认与现场控制不启用。','Project restrictions intersect with platform rules. Reference, quality and simulation labels remain; conclusion confirmation and device control are unavailable.')}</p></details></section></div>
+   {dirty&&<div className="ap-diff"><h3>{t('本次差异','Changes')}</h3>{differences.map(k=><p key={k}>{({enabled:t('运行','Run'),allowedKinds:t('资料类型','Sources'),reads:t('读取数','Reads'),parallel:t('并行数','Parallel'),seconds:t('时限','Time limit')})[k]}：{k==='allowedKinds'?view.policy.allowedKinds.map(kind=>sourceLabels[kind][en?1:0]).join('、'):String(view.policy[k])} → {k==='allowedKinds'?draft.allowedKinds.map(kind=>sourceLabels[kind][en?1:0]).join('、'):String(draft[k])}</p>)}</div>}
+   <footer className="llm-editor-actions"><span className="llm-caption">{t('当前生效','Active')} r{view.revision}{dirty?' · '+t('有未生效修改','Unapplied changes'):''}</span><Btn disabled={busy} onClick={()=>{setError(null);void service.history().then(setHistory).catch(setError);}}><History size={14}/>{t('版本历史','History')}</Btn><Btn disabled={busy||!view.canManage||!!policyProblems(draft).length} onClick={()=>void check()}>{t('预览有效配置','Preview effective policy')}</Btn><Btn primary disabled={busy||!view.canManage||preview!==JSON.stringify(draft)} onClick={()=>void publish()}>{t('使配置生效','Apply policy')}</Btn></footer>
+  </section>}
+  {history&&<Modal title={t('策略版本历史','Policy history')} description={t('回滚会生成新修订，原历史继续保留。','Restoring creates a new revision and preserves history.')} onClose={()=>setHistory(null)}><div className="ap-history">{history.items.length?history.items.map(row=><article key={row.revision}><div><strong>r{row.revision}</strong><time>{new Date(row.savedAt).toLocaleString(en?'en-GB':'zh-CN')}</time><p>{row.policy.enabled?t('运行开启','Enabled'):t('运行关闭','Disabled')} · {row.policy.reads}/{row.policy.parallel} · {row.policy.seconds}s</p></div><Btn disabled={busy||!view?.canManage||dirty||row.revision===view.revision} onClick={()=>void publish(row.revision)}>{t('回滚为新修订','Restore as a new revision')}</Btn></article>):<p>{t('尚无已生效修订。','No applied revisions.')}</p>}</div></Modal>}
+ </>}
+ </section>;
+}

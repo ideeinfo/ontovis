@@ -1,0 +1,80 @@
+.wov-workspace {
+  display:grid;grid-template-columns:minmax(210px,270px) minmax(0,1fr);gap:16px;
+  padding:16px;flex:1;min-height:0;overflow:auto;color:var(--text);font-size:13px;background:var(--background);
+}
+.wov-sidebar,.wov-detail {min-width:0;background:var(--surface);border:1px solid var(--borderSubtle);border-radius:8px;align-self:start}
+.wov-sidebar {display:grid;gap:10px;padding:14px;position:sticky;top:0}
+.wov-line,.wov-actions,.wov-record-identity {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wov-line {justify-content:space-between}
+.wov-actions.end {justify-content:flex-end}
+.wov-search {display:flex;gap:8px;align-items:center}
+.wov-search input {flex:1}
+:is(.wov-workspace,.wov-form) :is(input:not([type=checkbox]),textarea,select) {
+  min-width:0;font:inherit;color:var(--text);background:var(--surface);
+  border:1px solid var(--borderControl);border-radius:6px;padding:7px 9px;
+}
+.wov-form :is(input:not([type=checkbox]),textarea,select) {width:100%;box-sizing:border-box}
+.wov-form textarea {resize:vertical;min-height:78px}
+.wov-form,.wov-form label:not(.wov-inline) {display:grid;gap:8px}
+.wov-form {gap:14px}
+.wov-form-row {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.wov-inline {display:flex;align-items:center;gap:5px}
+.wov-sidebar small,.wov-content small,.wov-header small,.wov-records small,.wov-form small,.wov-muted {
+  color:var(--textSecondary);font-size:11px;
+}
+.wov-order-list,.wov-file-options {display:grid;gap:4px;max-height:calc(100dvh - 260px);overflow:auto}
+.wov-file-options {max-height:260px}
+:is(.wov-order-list,.wov-file-options)>button,.wov-related {
+  border:1px solid transparent;background:var(--surface);color:var(--text);
+  font:inherit;border-radius:6px;padding:9px 10px;cursor:pointer;min-width:0;text-align:left;overflow-wrap:anywhere;
+}
+.wov-order-list>button {display:grid;gap:5px}
+.wov-file-options>button {display:flex;align-items:center;gap:8px}
+:is(.wov-order-list,.wov-file-options)>button:is(:hover,[aria-current=true],[aria-pressed=true]),.wov-related:hover {
+  background:var(--selected);border-color:var(--borderSubtle);
+}
+.wov-related {display:flex;align-items:center;gap:10px;border-color:var(--borderSubtle)}
+.wov-related span {flex:1;display:grid;gap:4px}
+.wov-header {display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:18px 20px}
+.wov-header h2 {font-size:20px;margin:5px 0 8px;overflow-wrap:anywhere}
+.wov-issue {margin:0;padding:0 20px 12px;color:var(--textSecondary);white-space:pre-wrap;overflow-wrap:anywhere}
+.wov-tag {display:inline-flex;border-radius:5px;padding:3px 7px;background:var(--selected);color:var(--onSelected);font-size:11px}
+.wov-more {position:relative}
+.wov-more>div {
+  position:absolute;right:0;top:calc(100% + 5px);z-index:3;display:grid;gap:4px;
+  padding:5px;min-width:120px;background:var(--surface);border:1px solid var(--borderControl);border-radius:6px;
+}
+.wov-tabs {display:flex;gap:16px;padding:0 20px;border-bottom:1px solid var(--borderSubtle)}
+.wov-tabs button {
+  border:0;border-bottom:2px solid transparent;background:transparent;
+  color:var(--textSecondary);font:inherit;padding:9px 0;cursor:pointer;
+}
+.wov-tabs button[aria-current=page] {border-color:var(--primary);color:var(--text);font-weight:600}
+.wov-content {display:grid;gap:14px;padding:18px 20px}
+:is(.wov-content,.wov-form,.wov-records) h3 {font-size:14px;margin:4px 0}
+:is(.wov-content,.wov-form,.wov-records) p {margin:4px 0;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.wov-panel,.wov-record,.wov-result {padding:12px 14px;border:1px solid var(--borderSubtle);border-radius:6px}
+.wov-result {background:var(--selected)}
+.wov-records {display:grid;gap:8px;min-width:0;color:var(--text);font-size:13px}
+.wov-record-identity {font-size:11px;color:var(--textSecondary)}
+.wov-records.compact .wov-record,.wov-records.compact .wov-result {padding:7px 8px}
+.wov-records.compact p {display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.wov-events {margin:10px 0 0;padding-left:20px}
+.wov-events li {padding:5px 0;border-bottom:1px solid var(--borderSubtle)}
+.wov-file {display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--borderSubtle)}
+.wov-file>div {flex:1;min-width:0;display:grid;gap:3px;overflow-wrap:anywhere}
+.wov-error {padding:10px 14px;display:flex;align-items:center;gap:8px;background:var(--warningSurface);color:var(--text)}
+.ov-modal-root .ov-dialog.wov-wide-dialog {width:min(1680px,97vw);max-width:97vw}
+.wov-wide-dialog .ov-dialog-body {max-height:78dvh;overflow:auto}
+.wov-file-preview {max-width:100%;max-height:64dvh;object-fit:contain;margin-inline:auto}
+.wov-legacy.wo-workspace {display:block;background:transparent}
+.wov-legacy>.wo-main {padding:10px;overflow:visible}
+@media (max-width:760px) {
+  .wov-workspace {grid-template-columns:minmax(0,1fr);gap:10px;padding:10px}
+  .wov-sidebar {position:static}
+  .wov-order-list {max-height:170px}
+  .wov-header,.wov-content {padding:12px}
+  .wov-tabs,.wov-issue {padding-inline:12px}
+  .wov-header {flex-wrap:wrap}
+  .wov-form-row {grid-template-columns:minmax(0,1fr)}
+}

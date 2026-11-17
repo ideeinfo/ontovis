@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "renderProfile": "standard-v1",
+  "presetId": "land-day-v1",
+  "color": {
+    "toneMapping": "aces",
+    "exposure": 1
+  },
+  "lighting": {
+    "hemisphereIntensity": 1,
+    "environment": {
+      "source": "procedural-sky-v1",
+      "intensity": 0.8
+    },
+    "sun": {
+      "enabled": true,
+      "azimuthDeg": 135,
+      "elevationDeg": 35,
+      "intensity": 2.5,
+      "color": "#fff3df"
+    }
+  },
+  "atmosphere": {
+    "sky": "gradient-v1",
+    "topColor": "#8daec0",
+    "horizonColor": "#d7e0dd",
+    "fog": {
+      "mode": "linear",
+      "nearM": 1500,
+      "farM": 13000
+    }
+  },
+  "shadows": {
+    "mode": "sun-local",
+    "quality": "balanced",
+    "radiusM": 500
+  },
+  "surface": {
+    "imageryShading": "source-color",
+    "textureSet": null,
+    "terrainRoughness": 1,
+    "textureRepeatM": 20
+  },
+  "water": {
+    "enabled": false,
+    "baseSurface": "active-flat-relative-terrain",
+    "mode": "normal-waves",
+    "travelHeadingDeg": 20,
+    "rippleStrength": 0.35,
+    "amplitudeM": 0,
+    "wavelengthM": 20,
+    "travelSpeedMps": 0.6,
+    "color": "#507d91",
+    "roughness": 0.3,
+    "reflection": "procedural-sky",
+    "seed": 771
+  },
+  "animation": {
+    "defaultPlayback": "playing",
+    "initialPhase": 0
+  }
+}

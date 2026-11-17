@@ -1,0 +1,11 @@
+import type {AssistantSource} from './assistantApi';
+import type {CanvasCard} from './analysisCanvas';
+import {assistantSourceAnchor} from './assistantApi';
+import type {SourceAnchor} from './analysisSources';
+const tools:Record<string,[string,string]>={fixed_manual_fault_lookup:['故障码检索','Fault code lookup'],fixed_manual_neighborhood:['关联知识与原文','Related knowledge and evidence'],engineering_neighborhood:['工程关联图谱','Engineering associations'],selected_manual:['固定手册知识','Fixed manual knowledge'],selected_alarm:['模拟报警事件','Simulated alarm events'],selected_trend:['趋势质量与汇总','Trend quality and summary'],selected_order:['工单人工记录','Human work order records'],selected_metadata:['所选资料元数据','Selected metadata']};
+export function AssistantRetrieval({sources,cards,en,onFocus}:{sources:AssistantSource[];cards:CanvasCard[];en:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void}){
+ const rows=sources.filter(s=>s.retrieval?.version===1);if(!rows.length)return null;
+ const count=rows.reduce((n,s)=>n+(s.retrieval?.plan.operations||0),0);
+ return <details className="as-retrieval"><summary>{en?'Retrieval process':'检索过程'} · {count} / 8</summary><p className="ap-caption">{en?'Only selected fixed materials. Search does not confirm engineering facts.':'仅在本轮勾选的固定资料中检索，结果仍需核验。'}</p><ol>{rows.map(source=>{const card=cards.find(c=>c.source?.id===source.evidenceRefId);return <li key={source.key}><strong>{source.key} · {card?.title||sourceLabelsFallback(source.kind,en)}</strong>{source.retrieval!.tools.map((step,index)=><span key={index}>{tools[step.tool]?.[en?1:0]||step.tool}{step.tool==='fixed_manual_fault_lookup'&&source.retrieval!.plan.faultCode?` · ${source.retrieval!.plan.faultCode}`:''} · {step.state==='not_found'?(en?'No match':'未命中'):step.state==='ambiguous'?(en?'Multiple matches':'匹配不唯一'):step.state==='matched'?(en?'Matched':'已命中'):(en?'Read':'已读取')}{step.nodes!==undefined?` · ${step.nodes} ${en?'nodes':'节点'}`:''}{step.truncated?(en?' · Limited result':' · 返回有界'):''}</span>)}{card&&assistantSourceAnchor(source)&&<button type="button" className="sw-text-button" onClick={()=>onFocus(card,assistantSourceAnchor(source))}>{en?'Locate retrieved evidence':'定位检索依据'}</button>}</li>;})}</ol></details>;
+}
+function sourceLabelsFallback(kind:string,en:boolean){return en?kind:'资料';}
