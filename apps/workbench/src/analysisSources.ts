@@ -41,7 +41,7 @@ export type EvidenceSource=Partial<Omit<ProjectModelVersion,'state'> & Simulated
   checks?:string[];note?:string;
   diagnosis?:{gap?:string;nodes?:DiagnosticNode[]};events?:{recordedAt:string;action:string;note:string}[];
 };
-export type EvidenceDetail={evidenceRefId:string;sourceKind:SourceKind;sourceRevision:string;availability:'available'|'restricted'|'unavailable'|'changed';reason?:string;source?:EvidenceSource};
+export type EvidenceDetail={evidenceRefId:string;sourceKind:SourceKind;sourceRevision:string;availability:'available'|'restricted'|'unavailable'|'changed';reason?:string;source?:EvidenceSource;photoTicket?:string};
 export type SourceAnchor={entityUid?:string;selector?:PhotoSelector|null;componentKeys?:string[];nodeId?:string;pageNumber?:number;drawingUid?:string;referenceKind?:'name_candidate'|'historical_binding'};
 export type SourceRelationshipGap={evidenceRefId:string;reason:string};
 export type SourceRelationship={id:string;fromRef:string;toRef:string;kind:string;label:string;reason:string;origin:'source'|'candidate';anchor:SourceAnchor|null};
@@ -147,7 +147,7 @@ export class AnalysisSources{
       {analysisSessionId:this.sessionId,evidenceRefIds:[...new Set(refs.map(ref=>ref.id))]},signal);
   }
   file(ref:SourceRef,source?:EvidenceSource,signal?:AbortSignal,representation:'original'|'preview'='original',pageNumber?:number,
-    priority:'foreground'|'background'='background'):Promise<string>{
+    priority:'foreground'|'background'='background',photo?:{ticket?:string}):Promise<string>{
     if(signal?.aborted||this.disposed)return Promise.reject(new DOMException('Closed','AbortError'));
     const key=representation+':'+(source?.contentVersionId&&source?.selector?`${source.contentVersionId}:${source.selector.displayRevision}`:ref.id+':'+ref.revision)+':'+(pageNumber||'');
     const cached=this.files.get(key);if(cached){this.files.delete(key);this.files.set(key,cached);return Promise.resolve(cached.url);}
@@ -158,11 +158,14 @@ export class AnalysisSources{
         await this.fileSlot(transfer);
         try{
           if(this.disposed||abort.signal.aborted)throw new DOMException('Closed','AbortError');
-          const route=representation==='preview'||pageNumber?'/evidence/preview-content':'/evidence/content';
-          const blob=await this.api.request<Blob>(ANALYSIS_ROOT+route,{
+          const route=ANALYSIS_ROOT+(representation==='preview'||pageNumber?'/evidence/preview-content':'/evidence/content');
+          const fixedPhoto=photo&&representation==='original'&&!pageNumber;
+          const request={
             analysisSessionId:this.sessionId,evidenceRefId:ref.id,...(pageNumber?{options:{pageNumber}}:
-              representation==='original'?{representation:'full_resolution'}:{})
-          },abort.signal,'source');
+              fixedPhoto?{representation:'full_resolution'}:{})
+          };
+          const blob=fixedPhoto&&this.api.analysisPhoto?await this.api.analysisPhoto(route,request,abort.signal,photo.ticket):
+            await this.api.request<Blob>(route,request,abort.signal,'source');
           if(this.disposed||abort.signal.aborted)throw new DOMException('Closed','AbortError');
           const url=URL.createObjectURL(blob);
           if(blob.type.startsWith('image/')&&typeof Image!=='undefined'){

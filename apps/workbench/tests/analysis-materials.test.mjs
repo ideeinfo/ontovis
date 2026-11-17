@@ -133,7 +133,7 @@ test('decoded image retention is bounded to two sources and released on close',a
 test('screen previews, originals and document pages never share the wrong byte cache',async()=>{
  const calls=[];const sources=new AnalysisSources({request:async(path,body)=>{calls.push({path,body});return new Blob([JSON.stringify(body)]);}},'session');
  const ref={id:'photo',revision:'fixed'},source={contentVersionId:'version',selector:{displayRevision:'display'}};
- const a=await sources.file(ref,source,undefined,'preview'),b=await sources.file(ref,source,undefined,'original');
+ const a=await sources.file(ref,source,undefined,'preview'),b=await sources.file(ref,source,undefined,'original',undefined,'foreground',{});
  assert.notEqual(a,b);assert.equal(await sources.file(ref,source,undefined,'preview'),a);
  const first=await sources.file({id:'doc',revision:'fixed'},undefined,undefined,'original',48),second=await sources.file({id:'doc',revision:'fixed'},undefined,undefined,'original',49);
  assert.notEqual(first,second);assert.equal(calls.length,4);assert.ok(calls[0].path.endsWith('/preview-content'));assert.ok(calls[1].path.endsWith('/content'));

@@ -3,6 +3,59 @@ import test from 'node:test';
 import {photoBoxes,photoFocusZoom,photoFocusScroll,photoBaseSize,photoFitZoom,photoRestoreZoom,photoWheelZoom,photoZoomScroll,clampPhotoZoom,MAX_PHOTO_ZOOM,MIN_PHOTO_ZOOM} from '../src/workOrderPhoto.ts';
 import {WorkbenchApi} from '../src/api.ts';
 
+const analysisPhotoPath = '/api/workbench/analysis-sessions/evidence/content';
+const mediaPhotoPath = 'https://vis-media.ontobase.ai/v1/fixed-photo';
+const nativePhotoBody = {representation:'full_resolution', analysisSessionId:'fixture', evidenceRefId:'fixed'};
+const photoBytes = () => new Response('fixed', {headers:{'Content-Type':'image/jpeg','X-Session-Revision':'r1',
+  'X-Content-SHA256':'a'.repeat(64),'X-Fixed-Photo-SHA256':'b'.repeat(64)}});
+const jsonReply = (value,status=200) => new Response(JSON.stringify(value), {status,headers:{'Content-Type':'application/json'}});
+
+test('prefetched fixed photo uses only an opaque, credential-free POST to the media host',async()=>{
+  const ticket = 'u'.repeat(43), signal = new AbortController().signal;
+  const api = new WorkbenchApi(async(path,init)=>{
+    assert.equal(path,mediaPhotoPath);
+    assert.equal(init.body,ticket);
+    assert.equal(init.credentials,'omit');
+    assert.equal(init.redirect,'error');
+    assert.equal(init.referrerPolicy,'no-referrer');
+    assert.equal(init.signal,signal);
+    return photoBytes();
+  });
+  api.session('r1');
+  assert.equal(await (await api.analysisPhoto(analysisPhotoPath,nativePhotoBody,signal,ticket)).text(),'fixed');
+});
+
+test('expired photo grant is renewed and an unavailable media host falls back to existing data access',async()=>{
+  const first='f'.repeat(43), next='n'.repeat(43), calls=[];
+  const api=new WorkbenchApi(async(path,init)=>{
+    calls.push(path);
+    if(path===mediaPhotoPath) return init.body===first?jsonReply({code:'PHOTO_TICKET_EXPIRED'},410):jsonReply({},503);
+    if(init.headers['X-Vis-Photo-Read'])return jsonReply({photoTicket:next,sessionRevision:'r1'});
+    return photoBytes();
+  });
+  api.session('r1');
+  const img=await api.analysisPhoto(analysisPhotoPath,nativePhotoBody,new AbortController().signal,first);
+  assert.equal(await img.text(),'fixed');
+  assert.deepEqual(calls,[mediaPhotoPath,analysisPhotoPath,mediaPhotoPath,analysisPhotoPath]);
+});
+
+test('photo grant revocation and user cancellation never retry the protected read',async()=>{
+  for(const cancel of [false,true]){
+    const control=new AbortController();
+    let calls=0;
+    const api=new WorkbenchApi(async(path)=>{
+      calls++;
+      assert.equal(path,mediaPhotoPath);
+      if(cancel){control.abort();throw new TypeError('cancelled');}
+      return jsonReply({code:'SESSION_EXPIRED'},401);
+    });
+    api.session('r1');
+    await assert.rejects(api.analysisPhoto(analysisPhotoPath,nativePhotoBody,control.signal,'t'.repeat(43)),
+      error=>cancel?error.name==='AbortError':error.status===401);
+    assert.equal(calls,1);
+  }
+});
+
 test('ordinary photo regions stay on the oriented display coordinate space',()=>{
   const bbox={x:.1,y:.2,width:.3,height:.4};
   assert.deepEqual(photoBoxes({kind:'image_bbox',coordinateSpace:'oriented_display_normalized',bbox}),[bbox]);

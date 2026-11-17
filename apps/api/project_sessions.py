@@ -471,7 +471,23 @@ class ProjectSessions(UserSessions):
         from .weather_service import request
         return request(self,sid,path,payload)
 
-    def analysis_request(self, sid, path, payload):
+    def authorize_photo_ticket(self, sid, payload):
+        row = self._session(sid, payload)
+        self._access(sid, row, self._ref(payload.get('projectRef')))
+        return row.revision
+
+    def fixed_photo_request(self, sid, path, payload):
+        from .photo_media import ANALYSIS_PHOTO, PHOTO_ROUTES
+        if path == ANALYSIS_PHOTO:
+            value = self.analysis_request(sid, path, payload, photo_only=True)
+        else:
+            value = getattr(self, PHOTO_ROUTES[path])(sid, path, payload)
+        if (not value.get('fixedPhotoSha256')
+                or value.get('mediaType') not in ('image/jpeg', 'image/png', 'image/webp', 'image/avif')):
+            raise PreviewError(404, 'NOT_FOUND_OR_FORBIDDEN')
+        return value
+
+    def analysis_request(self, sid, path, payload, *, photo_only=False):
         from .analysis_drafts import AnalysisDrafts, identifier, require, validate_snapshot
         row = self._session(sid, payload)
         code = self._ref(payload.get('projectRef'))
@@ -658,6 +674,9 @@ class ProjectSessions(UserSessions):
                     reference, descriptor = sources.descriptor(actor, request, guard)
                     release_store()
                     if action == 'evidence/content':
+                        if photo_only:
+                            require(reference['sourceKind'] == 'photo' and photo_representation in FULL_PHOTO_REPRESENTATIONS,
+                                    'NOT_FOUND_OR_FORBIDDEN', 404)
                         value = reader.content(reference['sourceKind'], descriptor, photo_representation=photo_representation)
                     else:
                         try:

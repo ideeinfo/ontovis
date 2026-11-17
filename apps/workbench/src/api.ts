@@ -15,6 +15,16 @@ export interface BinaryDescriptor {
 }
 type UploadKind = 'legacyModel' | 'projectModel' | 'terrain' | 'imagery' | 'imageryChunk' | 'sceneThumbnail' | 'workOrderPart';
 const MIB = 1024 * 1024;
+const PHOTO_MEDIA_URL = 'https://vis-media.ontobase.ai/v1/fixed-photo';
+const PHOTO_HEADER = 'X-Vis-Photo-Read';
+const PHOTO_ROUTES = new Set([
+  '/api/workbench/analysis-sessions/evidence/content',
+  '/api/workbench/objects/photos/content',
+  '/api/workbench/equipment/materials/content',
+  '/api/workbench/equipment/shared-photos/content',
+  '/api/workbench/work-orders/attachments/content',
+  '/api/workbench/work-orders/analysis-source',
+]);
 let avifDecodeSupport: Promise<boolean> | undefined;
 
 function browserCanDecodeAvif(): Promise<boolean> {
@@ -161,6 +171,10 @@ export class WorkbenchApi {
     return this.send<T>(path, body, signal, image, upload ? {file:upload, kind:'legacyModel'} : undefined);
   }
 
+  analysisPhoto(path: string, body: object, signal: AbortSignal, ticket?: string): Promise<Blob> {
+    return this.send<Blob>(path, body, signal, 'source', undefined, ticket);
+  }
+
   async subscribeSimulation(body:object,onEvent:(event:ServerEvent)=>void,signal:AbortSignal):Promise<void>{
     const path='/api/workbench/analysis-sessions/simulation/stream';
     const epoch=this.epoch,revision=this.revision,project=this.project?{...this.project}:null;
@@ -200,7 +214,7 @@ export class WorkbenchApi {
   }
 
   private async send<T>(path: string, body?: object, signal?: AbortSignal,
-    image: boolean | 'model' | 'source' | BinaryDescriptor = false, upload?: {file: Blob; kind: UploadKind}): Promise<T> {
+    image: boolean | 'model' | 'source' | BinaryDescriptor = false, upload?: {file: Blob; kind: UploadKind}, photoTicket?: string): Promise<T> {
     const epoch = this.epoch, revision = this.revision,project=this.project?{...this.project}:null;
     const guard = () => {
       if (epoch !== this.epoch || revision !== this.revision || signal?.aborted) {
@@ -212,7 +226,11 @@ export class WorkbenchApi {
     const scoped=path.startsWith('/api/workbench/')&&!path.startsWith('/api/workbench/projects')&&!sharedModels;
     const originalPhoto = body && 'representation' in body && body.representation === 'full_resolution'
       && (image === 'source' || typeof image === 'object' && image.fixedPhoto === true);
-    const photoAvif = originalPhoto ? await browserCanDecodeAvif() : false;
+    const photoDelivery = !!originalPhoto && PHOTO_ROUTES.has(path);
+    const photoBatch = path === '/api/workbench/analysis-sessions/evidence/batch';
+    const avif = originalPhoto || photoBatch ? await browserCanDecodeAvif() : false;
+    const photoAvif = !!originalPhoto && avif;
+    const photoFormat = avif ? 'full_resolution_avif' : 'full_resolution';
     guard();
     const json = body ? JSON.stringify({...body,...(photoAvif?{representation:'full_resolution_avif'}:{}),
       ...(scoped&&project?{projectRef:project}:{}), expectedSessionRevision: revision}) : undefined;
@@ -248,8 +266,49 @@ export class WorkbenchApi {
         headers[chunk ? 'X-Imagery-Chunk' : imagery ? 'X-Imagery-Metadata' : terrain ? 'X-Terrain-Metadata' : 'X-Model-Metadata'] = btoa(String.fromCharCode(...metadata));
       }
     }
-    const response = await this.transport(path, {method: body ? 'POST' : 'GET', credentials: 'same-origin',
-      cache: 'no-store', signal, headers, body:upload?.file || json});
+    const primary = (offer: boolean) => this.transport(path, {method: body ? 'POST' : 'GET', credentials: 'same-origin',
+      cache: 'no-store', signal, headers: offer ? {...headers, [PHOTO_HEADER]: photoFormat} : headers, body: upload?.file || json});
+    const redeem = async (ticket: unknown) => {
+      if (typeof ticket !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(ticket)) return;
+      let media: Response;
+      try {
+        media = await this.transport(PHOTO_MEDIA_URL, {method: 'POST', credentials: 'omit', redirect: 'error',
+          referrerPolicy: 'no-referrer', cache: 'no-store', signal, headers: {'Content-Type':'text/plain'}, body: ticket});
+      } catch {
+        guard();
+        return;
+      }
+      guard();
+      if (media.status === 410 && (await media.clone().json().catch(() => ({}))).code === 'PHOTO_TICKET_EXPIRED') {
+        await media.body?.cancel().catch(() => {});
+        return 'expired' as const;
+      }
+      if (media.status >= 500) {
+        await media.body?.cancel().catch(() => {});
+        return;
+      }
+      if (media.ok && (!/^[a-f0-9]{64}$/.test(media.headers.get('X-Fixed-Photo-SHA256') || '')
+          || !/^[a-f0-9]{64}$/.test(media.headers.get('X-Content-SHA256') || ''))) {
+        await media.body?.cancel().catch(() => {});
+        throw new ApiError(502, 'SOURCE_UNAVAILABLE');
+      }
+      return media;
+    };
+    let response = photoDelivery && photoTicket ? await redeem(photoTicket) : undefined;
+    if (!response || response === 'expired') {
+      const offerPhoto = photoDelivery && (!photoTicket || response === 'expired');
+      guard();
+      response = await primary(photoBatch || offerPhoto);
+      guard();
+      if (offerPhoto && response.ok && response.headers.get('Content-Type')?.startsWith('application/json')) {
+        const offer = await response.json();
+        guard();
+        if (offer.sessionRevision !== revision) throw new ApiError(502, 'SOURCE_UNAVAILABLE');
+        response = await redeem(offer.photoTicket);
+        guard();
+        if (!response || response === 'expired') response = await primary(false);
+      }
+    }
     guard();
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));

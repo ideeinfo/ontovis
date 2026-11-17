@@ -1184,7 +1184,8 @@ def main():
                 ontobase_connection_id=args.ontobase_connection_id, thumbnail_renderer=args.thumbnail_renderer,
                 thumbnail_node=args.thumbnail_node, thumbnail_browser=args.thumbnail_browser)
             try:
-                server = ThreadingHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin, development=args.development))
+                server = ThreadingHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin,
+                    development=args.development, photo_media_origin=os.environ.get('ONTOVIS_PHOTO_MEDIA_ORIGIN')))
                 print('ONTOVis evidence workbench ready', flush=True)
                 try:
                     server.serve_forever()

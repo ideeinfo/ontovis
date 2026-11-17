@@ -22,7 +22,7 @@ import {WorkOrderReferenceView} from './WorkOrderReferenceView';
 import type {WorkbenchApi} from './api';
 import type {FixedDocument} from './equipmentApi';
 
-export interface DraftApi {revision:string;epoch:number;project:ProjectScope|null;request<T>(path:string,body?:object,signal?:AbortSignal,image?:boolean|'model'|'source'):Promise<T>;content?:import('./api').WorkbenchApi['content']}
+export interface DraftApi {revision:string;epoch:number;project:ProjectScope|null;request<T>(path:string,body?:object,signal?:AbortSignal,image?:boolean|'model'|'source'):Promise<T>;content?:import('./api').WorkbenchApi['content'];analysisPhoto?:import('./api').WorkbenchApi['analysisPhoto']}
 type Detail=DraftReceipt&{snapshot:CanvasSnapshot;capabilities?:{canEditAssignedOrder?:boolean}};
 type Listing={items:AnalysisListItem[];total:number;nextCursor:string|null;capabilities:{canWrite:boolean;canManageLifecycle?:boolean}};
 type Versions={items:{revision:number;createdAt:string;operation:string}[];nextBeforeRevision:number|null};

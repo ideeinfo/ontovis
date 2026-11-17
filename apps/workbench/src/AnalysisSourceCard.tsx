@@ -60,7 +60,8 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
   useEffect(()=>{let live=true;const abort=new AbortController();if(cancelled||authorized!==authorizationKey||!active||detail?.availability!=='available'||!['photo','drawing','document'].includes(card.kind)||full&&['drawing','document'].includes(card.kind))return;
     setImagePending(true);setImageError(false);setSlow(false);
     const timer=setTimeout(()=>{if(live)setSlow(true);},3000);
-    void sources.file(ref,detail.source,abort.signal,card.kind==='photo'&&!original?'preview':'original',undefined,fullPhoto?'foreground':'background')
+    void sources.file(ref,detail.source,abort.signal,card.kind==='photo'&&!original?'preview':'original',undefined,fullPhoto?'foreground':'background',
+      card.kind==='photo'?{ticket:detail.photoTicket}:undefined)
       .then(url=>{if(live)setImage({url,original});})
       .catch(problem=>{
         if(!live)return;

@@ -13,15 +13,24 @@ from .imagery_validation import MAX_BYTES as MAX_IMAGERY_BYTES
 from .imagery_uploads import CHUNK_BYTES
 from .model_resource_metadata import MAX_METADATA_REQUEST_BYTES
 from .simulation_stream import PATH as SIMULATION_STREAM_PATH, event_bytes
+from .analysis_media import FULL_PHOTO_REPRESENTATIONS
+from .photo_media import ANALYSIS_BATCH, ANALYSIS_PHOTO, MEDIA_PATH, PHOTO_HEADER, PHOTO_ROUTES, TICKET_BYTES, PhotoTickets
 from tools.model_probe import strict_json, ProbeError
 
-def handler_type(sessions: UserSessions, origin: str, *, development=False):
+def handler_type(sessions: UserSessions, origin: str, *, development=False, photo_media_origin=None):
     parsed = urlsplit(origin)
     if (parsed.scheme != ('http' if development else 'https') or not parsed.netloc
             or parsed.path or parsed.query or parsed.fragment or parsed.username
             or development and parsed.hostname != '127.0.0.1'):
         raise ValueError('A fixed HTTPS origin is required')
     cookie_name = 'ontovis_development_session' if development else COOKIE
+    media_host, media_tickets = None, None
+    if photo_media_origin:
+        media = urlsplit(photo_media_origin)
+        if (media.scheme != 'https' or not media.hostname or media.netloc != media.hostname
+                or photo_media_origin != f'https://{media.hostname}' or media.hostname == parsed.hostname):
+            raise ValueError('A distinct HTTPS photo origin is required')
+        media_host, media_tickets = media.netloc, PhotoTickets()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = 'ONTOVis'
@@ -33,6 +42,15 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
 
         def log_message(self, *_args):
             pass  # No request bodies, paths, identities or tokens in access logs.
+
+        def end_headers(self):
+            if (media_host and getattr(self, 'path', None) == MEDIA_PATH and hasattr(self, 'headers')
+                    and self.headers.get_all('Host') == [media_host]
+                    and self.headers.get_all('Origin') == [origin]):
+                self.send_header('Access-Control-Allow-Origin', origin)
+                self.send_header('Access-Control-Expose-Headers', 'X-Session-Revision, X-Content-SHA256, X-Fixed-Photo-SHA256, Server-Timing')
+                self.send_header('Vary', 'Origin')
+            super().end_headers()
 
         def sid(self):
             cookie = SimpleCookie()
@@ -58,7 +76,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             try: self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError): pass
 
-        def image(self, data, revision, media_type='image/png', sha256=None, fixed_photo_sha256=None):
+        def image(self, data, revision, media_type='image/png', sha256=None, fixed_photo_sha256=None, *, photo_encode_ms=None):
             self.send_response(200)
             for key, value in (('Content-Type',media_type), ('Content-Length',str(len(data))),
                                ('Cache-Control','no-store'), ('X-Content-Type-Options','nosniff'),
@@ -68,13 +86,36 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 self.send_header('X-Content-SHA256', sha256)
             if fixed_photo_sha256 is not None:
                 self.send_header('X-Fixed-Photo-SHA256', fixed_photo_sha256)
+            if photo_encode_ms is not None:
+                self.send_header('Server-Timing', f'photo-encode;dur={photo_encode_ms}')
             self.end_headers()
             try: self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError): pass
 
-        def source_image(self, value):
+        def source_image(self, value, *, timed=False):
             return self.image(value['content'], value['sessionRevision'], value['mediaType'], value['sha256'],
-                              value.get('fixedPhotoSha256'))
+                              value.get('fixedPhotoSha256'), photo_encode_ms=value.get('photoEncodeMs') if timed else None)
+
+        def fixed_photo(self):
+            if self.path != MEDIA_PATH or self.command not in ('POST', 'OPTIONS'):
+                raise PreviewError(404, 'NOT_FOUND')
+            if self.headers.get_all('Origin') != [origin]:
+                raise PreviewError(403, 'FORBIDDEN')
+            if self.command == 'OPTIONS':
+                if (self.headers.get_all('Access-Control-Request-Method') != ['POST']
+                        or self.headers.get('Access-Control-Request-Headers', '').lower() not in ('', 'content-type')):
+                    raise PreviewError(403, 'FORBIDDEN')
+                self.send_response(204)
+                self.send_header('Access-Control-Allow-Methods', 'POST')
+                self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+                self.send_header('Cache-Control', 'no-store')
+                return self.end_headers()
+            if (self.headers.get_all('Transfer-Encoding') or self.headers.get('Cookie')
+                    or self.headers.get_all('Content-Type') != ['text/plain']
+                    or self.headers.get_all('Content-Length') != [str(TICKET_BYTES)]):
+                raise PreviewError(401, 'PHOTO_TICKET_REQUIRED')
+            sid, path, payload = media_tickets.consume(self.rfile.read(TICKET_BYTES))
+            return self.source_image(sessions.fixed_photo_request(sid, path, payload), timed=True)
 
         def simulation_stream(self, sid, payload):
             subscription = sessions.simulation_stream(sid, payload)
@@ -104,6 +145,8 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
 
         def dispatch(self):
             hosts, origins = self.headers.get_all('Host', []), self.headers.get_all('Origin', [])
+            if media_host and hosts == [media_host]:
+                return self.fixed_photo()
             if (len(hosts) != 1 or len(origins) > 1
                     or self.command == 'POST' and len(origins) != 1
                     or self.headers.get('Host') != parsed.netloc
@@ -292,6 +335,11 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 payload = decode_scene_request(raw) if parts.path in scene_paths else strict_json(raw)
             except (ValueError, UnicodeError, ProbeError): raise PreviewError(422, 'INVALID_REQUEST') from None
             if not isinstance(payload, dict): raise PreviewError(422, 'INVALID_REQUEST')
+            photo_format = self.headers.get(PHOTO_HEADER)
+            if (media_tickets and len(raw) <= 2048 and parts.path in PHOTO_ROUTES
+                    and photo_format in FULL_PHOTO_REPRESENTATIONS and payload.get('representation') == photo_format):
+                revision = sessions.authorize_photo_ticket(sid, payload)
+                return self.reply(200, {'photoTicket': media_tickets.issue(sid, parts.path, payload), 'sessionRevision': revision})
             if parts.path == SIMULATION_STREAM_PATH:
                 return self.simulation_stream(sid, payload)
             if parts.path in project_paths:
@@ -305,6 +353,12 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
                 return self.reply(200,sessions.weather_request(sid,parts.path,payload))
             if parts.path in analysis_paths:
                 value = sessions.analysis_request(sid, parts.path, payload)
+                if media_tickets and parts.path == ANALYSIS_BATCH and photo_format in FULL_PHOTO_REPRESENTATIONS:
+                    for item in value['items']:
+                        if item.get('sourceKind') == 'photo' and item.get('availability') == 'available':
+                            request = {key: payload[key] for key in ('projectRef','expectedSessionRevision','analysisSessionId')}
+                            request.update(evidenceRefId=item['evidenceRefId'], representation=photo_format)
+                            item['photoTicket'] = media_tickets.issue(sid, ANALYSIS_PHOTO, request)
                 if parts.path.endswith(('/evidence/content', '/evidence/preview-content')):
                     return self.source_image(value)
                 return self.reply(200, value)
@@ -370,6 +424,9 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False):
             self.handle_request()
 
         def do_POST(self):
+            self.handle_request()
+
+        def do_OPTIONS(self):
             self.handle_request()
 
         def handle_request(self):

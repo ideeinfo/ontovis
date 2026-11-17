@@ -3,6 +3,7 @@ from collections import OrderedDict
 from io import BytesIO
 import hashlib
 import threading
+from time import perf_counter
 
 from .authority import PreviewError
 
@@ -60,10 +61,20 @@ def photo_image(source):
 def full_resolution_photo(source, projection=None, *, prefer_avif=False):
     """Return display bytes at the fixed pixel dimensions, with a separate digest."""
     value = source
+    encode_ms = None
     if projection is None and len(source['content']) >= PHOTO_LIMIT:
         key = ('full-resolution-avif-v1' if prefer_avif else 'full-resolution-photo-v1', source['sha256'])
-        value = derived(key, lambda: encode_full_resolution(source, prefer_avif=prefer_avif))
-    return {**value, 'fixedPhotoSha256': source['sha256']}
+        encode_ms = 0.0
+
+        def generate():
+            nonlocal encode_ms
+            start = perf_counter()
+            result = encode_full_resolution(source, prefer_avif=prefer_avif)
+            encode_ms = round((perf_counter() - start) * 1000, 2)
+            return result
+
+        value = derived(key, generate)
+    return {**value, 'fixedPhotoSha256': source['sha256'], 'photoEncodeMs': encode_ms}
 
 
 def encode_full_resolution(source, *, prefer_avif=False):
@@ -101,7 +112,7 @@ def encode_full_resolution(source, *, prefer_avif=False):
             if prefer_avif and not transparent and orientation in (None, 1) and features.check('avif'):
                 avif = BytesIO()
                 try:
-                    pixels.save(avif, 'AVIF', quality=54, speed=9, max_threads=2,
+                    pixels.save(avif, 'AVIF', quality=54, speed=9, max_threads=4,
                                 icc_profile=options.get('icc_profile'))
                     if 0 < avif.tell() < PHOTO_LIMIT:
                         return avif.getvalue(), 'image/avif'

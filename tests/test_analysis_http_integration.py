@@ -57,7 +57,8 @@ class AnalysisHttpIntegrationTests(unittest.TestCase):
                 return super().request(method, path, body)
         self.source = Source
         self.sessions = self.start()
-        self.server = ThreadingHTTPServer(('127.0.0.1', 0), handler_type(self.sessions, transport.ORIGIN, development=True))
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), handler_type(self.sessions, transport.ORIGIN,
+            development=True, photo_media_origin=getattr(self, 'photo_media_origin', None)))
         thread = Thread(target=self.server.serve_forever, daemon=True); thread.start()
         self.addCleanup(self.server.server_close); self.addCleanup(thread.join); self.addCleanup(self.server.shutdown)
         self.admin = self.login('writer')

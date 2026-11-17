@@ -18,6 +18,7 @@ ROOT='/api/workbench/analysis-sessions'
 
 @unittest.skipUnless(os.environ.get('ONTOVIS_ANALYSIS_TEST_DATABASE_URL'), 'Set an owned disposable PG test connection')
 class AnalysisSourceHttpTests(unittest.TestCase):
+    photo_media_origin = 'https://vis-media.ontobase.ai'
     setUpClass=classmethod(base.AnalysisHttpIntegrationTests.setUpClass.__func__)
     tearDownClass=classmethod(base.AnalysisHttpIntegrationTests.tearDownClass.__func__)
     setUp=base.AnalysisHttpIntegrationTests.setUp
@@ -56,6 +57,16 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             return response.read()
         finally:connection.close()
 
+    def redeem_photo(self, ticket):
+        connection = HTTPConnection(*self.server.server_address, timeout=5)
+        try:
+            connection.request('POST', '/v1/fixed-photo', ticket, {'Host':'vis-media.ontobase.ai',
+                'Origin':'http://127.0.0.1:4180','Content-Type':'text/plain'})
+            response = connection.getresponse()
+            return response.status, response.getheader('X-Fixed-Photo-SHA256'), response.read()
+        finally:
+            connection.close()
+
     def test_project_document_photo_registers_and_reads_without_object_or_region(self):
         from tests.test_equipment_materials import DocumentReader, DOC, VERSION, PNG
         from tools.analysis_draft_backup import export_package, validate_package
@@ -73,13 +84,30 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             self.assertEqual(self.read_bytes(ROOT+'/evidence/content',payload),PNG)
             self.assertEqual(self.read_bytes(ROOT+'/evidence/content',payload|{'representation':'full_resolution'}),PNG)
             self.assertEqual(self.read_bytes(ROOT+'/evidence/content',payload|{'representation':'full_resolution_avif'}),PNG)
+            native = payload | {'representation':'full_resolution_avif'}
+            photo_header = {'X-Vis-Photo-Read':'full_resolution_avif'}
+            def mint(request):
+                reply = self.request(ROOT+'/evidence/content', request, headers=photo_header)
+                self.assertEqual(reply[0], 200, reply[1])
+                return reply[1]['photoTicket']
+            self.assertEqual(self.redeem_photo(mint(native)), (200, 'b'*64, PNG))
+            wrong_project = native | {'projectRef':self.body()['projectRef'] | {'projectCode':'B'}}
+            self.assertEqual(self.redeem_photo(mint(wrong_project))[0], 404)
+            ticket = mint(native)
+            previous_role = self.source.permissions['writer'].pop('SYNTHETIC-A')
+            try:
+                self.assertEqual(self.redeem_photo(ticket)[0], 403)
+            finally:
+                self.source.permissions['writer']['SYNTHETIC-A'] = previous_role
             self.assertEqual(self.request(ROOT+'/evidence/content',payload|{'representation':'other'})[0],422)
             self.assertTrue(self.read_bytes(ROOT+'/evidence/preview-content',payload).startswith(b'\xff\xd8\xff'))
             self.assertEqual(self.request(ROOT+'/evidence/relationships',self.body(analysisSessionId=created['analysisSessionId'],evidenceRefIds=[ref['evidenceRefId']]))[1]['items'],[])
             package=export_package(self.urls[0]);validate_package(package)
             row=next(row for row in package['tables']['analysis_evidence_refs'] if row['evidence_ref_id']==ref['evidenceRefId'])
             self.assertEqual(json.loads(row['descriptor_json']),selector|{'sourceSha256':'a'*64})
+            ticket = mint(native)
             fixed.version['source_sha256']='c'*64
+            self.assertEqual(self.redeem_photo(ticket)[0], 409)
             self.assertNotEqual(self.request(ROOT+'/evidence/detail',payload)[1]['availability'],'available')
 
     def test_cabinet_member_photo_recommendation_preserves_scope_and_writes_only_on_explicit_register(self):
