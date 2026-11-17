@@ -4,6 +4,7 @@ import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {ArrowRight,Focus,Globe2,Pause,Play,X} from 'lucide-react';
 import earthMap from '../../../assets/maps/bluemarble-2048.png';
 import {clusterGlobePoints,globeClusterDegrees,globeClusterFocusDistance,globeDriftRadians,globeVector,globeFlightProgress,resumedGlobeFlightStart,globeFramePlan,type GlobePoint} from './cockpitSpace';
+import {resizeSceneRenderer} from './sceneRenderer';
 import './cockpitSpace.css';
 
 export function WindTurbineIcon({size=16,className=''}:{size?:number;className?:string}){
@@ -37,7 +38,7 @@ export function CockpitGlobe({points,active,en,light,flight,focusTarget,onSelect
    const next=globeClusterDegrees(camera.position.length(),Math.max(240,element.clientHeight||900));
    if(next!==lastDegrees){lastDegrees=next;setClusterDegrees(next);}
   };
-  renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearAlpha(0);renderer.outputColorSpace=THREE.SRGBColorSpace;
+  renderer.setClearAlpha(0);renderer.outputColorSpace=THREE.SRGBColorSpace;
   renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.1;element.append(renderer.domElement);
   const controls=new OrbitControls(camera,renderer.domElement);controls.enablePan=false;controls.enableDamping=false;controls.minDistance=1.12;controls.maxDistance=5.8;controls.rotateSpeed=.5;controls.zoomSpeed=.55;
   const geometry=new THREE.SphereGeometry(1,80,48),material=new THREE.MeshPhongMaterial({color:0xb6cecb,shininess:7,specular:0x173346});
@@ -83,7 +84,11 @@ export function CockpitGlobe({points,active,en,light,flight,focusTarget,onSelect
    }
    try{renderer.render(scene,camera);}catch{failed=true;setFallback(true);return;}if(plan.continue)schedule();
   }
-  const resize=new ResizeObserver(()=>{const width=Math.max(1,element.clientWidth),height=Math.max(1,element.clientHeight);renderer.setSize(width,height);camera.aspect=width/height;camera.updateProjectionMatrix();syncDegrees();schedule();});resize.observe(element);
+  const resize=new ResizeObserver(()=>{
+   const {width,height}=resizeSceneRenderer(renderer,element,window.devicePixelRatio,true);
+   camera.aspect=width/height;camera.updateProjectionMatrix();syncDegrees();schedule();
+  });
+  resize.observe(element,'devicePixelContentBoxSize' in ResizeObserverEntry?{box:'device-pixel-content-box'}:undefined);
   const change=()=>schedule(),start=()=>{tween=null;interacting=true;drifting=false;},end=()=>{interacting=false;resumeAt=performance.now()+4500;lastDraw=0;schedule();};controls.addEventListener('change',change);controls.addEventListener('start',start);controls.addEventListener('end',end);
   const lost=(event:Event)=>{event.preventDefault();failed=true;setFallback(true);cancelAnimationFrame(frame);frame=0;};renderer.domElement.addEventListener('webglcontextlost',lost);
   document.addEventListener('visibilitychange',refresh);media.addEventListener('change',refresh);

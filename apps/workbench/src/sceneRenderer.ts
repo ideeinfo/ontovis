@@ -1,5 +1,18 @@
 import * as THREE from 'three';
 
+export function resizeSceneRenderer(
+  renderer:Pick<THREE.WebGLRenderer,'setDrawingBufferSize'>,
+  element:Pick<HTMLElement,'clientWidth'|'clientHeight'|'getBoundingClientRect'>,
+  devicePixelRatio:number,
+  presentation:boolean,
+) {
+  // The cockpit's CSS zoom may change the visible size without changing layout pixels.
+  const bounds=presentation?element.getBoundingClientRect():{width:element.clientWidth,height:element.clientHeight};
+  const width=Math.max(1,bounds.width),height=Math.max(1,bounds.height),ratio=devicePixelRatio||1;
+  renderer.setDrawingBufferSize(width,height,presentation?ratio:Math.min(ratio,1.5));
+  return {width,height};
+}
+
 type DisposeListener=(event:THREE.Event<'dispose',THREE.Texture>)=>void;
 let registeringRenderer:symbol|null=null;
 

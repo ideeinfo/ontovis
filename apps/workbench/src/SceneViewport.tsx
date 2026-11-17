@@ -9,7 +9,7 @@ import {IconBtn} from './Primitives';
 import {SceneResourceCache,cloneModel} from './sceneResourceCache';
 import {createSceneControls} from './sceneControls';
 import {cursorZoomView,visibleZoomHit} from './sceneZoom';
-import {prepareSceneRenderer} from './sceneRenderer';
+import {prepareSceneRenderer,resizeSceneRenderer} from './sceneRenderer';
 import {SceneModelSelectionBoxes,arrivalModelView,selectedModelBounds,selectedModelView,terrainSafeView,type OverviewFrame} from './sceneModelFocus';
 import {SceneCabinetAppearance} from './sceneCabinetAppearance';
 import {ModelPreviewInspection} from './modelPreview';
@@ -233,7 +233,7 @@ export function SceneViewport(props:SceneViewportProps) {
     catch(value){webglFailure.current=true;setError(value);props.onError?.(value);return;}
     const cache=new SceneResourceCache(api),scene=new THREE.Scene(),imageryLayer=new SceneImageryLayer(new SceneApi(api));
     const camera=new THREE.PerspectiveCamera(42,1,.05,2_000_000);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;
+    renderer.outputColorSpace=THREE.SRGBColorSpace;
     renderer.domElement.setAttribute('role','img');renderer.domElement.tabIndex=0;
     element.append(renderer.domElement);
     const sceneControls=createSceneControls(camera,renderer.domElement),orbit=sceneControls.orbit;
@@ -792,9 +792,10 @@ export function SceneViewport(props:SceneViewportProps) {
       else {if(tween&&hiddenAt!==null)tween.start+=performance.now()-hiddenAt;hiddenAt=null;appearance();request();}
     };
     const resize=new ResizeObserver(()=>{
-      // Layout dimensions exclude the enclosing analysis canvas's CSS zoom.
-      const width=Math.max(1,element.clientWidth),height=Math.max(1,element.clientHeight);
-      camera.aspect=width/height;camera.updateProjectionMatrix();renderer.setSize(width,height);request();});resize.observe(element);
+      const {width,height}=resizeSceneRenderer(renderer,element,window.devicePixelRatio,!!props.presentation);
+      camera.aspect=width/height;camera.updateProjectionMatrix();request();
+    });
+    resize.observe(element,props.presentation&&'devicePixelContentBoxSize' in ResizeObserverEntry?{box:'device-pixel-content-box'}:undefined);
     const orbitStart=()=>{initialFocusIds=undefined;current.current.onCameraInteraction?.();tween=null;componentTween=false;componentPending=null;};orbit.addEventListener('change',request);orbit.addEventListener('start',orbitStart);orbit.addEventListener('end',emit);
     const canvas=renderer.domElement;
     canvas.addEventListener('wheel',wheel,{capture:true,passive:false});

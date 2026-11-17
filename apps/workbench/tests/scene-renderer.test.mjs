@@ -1,7 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import {prepareSceneRenderer} from '../src/sceneRenderer.ts';
+import {prepareSceneRenderer,resizeSceneRenderer} from '../src/sceneRenderer.ts';
+
+test('cockpit renders the visible area at display density through interface zoom and fullscreen changes',()=>{
+  const buffers=[],renderer={setDrawingBufferSize:(width,height,ratio)=>buffers.push([width*ratio,height*ratio])};
+  const element={clientWidth:960,clientHeight:540,getBoundingClientRect:()=>({width:1920,height:1080})};
+  assert.deepEqual(resizeSceneRenderer(renderer,element,2,true),{width:1920,height:1080});
+  resizeSceneRenderer(renderer,element,1,true);
+  element.getBoundingClientRect=()=>({width:1600,height:900});
+  resizeSceneRenderer(renderer,element,2,true);
+  assert.deepEqual(buffers,[[3840,2160],[1920,1080],[3200,1800]]);
+});
+
+test('workbench viewport sizing uses layout pixels and retains its device-pixel cap',()=>{
+  const calls=[],renderer={setDrawingBufferSize:(...args)=>calls.push(args)};
+  const element={clientWidth:960,clientHeight:540,getBoundingClientRect:()=>({width:1920,height:1080})};
+  assert.deepEqual(resizeSceneRenderer(renderer,element,2,false),{width:960,height:540});
+  resizeSceneRenderer(renderer,element,1,false);
+  assert.deepEqual(calls,[[960,540,1.5],[960,540,1]]);
+});
 
 const lut=()=>{const value=new THREE.DataTexture(new Uint16Array(512),16,16,THREE.RGFormat,THREE.HalfFloatType);value.name='DFG_LUT';return value;};
 function fixture(texture,onRender=()=>{}){
