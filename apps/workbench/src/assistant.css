@@ -153,6 +153,9 @@
 .as-configuration dl{margin:6px 0 0}
 .as-configuration dl>div{display:grid;grid-template-columns:minmax(100px,1fr) minmax(120px,2fr);gap:8px;padding:4px 0}
 .as-configuration dd{margin:0;color:var(--textSecondary)}
+.as-configuration-instances{list-style:none;padding:0}
+.as-configuration-instances li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--borderSubtle)}
+.as-configuration-instances .ov-btn{flex:none}
 .as-configuration .as-configuration-proposal{border:1px solid var(--borderSubtle);background:var(--selected);padding:12px;border-radius:6px}
 .as-configuration-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--borderSubtle);padding-top:12px}
 .as-result-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}

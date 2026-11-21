@@ -1,7 +1,9 @@
-import {useEffect,useMemo,useState} from 'react';
-import {ArrowUpRight,Box,Plus} from 'lucide-react';
+import {useEffect,useMemo,useRef,useState} from 'react';
+import {ArrowUpRight,Box,LocateFixed,Plus} from 'lucide-react';
 import {cancelled,failureMessage,type WorkbenchApi} from './api';
 import {EquipmentApi,type EquipmentConfigurationEdit,type EquipmentConfigurationPreview,type EquipmentConfigurationTarget} from './equipmentApi';
+import {AssistantSceneViewer} from './AssistantSceneViewer';
+import type {AssistantSceneTarget} from './assistantScene';
 import {Btn,Modal} from './Primitives';
 import {ResourcePanel} from './ResourcePanel';
 
@@ -14,6 +16,8 @@ export function AssistantEquipmentConfiguration({api,target,title,en,onClose,onE
   const [preview,setPreview]=useState<EquipmentConfigurationPreview|null>(null);
   const [proposal,setProposal]=useState<string>();
   const [picker,setPicker]=useState(false);
+  const [scene,setScene]=useState<AssistantSceneTarget|null>(null);
+  const sceneTrigger=useRef<HTMLButtonElement|null>(null);
   const [error,setError]=useState<unknown>(null);
   const [attempt,setAttempt]=useState(0);
   useEffect(()=>{
@@ -65,9 +69,15 @@ export function AssistantEquipmentConfiguration({api,target,title,en,onClose,onE
           <section>
             <h3>{t('已保存场景实例','Saved scene instances')}</h3>
             {preview.impact?<><p>{preview.equipmentCount} {t('台设备采用此配置','devices adopt this configuration')} · {preview.impact.total} {t('个实例引用所列模型','instances reference the listed models')}</p>
-              {preview.impact.items.length>0&&<ul>{preview.impact.items.map(row=><li key={row.sceneId+'/'+row.instanceId}>
-                <strong>{row.sceneName}</strong> · {row.instanceName}
-                {row.modelVersionId===preview.proposal?.modelVersionId&&<small> · {t('拟关联版本','Proposed version')}</small>}
+              {preview.impact.items.length>0&&<ul className="as-configuration-instances">{preview.impact.items.map(row=><li key={row.sceneId+'/'+row.instanceId}>
+                <span><strong>{row.sceneName}</strong> · {row.instanceName}
+                  {row.modelVersionId===preview.proposal?.modelVersionId&&<small> · {t('拟关联版本','Proposed version')}</small>}
+                </span>
+                <Btn aria-label={`${t('定位','Locate')} ${row.sceneName} · ${row.instanceName}`} onClick={event=>{
+                  sceneTrigger.current=event.currentTarget;
+                  setScene({sceneId:row.sceneId,sceneRevision:row.sceneRevision,title:row.sceneName,
+                    instance:{instanceId:row.instanceId,modelVersionId:row.modelVersionId,equipmentUid:row.equipmentUid}});
+                }}><LocateFixed size={14}/>{t('定位','Locate')}</Btn>
               </li>)}</ul>}
               {preview.impact.total>preview.impact.items.length&&<p>{t('显示前 20 个实例。','Showing the first 20 instances.')}</p>}
               {preview.proposal&&<p>{t('场景保留已保存的模型版本和位置。','Saved scene model versions and placements are retained.')}</p>}
@@ -83,6 +93,12 @@ export function AssistantEquipmentConfiguration({api,target,title,en,onClose,onE
         </footer>
       </div>
     </Modal>
+    {scene&&<AssistantSceneViewer api={api} target={scene} en={en} onClose={()=>setScene(null)}
+      onCloseAutoFocus={event=>{
+        if(!sceneTrigger.current?.isConnected)return;
+        event.preventDefault();
+        sceneTrigger.current.focus({preventScroll:true});
+      }}/>}
     {picker&&onEdit&&<Modal title={t('选择固定模型版本','Choose a fixed model version')} description={t('从模型目录选择已保存版本。','Select a saved version from the model catalogue.')}
       onClose={()=>setPicker(false)} className="as-configuration-dialog">
       <ResourcePanel api={api} modelsOnly canPlace={false} canAcquire={false} onPlace={()=>{}} onTerrainReady={()=>{}}
