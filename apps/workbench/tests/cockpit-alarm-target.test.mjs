@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {cockpitAlarmPlacements,cockpitAlarmTarget,cockpitAlarmTargetCurrent} from '../src/cockpitAlarmTarget.ts';
+import {cockpitAlarmInstance,cockpitAlarmPlacements,cockpitAlarmTarget,cockpitAlarmTargetCurrent} from '../src/cockpitAlarmTarget.ts';
 const ref={entityUid:'unit-1',projectCode:'project',ontobaseConnectionId:'connection'};
 const root={entityUid:'unit-1',entityRevision:'unit-r1',objectScope:'installation',displayName:'Unit 1',installationContextId:'installed-1'};
 const cabinet={entityUid:'cn1-unit-1',entityRevision:'cabinet-r1',displayName:'Unit 1 CN1',objectScope:'installation',objectKind:'cabinet',installationContextId:'installed-1',sourceTemplateEntityUid:'cn1-definition'};
@@ -23,6 +23,17 @@ test('a simulated alarm resolves to the installed cabinet, keeping its scene, mo
  assert.deepEqual(target,{sceneId:'scene-1',sceneRevision:'s-r1',instanceId:'placed-1',modelVersionId:'model-fixed',rootUid:'unit-1',rootName:'Unit 1',entityUid:'cn1-unit-1',entityRevision:'cabinet-r1',displayName:'Unit 1 CN1'});
  assert.equal(cockpitAlarmTargetCurrent(target,catalog),true);
  for(const change of [{sceneRevision:'changed'},{instanceId:'other'},{modelVersionId:'other'},{rootUid:'other'}])assert.equal(cockpitAlarmTargetCurrent({...target,...change},catalog),false);
+});
+test('parallel alarm location uses only the selected visible instance of the fixed scene',()=>{
+ const target=cockpitAlarmTarget(placement,record,context,bundle,dataset);
+ const sameName={...instance,sceneModelInstanceId:'placed-2',rootBinding:{objectRef:{...ref,entityUid:'unit-2'}}};
+ const opened={...scene.opened,snapshot:{...scene.opened.snapshot,instances:[sameName,instance]}};
+ assert.equal(cockpitAlarmInstance(target,opened),instance);
+ assert.equal(cockpitAlarmInstance(target,{...opened,sceneId:'other'}),undefined);
+ assert.equal(cockpitAlarmInstance(target,{...opened,sceneRevision:'next'}),undefined);
+ for(const replacement of [{modelVersionId:'new'},{visible:false},{rootBinding:sameName.rootBinding}]){
+  assert.equal(cockpitAlarmInstance(target,{...opened,snapshot:{...opened.snapshot,instances:[sameName,{...instance,...replacement}]}}),undefined);
+ }
 });
 test('names and shared model identity cannot move an alarm to another installation or source',()=>{
  assert.equal(cockpitAlarmTarget(placement,record,{...context,objectRef:{...ref,ontobaseConnectionId:'other'}},bundle,dataset),null);

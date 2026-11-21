@@ -1,6 +1,6 @@
 import type {CockpitCatalog,CockpitScene} from './cockpitState';
 import type {ProjectRef} from './projectTypes';
-import type {SceneModelInstance} from './sceneTypes';
+import type {SceneModelInstance,SceneOpen} from './sceneTypes';
 import type {EquipmentRecord,ApplicationBundle} from './equipmentApi';
 import type {SceneObjectContext} from './sceneEngineeringTypes';
 import type {SimulatedDataset} from './simulatedAlarms';
@@ -27,8 +27,13 @@ export function cockpitAlarmTarget(placement:CockpitAlarmPlacement,record:Equipm
  return target?{sceneId:scene.sceneId,sceneRevision:scene.sceneRevision,instanceId:placement.instance.sceneModelInstanceId,modelVersionId:placement.instance.modelVersionId,rootUid:target.rootUid,rootName:target.rootName,entityUid:target.item.entityUid,entityRevision:target.item.entityRevision,displayName:target.item.displayName}:null;
 }
 
+export function cockpitAlarmInstance(target:CockpitAlarmTarget,scene:SceneOpen|null|undefined){
+ if(scene?.sceneId!==target.sceneId||scene.sceneRevision!==target.sceneRevision)return;
+ const instance=scene.snapshot.instances.find(row=>row.sceneModelInstanceId===target.instanceId);
+ if(instance?.visible&&instance.modelVersionId===target.modelVersionId&&instance.rootBinding?.objectRef.entityUid===target.rootUid)return instance;
+}
+
 export function cockpitAlarmTargetCurrent(target:CockpitAlarmTarget,catalog:CockpitCatalog|null){
  const scene=catalog?.scenes.find(row=>row.summary.sceneId===target.sceneId)?.opened;
- const instance=scene?.snapshot.instances.find(row=>row.sceneModelInstanceId===target.instanceId);
- return !!scene&&scene.sceneRevision===target.sceneRevision&&instance?.modelVersionId===target.modelVersionId&&instance.rootBinding?.objectRef.entityUid===target.rootUid&&instance.visible;
+ return !!cockpitAlarmInstance(target,scene);
 }

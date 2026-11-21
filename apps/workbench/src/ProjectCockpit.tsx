@@ -32,7 +32,7 @@ import {PageDeck,DisplaySwitch,CockpitWeatherSummary} from './CockpitPanels';
 import {CockpitAlarmSummary,CockpitAlarmCard,useCockpitAlarms} from './CockpitAlarmSummary';
 import {replayAlarm,type ReplaySelection} from './cockpitAlarms';
 import {useCockpitAlarmTargets} from './useCockpitAlarmTargets';
-import {cockpitAlarmTargetCurrent,type CockpitAlarmTarget} from './cockpitAlarmTarget';
+import {cockpitAlarmInstance,cockpitAlarmTargetCurrent,type CockpitAlarmTarget} from './cockpitAlarmTarget';
 import {useCockpitEquipment,useCockpitLocation} from './useCockpitLocation';
 import {cockpitInspectionScene,cockpitPickedObject} from './cockpitLocation';
 import {cockpitQuickFocus} from './cockpitQuickFocus';
@@ -66,6 +66,7 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  const alarmTargets=useCockpitAlarmTargets(api,catalog,project.projectRef,replay.rows,active);
  const [alarmFocus,setAlarmFocus]=useState<{selection:ReplaySelection;target:CockpitAlarmTarget}|null>(null);
  const pendingAlarm=useRef<{token:number;target:CockpitAlarmTarget}|null>(null);
+ const [spaceNavigation,setSpaceNavigation]=useState<SpaceNavigation|null>(null),[spaceKey,setSpaceKey]=useState(''),[globeFlight,setGlobeFlight]=useState<GlobeFlight|null>(null),[focusedScene,setFocusedScene]=useState<{sceneId:string;token:number}|null>(null);
  const openAlarms=(selection?:ReplaySelection)=>{setAlarmSelection(selection);setAlarms(true);};
  const [settings,setSettings]=useState(false),[alarms,setAlarms]=useState(false),[notice,setNotice]=useState('');
  const [analysisMounted,setAnalysisMounted]=useState(false),[analysisEntry,setAnalysisEntry]=useState<AnalysisEntry|null>(null),[analysisGeneration,setAnalysisGeneration]=useState(0),[orderDirty,setOrderDirty]=useState(false),[leave,setLeave]=useState<(()=>void)|null>(null);
@@ -102,9 +103,16 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  const weather=useCockpitWeather(api,opened?.sceneId||'',active&&(view==='scene'||view==='device'));
  const [motionStatus,setMotionStatus]=useState<Record<string,MotionStatus>>({});
  const motionVisible=devicesVisible&&active&&view==='device'&&!!selected&&(personal[selected.sceneModelInstanceId]??selected.visible);
- const location=useCockpitLocation(api,opened,selected,uid,motionVisible,locationAttempt,alarmFocus?.target.entityUid===uid?alarmFocus.target.entityRevision:undefined);
+ // A fixed alarm can be located while terrain and imagery load. The view still waits for the final model.
+ const queuedAlarm=active&&spaceNavigation&&spaceNavigation.phase!=='failed'&&pendingAlarm.current?.token===spaceNavigation.token?
+  pendingAlarm.current.target:undefined;
+ const queuedInstance=queuedAlarm&&cockpitAlarmTargetCurrent(queuedAlarm,catalog)?cockpitAlarmInstance(queuedAlarm,opened):undefined;
+ const locationInstance=queuedInstance??selected;
+ const locationUid=queuedInstance?queuedAlarm!.entityUid:uid;
+ const location=useCockpitLocation(api,opened,locationInstance,locationUid,!!queuedInstance||motionVisible,locationAttempt,
+  alarmFocus?.target.entityUid===locationUid?alarmFocus.target.entityRevision:undefined);
  const representation=location.representation;
- const displayOpened=useMemo(()=>cockpitInspectionScene(opened,selected,representation),[opened,selected,representation]);
+ const displayOpened=useMemo(()=>cockpitInspectionScene(opened,locationInstance,representation),[opened,locationInstance,representation]);
  const viewportSnapshot=useMemo(()=>displayOpened?{...displayOpened.snapshot,initialView:bookmarks.current.get(displayOpened.sceneId+':'+displayOpened.sceneRevision)||displayOpened.snapshot.initialView}:null,[displayOpened]);
  const effectiveModelRefs=displayOpened?.resourceRefs??[];
  const boundInstance=displayOpened?.snapshot.instances.find(item=>item.sceneModelInstanceId===instanceId);
@@ -130,7 +138,6 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
   }
   return undefined;
  },[inspecting,activeMode,location.loading,quickFocus,location.value,locationAttempt,isolated]);
- const [spaceNavigation,setSpaceNavigation]=useState<SpaceNavigation|null>(null),[spaceKey,setSpaceKey]=useState(''),[globeFlight,setGlobeFlight]=useState<GlobeFlight|null>(null),[focusedScene,setFocusedScene]=useState<{sceneId:string;token:number}|null>(null);
  const navigationSerial=useRef(0);
  const globePoints=useMemo(()=>catalog?.scenes.filter(item=>item.summary.displayName.toLocaleLowerCase().includes(query.toLocaleLowerCase())).flatMap(item=>{const point=sceneGlobePoint(item);return point?[point]:[];})??[],[catalog,query]);
  const preparationKey=useMemo(()=>viewportSnapshot?sceneLoadingIdentity(sceneLoadingPlan(viewportSnapshot,effectiveModelRefs),JSON.stringify([
@@ -146,11 +153,16 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  },[]);
  useEffect(()=>{if(spaceNavigation?.phase!=='arriving')return;const token=spaceNavigation.token;
   if(navigationSerial.current!==token||!mayFinishNavigation(spaceNavigation,token))return;
-  if(opened?.sceneId!==spaceNavigation.sceneId||opened.sceneRevision!==spaceNavigation.revision){pendingAlarm.current=null;setAlarmFocus(null);setResourceError(new ApiError(409,'SCENE_CHANGED'));setSpaceNavigation(current=>current?{...current,phase:'failed'}:null);return;}
-  const target=pendingAlarm.current?.token===token?pendingAlarm.current.target:null;pendingAlarm.current=null;
-  if(target){setInstanceId(target.instanceId);setUid(target.entityUid);setIsolated(true);setDevicePanel('structure');setLocationAttempt(v=>v+1);setView('device');}
+  if(opened?.sceneId!==spaceNavigation.sceneId||opened.sceneRevision!==spaceNavigation.revision||queuedAlarm&&!queuedInstance){
+   pendingAlarm.current=null;setAlarmFocus(null);setResourceError(new ApiError(409,'SCENE_CHANGED'));
+   setSpaceNavigation(current=>current?.token===token?{...current,phase:'failed'}:current);return;
+  }
+  if(preparationState==='error'){setSpaceNavigation(current=>current?.token===token?{...current,phase:'failed'}:current);return;}
+  if(preparationState!=='ready'||queuedAlarm&&location.loading)return;
+  pendingAlarm.current=null;
+  if(queuedAlarm){setInstanceId(queuedAlarm.instanceId);setUid(queuedAlarm.entityUid);setIsolated(true);setDevicePanel('structure');setView('device');}
   setSpaceNavigation(null);
- },[spaceNavigation?.token,spaceNavigation?.phase,opened?.sceneRevision]);
+ },[spaceNavigation,opened,queuedAlarm,queuedInstance,preparationState,location.loading]);
  const missingScene=!!catalog&&!catalog.loading&&!!sceneId&&!row;
  useEffect(()=>{if(row?.error||missingScene)setSpaceNavigation(current=>current?.sceneId===sceneId?{...current,phase:'failed'}:current);},[row?.error,missingScene,sceneId]);
  useEffect(()=>{if(!active){pendingAlarm.current=null;setAlarmFocus(null);setSpaceNavigation(null);setGlobeFlight(null);setFocusedScene(null);++navigationSerial.current;}},[active]);
@@ -183,7 +195,7 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  function remember(){const value=camera.current?.getView();if(value&&spatialKey)saveView(spatialKey,value);}
  function exit(){remember();guarded(onExit);}
  function navigate(next:View){if(next==='device'&&navigationBusy)return;remember();if(next==='scene'&&view==='device'){setInstanceId(null);setUid('');setIsolated(false);setModelView(null);setShellMode(null);setFocus({token:Date.now(),instanceId:null});}pendingAlarm.current=null;setSpaceNavigation(null);if(next!=='assets')setFocusedScene(null);const point=row?sceneGlobePoint(row):null;const token=++navigationSerial.current;if(next==='assets'&&point)setGlobeFlight({token,longitude:point.longitude,latitude:point.latitude,direction:'out'});else if(next==='assets')setGlobeFlight(null);if(next==='analysis'){if(view!=='analysis'&&view!=='orders'){returnView.current=view;const selection=alarmFocus?.selection||alarmSelection;if(selection){setAnalysisEntry(selection);setAnalysisGeneration(value=>value+1);}}setAnalysisMounted(true);}setView(next);}
- function openScene(id:string,alarm?:{selection:ReplaySelection;target:CockpitAlarmTarget},retry=false){remember();setAlarmFocus(alarm||null);setModelView(null);setShellMode(null);setFocus(undefined);setIsolated(false);setPinnedEntry(null);entryPending.current=false;setFocusedScene(null);setSceneId(id);setInstanceId(null);setUid('');setGlobeFlight(null);const target=catalog?.scenes.find(x=>x.summary.sceneId===id),token=++navigationSerial.current;const revision=target?.summary.headRevision||'',key=id+':'+revision+':navigation:'+token;pendingAlarm.current=alarm?{token,target:alarm.target}:null;setSpaceKey(key);catalogCache.priority=id;setSpaceNavigation({token,key,sceneId:id,revision,phase:target?.error&&!retry||!target&&!catalog?.loading?'failed':'loading'});setView('scene');}
+ function openScene(id:string,alarm?:{selection:ReplaySelection;target:CockpitAlarmTarget},retry=false){remember();setAlarmFocus(alarm||null);setModelView(null);setShellMode(null);setFocus(undefined);setIsolated(false);setPinnedEntry(null);entryPending.current=false;setFocusedScene(null);setSceneId(id);setInstanceId(null);setUid('');setGlobeFlight(null);const target=catalog?.scenes.find(x=>x.summary.sceneId===id),token=++navigationSerial.current;const revision=target?.summary.headRevision||'',key=id+':'+revision+':navigation:'+token;pendingAlarm.current=alarm?{token,target:alarm.target}:null;if(alarm)setLocationAttempt(v=>v+1);setSpaceKey(key);catalogCache.priority=id;setSpaceNavigation({token,key,sceneId:id,revision,phase:target?.error&&!retry||!target&&!catalog?.loading?'failed':'loading'});setView('scene');}
  function cancelSpace(){setView('assets');pendingAlarm.current=null;setAlarmFocus(null);setSpaceNavigation(null);setShellMode(null);const point=row?sceneGlobePoint(row):null;const token=++navigationSerial.current;if(point)setGlobeFlight({token,longitude:point.longitude,latitude:point.latitude,direction:'out'});}
  function selectInstance(id:string|null){if(navigationBusy||!id)return;setAlarmFocus(null);setDetail('');setModelView(null);setShellMode(null);setIsolated(false);setDevicePanel('structure');setInstanceId(id);const candidate=opened?.snapshot.instances.find(x=>x.sceneModelInstanceId===id)?.rootBinding?.objectRef.entityUid||'';setUid(counts?.uids.includes(candidate)?candidate:'');setFocus({token:Date.now(),instanceId:id});setView('device');}
  function selectObject(id:string){if(navigationBusy)return;if(alarmFocus?.target.entityUid!==id)setAlarmFocus(null);setModelView(null);setShellMode(null);setInspectionGeneration(v=>v+1);setUid(id);setFocus(undefined);setIsolated(id!==selected?.rootBinding?.objectRef.entityUid);setLocationAttempt(v=>v+1);}
