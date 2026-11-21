@@ -1,6 +1,7 @@
 import type {AssistantRun} from './assistantApi';
 import {Btn} from './Primitives';
-import {adoptedModelTarget,taskActionNames,type AssistantModelTarget} from './assistantTasks';
+import {adoptedModelTarget,equipmentConfigurationTarget,taskActionNames,type AssistantModelTarget} from './assistantTasks';
+import type {EquipmentConfigurationTarget} from './equipmentApi';
 import type {AssistantSceneTarget} from './assistantScene';
 import type {DeviceMaterialsTarget} from './AssistantDeviceMaterials';
 import type {FixedDocumentTarget} from './FixedDocumentPreview';
@@ -17,10 +18,11 @@ const processingLabels:Record<string,[string,string]>={
  superseded:['已被新版本替代','Superseded'],withdrawn:['已撤回','Withdrawn'],
 };
 
-export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,onViewScene,onViewDevice,onViewDocument,onViewModel,hasUnsaved=false}:{
+export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,onViewScene,onViewDevice,onViewDocument,onViewModel,onViewConfiguration,hasUnsaved=false}:{
  run:AssistantRun;en:boolean;locked:boolean;onExecute?:(keys:string[])=>void;onPage:(index:number)=>void;onHandoff?:()=>void;
  onViewScene?:(target:AssistantSceneTarget)=>void;onViewDevice?:(target:DeviceMaterialsTarget)=>void;
- onViewDocument?:(target:FixedDocumentTarget)=>void;onViewModel?:(target:AssistantModelTarget)=>void;hasUnsaved?:boolean}){
+ onViewDocument?:(target:FixedDocumentTarget)=>void;onViewModel?:(target:AssistantModelTarget)=>void;
+ onViewConfiguration?:(target:EquipmentConfigurationTarget,title:string)=>void;hasUnsaved?:boolean}){
  const task=run.result?.task;if(!task)return null;
  const t=(zh:string,english:string)=>en?english:zh;
  const processingLabel=(key?:string)=>processingLabels[key??'']?.[en?1:0];
@@ -30,12 +32,14 @@ export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,on
   {task.mode==='cockpit_query'&&onHandoff&&<Btn disabled={locked} onClick={onHandoff}>{t('转后台继续','Continue in workbench')}</Btn>}
   {!!task.results.length&&<><h4>{t('项目检索结果','Project results')} <span>{task.results.length}</span></h4><div className="as-project-results">{task.results.map(row=>{
    const scene=row.kind==='scene',adopted=row.kind==='adopted_model',device=row.kind==='equipment_material_scope',version=String(row.version);
-   const model=adoptedModelTarget(row);
+   const model=adoptedModelTarget(row),configuration=equipmentConfigurationTarget(row);
    return <article key={row.key}><div><strong>{row.title}</strong>
-    {scene?<><small title={version}>{t('保存版本','Saved revision')} · {version.replace(/^scene:/,'').slice(0,8)}</small>
+    {row.kind==='equipment_configuration'?<><small>{[row.installation,row.deviceCode,row.identifier].filter(Boolean).join(' · ')}</small>
+     <p>{row.configurationId?row.configuration+' · '+row.modelCount+' '+t('个固定模型','fixed models'):t('当前无已保存的采用配置','No saved configuration for the current adoption')}</p></>:
+    scene?<><small title={version}>{t('保存版本','Saved revision')} · {version.replace(/^scene:/,'').slice(0,8)}</small>
      <p>{row.instanceCount} {t('个实例','instances')}</p></>:adopted?<>
      <small title={version}>{t('固定模型版本','Fixed model revision')} · {version.slice(0,8)} · {row.representation==='appearance'?t('外观版','Exterior'):row.representation==='detailed'?t('完整版','Full model'):t('表示用途未登记','Representation not recorded')}{row.state==='deleted'?' · '+t('模型在回收站','Model in trash'):''}</small>
-     <p title={row.configurationRevision}>{row.configuration}</p>
+     <p title={row.configurationRevision??undefined}>{row.configuration}</p>
      <small>{row.instanceCount? t('已保存场景共引用','References across saved scenes')+' '+row.instanceCount:t('暂无已保存场景引用','No saved scene references')}</small>
      {!!row.scenes?.length&&<ul className="as-model-uses">{row.scenes.map((item,index)=><li key={index}>{item.title} · {item.instanceCount} {t('个实例','instances')}</li>)}</ul>}
      {row.moreScenes&&<small>{t('还有场景引用未展开','More saved scene references')}</small>}</>:
@@ -49,6 +53,7 @@ export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,on
     </div><div className="as-result-actions">
      {scene&&onViewScene&&<Btn disabled={locked} onClick={()=>onViewScene({sceneId:row.identifier,sceneRevision:version,title:row.title})}>{t('查看场景','View scene')}</Btn>}
      {model&&onViewModel&&<Btn aria-haspopup="dialog" disabled={locked} onClick={()=>onViewModel(model)}>{t('查看固定模型','View fixed model')}</Btn>}
+     {configuration&&onViewConfiguration&&<Btn aria-haspopup="dialog" disabled={locked} onClick={()=>onViewConfiguration(configuration,row.kind==='adopted_model'?row.configuration??row.title:row.title)}>{t('查看设备配置','View device configuration')}</Btn>}
      {device&&onViewDevice&&<Btn disabled={locked} onClick={()=>onViewDevice({entityUid:row.identifier,entityRevision:version,title:row.title})}>{t('查看设备资料','View materials')}</Btn>}
      {row.documentPreview&&onViewDocument&&<Btn disabled={locked} onClick={()=>onViewDocument(row.documentPreview!)}>{t('查看原文','View source')}</Btn>}
      {row.selector&&onExecute&&<Btn disabled={locked||!!task.receipts.length} onClick={()=>onExecute([row.key])}>{t('加入画布','Add to canvas')}</Btn>}

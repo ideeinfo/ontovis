@@ -2,14 +2,22 @@ import type {CanvasSnapshot,ProjectScope} from './analysisCanvas.ts';
 import {validateSnapshot} from './analysisCanvas.ts';
 import type {DraftReceipt} from './analysisDraftState';
 import type {FixedDocumentTarget} from './FixedDocumentPreview';
+import type {EquipmentConfigurationTarget} from './equipmentApi';
 export const TASK_PROTOCOL='ontovis-engineering-tasks-v1';
 export type TaskCandidate={key:string;kind:string;title:string;identifier:string;version:string|number;state?:string;faultCode?:string;instanceCount?:number;simulated:boolean;reason:string;
- selector?:Record<string,unknown>;configuration?:string;configurationRevision?:string;representation?:string|null;scenes?:{title:string;instanceCount:number}[];moreScenes?:boolean;
+ selector?:Record<string,unknown>;configuration?:string|null;configurationRevision?:string|null;representation?:string|null;scenes?:{title:string;instanceCount:number}[];moreScenes?:boolean;
+ configurationId?:string|null;deviceCode?:string|null;installation?:string;modelCount?:number;
  documentPreview?:FixedDocumentTarget;processingKind?:string;resultState?:string;completedUnits?:number;totalUnits?:number};
 export type AssistantModelTarget={modelAssetId:string;modelVersionId:string;title:string};
 export function adoptedModelTarget(row:TaskCandidate):AssistantModelTarget|null {
   if(row.kind!=='adopted_model'||!row.identifier||typeof row.version!=='string'||!row.version)return null;
   return {modelAssetId:row.identifier,modelVersionId:row.version,title:row.title};
+}
+export function equipmentConfigurationTarget(row:TaskCandidate):EquipmentConfigurationTarget|null {
+ if(!['equipment_configuration','adopted_model'].includes(row.kind)||!row.configurationId||!row.configurationRevision)return null;
+ if(row.kind==='equipment_configuration'&&(!row.identifier||typeof row.version!=='string'||!row.version))return null;
+ return {configurationId:row.configurationId,configurationRevision:row.configurationRevision,
+   ...(row.kind==='equipment_configuration'?{device:{entityUid:row.identifier,entityRevision:String(row.version)}}:{})};
 }
 export type TaskReceipt={operationId:string;state:'applied_draft'|'saved';saveRequested?:boolean;analysisSessionId:string;analysisRevision:number;snapshotSha256:string;items:{kind:string;status:string;identifier?:string;cardId?:string;label?:string;historyDirection?:'undo'|'redo';restoredFrom?:string;simulated?:boolean}[]};
 export type SelectedEvidenceRead={evidenceRefId:string;kind:string}&(

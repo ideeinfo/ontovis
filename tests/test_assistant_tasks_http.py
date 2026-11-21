@@ -167,6 +167,30 @@ class TaskHttpTests(unittest.TestCase):
             self.assertEqual((403,'ASSISTANT_TOOL_NOT_ALLOWED'),(status,error['code']))
             store.assert_not_called()
 
+    def test_explicit_device_configuration_uses_project_directory_without_a_generated_plan(self):
+        hit=dict(title='示例风机',identifier='fixed-device',version='fixed-device:1',
+                 configurationId=str(uuid4()),configurationRevision=str(uuid4()),modelCount=2)
+        with (
+            patch('apps.api.assistant_project_models.device_catalogue',return_value=dict(items=[hit],
+                snapshotRevision='fixed',truncated=False)) as directory,
+            patch('apps.api.assistant_task_api.call_source') as model,
+        ):
+            status,started=self.request('task-start',{**self.body,'question':'查询示例风机的设备配置'})
+            self.assertEqual(200,status,started)
+            for _ in range(60):
+                _,run=self.request('status',dict(runId=started['runId']))
+                if run['state'] not in ('reading','model','validating'):
+                    break
+                time.sleep(.01)
+            model.assert_not_called()
+        self.assertEqual('complete',run['state'],run)
+        self.assertEqual(0,run['result']['modelCalls'])
+        self.assertEqual('Demo-PDS',directory.call_args.args[0].project_code)
+        self.assertEqual('示例风机',directory.call_args.args[3])
+        self.assertEqual('query_only',run['result']['task']['execution'])
+        self.assertEqual(hit['configurationRevision'],run['result']['task']['results'][0]['configurationRevision'])
+        self.assertFalse(run['result']['task']['plan']['actions'])
+
     def test_history_scope_and_readonly_source_view_without_registration(self):
         wrong=json.loads(self.body['snapshotJson']);wrong['projectCode']='B'
         self.assertEqual(404,self.request('task-start',{**self.body,'historyJson':json.dumps(dict(undo=wrong))})[0])

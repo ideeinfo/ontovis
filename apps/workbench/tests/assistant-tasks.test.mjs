@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adoptedModelTarget,checkedTaskSnapshot,snapshotDigest,canApplyFreshTask} from '../src/assistantTasks.ts';
+import {adoptedModelTarget,equipmentConfigurationTarget,checkedTaskSnapshot,snapshotDigest,canApplyFreshTask} from '../src/assistantTasks.ts';
 import {assistantSendBlocker} from '../src/assistantApi.ts';
 import {blankAnalysisDraft} from '../src/analysisDraftState.ts';
 import {assistantEntrySeed} from '../src/analysisSources.ts';
@@ -11,6 +11,16 @@ test('the adopted model viewer uses the fixed pair returned by the catalogue',()
  for(const invalid of [{kind:'scene'},{kind:'model'},{version:2},{identifier:''},{version:''}]){
   assert.equal(adoptedModelTarget({...row,...invalid}),null);
  }
+});
+test('same-name devices open the exact fixed configuration and adoption identity',()=>{
+ const row={kind:'equipment_configuration',title:'Identical name',identifier:'device-a',version:'device-a:3',configurationId:'config',configurationRevision:'config:5'};
+ assert.deepEqual(equipmentConfigurationTarget(row),{configurationId:'config',configurationRevision:'config:5',device:{entityUid:'device-a',entityRevision:'device-a:3'}});
+ const duplicate={...row,identifier:'device-b',version:'device-b:7'};
+ assert.equal(equipmentConfigurationTarget(duplicate).device.entityUid,'device-b');
+ for(const incomplete of [{configurationId:null},{configurationRevision:null},{version:7},{kind:'scene'}]){
+  assert.equal(equipmentConfigurationTarget({...row,...incomplete}),null);
+ }
+ assert.deepEqual(equipmentConfigurationTarget({...row,kind:'adopted_model'}),{configurationId:'config',configurationRevision:'config:5'});
 });
 test('a cockpit handoff stays on its target canvas and does not replay after consumption',()=>{
  const entry={analysisSessionId:'target',analysisRevision:8,assistantQuestion:'Add the matching order',openLatest:true};

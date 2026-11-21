@@ -386,6 +386,8 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     COMPONENT_ALREADY_LINKED:['该构件已关联另一个柜体，请选择其他构件。','This component is already linked to another cabinet. Choose a different component.'],
     MODEL_LIBRARY_CHANGED:['模型库已变化，请刷新后重试。','The library changed. Refresh and retry.'],
     MODEL_DELETED:['模型已移至回收站，请先恢复后再新增使用。','This model is in the recycle bin. Restore it before adding new uses.'],
+    MODEL_ALREADY_ASSOCIATED:['该固定版本已关联到此配置，请选择其他版本。','This fixed version is already linked. Select another version.'],
+    EQUIPMENT_MODEL_LIMIT:['此配置已关联 20 个固定模型版本。','This configuration already has 20 fixed model versions.'],
     MODEL_ASSET_CHANGED:['模型资源信息已变化，请重新读取。','The model resource changed. Reload it.'],
     MODEL_GEOGRAPHIC_CALIBRATION_REQUIRED:['沿用旧显示的模型仅可用于局部场景；地理布置请先校准。','Legacy display models are limited to local scenes. Calibrate before geographic placement.'],
     MODEL_CALIBRATION_REQUIRED:['请先核对模型单位、基点和正面朝向。','Verify the model units, base point and forward direction first.'],

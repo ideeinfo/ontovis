@@ -103,6 +103,8 @@ class WorkbenchSessions(UserSessions):
 
     def equipment_request(self, sid, path, payload):
         writing=path.endswith(('/save','/assign','/associate'))
+        if path=='/api/workbench/equipment/configurations/detail':
+            writing='proposedModelVersionId' in payload or payload.get('requireCurrent') is True
         row,authorize,access,actor=self.project_authorization(sid,payload,writing=writing)
         body={k:v for k,v in payload.items() if k!='expectedSessionRevision'}
         reader=SceneEngineeringReader(row.authority,self.ontobase_connection_id,self.project_code,lambda:self.guard(sid,row))
@@ -179,9 +181,22 @@ class WorkbenchSessions(UserSessions):
                 identity=self.project_models.content_identity(version)
                 value['models'].append(self.project_models.model(identity['modelAssetId'],version,authorize))
         elif path=='/api/workbench/equipment/configurations/detail':
-            if not {'configurationId'}<=set(body)<={'configurationId','configurationRevision'}:raise PreviewError(422,'INVALID_REQUEST')
-            value=self.equipment_store().detail(body['configurationId'],body.get('configurationRevision'),authorize)
+            if not {'configurationId'}<=set(body)<={'configurationId','configurationRevision','includeImpact','device',
+                'proposedModelVersionId','requireCurrent'}:raise PreviewError(422,'INVALID_REQUEST')
+            if type(body.get('includeImpact',False)) is not bool or type(body.get('requireCurrent',False)) is not bool:
+                raise PreviewError(422,'INVALID_REQUEST')
+            if body.get('includeImpact'):
+                if 'configurationRevision' not in body or ('proposedModelVersionId' in body and body['proposedModelVersionId'] is None):
+                    raise PreviewError(422,'INVALID_REQUEST')
+                value=self.equipment_store().preview(body['configurationId'],body['configurationRevision'],authorize,equipment,
+                    self.project_models,can_prepare=access.get('role')=='admin',device=body.get('device'),
+                    proposal=body.get('proposedModelVersionId'),require_current=body.get('requireCurrent',False))
+            else:
+                if set(body)-{'configurationId','configurationRevision','includeImpact'}:raise PreviewError(422,'INVALID_REQUEST')
+                value=self.equipment_store().detail(body['configurationId'],body.get('configurationRevision'),authorize)
         elif path=='/api/workbench/equipment/configurations/save':
+            require_current=body.pop('requireCurrentApplication',False)
+            if type(require_current) is not bool:raise PreviewError(422,'INVALID_REQUEST')
             snapshot=body.get('snapshot')
             if type(snapshot) is not dict or type(snapshot.get('models')) is not list or len(snapshot['models'])>20:
                 raise PreviewError(422,'INVALID_REQUEST')
@@ -190,6 +205,12 @@ class WorkbenchSessions(UserSessions):
                 raise PreviewError(409,'SOURCE_APPLICATION_REQUIRED')
             application=equipment.application(source_ref['applicationRevisionId'])
             derived=self.equipment_store().source_snapshot(snapshot,application)
+            if require_current:
+                authorize_project=authorize
+                def authorize():
+                    authorize_project()
+                    if equipment.application(source_ref['applicationRevisionId']).get('headRevisionId')!=source_ref['applicationRevisionId']:
+                        raise PreviewError(409,'ENGINEERING_CHANGED')
             refs=[]
             if derived.get('rootDefinition') is not None:
                 refs.append(derived['rootDefinition']['objectRef'])

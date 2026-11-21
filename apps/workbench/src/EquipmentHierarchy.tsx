@@ -1,7 +1,7 @@
 import {lazy,Suspense,useEffect,useMemo,useState} from 'react';
 import {Box,Boxes,Check,ChevronDown,Focus,Link2,Plus,Search,Trash2} from 'lucide-react';
 import {cancelled,failureMessage,type WorkbenchApi} from './api';
-import {EquipmentApi,type EquipmentConfiguration,type EquipmentConfigurations,type EquipmentConfigurationSnapshot,type SourceAdoption,type ApplicationBundle} from './equipmentApi';
+import {EquipmentApi,type EquipmentConfigurationEdit,type EquipmentConfigurations,type EquipmentConfigurationSnapshot,type SourceAdoption,type ApplicationBundle} from './equipmentApi';
 import type {EngineeringObject} from './types';
 import type {SceneObjectContext} from './sceneEngineeringTypes';
 import type {ProjectModelVersion} from './resourceTypes';
@@ -32,10 +32,12 @@ function SharedCabinetObjects({api,parentUid,selectedUid,onSelect,en}:{api:Workb
   return <details open className="eq-shared-children"><summary>{en?'Cabinet engineering objects':'柜内共享工程对象'} ({total})</summary><div className="eq-device-children">{items.map(item=><button key={item.entityUid} aria-pressed={item.entityUid===selectedUid} onClick={()=>onSelect(item.entityUid)}><Box size={13}/>{item.displayName}</button>)}</div>{next&&<Btn onClick={()=>setCursor(next)}>{en?'Load more':'加载更多'}</Btn>}{!!error&&<p role="alert">{failureMessage(error,en?'en':'zh')}</p>}</details>;
 }
 
-export function EquipmentHierarchy({api,onAnalyze,onOpenScene,onDirtyChange}:{api:WorkbenchApi;onAnalyze?:(entry:AnalysisEntry)=>void;onOpenScene?:()=>void;onDirtyChange?:(dirty:boolean)=>void}){
+export function EquipmentHierarchy({api,onAnalyze,onOpenScene,onDirtyChange,initialConfiguration}:{api:WorkbenchApi;onAnalyze?:(entry:AnalysisEntry)=>void;onOpenScene?:()=>void;onDirtyChange?:(dirty:boolean)=>void;initialConfiguration?:EquipmentConfigurationEdit}){
   const {locale}=usePreferences(),en=locale==='en',t=(zh:string,english:string)=>en?english:zh;
   const service=useMemo(()=>new EquipmentApi(api),[api]);
-  const [tab,setTab]=useState<'configuration'|'equipment'>('equipment'),[reload,setReload]=useState(0);
+  const [tab,setTab]=useState<'configuration'|'equipment'>(initialConfiguration?'configuration':'equipment'),[reload,setReload]=useState(0);
+  const [handoff,setHandoff]=useState(initialConfiguration);
+  const [prepared,setPrepared]=useState<EquipmentConfigurationEdit>();
   const [data,setData]=useState<EquipmentConfigurations|null>(null),[configurationId,setConfigurationId]=useState(''),[draft,setDraft]=useState<EquipmentConfigurationSnapshot|null>(null),[dirty,setDirty]=useState(false);
   const [versions,setVersions]=useState<ProjectModelVersion[]>([]),[versionId,setVersionId]=useState('');
   const [selectedUid,setSelectedUid]=useState(''),[definition,setDefinition]=useState<SceneObjectContext|null>(null),[extraObjects,setExtraObjects]=useState<EngineeringObject[]>([]);
@@ -52,11 +54,34 @@ export function EquipmentHierarchy({api,onAnalyze,onOpenScene,onDirtyChange}:{ap
   function chooseModelNode(nodeId:string|null,focus=true){inspection.choose(nodeId,focus);const node=inspection.structure?.nodes.find(row=>row.id===nodeId);if(node?.componentKeys.length)setKeys([...node.componentKeys]);}
   const editableInspection={...inspection,choose:chooseModelNode};
   useEffect(()=>{if(tab!=='configuration'||data)return;const abort=new AbortController();setReading(true);setError(null);
-    service.configurations(abort.signal).then(value=>{if(!abort.signal.aborted){setReading(false);setData(value);setVersions(value.models);setConfigurationId(value.items[0]?.configurationId??'');}})
+    service.configurations(abort.signal).then(async value=>{
+      let models=value.models;
+      if(handoff){
+        const exact=value.items.find(row=>row.configurationId===handoff.configurationId&&row.configurationRevision===handoff.configurationRevision);
+        if(!exact)throw new Error(t('预览后的配置已变化，请重新查询后打开。','The configuration changed after preview. Search again for the current revision.'));
+        const preview=await service.configurationPreview(handoff,true,abort.signal);
+        if(preview.proposal){
+          const result=await new SceneApi(api).model(preview.proposal.modelAssetId,preview.proposal.modelVersionId,abort.signal);
+          models=[...models.filter(row=>row.modelVersionId!==result.modelVersionId),result];
+        }
+      }
+      if(abort.signal.aborted)return;
+      setData(value);setVersions(models);setConfigurationId(handoff?.configurationId??value.items[0]?.configurationId??'');
+      setPrepared(handoff);setHandoff(undefined);
+    })
       .catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setError(e);}).finally(()=>{if(!abort.signal.aborted)setReading(false);});return()=>abort.abort();
-  },[service,api.epoch,api.revision,tab,data,reload]);
-  useEffect(()=>{setData(null);setDraft(null);setConfigurationId('');setBundle(null);setVersions([]);setPending(null);},[api,api.epoch,api.revision]);
-  useEffect(()=>{if(!configuration)return;setDraft(structuredClone(configuration.snapshot));setVersionId(configuration.snapshot.models[0]?.modelVersionId??'');setDirty(false);setSelectedUid(configuration.snapshot.models[0]?.mappings[0]?.objectRef.entityUid??'');},[configuration?.configurationId,configuration?.configurationRevision]);
+  },[service,api.epoch,api.revision,tab,data,reload,handoff]);
+  useEffect(()=>{setData(null);setDraft(null);setConfigurationId('');setBundle(null);setVersions([]);setPending(null);setPrepared(undefined);},[api,api.epoch,api.revision]);
+  useEffect(()=>{
+    if(!configuration)return;
+    const value=structuredClone(configuration.snapshot);
+    const proposal=prepared?.configurationId===configuration.configurationId&&prepared.configurationRevision===configuration.configurationRevision?
+      prepared.proposedModelVersionId:undefined;
+    if(proposal)value.models.push({modelVersionId:proposal,mappings:[]});
+    setDraft(value);setVersionId(proposal??value.models[0]?.modelVersionId??'');setDirty(!!proposal);
+    setSelectedUid(value.models[0]?.mappings[0]?.objectRef.entityUid??'');
+    if(proposal)setNotice(t('模型已预填。核对后保存构件绑定。','Model prefilled. Review and save the binding.'));
+  },[configuration?.configurationId,configuration?.configurationRevision,prepared]);
   useEffect(()=>{const abort=new AbortController();setBundle(null);setSourceBusy(false);if(!draft?.projectApplicationRef)return;setSourceBusy(true);
     service.application(draft.projectApplicationRef.applicationRevisionId,abort.signal).then(value=>{if(!abort.signal.aborted){setBundle(value);setExtraObjects(value.objects);}})
       .catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setError(e);}).finally(()=>{if(!abort.signal.aborted)setSourceBusy(false);});return()=>abort.abort();
@@ -92,12 +117,22 @@ export function EquipmentHierarchy({api,onAnalyze,onOpenScene,onDirtyChange}:{ap
     change({displayName:source.name,objectKind:app.specification.objectKind,projectApplicationRef:ref,
       rootDefinition:source.rootDefinition?{objectRef:{...api.project,entityUid:source.rootDefinition.entityUid},expectedEntityRevision:source.rootDefinition.expectedEntityRevision}:null,
       models:continuing&&draft?draft.models:[]});setBundle(value);setExtraObjects(value.objects);setPicker(null);}
-  async function save(){if(!draft||!editable)return;setBusy(true);setError(null);try{const result=await service.save(configurationId,configuration?.configurationRevision??null,draft);setData(value=>value?{...value,items:[...value.items.filter(c=>c.configurationId!==configurationId),result]}:value);setDirty(false);setNotice(t('构件绑定已保存，设备采用由源端管理。','Component binding saved. Equipment adoption is managed at the source.'));}catch(e){setError(e);}finally{setBusy(false);}}
+  async function save(){
+    if(!draft||!editable)return;
+    setBusy(true);setError(null);
+    try{
+      const fromAssistant=prepared?.configurationId===configurationId&&prepared.configurationRevision===configuration?.configurationRevision;
+      if(fromAssistant)await service.configurationPreview(prepared,true);
+      const result=await service.save(configurationId,configuration?.configurationRevision??null,draft,undefined,fromAssistant);
+      setData(value=>value?{...value,items:[...value.items.filter(c=>c.configurationId!==configurationId),result]}:value);
+      setPrepared(undefined);setDirty(false);setNotice(t('构件绑定已保存，设备采用由源端管理。','Component binding saved. Equipment adoption is managed at the source.'));
+    }catch(e){setError(e);}finally{setBusy(false);}
+  }
   return <section className="eq-hierarchy" aria-label={t('设备层级','Equipment hierarchy')}>
     <header className="eq-heading"><div className="eq-tabs" role="tablist"><button role="tab" aria-selected={tab==='equipment'} onClick={()=>setTab('equipment')}>{t('项目设备','Project equipment')}</button><button role="tab" aria-selected={tab==='configuration'} onClick={()=>setTab('configuration')}>{t('构件绑定','Component binding')}</button></div>
     <div className="eq-actions">{tab==='configuration'&&<><Btn disabled={!canWrite||busy||dirty} onClick={()=>{setContinuing(false);setPicker('source');}}><Plus size={14}/>{t('选择项目采用','Choose project application')}</Btn><Btn primary disabled={!dirty||busy||!editable||!draft?.models.length} onClick={()=>void save()}><Check size={14}/>{busy?t('正在保存…','Saving…'):t('保存构件绑定','Save binding')}</Btn></>}</div></header>
     <div hidden={tab!=='equipment'} className="eq-device-host"><EquipmentDevices api={api} en={en} active={tab==='equipment'} onAnalyze={onAnalyze} onOpenScene={onOpenScene} onBinding={(device,adoption)=>{setPending({device,adoption});setTab('configuration');}}/></div>
-    {tab==='configuration'&&<>{!!error&&<div role="alert" className="eq-message">{error instanceof Error&&!(error as {code?:string}).code?error.message:failureMessage(error,locale)}<Btn onClick={()=>{setData(null);setReload(value=>value+1);}}>{t('重新读取','Reload')}</Btn></div>}{notice&&<div role="status" className="eq-message">{notice}</div>}
+    {tab==='configuration'&&<>{!!error&&<div role="alert" className="eq-message">{error instanceof Error&&!(error as {code?:string}).code?error.message:failureMessage(error,locale)}<Btn onClick={()=>{setData(null);setReload(value=>value+1);}}>{t('重新读取','Reload')}</Btn>{handoff&&<Btn onClick={()=>setHandoff(undefined)}>{t('返回配置列表','Back to configuration list')}</Btn>}</div>}{notice&&<div role="status" className="eq-message">{notice}</div>}
     {reading?<p role="status">{t('正在读取共享绑定…','Loading shared bindings…')}</p>:draft?<>
     <div className="eq-config-bar"><label>{t('固定项目采用','Fixed project application')}<select value={configurationId} onChange={event=>{if(dirty){setNotice(t('请先保存当前修改再切换配置','Save changes before switching'));return;}setConfigurationId(event.target.value);}}>{data?.items.map(row=><option key={row.configurationId} value={row.configurationId}>{row.snapshot.displayName}</option>)}{!configuration&&<option value={configurationId}>{draft.displayName}</option>}</select></label>
     <label>{t('固定模型版本','Fixed model version')}<select value={versionId} onChange={event=>setVersionId(event.target.value)}>{draft.models.map(entry=><option key={entry.modelVersionId} value={entry.modelVersionId}>{versions.find(m=>m.modelVersionId===entry.modelVersionId)?.displayName??entry.modelVersionId}</option>)}</select></label>

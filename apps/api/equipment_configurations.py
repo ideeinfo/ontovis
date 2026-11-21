@@ -176,6 +176,96 @@ class EquipmentConfigurations:
         authorize()
         return {'configurationId':configuration_id,'configurationRevision':row['revision'],'snapshot':json.loads(row['snapshot']),'savedAt':row['saved_at']}
 
+    def preview(self, configuration_id, revision, authorize, equipment, models, *,
+                can_prepare=False, device=None, proposal=None, require_current=False):
+        """Read one fixed configuration and its current saved-scene scope."""
+        text(revision)
+        fixed = self.detail(configuration_id, revision, authorize)
+        head = self.detail(configuration_id, None, authorize)['configurationRevision']
+        ref = fixed['snapshot'].get('projectApplicationRef')
+        application = equipment.application(ref['applicationRevisionId']) if ref and revision==head else None
+        current = bool(application and application.get('headRevisionId')==ref['applicationRevisionId'])
+        if application:
+            self.source_snapshot(dict(projectApplicationRef=ref,models=fixed['snapshot']['models']),application)
+
+        def check_device():
+            uid, expected = device['entityUid'], device['entityRevision']
+            value = equipment.resolve([uid])[uid]
+            adoption = value['adoption'] or {}
+            require(value['item']['entityRevision']==expected and value['item']['equipmentState']=='active'
+                    and all(adoption.get(key)==ref[key] for key in ref),'ENGINEERING_CHANGED',409)
+
+        if device is not None:
+            require(type(device) is dict and set(device)=={'entityUid','entityRevision'})
+            text(device['entityUid'],512);text(device['entityRevision'])
+            if current:
+                check_device()
+
+        if require_current or proposal is not None:
+            require(revision==head,'REVISION_CONFLICT',409)
+            require(current,'ENGINEERING_CHANGED',409)
+            require(can_prepare,'SCENE_WRITE_FORBIDDEN',403)
+        attached = {row['modelVersionId']:models.fixed_version_metadata(row['modelVersionId'],authorize)
+                    for row in fixed['snapshot']['models']}
+        candidate = None
+        if proposal is not None:
+            candidate = models.fixed_version_metadata(identifier(proposal),authorize)
+            require(candidate['assetState']=='active','MODEL_DELETED',410)
+            require(proposal not in attached,'MODEL_ALREADY_ASSOCIATED',409)
+            require(len(attached)<20,'EQUIPMENT_MODEL_LIMIT',409)
+        adopters = equipment.application_equipment(ref['applicationRevisionId']) if current else []
+        if current and device:
+            require(device['entityUid'] in adopters,'ENGINEERING_CHANGED',409)
+        version_ids = [*attached,*([proposal] if candidate else [])]
+        impact = self._scene_impact(adopters,version_ids) if current else None
+        definitions = {m['objectRef']['entityUid'] for row in fixed['snapshot']['models'] for m in row['mappings']}
+        root = fixed['snapshot'].get('rootDefinition')
+        if root:
+            definitions.add(root['objectRef']['entityUid'])
+        objects = {}
+        uids = sorted(definitions)
+        for offset in range(0,len(uids),50):
+            objects.update(equipment.reader._resolve(uids[offset:offset+50]))
+        names = {uid:obj['displayName'] for uid,obj in objects.items()}
+        if current:
+            require(equipment.application(ref['applicationRevisionId'])==application,'ENGINEERING_CHANGED',409)
+            require(equipment.application_equipment(ref['applicationRevisionId'])==adopters,'ENGINEERING_CHANGED',409)
+            if device:
+                check_device()
+            require(self._scene_impact(adopters,version_ids)==impact,'SNAPSHOT_CHANGED',409)
+        if candidate:
+            require(models.fixed_version_metadata(proposal,authorize)==candidate,'MODEL_ASSET_CHANGED',409)
+        require(self.detail(configuration_id, None, authorize)['configurationRevision']==head,'REVISION_CONFLICT',409)
+        return dict(**fixed, models=list(attached.values()), objectNames=names, current=current,
+                    canPrepare=can_prepare and current, equipmentCount=len(adopters) if current else None,
+                    impact=impact, proposal=candidate)
+
+    def _scene_impact(self, adopters, version_ids):
+        if not adopters or not version_ids:
+            return dict(total=0,items=[])
+        # The bounds come from the source adopter listing and the saved configuration schema.
+        with self.library.connect() as db:
+            rows=db.execute('''select s.id as sceneId,s.head_revision as sceneRevision,
+                json_extract(r.snapshot,'$.displayName') as sceneName,
+                json_extract(i.value,'$.sceneModelInstanceId') as instanceId,
+                json_extract(i.value,'$.displayName') as instanceName,
+                json_extract(i.value,'$.modelVersionId') as modelVersionId,
+                json_extract(i.value,'$.rootBinding.objectRef.entityUid') as equipmentUid,
+                count(*) over() as total
+                from scenes s join scene_revisions r on r.revision=s.head_revision
+                join json_each(r.snapshot,'$.instances') i left join scene_lifecycle l on l.scene_id=s.id
+                where s.project_code=? and coalesce(l.state,'active')='active'
+                and json_extract(i.value,'$.rootBinding.objectRef.ontobaseConnectionId')=?
+                and json_extract(i.value,'$.rootBinding.objectRef.projectCode')=?
+                and json_extract(i.value,'$.rootBinding.objectRef.entityUid') in
+                    (select value from json_each(?))
+                and json_extract(i.value,'$.modelVersionId') in (select value from json_each(?))
+                order by s.id,instanceId limit 20''',
+                (self.scope['project_code'],self.scope['connection_id'],self.scope['project_code'],
+                 encoded(adopters),encoded(version_ids))).fetchall()
+        return dict(total=rows[0]['total'] if rows else 0,
+                    items=[{key:row[key] for key in row.keys() if key!='total'} for row in rows])
+
     def resolve_scene(self, opened, equipment, authorize):
         """Compose a read projection. Never persist per-device copies of mappings."""
         authorize();current=opened['sceneRevision']==opened['headRevision']

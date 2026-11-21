@@ -24,6 +24,8 @@ class EquipmentAuthority(bindings.BindingAuthority):
                 'mappings':[{'roleKey':'cabinet','entityUid':'definition','expectedEntityRevision':self.engineering.objects['definition']['entityRevision']}]}}
         self.source_ref={'applicationId':self.application['applicationId'],'applicationRevisionId':self.application['revisionId'],
             'specificationRevisionId':self.application['snapshot']['specificationRevisionId']}
+        self.application['headRevisionId']=self.application['revisionId']
+        self.adoption_id=str(uuid4())
         self.source_calls=[]
         self.specification={'revisionId':self.source_ref['specificationRevisionId'],
             'snapshot':{'templateRevisionId':str(uuid4()),'classificationRef':{'code':'PUMP'}}}
@@ -36,11 +38,15 @@ class EquipmentAuthority(bindings.BindingAuthority):
         if '/equipment-catalog/template-revisions/' in path:return {'fields':[]}
         if path.endswith('/equipment/shared-photos/query'):return {'items':[],'nextCursor':None}
         if path.endswith('/equipment/shared-photos/regions'):return {'items':[],'nextCursor':None}
+        if '/equipment-applications/revisions/' in path and urlsplit(path).path.endswith('/equipment'):
+            adopters=[dict(entityUid=engineering.ROOT,adoptionId=self.adoption_id)] if self.adopted else []
+            return dict(projectCode=engineering.PROJECT,applicationRevisionId=self.application['revisionId'],
+                        items=adopters,total=len(adopters),nextOffset=None,snapshotRevision='adopters:1')
         if '/equipment-applications/revisions/' in path:return copy.deepcopy(self.application)
         if urlsplit(path).path.endswith('/equipment/resolve'):
             return {'projectCode':engineering.PROJECT,'items':[
                 {'item':source.objects[uid],'context':source.contexts[source.objects[uid]['installationContextId']],
-                 'adoption':dict(self.source_ref,adoptionId=str(uuid4())) if self.adopted else None,
+                 'adoption':dict(self.source_ref,adoptionId=self.adoption_id) if self.adopted and uid==engineering.ROOT else None,
                  'children':[row for row in source.objects.values() if row['entityUid']!=uid
                      and row['installationContextId']==source.objects[uid]['installationContextId']]}
                 for uid in body['entityUids']]}
@@ -150,6 +156,70 @@ class EquipmentHttpTests(unittest.TestCase):
         self.assertEqual(self.open_ok(scene)['snapshot']['instances'][0]['componentBindings'],[])
         with self.sessions.library.connect() as db:
             self.assertEqual(db.execute('select count(*) from scene_equipment_configuration_uses').fetchone()[0],1)
+
+    def test_assistant_configuration_preview_is_fixed_read_only_and_role_checked(self):
+        config=self.configure()
+        candidate=self.upload_calibrated(self.version['modelAssetId'])
+        self.authority().adopted=False
+        scene=self.create()
+        snapshot=copy.deepcopy(scene['snapshot'])
+        snapshot['instances']=[self.item('Adopted current',engineering.ROOT),
+                               self.item('Adopted candidate',engineering.ROOT,candidate),
+                               self.item('Other device',engineering.OTHER_ROOT)]
+        scene=self.saved(scene,snapshot);counts=self.counts()
+        self.authority().adopted=True
+        device=dict(entityUid=engineering.ROOT,entityRevision=self.authority().engineering.objects[engineering.ROOT]['entityRevision'])
+        target=dict(configurationId=self.cid,configurationRevision=config['configurationRevision'])
+        route=ROOT+'/configurations/detail'
+        status,prior,_=self.request(route,target)
+        self.assertEqual(200,status,prior);self.assertNotIn('impact',prior)
+        preview={**target,'includeImpact':True,'device':device}
+        status,value,_=self.request(route,preview)
+        self.assertEqual(200,status,value);self.assertTrue(value['canPrepare'])
+        self.assertEqual(1,value['impact']['total'])
+        self.assertEqual('Adopted current',value['impact']['items'][0]['instanceName'])
+        self.assertEqual([self.component_key],value['snapshot']['models'][0]['mappings'][0]['componentKeys'])
+        proposed={**preview,'proposedModelVersionId':candidate['modelVersionId']}
+        status,value,_=self.request(route,proposed)
+        self.assertEqual(200,status,value)
+        self.assertEqual(candidate['modelVersionId'],value['proposal']['modelVersionId'])
+        self.assertEqual({'Adopted current','Adopted candidate'},{row['instanceName'] for row in value['impact']['items']})
+        self.assertEqual(2,value['impact']['total'])
+        self.assertEqual(prior,self.request(route,target)[1])
+        self.authority().role='reader'
+        status,value,_=self.request(route,preview)
+        self.assertEqual(200,status,value);self.assertFalse(value['canPrepare'])
+        self.expect(self.request(route,proposed),403,'SCENE_WRITE_FORBIDDEN')
+        self.expect(self.request(route,{**preview,'requireCurrent':True}),403,'SCENE_WRITE_FORBIDDEN')
+        self.authority().role='admin'
+        self.expect(self.request(route,{**preview,'device':{**device,'entityRevision':'stale'}}),409,'ENGINEERING_CHANGED')
+        next_profile=self.profile();next_profile['models'].append(dict(modelVersionId=candidate['modelVersionId'],mappings=[]))
+        status,new,_=self.request(ROOT+'/configurations/save',dict(configurationId=self.cid,
+            expectedConfigurationRevision=target['configurationRevision'],snapshot=next_profile,clientRequestId=str(uuid4()),
+            requireCurrentApplication=True))
+        self.assertEqual(200,status,new)
+        self.assertNotEqual(target['configurationRevision'],new['configurationRevision'])
+        self.assertEqual(prior,self.request(route,target)[1])
+        self.expect(self.request(route,proposed),409,'REVISION_CONFLICT')
+        status,historical,_=self.request(route,preview)
+        self.assertEqual(200,status,historical);self.assertFalse(historical['canPrepare']);self.assertIsNone(historical['impact'])
+        self.authority().application['headRevisionId']=str(uuid4())
+        self.expect(self.request(ROOT+'/configurations/save',dict(configurationId=self.cid,
+            expectedConfigurationRevision=new['configurationRevision'],snapshot=next_profile,clientRequestId=str(uuid4()),
+            requireCurrentApplication=True)),409,'ENGINEERING_CHANGED')
+        self.assertEqual(snapshot['instances'],self.open_ok(scene)['snapshot']['instances'])
+        self.assertEqual(counts,self.counts())
+
+    def test_configuration_preview_rechecks_project_access_after_read(self):
+        config=self.configure();source=self.authority()
+        original=self.sessions.project_models.fixed_version_metadata
+        def revoke(version,authorize):
+            value=original(version,authorize)
+            source.allowed=False
+            return value
+        with patch.object(self.sessions.project_models,'fixed_version_metadata',side_effect=revoke):
+            self.expect(self.request(ROOT+'/configurations/detail',dict(configurationId=self.cid,
+                configurationRevision=config['configurationRevision'],includeImpact=True)),403,'FORBIDDEN')
 
     def test_adopted_instance_does_not_accept_a_private_mapping_override(self):
         self.configure();scene=self.create();snapshot=copy.deepcopy(scene['snapshot'])

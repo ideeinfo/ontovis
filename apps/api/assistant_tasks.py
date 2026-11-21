@@ -1,6 +1,7 @@
 """Bounded project tools for the existing assistant runner, separate from Canvas membership."""
 import hashlib
 import json
+import re
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -11,7 +12,17 @@ from .assistant_canvas_tasks import ACTIONS
 
 PROTOCOL='ontovis-engineering-tasks-v1'
 QUERY_TOOLS=('work_orders','objects','materials','graph','knowledge')
-CATALOGUE_TOOLS=('equipment_materials','processing_tasks')
+CATALOGUE_TOOLS=('equipment_materials','processing_tasks','equipment_configurations')
+
+
+def equipment_configuration_question(value):
+    """Only route an explicit catalogue lookup, leaving conversational requests to the planner."""
+    query = re.fullmatch(r'(?:请)?(?:查询|查看|显示|列出)\s*(?:设备配置\s*[：:]\s*([^，,。？?\n]+)|([^，,。？?\n]*?)的?设备配置)[。？?]?',value.strip())
+    if not query:
+        english=re.fullmatch(r'(?:show|find|view) device configurations?(?: for ([^,.?\n]+))?[.?]?',value.strip(),re.IGNORECASE)
+        return (english[1] or '').strip() if english and len(english[1] or '')<=200 else None
+    term = (query[1] or query[2] or '').strip()
+    return term if len(term)<=200 else None
 
 
 def snapshot(body, connection, project):
@@ -36,7 +47,8 @@ def draft_history(body,connection,project):
     return value
 
 
-def validate_plan(value, *, scene_directory=False, adopted_models=False, equipment_materials=False, processing_tasks=False):
+def validate_plan(value, *, scene_directory=False, adopted_models=False, equipment_materials=False, processing_tasks=False,
+                  equipment_configurations=False):
     require(type(value) is dict and set(value)=={'intent','queries','actions'},'ASSISTANT_OUTPUT_INVALID',502)
     require(value['intent'] in ('query','edit') and type(value['queries']) is list and len(value['queries'])<=2
         and type(value['actions']) is list and len(value['actions'])<=8,'ASSISTANT_OUTPUT_INVALID',502)
@@ -46,6 +58,7 @@ def validate_plan(value, *, scene_directory=False, adopted_models=False, equipme
     if adopted_models:tools.add('adopted_models')
     if equipment_materials:tools.add('equipment_materials')
     if processing_tasks:tools.add('processing_tasks')
+    if equipment_configurations:tools.add('equipment_configurations')
     for q in value['queries']:
         require(type(q) is dict and set(q) in ({'tool','query','faultCode'},{'tool','query','faultCode','orderId'})
             and type(q['tool']) is str and q['tool'] in tools
@@ -240,6 +253,20 @@ class ProjectTools:
             self.trace.append(dict(tool=tool,state='complete',count=len(value['items']),total=value['total'],scope=SCOPE,
                 truncated=value['truncated'] or value['sceneUsageTruncated'],snapshotRevision=value['snapshotRevision']))
             self.source('model',summary(value,self.private),retrievalRevision=value['snapshotRevision'])
+        elif tool=='equipment_configurations':
+            require({'object','model'}<=self.allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
+            require(callable(reader.equipment_configuration_listing),'MODEL_UNAVAILABLE',503)
+            from .assistant_project_models import DEVICE_SCOPE
+            value=self.read(lambda:reader.equipment_configuration_listing(needle))
+            for row in value['items']:
+                self.results.append(dict(row,key='R'+str(len(self.results)+1),kind='equipment_configuration',
+                    reason='设备当前采用',simulated=False))
+            count=len(value['items'])
+            configured=sum(bool(item['configurationId']) for item in value['items'])
+            self.trace.append(dict(tool=tool,state='complete',count=count,scope=DEVICE_SCOPE,
+                truncated=value['truncated'],snapshotRevision=value['snapshotRevision']))
+            message=f'本轮查到 {count} 台设备，其中 {configured} 台有已保存的采用配置。' if count else '本项目未查到匹配的安装设备。'
+            self.catalogue_source('model',message,message)
 
 
 def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
@@ -286,6 +313,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         adopted_models=allow_models and callable(getattr(reader,'adopted_model_listing',None))
         equipment_materials='object' in kinds and bool({'document','photo'}&kinds)
         processing_tasks='document' in kinds
+        equipment_configurations={'object','model'}<=kinds and callable(getattr(reader,'equipment_configuration_listing',None))
         if scene_directory:
             context['sceneDirectory']=True
         if adopted_models:
@@ -294,13 +322,21 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             context['equipmentMaterials']=True
         if processing_tasks:
             context['processingTasks']=True
-        plan=validate_plan(model('plan',context,[])['plan'],scene_directory=scene_directory,adopted_models=adopted_models,
-                           equipment_materials=equipment_materials,processing_tasks=processing_tasks)
+        equipment_query=equipment_configuration_question(body['question'])
+        explicit_equipment=equipment_query is not None
+        if explicit_equipment:
+            require(equipment_configurations,'ASSISTANT_TOOL_NOT_ALLOWED',403)
+            proposed=dict(intent='query',queries=[dict(tool='equipment_configurations',query=equipment_query,faultCode='')],actions=[])
+        else:
+            proposed=model('plan',context,[])['plan']
+        plan=validate_plan(proposed,scene_directory=scene_directory,adopted_models=adopted_models,
+                           equipment_materials=equipment_materials,processing_tasks=processing_tasks,
+                           equipment_configurations=equipment_configurations)
         switches=set(service.get('settings',{}).get('tools',('selected_sources','engineering_neighborhood','manual_fault_lookup')))
         require(all(q['tool']!='graph' or 'engineering_neighborhood' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         require(all(q['tool']!='knowledge' or 'manual_fault_lookup' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         tools=ProjectTools(reader,guard,policy['policy']['reads'],policy['policy']['allowedKinds'],job.private)
-        prefer_selected=body.get('preferSelectedEvidence',False)
+        prefer_selected=body.get('preferSelectedEvidence',False) and not explicit_equipment
         selected_reads=read_selected_evidence(tools,fixed) if prefer_selected else []
         for q in plan['queries']:
             try:tools.query(q)
@@ -308,12 +344,12 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
                 state='budget_limited' if error.code=='ASSISTANT_READ_LIMIT' else 'unavailable'
                 tools.trace.append(dict(tool=q['tool'],state=state,reason=error.code))
-        if not prefer_selected:
+        if not prefer_selected and not explicit_equipment:
             selected_reads=read_selected_evidence(tools,fixed)
         trace=[dict(key=t['tool'],state=t['state']) for t in tools.trace]
         runtime.store.update(run_id,'reading',progress=trace,sources=tools.sources)
         evidence=[{k:s[k] for k in ('key','kind','summary')} for s in tools.sources]
-        catalogue_query=body['taskId']=='query' and plan['queries'] and all(q['tool'] in CATALOGUE_TOOLS for q in plan['queries'])
+        catalogue_query=explicit_equipment or body['taskId']=='query' and plan['queries'] and all(q['tool'] in CATALOGUE_TOOLS for q in plan['queries'])
         if catalogue_query:
             answer=tools.catalogue_answer()
         elif evidence:

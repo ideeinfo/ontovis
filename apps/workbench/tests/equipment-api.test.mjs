@@ -44,6 +44,19 @@ test('source application binding writes only its fixed reference and geometry ma
   assert.equal(sent.path,'/api/workbench/equipment/configurations/save');assert.deepEqual(sent.body.snapshot,{projectApplicationRef,models});assert.deepEqual(sent.body.projectRef,project);
 });
 
+test('association preview and draft handoff use a fixed project-scoped read route',async()=>{
+  const sent=[];
+  const api=new WorkbenchApi(async(path,options)=>{sent.push({path,body:JSON.parse(options.body)});return new Response('{}',{headers:{'Content-Type':'application/json','X-Session-Revision':'session:1'}});});
+  api.session('session:1');api.selectProject(project);
+  const service=new EquipmentApi(api);
+  const target={configurationId:'config',configurationRevision:'config:5',device:{entityUid:'device-a',entityRevision:'device-a:3'}};
+  await service.configurationPreview(target);
+  await service.configurationPreview({...target,proposedModelVersionId:'fixed-version'},true);
+  assert.deepEqual(sent.map(call=>call.path),Array(2).fill('/api/workbench/equipment/configurations/detail'));
+  assert.deepEqual(sent[0].body,{...target,includeImpact:true,requireCurrent:false,projectRef:project,expectedSessionRevision:'session:1'});
+  assert.deepEqual(sent[1].body,{...sent[0].body,requireCurrent:true,proposedModelVersionId:'fixed-version'});
+});
+
 test('shared photo pages and renditions keep source identity and request limits',async()=>{
   const sent=[];
   const api=new WorkbenchApi(async(path,options)=>{sent.push({path,body:JSON.parse(options.body)});return new Response(path.endsWith('/content')?'image':'{}',{headers:{'Content-Type':path.endsWith('/content')?'image/jpeg':'application/json','X-Session-Revision':'session:1'}});});

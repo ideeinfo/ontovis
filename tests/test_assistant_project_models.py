@@ -4,20 +4,20 @@ import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from apps.api.assistant_project_models import catalogue, summary
-from apps.api.assistant_tasks import ProjectTools, validate_plan
+from apps.api.assistant_project_models import catalogue, device_catalogue, summary
+from apps.api.assistant_tasks import ProjectTools, equipment_configuration_question, validate_plan
 from apps.api.authority import PreviewError
 
 
 class AssistantProjectModelsTests(unittest.TestCase):
     def setUp(self):
         self.guard = Mock()
-        self.reader = SimpleNamespace(prefix='/api/v1/projects/P')
+        self.reader = SimpleNamespace(prefix='/api/v1/projects/P',project_code='P')
         self.adopted, self.stale, self.shared_only = (str(uuid4()) for _ in range(3))
         self.application = dict(applicationId='a',revisionId='latest',specificationRevisionId='spec',
                                 name='Current installation',specificationName='Model 3000')
         def config(revision, name, version):
-            return dict(configurationRevision='cfg-'+revision,snapshot=dict(displayName=name,
+            return dict(configurationId='id-'+revision,configurationRevision='cfg-'+revision,snapshot=dict(displayName=name,
                 models=[dict(modelVersionId=version)],projectApplicationRef=dict(applicationId='a',
                     applicationRevisionId=revision,specificationRevisionId='spec')))
         self.configs = [config('latest','Current configuration',self.adopted),
@@ -77,3 +77,28 @@ class AssistantProjectModelsTests(unittest.TestCase):
         self.assertEqual(43,tools.trace[0]['total'])
         self.assertLessEqual(len(tools.sources[0]['summary']),1000)
         self.assertNotIn('R1',tools.sources[0]['summary'])
+
+    def test_same_name_devices_keep_exact_identities_and_current_source_adoptions(self):
+        items=[dict(entityUid=uid,entityRevision=uid+':1',equipmentState='active',displayName='Same machine',identifiers=[])
+               for uid in ('A','B')]
+        rows={item['entityUid']:dict(item=item,context=dict(displayName='Site '+item['entityUid']),adoption=dict(
+            applicationId='a',applicationRevisionId=revision,specificationRevisionId='spec'))
+            for item,revision in zip(items,('latest','former'))}
+        with (
+            patch('apps.api.assistant_project_models.current_applications',return_value=[self.application]),
+            patch('apps.api.assistant_project_models.EquipmentReader.catalogue',
+                  return_value=dict(items=items,nextCursor='opaque',snapshotRevision='stable')) as listing,
+            patch('apps.api.assistant_project_models.EquipmentReader.resolve',return_value=rows),
+        ):
+            value=device_catalogue(self.reader,self.configurations,self.guard,'Same machine')
+            self.assertEqual(dict(q='Same machine',limit=4,rootsOnly=True),listing.call_args.args[0])
+        self.assertTrue(value['truncated'])
+        self.assertEqual([('A','Site A','id-latest','cfg-latest'),('B','Site B',None,None)],
+                         [(row['identifier'],row['installation'],row['configurationId'],row['configurationRevision']) for row in value['items']])
+
+    def test_explicit_equipment_route_does_not_capture_compound_question(self):
+        for question, expected in [('查看设备配置',''),('查询示例风机的设备配置？','示例风机'),
+                                   ('显示设备配置：示例风机','示例风机'),
+                                   ('View device configurations for Example','Example'),
+                                   ('查看设备配置，并更新构件绑定',None)]:
+            self.assertEqual(expected,equipment_configuration_question(question))

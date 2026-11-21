@@ -284,6 +284,7 @@ def request(sessions,sid,path,payload):
         engineering=SceneEngineeringReader(row.authority,sessions.connection_id,project,guard)
         scene_listing=None
         adopted_models=None
+        equipment_configurations=None
         if local.scenes is not None and local.scenes.project_code==project:
             def scene_listing(query):
                 return local.scenes.listing(actor,guard,access_revision=access['accessRevision'],q=query,limit=6)
@@ -291,8 +292,12 @@ def request(sessions,sid,path,payload):
                 from .assistant_project_models import catalogue
                 return catalogue(engineering,local.equipment_store(),local.scenes,sessions.shared.project_models,
                                  actor,guard,access['accessRevision'],query)
+            def equipment_configurations(query):
+                from .assistant_project_models import device_catalogue
+                return device_catalogue(engineering,local.equipment_store(),guard,query)
         reader=AnalysisSourceReader(engineering,sessions.shared.project_models,orders,guard,actor,
-            scene_library=local.library,scene_listing=scene_listing,adopted_model_listing=adopted_models)
+            scene_library=local.library,scene_listing=scene_listing,adopted_model_listing=adopted_models,
+            equipment_configuration_listing=equipment_configurations)
         return fixed,reader
     if action in ('task-start','task-prepare','task-ack','task-page','task-source','task-source-preview','task-source-content'):
         from .assistant_task_api import handle

@@ -11,6 +11,17 @@ export interface EquipmentConfigurationSnapshot {displayName:string;objectKind:s
   rootDefinition:{objectRef:EngineeringRef;expectedEntityRevision:string}|null;
   models:{modelVersionId:string;mappings:SharedMapping[]}[]}
 export interface EquipmentConfiguration {configurationId:string;configurationRevision:string;snapshot:EquipmentConfigurationSnapshot;equipmentCount:number|null;savedAt:string}
+export interface EquipmentConfigurationTarget {
+  configurationId:string;configurationRevision:string;
+  device?:{entityUid:string;entityRevision:string};
+}
+type FixedModelSummary=Pick<ProjectModelVersion,'modelAssetId'|'modelVersionId'|'displayName'|'contentRevision'|'representationType'|'assetState'|'assetRevision'>;
+export interface EquipmentConfigurationPreview extends EquipmentConfiguration {
+  current:boolean;canPrepare:boolean;models:FixedModelSummary[];objectNames:Record<string,string>;
+  impact:{total:number;items:{sceneId:string;sceneRevision:string;sceneName:string;instanceId:string;instanceName:string;modelVersionId:string;equipmentUid:string}[]}|null;
+  proposal:FixedModelSummary|null;
+}
+export type EquipmentConfigurationEdit=EquipmentConfigurationTarget&{proposedModelVersionId?:string};
 export interface EquipmentAdoption {equipment_uid:string;configuration_id:string;assignment_revision:string}
 export interface SourceAdoption extends ProjectApplicationRef {adoptionId:string;roleKey:string|null;name:string;previousAdoptionId:string|null}
 export interface EquipmentModel {specificationId:string;revisionId:string;headRevisionId:string;templateRevisionId:string;name:string;code:string;manufacturer:string|null;objectKind:string;revision:number;classificationRef:{revisionId:string;code:string}}
@@ -45,6 +56,9 @@ export class EquipmentApi {
   constructor(api:Pick<WorkbenchApi,'request'>){this.api=api;}
   catalogue(q='',cursor:string|null=null,signal?:AbortSignal){return this.api.request<EquipmentCatalogue>(ROOT,{q,cursor,limit:50,rootsOnly:true},signal);}
   configurations(signal?:AbortSignal){return this.api.request<EquipmentConfigurations>(ROOT+'/configurations',{},signal);}
+  configurationPreview(target:EquipmentConfigurationEdit,requireCurrent=false,signal?:AbortSignal){
+    return this.api.request<EquipmentConfigurationPreview>(ROOT+'/configurations/detail',{...target,includeImpact:true,requireCurrent},signal);
+  }
   resolve(entityUids:string[],signal?:AbortSignal){return this.api.request<{items:EquipmentRecord[]}>(ROOT+'/resolve',{entityUids},signal);}
   modelMaterials(specificationId:string,scope='',kind='',cursor:string|null=null,signal?:AbortSignal){return this.api.request<EquipmentMaterialPage>(ROOT+'/materials/models',{specificationId,scope,kind,cursor,limit:20},signal);}
   materialCandidates(specificationId:string,revision:number,scope='model',q='',kind='',cursor:string|null=null,signal?:AbortSignal){return this.api.request<{items:(EquipmentMaterial&{selected:boolean})[];nextCursor:string|null}>(ROOT+'/materials/candidates',{specificationId,revision,scope,q,kind,cursor,limit:20},signal);}
@@ -64,8 +78,9 @@ export class EquipmentApi {
       expectedSourceRevision:photo.sourceRevision,expectedContentVersionId:photo.contentVersionId,expectedSourceSha256:photo.sourceSha256,
       expectedDisplayRevision:photo.selector?.displayRevision,representation:full?'full_resolution':'preview'},signal,'source');
   }
-  save(configurationId:string,expectedConfigurationRevision:string|null,snapshot:EquipmentConfigurationSnapshot,signal?:AbortSignal){
+  save(configurationId:string,expectedConfigurationRevision:string|null,snapshot:EquipmentConfigurationSnapshot,signal?:AbortSignal,requireCurrentApplication=false){
     return this.api.request<EquipmentConfiguration>(ROOT+'/configurations/save',{configurationId,expectedConfigurationRevision,
-      snapshot:{projectApplicationRef:snapshot.projectApplicationRef,models:snapshot.models},clientRequestId:crypto.randomUUID()},signal);
+      snapshot:{projectApplicationRef:snapshot.projectApplicationRef,models:snapshot.models},clientRequestId:crypto.randomUUID(),
+      ...(requireCurrentApplication?{requireCurrentApplication}:{})},signal);
   }
 }

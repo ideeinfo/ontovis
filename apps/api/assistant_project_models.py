@@ -9,6 +9,51 @@ from .project_application_models import current_applications
 LIMIT = 4
 SCENE_LIMIT = 4
 SCOPE = '当前项目采用配置及已保存活动场景对固定模型的引用'
+DEVICE_SCOPE = '当前项目安装设备及其当前采用的固定配置'
+
+
+def device_catalogue(reader, configurations, guard, query):
+    """Use source equipment identities, including separate results for same-name devices."""
+    guard()
+    equipment = EquipmentReader(reader)
+    request = dict(q=query, limit=LIMIT, rootsOnly=True)
+    page = equipment.catalogue(request)
+    devices = equipment.resolve([item['entityUid'] for item in page['items']]) if page['items'] else {}
+    applications = current_applications(equipment)
+    configured = configurations.catalogue(guard)['items']
+    current = {(item['applicationId'], item['revisionId'], item['specificationRevisionId']) for item in applications}
+    by_application = {}
+    for config in configured:
+        ref = config['snapshot'].get('projectApplicationRef')
+        if ref:
+            by_application[(ref['applicationId'], ref['applicationRevisionId'], ref['specificationRevisionId'])] = config
+    items = []
+    for item in page['items']:
+        device = devices[item['entityUid']]
+        require(device['item']['entityRevision']==item['entityRevision']
+                and device['item']['equipmentState']=='active','ENGINEERING_CHANGED',409)
+        adoption = device['adoption'] or {}
+        key = tuple(adoption.get(k) for k in ('applicationId','applicationRevisionId','specificationRevisionId'))
+        config = by_application.get(key) if key in current else None
+        code = next((entry['value'] for entry in item['identifiers']
+                     if entry['role']=='primary' and entry['status']=='accepted' and entry['scheme']=='RDS'
+                     and entry['scopeType']=='project' and entry['scopeKey']==reader.project_code), None)
+        items.append(dict(title=item['displayName'], identifier=item['entityUid'], version=item['entityRevision'],
+            deviceCode=code, installation=device['context']['displayName'],
+            configuration=config['snapshot']['displayName'] if config else None,
+            configurationId=config['configurationId'] if config else None,
+            configurationRevision=config['configurationRevision'] if config else None,
+            modelCount=len(config['snapshot']['models']) if config else 0))
+    require(equipment.catalogue(request)==page,'ENGINEERING_CHANGED',409)
+    if devices:
+        latest = equipment.resolve(list(devices))
+        for uid, device in devices.items():
+            require(all(latest[uid][field]==device[field] for field in ('item','adoption','context')),'ENGINEERING_CHANGED',409)
+    require(current_applications(equipment)==applications,'ENGINEERING_CHANGED',409)
+    require(configurations.catalogue(guard)['items']==configured,'REVISION_CONFLICT',409)
+    guard()
+    return dict(items=items, truncated=page['nextCursor'] is not None,
+                snapshotRevision=digest([page['snapshotRevision'],items]))
 
 
 def catalogue(reader, configurations, scenes, models, actor, guard, access_revision, query):
@@ -45,6 +90,7 @@ def catalogue(reader, configurations, scenes, models, actor, guard, access_revis
         model = versions[version_id]
         items.append(dict(title=model['displayName'],identifier=model['modelAssetId'],version=version_id,
             configuration=config['snapshot']['displayName'],configurationRevision=config['configurationRevision'],
+            configurationId=config['configurationId'],
             representation=model['representationType'],state=model['assetState'],
             instanceCount=report['currentInstanceCount'],moreScenes=report['nextCursor'] is not None,
             scenes=[dict(title=row['displayName'],instanceCount=row['currentInstanceCount']) for row in report['items']]))
