@@ -31,8 +31,13 @@ async (page, facts, phase) => {
   }
   await page.getByRole('button',{name:new RegExp('^'+facts.projectTitle+' ')}).click();
   await button('进入项目').click();
-  await button('场景与可视化').click();
-  await button('打开 '+facts.title).click();
+  const [sceneList]=await Promise.all([
+    page.waitForResponse(response=>response.url()===facts.origin+'/api/workbench/scenes'),
+    button('场景与可视化').click()
+  ]);
+  check(sceneList.ok()&&(await sceneList.json()).items.some(item=>item.sceneId===facts.sceneId),
+    'The project did not return the test scene, HTTP '+sceneList.status());
+  await page.getByTestId('scene-open-'+facts.sceneId).click();
   await button('布置').click();
   await page.getByRole('tab',{name:'模型资源',exact:true}).click();
   await page.getByRole('tab',{name:'影像',exact:true}).click();

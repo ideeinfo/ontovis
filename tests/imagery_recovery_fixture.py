@@ -65,7 +65,7 @@ def imagery_workspace():
         pinned = fixture.opened(scene, saved['sceneRevision'])
         status, head, _ = fixture.save(fixture.save_body(pinned, {**pinned['snapshot'], 'imagery': None}))
         assert status == 200, head
-        facts = dict(projectCode=PROJECT, projectTitle=TITLE, sceneId=scene['sceneId'], title=pinned['snapshot']['displayName'],
+        facts = dict(projectCode=PROJECT, projectTitle=TITLE, sceneId=scene['sceneId'],
                      pinnedRevision=pinned['sceneRevision'], headRevision=head['sceneRevision'],
                      historical={k: historical[k] for k in keys}, textureSha256=historical['texture']['sha256'],
                      reference=reference, uploadTitle=UPLOAD,

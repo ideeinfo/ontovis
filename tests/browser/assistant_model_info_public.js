@@ -19,6 +19,7 @@ async (page, origin, evidence, mode) => {
     const cockpit=mode==='cockpit_query';
     const panel=page.locator(cockpit?'#pa-chat-panel':'.ad-assistant .as-panel');
     const title=page.getByRole('textbox',{name:'分析名称',exact:true});
+    let originalTitle='';
     if(cockpit){
       await button('驾驶舱').click();
       const root=page.getByRole('region',{name:'项目驾驶舱'});
@@ -31,9 +32,13 @@ async (page, origin, evidence, mode) => {
       await title.waitFor();
       const selected=page.locator('.ad-list-items .ov-list-main').filter({hasText:'13001 · 多来源证据公网验收'}).first();
       await selected.click();
+      originalTitle=await title.inputValue();
+      await title.fill(originalTitle+' · 取消验收草稿');
       if(!await panel.isVisible())await button('分析助手').click();
     }
     await button('新对话',panel).click();
+    const task=panel.getByLabel('助手任务',{exact:true});
+    if(await task.count()&&await task.inputValue()!=='query')await task.selectOption('query');
     await panel.getByRole('textbox',{name:'向分析助手提问',exact:true})
       .fill('查询项目采用的固定模型及其使用清单，列出已保存场景引用');
     const [started]=await Promise.all([watch('/api/workbench/assistant/task-start',body=>body.mode===mode),button('发送',panel).click()]);
@@ -53,10 +58,6 @@ async (page, origin, evidence, mode) => {
       await preview.locator('.ac-expanded').waitFor();
       check(await entry.count()===0,'Cockpit exposed the model editor');
     }else{
-      const originalTitle=await title.inputValue();
-      await button('关闭',preview).click();
-      await title.fill(originalTitle+' · 取消验收草稿');
-      await show.click();
       await entry.click();
       await button('继续编辑',page.getByRole('dialog',{name:'分析修改尚未保存'})).click();
       await preview.waitFor();
