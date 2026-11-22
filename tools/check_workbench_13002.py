@@ -1,15 +1,14 @@
 """Run the 13002 browser regression before and after a workbench release."""
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from email.parser import BytesParser
 from hashlib import sha256
-from http.cookiejar import CookieJar
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from secrets import token_urlsafe
 from threading import Thread
-from urllib.error import HTTPError
 from urllib.parse import urlsplit
-from urllib.request import HTTPCookieProcessor, ProxyHandler, Request, build_opener
 from uuid import uuid4
 import argparse
 import json
@@ -17,7 +16,6 @@ import os
 import re
 import subprocess
 
-from apps.api.authority import NoRedirect
 from apps.api.user_sessions import COOKIE
 
 SCRIPTS = Path(__file__).resolve().parents[1]/'tests/browser'
@@ -87,17 +85,29 @@ def isolated(browser, dist):
 
 @contextmanager
 def signed_in(origin, release):
-    jar = CookieJar()
-    opener = build_opener(ProxyHandler({}), NoRedirect(), HTTPCookieProcessor(jar))
+    jar = SimpleCookie()
+    env = {k:v for k,v in os.environ.items() if k not in (USERNAME_ENV, PASSWORD_ENV)}
 
     def request(path, payload=None):
-        data = json.dumps(payload).encode() if payload is not None else None
-        headers = {'Origin':origin,'Content-Type':'application/json'} if data else {}
-        try:
-            with opener.open(Request(origin+path,data,headers), timeout=30) as reply:
-                return json.load(reply)
-        except HTTPError as error:
-            raise RuntimeError(f'{path} returned HTTP {error.code}') from None
+        options = [('url',origin+path),('max-time','35'),('header','Accept: application/json')]
+        if COOKIE in jar:
+            options.append(('cookie',f'{COOKIE}={jar[COOKIE].coded_value}'))
+        if payload is not None:
+            options.extend([('header','Origin: '+origin),('header','Content-Type: application/json'),
+                            ('data-binary',json.dumps(payload))])
+        config = '\n'.join(key+' = '+json.dumps(value) for key,value in options)+'\n'
+        result = subprocess.run(['curl','--disable','--silent','--show-error','--include',
+                                 '--suppress-connect-headers','--config','-'],
+                                input=config.encode(),env=env,capture_output=True,timeout=40)
+        verify(result.returncode==0, f'{path} failed to connect')
+        headers,separator,body = result.stdout.partition(b'\r\n\r\n')
+        verify(separator, f'{path} did not return HTTP headers')
+        line,_,fields = headers.partition(b'\r\n')
+        status = line.decode('ascii',errors='replace').split()
+        verify(len(status)>=2 and status[1]=='200', f'{path} returned {line.decode("ascii",errors="replace")}')
+        for value in BytesParser().parsebytes(fields+b'\r\n\r\n').get_all('Set-Cookie',[]):
+            jar.load(value)
+        return json.loads(body)
 
     health = request('/health')
     verify(health.get('status')=='ok' and health.get('frontendRelease')==health.get('backendRelease')==release,
@@ -107,10 +117,9 @@ def signed_in(origin, release):
                                                expectedSessionRevision=session['sessionRevision']))
     verify(active.get('state')=='active','The release-check account could not sign in')
     try:
-        cookies = [dict(name=cookie.name,value=cookie.value,url=origin,httpOnly=True,secure=True,sameSite='Strict')
-                   for cookie in jar if cookie.name==COOKIE and cookie.secure]
-        verify(len(cookies)==1,'The public site did not issue an authenticated session')
-        yield cookies
+        cookie = jar.get(COOKIE)
+        verify(cookie and cookie['secure'] and cookie.value, 'The public site did not issue an authenticated session')
+        yield [dict(name=COOKIE,value=cookie.value,url=origin,httpOnly=True,secure=True,sameSite='Strict')]
     finally:
         request('/api/session/logout', dict(expectedSessionRevision=active['sessionRevision']))
 
