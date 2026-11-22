@@ -1,9 +1,11 @@
 """Project-local demo work orders; every mutation has a guarded transaction."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+from threading import Lock
 from uuid import UUID
 
 from .authority import PreviewError
@@ -45,6 +47,7 @@ def text(value, limit=2000, *, empty=False):
 class WorkOrders:
     def __init__(self, library, project_code):
         self.library, self.project_code = library, project_code
+        self._write_lock = Lock()
         with library.connect() as db:
             scope = db.execute('select project_code from library where id=1').fetchone()
             require(scope is not None and scope[0] == project_code, 'WORKSPACE_SCOPE_INVALID', 409)
@@ -253,12 +256,23 @@ class WorkOrders:
                             (value['orderId'], value['orderRevision'])).fetchone()
         require(stored[0] == raw, 'WORK_ORDER_SNAPSHOT_CHANGED', 409)
 
+    @contextmanager
+    def _write_transaction(self):
+        # The workspace shares this store across sessions. Queue writers before SQLite's busy timeout starts.
+        require(self._write_lock.acquire(timeout=5), 'WORK_ORDER_BUSY', 503)
+        try:
+            with self.library.connect() as db:
+                db.execute('begin immediate')
+                yield db
+        finally:
+            self._write_lock.release()
+
     def capture(self, body, actor, guard):
         require(set(body) == {'orderId', 'expectedOrderRevision'})
         require(type(body['expectedOrderRevision']) is int and body['expectedOrderRevision'] > 0)
         identifier = text(body['orderId'], 100); text(actor, 200)
-        with self.library.connect() as db:
-            db.execute('begin immediate'); guard()
+        with self._write_transaction() as db:
+            guard()
             value = self._detail(db, identifier)
             require(value['orderRevision'] == body['expectedOrderRevision'], 'WORK_ORDER_CHANGED', 409)
             self._retain(db, value, actor); guard()
@@ -317,8 +331,7 @@ class WorkOrders:
             raise PreviewError(422, 'INVALID_REQUEST') from None
         require(request_id == body['requestId'])
         fingerprint = digest({'actor': actor, 'body': body})
-        with self.library.connect() as db:
-            db.execute('begin immediate')
+        with self._write_transaction() as db:
             guard()
             previous = db.execute('select * from work_order_requests where request_id=?', (request_id,)).fetchone()
             if previous:

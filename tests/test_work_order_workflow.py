@@ -1,8 +1,11 @@
 """Workflow state, retained records and version races in a real SQLite library."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 import tempfile
+from threading import Event
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from apps.api import work_order_workflow as workflow
@@ -85,6 +88,54 @@ class WorkOrderWorkflowTests(unittest.TestCase):
             resolve=lambda *_: {'userId': self.admin, 'name': '管理员'})
         with self.assertRaisesRegex(PreviewError, 'WORK_ORDER_HANDLER_REQUIRED'):
             workflow.update(self.orders, body, self.reviewer, '处理人员', 'reviewer', self.guard)
+
+    def test_queued_writer_rechecks_permission_before_using_sqlite(self):
+        first, second = (self.apply(self.create(), 'accept') for _ in range(2))
+        request = self.request(second, 'record', text='等候期间发生权限变化')
+        holding, release, started, revoked = (Event() for _ in range(4))
+        connect = self.orders.library.connect
+
+        @contextmanager
+        def connect_without_busy_wait():
+            with connect() as db:
+                db.execute('pragma busy_timeout=0')
+                yield db
+
+        def hold_transaction():
+            holding.set()
+            self.assertTrue(release.wait(3))
+
+        def authorize_second():
+            if revoked.is_set():
+                raise PreviewError(403, 'FORBIDDEN')
+
+        def write_second():
+            started.set()
+            return workflow.update(self.orders, request, self.admin, '管理员', 'admin', authorize_second)
+
+        with patch.object(self.orders.library, 'connect', connect_without_busy_wait), ThreadPoolExecutor(2) as pool:
+            capture = pool.submit(self.orders.capture, {
+                'orderId': first['orderId'], 'expectedOrderRevision': first['orderRevision'],
+            }, '管理员', hold_transaction)
+            try:
+                self.assertTrue(holding.wait(2))
+                queued = pool.submit(write_second)
+                self.assertTrue(started.wait(2))
+                with self.assertRaises(TimeoutError):
+                    queued.result(timeout=0.1)
+                revoked.set()
+            finally:
+                release.set()
+            fixed = capture.result(timeout=2)
+            with self.assertRaisesRegex(PreviewError, 'FORBIDDEN'):
+                queued.result(timeout=2)
+
+        self.assertEqual(self.orders.fixed_snapshot(fixed), first)
+        self.assertEqual(self.orders.detail({'orderId': second['orderId']}), second)
+        revoked.clear()
+        saved = write_second()
+        self.assertEqual(write_second(), saved)
+        self.assertEqual(len(saved['workflow']['records']), 1)
 
     def test_concurrent_adoption_and_actual_record_summary(self):
         order = self.apply(self.create(faultCode='13001', simulated=True), 'accept')
