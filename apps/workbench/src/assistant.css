@@ -138,7 +138,10 @@
 .as-scene-status:empty{display:none}
 .as-scene-viewport{position:relative;flex:1;min-height:0;overflow:hidden;border:1px solid var(--borderSubtle);border-radius:8px}
 @media(max-width:580px){.as-scene-controls{margin-inline-start:0;width:100%}}
-.as-model-uses{margin:4px 0;padding-inline-start:18px;color:var(--textSecondary);font-size:11px}
+.as-model-uses{display:grid;gap:4px;margin:6px 0;padding:0;list-style:none}
+.as-model-uses li{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px}
+.as-model-uses li>span{flex:1 1 110px;min-width:0}
+.as-model-uses strong{font-size:12px}
 .as-configuration-dialog{width:min(690px,calc(100vw - 24px))}
 .as-configuration{display:grid;gap:16px;overflow-wrap:anywhere}
 .as-configuration>header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}

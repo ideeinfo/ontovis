@@ -21,8 +21,9 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
  const [error,setError]=useState<unknown>(null),[reload,setReload]=useState(0);
  const [choice,setChoice]=useState(''),[requested,setRequested]=useState(''),[attempt,setAttempt]=useState(0);
  const [preparation,setPreparation]=useState<ScenePreparationState|null>(null);
+ const modelUse=!!target.modelVersionId;
  const scope=JSON.stringify([api.epoch,api.revision,api.project,target]);
- const viewerApi=useMemo(()=>target.instance?api.assistantScope():api,[api,scope,target.instance]);
+ const viewerApi=useMemo(()=>target.instance||modelUse?api.assistantScope():api,[api,scope,target.instance,modelUse]);
  useEffect(()=>{
   const abort=new AbortController();
   setOpened(null);setError(null);setChoice('');setRequested('');setPreparation(null);
@@ -32,12 +33,15 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
   return()=>abort.abort();
  },[viewerApi,scope,target,reload]);
  const scene=opened?.scene??null;
- const fixedInstance=opened?.instance??null;
+ const instances=modelUse?opened?.modelInstances??[]:scene?.snapshot.instances??[];
+ const fixedInstance=opened?.instance??(modelUse&&instances.length===1?instances[0]:null);
  const fixedIds=useMemo(()=>fixedInstance?[fixedInstance.sceneModelInstanceId]:undefined,[fixedInstance]);
- const visibleInstances=useMemo(()=>fixedInstance&&!fixedInstance.visible?{[fixedInstance.sceneModelInstanceId]:true}:visibility,[fixedInstance]);
- const instances=scene?.snapshot.instances??[];
  const chosen=instances.find(item=>item.sceneModelInstanceId===choice);
- const device=instances.find(item=>item.sceneModelInstanceId===requested&&item.visible);
+ const selected=instances.find(item=>item.sceneModelInstanceId===requested);
+ const modelFocus=modelUse?selected:undefined;
+ const previewed=fixedInstance??modelFocus;
+ const visibleInstances=useMemo(()=>previewed&&!previewed.visible?{[previewed.sceneModelInstanceId]:true}:visibility,[previewed]);
+ const device=!modelUse&&selected?.visible?selected:undefined;
  const location=useCockpitLocation(api,scene,device,device?.rootBinding?.objectRef.entityUid??'',!!device,attempt);
  const displayed=useMemo(()=>cockpitInspectionScene(scene,device,location.representation),[scene,device,location.representation]);
  const preparationKey=useMemo(()=>displayed?sceneLoadingIdentity(sceneLoadingPlan(displayed.snapshot,displayed.resourceRefs),scope+':'+displayed.sceneRevision):'',[displayed,scope]);
@@ -57,32 +61,35 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
    ?t('已定位 · 完整版','Located · full model'):t('已定位 · 当前可用表示','Located · available representation')):'';
  const loadError=error instanceof ApiError&&[401,403,404,410].includes(error.status)
   ?t('场景版本不可用，或当前权限无法查看。','This scene revision is unavailable or you no longer have access.')
-  :target.instance&&error instanceof ApiError&&error.status===409
-   ?t('无法验证此场景实例，请返回配置后重新查询。','Could not verify this scene instance. Return to the configuration and search again.')
+  :(target.instance||modelUse)&&error instanceof ApiError&&error.status===409
+   ?t('无法核对保存版本中的实例。请返回并重新查询。','Could not verify the instances in this saved revision. Return and search again.')
    :t('无法加载该保存版本，请重试。','Could not load this saved revision. Retry.');
  return <Modal className="ac-source-modal" title={scene?.snapshot.displayName??target.title}
-  description={t('查看已保存场景和定位设备','Preview a saved scene and locate equipment')} onClose={onClose} onCloseAutoFocus={onCloseAutoFocus}>
+  description={modelUse?t('查看模型在保存场景中的实例','Locate instances of the model in the saved scene')
+   :t('查看已保存场景和定位设备','Preview a saved scene and locate equipment')} onClose={onClose} onCloseAutoFocus={onCloseAutoFocus}>
   <section className="as-scene-preview">
    <header>
     <span title={target.sceneRevision}>{t('保存版本','Saved revision')} · {target.sceneRevision.replace(/^scene:/,'').slice(0,8)}</span>
     {scene&&scene.headRevision!==scene.sceneRevision&&<span>{t('历史版本','Historical revision')}</span>}
     {onEdit&&scene&&canEditAssistantScene(scene,api.project?.projectCode,target)&&
      <Btn onClick={()=>onEdit(target)}>{t('进入场景编辑','Open scene editor')}</Btn>}
-    {fixedInstance&&<span title={fixedInstance.sceneModelInstanceId}>{t('实例','Instance')} · {fixedInstance.displayName}</span>}
-    {!target.instance&&!!instances.length&&<div className="as-scene-controls">
-     <select aria-label={t('选择设备','Select equipment')} value={choice} disabled={locked} onChange={event=>setChoice(event.currentTarget.value)}>
-      <option value="">{t('选择设备','Select equipment')}</option>
+    {previewed&&<span title={previewed.sceneModelInstanceId}>{t('实例','Instance')} · {previewed.displayName}</span>}
+    {!fixedInstance&&!!instances.length&&<div className="as-scene-controls">
+     <select aria-label={modelUse?t('选择模型实例','Select model instance'):t('选择设备','Select equipment')}
+      value={choice} disabled={locked} onChange={event=>setChoice(event.currentTarget.value)}>
+      <option value="">{modelUse?t('选择模型实例','Select model instance'):t('选择设备','Select equipment')}</option>
       {instances.map(item=><option key={item.sceneModelInstanceId} value={item.sceneModelInstanceId}>{item.displayName}
        {instances.filter(other=>other.displayName===item.displayName).length>1?' · '+item.sceneModelInstanceId.slice(0,8):''}
-       {!item.rootBinding?' · '+t('未绑定','Unbound'):!item.visible?' · '+t('已隐藏','Hidden'):''}</option>)}
+       {!modelUse&&!item.rootBinding?' · '+t('未绑定','Unbound'):!item.visible?' · '+t('已隐藏','Hidden'):''}</option>)}
      </select>
-     <Btn disabled={locked||!chosen?.visible||!chosen.rootBinding} onClick={()=>{setRequested(choice);setAttempt(value=>value+1);}}>{t('定位设备','Locate equipment')}</Btn>
+     <Btn disabled={locked||!chosen||!modelUse&&(!chosen.visible||!chosen.rootBinding)}
+      onClick={()=>{setRequested(choice);setAttempt(value=>value+1);}}>{modelUse?t('定位实例','Locate instance'):t('定位设备','Locate equipment')}</Btn>
     </div>}
    </header>
    <div className="as-scene-status" role="status">
-    {fixedInstance&&ready?t('已定位 · 固定实例','Located · fixed instance'):
-     chosen&&!chosen.rootBinding?t('该实例尚未绑定安装设备。','This instance has no installation binding.'):
-     chosen&&!chosen.visible?t('此实例在保存版本中已隐藏。','This instance is hidden in the saved revision.'):locationMessage}
+    {previewed&&ready?t('已定位 · 固定实例','Located · fixed instance'):
+     !modelUse&&chosen&&!chosen.rootBinding?t('该实例尚未绑定安装设备。','This instance has no installation binding.'):
+     !modelUse&&chosen&&!chosen.visible?t('此实例在保存版本中已隐藏。','This instance is hidden in the saved revision.'):locationMessage}
    </div>
    <div className="as-scene-viewport">
     {!opened&&<div className="ac-source-state" role={error?'alert':'status'}>{error?loadError:t('正在读取保存的场景…','Loading the saved scene…')}
@@ -90,10 +97,12 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
     {opened&&displayed&&<Suspense fallback={<div role="status">{t('正在准备三维视图…','Preparing the 3D view…')}</div>}>
      <Viewport api={viewerApi} sceneKey={displayed.sceneRevision} snapshot={displayed.snapshot} modelRefs={displayed.resourceRefs}
       terrainVersion={opened.terrain} imageryVersion={opened.imagery} imageryVisible={!!displayed.snapshot.imagery?.visible}
-      selectedId={fixedInstance?.sceneModelInstanceId??(choice||null)} initialFocusIds={fixedIds}
+      selectedId={previewed?.sceneModelInstanceId??(choice||null)} initialFocusIds={fixedIds}
+      focusRequest={modelFocus?{token:attempt,instanceId:modelFocus.sceneModelInstanceId}:undefined}
       componentFocus={focus} preparationKey={preparationKey} onPreparationState={prepared}
       presentation editing={false} disabled={locked} personalVisibility={visibleInstances} terrainVisible pendingPlacement={false}
-      onSelect={id=>{if(!locked&&!target.instance)setChoice(id??'');}} onPoint={idle} onMove={preventMove} onViewChange={idle}/>
+      onSelect={id=>{if(!locked&&!fixedInstance&&(!modelUse||instances.some(item=>item.sceneModelInstanceId===id)))setChoice(id??'');}}
+      onPoint={idle} onMove={preventMove} onViewChange={idle}/>
     </Suspense>}
    </div>
   </section>

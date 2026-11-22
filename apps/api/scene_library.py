@@ -1673,14 +1673,14 @@ class SceneLibrary:
                 _require(all(page[name] == value for name, value in context.items()))
                 _require(page['revision'] == revision, 'SNAPSHOT_EXPIRED', 409)
                 last = _uuid(page['last'])
-            grouped = '''select s.id,s.display_name,coalesce(l.state,'active') scene_state,
+            grouped = '''select s.id,s.display_name,s.head_revision,coalesce(l.state,'active') scene_state,
                     count(distinct case when r.revision=s.head_revision and coalesce(l.state,'active')='active' then u.instance_id end) current_instances,
                     count(distinct case when r.revision!=s.head_revision or l.state='deleted' then u.instance_id end) retained_instances,
                     sum(case when r.revision!=s.head_revision or l.state='deleted' then 1 else 0 end) retained_refs
                 from scene_resource_uses u join scene_revisions r on r.revision=u.revision
                 join scenes s on s.id=r.scene_id
                 left join scene_lifecycle l on l.scene_id=s.id
-                where s.project_code=? and u.model_version_id=? group by s.id,s.display_name,l.state'''
+                where s.project_code=? and u.model_version_id=? group by s.id,s.display_name,s.head_revision,l.state'''
             condition = {'current': 'current_instances>0', 'retained': 'retained_refs>0',
                          'current_or_retained': '1=1'}[scope]
             total_current, total_retained, total_retained_refs = db.execute(
@@ -1700,6 +1700,7 @@ class SceneLibrary:
                       'retainedReferenceCount': total_retained_refs,
                       'items': [{'sceneId': row['id'], 'displayName': row['display_name'],
                                  'sceneState': row['scene_state'],
+                                 'currentSceneRevision': row['head_revision'] if row['current_instances'] else None,
                                  'currentInstanceCount': row['current_instances'],
                                  'retainedInstanceCount': row['retained_instances'],
                                  'retainedReferenceCount': row['retained_refs']} for row in visible],

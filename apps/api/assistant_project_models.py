@@ -93,7 +93,8 @@ def catalogue(reader, configurations, scenes, models, actor, guard, access_revis
             configurationId=config['configurationId'],
             representation=model['representationType'],state=model['assetState'],
             instanceCount=report['currentInstanceCount'],moreScenes=report['nextCursor'] is not None,
-            scenes=[dict(title=row['displayName'],instanceCount=row['currentInstanceCount']) for row in report['items']]))
+            scenes=[dict(title=row['displayName'],instanceCount=row['currentInstanceCount'],
+                         sceneId=row['sceneId'],sceneRevision=row['currentSceneRevision']) for row in report['items']]))
 
     require(current_applications(equipment)==applications,'ENGINEERING_CHANGED',409)
     require(configurations.catalogue(guard)['items']==configured,'REVISION_CONFLICT',409)

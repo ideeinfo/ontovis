@@ -20,7 +20,7 @@ const processingLabels:Record<string,[string,string]>={
 
 export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,onViewScene,onViewDevice,onViewDocument,onViewModel,onViewConfiguration,hasUnsaved=false}:{
  run:AssistantRun;en:boolean;locked:boolean;onExecute?:(keys:string[])=>void;onPage:(index:number)=>void;onHandoff?:()=>void;
- onViewScene?:(target:AssistantSceneTarget)=>void;onViewDevice?:(target:DeviceMaterialsTarget)=>void;
+ onViewScene?:(target:AssistantSceneTarget,trigger?:HTMLButtonElement)=>void;onViewDevice?:(target:DeviceMaterialsTarget)=>void;
  onViewDocument?:(target:FixedDocumentTarget)=>void;onViewModel?:(target:AssistantModelTarget)=>void;
  onViewConfiguration?:(target:EquipmentConfigurationTarget,title:string)=>void;hasUnsaved?:boolean}){
  const task=run.result?.task;if(!task)return null;
@@ -41,7 +41,15 @@ export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,on
      <small title={version}>{t('固定模型版本','Fixed model revision')} · {version.slice(0,8)} · {row.representation==='appearance'?t('外观版','Exterior'):row.representation==='detailed'?t('完整版','Full model'):t('表示用途未登记','Representation not recorded')}{row.state==='deleted'?' · '+t('模型在回收站','Model in trash'):''}</small>
      <p title={row.configurationRevision??undefined}>{row.configuration}</p>
      <small>{row.instanceCount? t('已保存场景共引用','References across saved scenes')+' '+row.instanceCount:t('暂无已保存场景引用','No saved scene references')}</small>
-     {!!row.scenes?.length&&<ul className="as-model-uses">{row.scenes.map((item,index)=><li key={index}>{item.title} · {item.instanceCount} {t('个实例','instances')}</li>)}</ul>}
+     {!!row.scenes?.length&&<ul className="as-model-uses">{row.scenes.map((item,index)=>{
+      const revision=item.sceneRevision,shortRevision=revision?.replace(/^scene:/,'').slice(0,8);
+      const target=model&&item.sceneId&&revision?{sceneId:item.sceneId,sceneRevision:revision,title:item.title,modelVersionId:model.modelVersionId}:null;
+      return <li key={item.sceneId??index}><span><strong>{item.title}</strong>
+       <small title={revision??undefined}>{shortRevision&&t('保存版','Saved revision')+' '+shortRevision+' · '}{item.instanceCount} {t('个实例','instances')}</small></span>
+       {target&&onViewScene&&<Btn aria-haspopup="dialog" aria-label={t('查看场景','View scene')+' '+item.title+' '+shortRevision}
+        disabled={locked} onClick={event=>onViewScene(target,event.currentTarget)}>{t('查看场景','View scene')}</Btn>}
+      </li>;
+     })}</ul>}
      {row.moreScenes&&<small>{t('还有场景引用未展开','More saved scene references')}</small>}</>:
      row.kind==='processing_task'?<>
       <small>{processingLabel(row.processingKind)}</small>

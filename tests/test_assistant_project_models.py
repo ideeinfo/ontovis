@@ -14,6 +14,8 @@ class AssistantProjectModelsTests(unittest.TestCase):
         self.guard = Mock()
         self.reader = SimpleNamespace(prefix='/api/v1/projects/P',project_code='P')
         self.adopted, self.stale, self.shared_only = (str(uuid4()) for _ in range(3))
+        self.scene_id = str(uuid4())
+        self.scene_revision = 'scene:' + 'a' * 64
         self.application = dict(applicationId='a',revisionId='latest',specificationRevisionId='spec',
                                 name='Current installation',specificationName='Model 3000')
         def config(revision, name, version):
@@ -26,7 +28,8 @@ class AssistantProjectModelsTests(unittest.TestCase):
         self.models = SimpleNamespace(fixed_version_metadata=Mock(return_value=dict(displayName='Fixed model',
             modelAssetId='asset',representationType='detailed',assetState='active')))
         self.scenes = SimpleNamespace(uses=Mock(return_value=dict(currentInstanceCount=2,
-            items=[dict(displayName='First scene',currentInstanceCount=2)],snapshotRevision='scene-list:1',nextCursor=None)),
+            items=[dict(displayName='First scene',currentInstanceCount=2,sceneId=self.scene_id,
+                        currentSceneRevision=self.scene_revision)],snapshotRevision='scene-list:1',nextCursor=None)),
             listing=Mock(return_value=dict(snapshotRevision='scene-list:1')))
 
     def read(self, term='model 3000'):
@@ -41,9 +44,12 @@ class AssistantProjectModelsTests(unittest.TestCase):
         row = value['items'][0]
         self.assertEqual(self.adopted,row['version'])
         self.assertEqual('detailed',row['representation'])
-        self.assertEqual([dict(title='First scene',instanceCount=2)],row['scenes'])
+        self.assertEqual([dict(title='First scene',instanceCount=2,sceneId=self.scene_id,
+                              sceneRevision=self.scene_revision)],row['scenes'])
         self.scenes.uses.assert_called_once_with(self.adopted,'actor',self.guard,access_revision='P-grant',scope='current',limit=4)
         self.assertNotIn(self.adopted,summary(value,()))
+        self.assertNotIn(self.scene_id,summary(value,()))
+        self.assertNotIn(self.scene_revision,summary(value,()))
         self.assertNotIn(self.shared_only,json.dumps(value))
 
     def test_changed_catalogue_cannot_return_mixed_revisions(self):

@@ -15,7 +15,7 @@ test('assistant preview reads the exact saved revision, including an older saved
  const calls=[];
  const client={open:async (...args)=>{calls.push(args);return old;}};
  const signal=new AbortController().signal;
- assert.deepEqual(await openAssistantScene(client,project,target,signal),{scene:old,instance:null,terrain:null,imagery:null});
+ assert.deepEqual(await openAssistantScene(client,project,target,signal),{scene:old,instance:null,modelInstances:[],terrain:null,imagery:null});
  assert.deepEqual(calls,[[target.sceneId,target.sceneRevision,signal]]);
 });
 
@@ -70,6 +70,28 @@ test('configuration location never falls back after a denied or deleted saved sc
   const client={open:async()=>{throw new ApiError(status,code);},version:()=>assert.fail('unavailable scene requested resources')};
   await assert.rejects(openAssistantScene(client,project,fixedTarget,signal),{status,code});
  }
+});
+
+test('model use opens the recorded revision and selects all instances of that exact version',async()=>{
+ const modelUse={...target,modelVersionId:'model-a'};
+ const unbound={...savedInstance,sceneModelInstanceId:'c',rootBinding:null};
+ const replacement={...savedInstance,sceneModelInstanceId:'b',modelVersionId:'model-new'};
+ const scene={...old,snapshot:{terrain:null,instances:[replacement,unbound,savedInstance]},
+  resourceRefs:[{modelVersionId:'model-a'},{modelVersionId:'model-new'}]};
+ const client={open:async(id,revision)=>{
+  assert.equal(id,target.sceneId);
+  assert.equal(revision,target.sceneRevision);
+  return scene;
+ }};
+ const signal=new AbortController().signal;
+ assert.deepEqual((await openAssistantScene(client,project,modelUse,signal)).modelInstances,[unbound,savedInstance]);
+ assert.equal(canEditAssistantScene({...scene,headRevision:scene.sceneRevision,capabilities:{canWrite:true}},'P',modelUse),false);
+ for(const patch of [{resourceRefs:[]},{snapshot:{terrain:{terrainVersionId:'t'},instances:[replacement]}}]){
+  await assert.rejects(openAssistantScene({open:async()=>({...scene,...patch}),
+   version:()=>assert.fail('invalid use requested map resources')},project,modelUse,signal),{code:'SCENE_INSTANCE_CHANGED'});
+ }
+ await assert.rejects(openAssistantScene({open:async()=>{throw new ApiError(403,'PROJECT_FORBIDDEN');}},
+  project,modelUse,signal),{status:403,code:'PROJECT_FORBIDDEN'});
 });
 
 test('the editor opens only the exact writable head in the active project',()=>{

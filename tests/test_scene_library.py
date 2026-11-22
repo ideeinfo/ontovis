@@ -230,6 +230,7 @@ class SceneLibraryTests(unittest.TestCase):
         self.save(self.body(scene, [self.item(), self.item()]))
         current = self.opened(scene)
         self.assertEqual(self.uses()['currentInstanceCount'], 2)
+        self.assertEqual(self.uses()['items'][0]['currentSceneRevision'], current['sceneRevision'])
         self.assertEqual(self.uses()['retainedInstanceCount'], 0)
         self.assertEqual(self.uses()['retainedReferenceCount'], 0)
         self.save(self.body(current, []))
@@ -238,6 +239,9 @@ class SceneLibraryTests(unittest.TestCase):
         self.assertEqual(uses['retainedInstanceCount'], 2)
         self.assertEqual(uses['retainedReferenceCount'], 2)
         self.assertEqual(uses['items'][0]['displayName'], '合成设备区')
+        self.assertIsNone(uses['items'][0]['currentSceneRevision'])
+        historical = self.scenes.open(scene['sceneId'], 'actor', self.authorize, current['sceneRevision'])
+        self.assertEqual(len(historical['snapshot']['instances']), 2)
         self.expect('RESOURCE_IN_USE', lambda: self.scenes.assert_model_unused(self.model['versionId'], self.authorize))
         self.assertEqual(len(self.models.listing()['items']), 1)
 
@@ -293,7 +297,7 @@ class SceneLibraryTests(unittest.TestCase):
             access_revision='grant:1', q='area', limit=1, cursor=first['nextCursor']))
 
     def test_model_uses_pagination_and_snapshot_expiration(self):
-        for name in ['A', 'B']:
+        for name in ['同名场景', '同名场景']:
             scene = self.create(name)
             self.save(self.body(scene, [self.item()]))
         page = self.uses(limit=1)
@@ -302,6 +306,7 @@ class SceneLibraryTests(unittest.TestCase):
         self.assertIsNotNone(page['nextCursor'])
         next_page = self.uses(limit=1, cursor=page['nextCursor'])
         self.assertNotEqual(page['items'][0]['sceneId'], next_page['items'][0]['sceneId'])
+        self.assertNotEqual(page['items'][0]['currentSceneRevision'], next_page['items'][0]['currentSceneRevision'])
         self.create('C')
         self.expect('SNAPSHOT_EXPIRED', lambda: self.uses(limit=1, cursor=page['nextCursor']))
 

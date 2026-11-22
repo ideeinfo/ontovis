@@ -4,7 +4,7 @@ import type {SceneApi} from './sceneApi';
 import type {SceneOpen} from './sceneTypes';
 
 type FixedInstanceTarget={instanceId:string;modelVersionId:string;equipmentUid:string};
-export type AssistantSceneTarget={sceneId:string;sceneRevision:string;title:string;instance?:FixedInstanceTarget};
+export type AssistantSceneTarget={sceneId:string;sceneRevision:string;title:string;instance?:FixedInstanceTarget;modelVersionId?:string};
 type FixedSceneTarget=Pick<AssistantSceneTarget,'sceneId'|'sceneRevision'>;
 
 function matchesSceneRevision(scene:SceneOpen,target:FixedSceneTarget) {
@@ -16,8 +16,9 @@ export function verifyAssistantScene(scene:SceneOpen,projectCode:string|undefine
  if(!matchesSceneRevision(scene,target))throw new ApiError(409,'SCENE_CHANGED');
 }
 
-export function canEditAssistantScene(scene:SceneOpen,projectCode:string|undefined,target:FixedSceneTarget&Pick<AssistantSceneTarget,'instance'>) {
- return !target.instance&&scene.capabilities.canWrite&&scene.projectCode===projectCode&&matchesSceneRevision(scene,target)
+export function canEditAssistantScene(scene:SceneOpen,projectCode:string|undefined,
+ target:FixedSceneTarget&Pick<AssistantSceneTarget,'instance'|'modelVersionId'>) {
+ return !target.instance&&!target.modelVersionId&&scene.capabilities.canWrite&&scene.projectCode===projectCode&&matchesSceneRevision(scene,target)
   &&scene.sceneRevision===scene.headRevision;
 }
 
@@ -33,6 +34,14 @@ function verifyFixedInstance(scene:SceneOpen,project:ProjectRef,target:FixedInst
  return instance;
 }
 
+function verifyModelInstances(scene:SceneOpen,modelVersionId:string) {
+ const instances=scene.snapshot.instances.filter(item=>item.modelVersionId===modelVersionId);
+ if(!instances.length||!scene.resourceRefs.some(model=>model.modelVersionId===modelVersionId)){
+  throw new ApiError(409,'SCENE_INSTANCE_CHANGED');
+ }
+ return instances;
+}
+
 export async function openAssistantScene(
  client:Pick<SceneApi,'open'|'version'|'imageryVersion'>, project:ProjectRef|null,
  target:AssistantSceneTarget, signal:AbortSignal,
@@ -42,6 +51,7 @@ export async function openAssistantScene(
  signal.throwIfAborted();
  verifyAssistantScene(scene,project.projectCode,target);
  const instance=target.instance?verifyFixedInstance(scene,project,target.instance):null;
+ const modelInstances=target.modelVersionId?verifyModelInstances(scene,target.modelVersionId):[];
  const {terrain:ground,imagery:image}=scene.snapshot;
  const [terrain,imagery]=await Promise.all([
   ground?client.version(ground.terrainVersionId,signal):null,
@@ -51,5 +61,5 @@ export async function openAssistantScene(
  if(ground&&(terrain?.terrainVersionId!==ground.terrainVersionId||terrain.contentRevision!==ground.expectedContentRevision)
   ||image&&(imagery?.imageryVersionId!==image.imageryVersionId||imagery.contentRevision!==image.expectedContentRevision
    ||imagery.expectedReportSha256!==image.expectedReportSha256))throw new ApiError(409,'RESOURCE_CHANGED');
- return {scene,instance,terrain,imagery};
+ return {scene,instance,modelInstances,terrain,imagery};
 }
