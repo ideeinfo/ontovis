@@ -15,7 +15,9 @@ from tools.check_workbench_13002 import (
 )
 
 RECEIPT = 'workbench-release-check.json'
-SUITES = {'13002','assistantModelUsage','analysisSaveRecovery'}
+SUITES = {'13002','assistantModelUsage','analysisSaveRecovery','fixedEvidenceAccess'}
+SOURCE_SERVICES = {'ontobase-api','ontobase-web','ontobase-worker','ontobase-region-ocr'}
+SOURCE_RELEASE_ENV = 'ONTOVIS_EXPECTED_SOURCE_RELEASE'
 
 
 def build_identity(dist):
@@ -50,18 +52,23 @@ def assistant_model_usage(browser, dist):
     from tests.assistant_model_usage_fixture import browser_site
 
     script = (SCRIPTS/'assistant_model_usage.js').read_text()
-    with browser_site(dist) as (facts,advance,revoke,model_calls):
+    with browser_site(dist) as (facts,advance,revoked,model_calls,verify_saved):
         browser.open('models')
         details = browser.run('models',script,facts,'browse')
         verify(details and details['laterScene'], 'Missing model catalogue pagination receipt')
         facts['newRevision'] = advance()
         changed = browser.run('models',script,facts,'changed')
         verify(changed and changed['refreshAfterChange'], 'Missing fixed scene and refresh receipt')
-        revoke()
+        revoked.set()
         denied = browser.run('models',script,facts,'revoke')
-        verify(denied and denied['revokedStatus']==403 and model_calls==['plan','answer'],
+        verify(denied and denied['revokedStatus']==403,
                'Model catalogue permission or no-generation check failed')
-        return {**details,**changed,**denied,'modelCallsDuringBrowsing':0}
+        revoked.clear()
+        edited = browser.run('models',script,facts,'edit')
+        verify(edited and edited['enteredEditor'] and model_calls==['plan','answer'],
+               'Scene edit handoff or no-generation check failed')
+        verify_saved(edited['savedRevision'])
+        return {**details,**changed,**denied,**edited,'modelCallsDuringBrowsing':0}
 
 
 def analysis_save_recovery(browser, dist):
@@ -99,13 +106,32 @@ def analysis_save_recovery(browser, dist):
         return dict(busy=busy,saved=saved,disconnected=dropped,replayed=replayed,conflict=conflict,revisions=final_revisions)
 
 
+def fixed_evidence_access(browser, dist):
+    from tests.analysis_fixed_access_fixture import browser_site
+
+    script = (SCRIPTS/'analysis_fixed_access.js').read_text()
+    results = {}
+    with browser_site(dist) as (facts,restore,verify_snapshot):
+        for mode in ('withdraw-document','switch-project','expire-session','withdraw-project'):
+            browser.open(mode)
+            try:
+                result = browser.run(mode,script,facts,mode)
+                verify(type(result) is dict, f'Missing fixed evidence access receipt for {mode}')
+                results[mode] = result
+            finally:
+                restore()
+        verify_snapshot()
+        return results
+
+
 def candidate(browser, release, dist, output):
     receipt = dict(mode='candidate',release=release,recordedAt=timestamp(),passed=False)
     record(output,receipt)
     identity = build_identity(dist)
     try:
         results = {'assistantModelUsage':assistant_model_usage(browser,dist),
-                   'analysisSaveRecovery':analysis_save_recovery(browser,dist),'13002':isolated(browser,dist)}
+                   'analysisSaveRecovery':analysis_save_recovery(browser,dist),
+                   'fixedEvidenceAccess':fixed_evidence_access(browser,dist),'13002':isolated(browser,dist)}
         verify(build_identity(dist)==identity, 'The build changed during browser checks')
     finally:
         browser.close()
@@ -126,13 +152,63 @@ def require_candidate(dist, release, output):
     return receipt
 
 
-def promote(dist, release, output, command):
+def source_probe(command, action, *args):
+    result = subprocess.run([str(command),action,*args],capture_output=True,text=True,timeout=90)
+    verify(result.returncode==0,f'Source {action} check failed')
+    return json.loads(result.stdout)
+
+
+def source_runtime(command, observations):
+    inventory = source_probe(command,'runtime')
+    verify(type(inventory) is dict and set(inventory)==SOURCE_SERVICES, 'The source inventory is incomplete')
+    observed = {}
+    for service, row in inventory.items():
+        verify(type(row) is dict and type(row.get('release')) is str and re.fullmatch('[a-f0-9]{40}',row['release']),
+               f'The source service {service} has no verified release')
+        observed[service] = dict(release=row['release'],health='healthy' if row.get('health')=='healthy' else 'not-ready')
+    observations.append(observed)
+    verify(all(row['health']=='healthy' for row in observed.values()), 'A source service is not ready')
+    releases = {row['release'] for row in observed.values()}
+    verify(len(releases)==1,'The source rollout is still in progress')
+    return releases.pop()
+
+
+def source_preflight(command, release, output):
+    receipt = dict(mode='sourcePreflight',release=release,recordedAt=timestamp(),passed=False)
+    area = output/'preflight'
+    record(area,receipt)
+    observations = []
+    try:
+        source = source_runtime(command,observations)
+        for _ in range(2):
+            try:
+                checked = source_probe(command,'compatibility',source)
+                verify(type(checked) is dict and checked.get('compatible') is True and checked.get('sourceRelease')==source,
+                       'Source compatibility was not verified for the observed release')
+            except (RuntimeError,ValueError,subprocess.TimeoutExpired):
+                current = source_runtime(command,observations)
+                if source==current:
+                    raise
+            else:
+                current = source_runtime(command,observations)
+                if source==current:
+                    receipt.update(passed=True,sourceRelease=source)
+                    return source
+            source = current
+        raise RuntimeError('The source release changed again during compatibility checks')
+    finally:
+        record(area,dict(receipt,runtimeChecks=observations))
+
+
+def promote(dist, release, output, command, source_command):
     receipt = require_candidate(dist,release,output)
+    source = source_preflight(source_command,release,output)
     env = dict(os.environ)
     for name in (USERNAME_ENV,PASSWORD_ENV):
         env.pop(name,None)
+    env[SOURCE_RELEASE_ENV] = source
     subprocess.run(command,env=env,check=True)
-    return receipt
+    return {**receipt,'sourceRelease':source}
 
 
 def load_evidence_case(path):
@@ -196,13 +272,14 @@ def main():
     parser.add_argument('--browser',default='chrome')
     parser.add_argument('--origin',default='https://vis.ontobase.ai')
     parser.add_argument('--evidence-case',type=Path,help='Private JSON manifest of the fixed 13001 acceptance canvas')
+    parser.add_argument('--source-preflight',type=Path,help='Source runtime and compatibility probe executable before activation')
     parser.add_argument('--activation-command',nargs=argparse.REMAINDER,
                         help='Existing deployment command, supplied last for the activate phase')
     args = parser.parse_args()
     if not re.fullmatch('[a-f0-9]{40}',args.release):
         parser.error('--release requires the full git commit')
-    if (args.phase=='activate') != bool(args.activation_command):
-        parser.error('Only activate requires an --activation-command')
+    if (args.phase=='activate') != bool(args.activation_command) or (args.phase=='activate') != bool(args.source_preflight):
+        parser.error('Activate requires --source-preflight and --activation-command')
     if args.phase=='candidate' and not os.environ.get('ONTOVIS_ANALYSIS_TEST_DATABASE_URL'):
         parser.error('The candidate requires a disposable PostgreSQL test database')
     origin = args.origin.rstrip('/')
@@ -227,13 +304,16 @@ def main():
         case = load_evidence_case(args.evidence_case)
     except (OSError,ValueError,RuntimeError) as error:
         parser.error(str(error))
-    verified = (promote(args.dist,args.release,output,args.activation_command) if args.phase=='activate'
+    verified = (promote(args.dist,args.release,output,args.activation_command,args.source_preflight.resolve()) if args.phase=='activate'
                 else require_candidate(args.dist,args.release,output))
     browser = BrowserCheck(cli,area,args.browser)
     try:
         with public_browser(browser,origin,args.release) as role:
             orders = public_13002(browser,role,origin,args.release,verified['indexSha256'])
             verify(bool(orders),'The public 13002 browser check returned no receipt')
+            if args.phase=='activate':
+                verify(orders.get('sourceRelease')==verified['sourceRelease'],
+                       'The public release reports a different source than preflight')
             results = {'13002':orders,'evidence13001':public_evidence(browser,role,origin,case)}
     finally:
         browser.close()

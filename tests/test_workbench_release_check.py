@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import Mock, patch
 from uuid import UUID
 
-from tools.check_workbench_release import RECEIPT, build_identity, candidate, load_evidence_case, promote, record
+from tools.check_workbench_release import (RECEIPT, SOURCE_RELEASE_ENV, SOURCE_SERVICES, build_identity,
+    candidate, load_evidence_case, promote, record)
 
 
 class WorkbenchBrowserReleaseTests(unittest.TestCase):
@@ -21,12 +22,20 @@ class WorkbenchBrowserReleaseTests(unittest.TestCase):
         self.output = self.root/'checks'
         self.release = 'a'*40
         self.marker = self.root/'activation-ran'
-        self.command = [sys.executable,'-c','import sys; from pathlib import Path; Path(sys.argv[1]).touch()',str(self.marker)]
+        self.source_command = self.root/'source-probe'
+        self.command = [sys.executable,'-c','import os,sys; from pathlib import Path; '
+                        'Path(sys.argv[1]).write_text(os.environ[sys.argv[2]])',str(self.marker),SOURCE_RELEASE_ENV]
+
+    def promote(self):
+        return promote(self.dist,self.release,self.output,self.command,self.source_command)
+
+    def inventory(self, release):
+        return {service:dict(health='healthy',release=release) for service in SOURCE_SERVICES}
 
     def receipt(self, **overrides):
         value = dict(mode='candidate',release=self.release,passed=True,**build_identity(self.dist),
                      results={'13002':{'tested':True},'assistantModelUsage':{'tested':True},
-                              'analysisSaveRecovery':{'tested':True}})
+                              'analysisSaveRecovery':{'tested':True},'fixedEvidenceAccess':{'tested':True}})
         record(self.output/'candidate',{**value,**overrides})
 
     def test_failed_or_unrelated_receipts_never_run_activation(self):
@@ -34,21 +43,24 @@ class WorkbenchBrowserReleaseTests(unittest.TestCase):
                     {'results':{'13002':{'tested':True},'assistantModelUsage':{'tested':True}}}):
             self.receipt(**bad)
             with self.assertRaises(RuntimeError):
-                promote(self.dist,self.release,self.output,self.command)
+                self.promote()
             self.assertFalse(self.marker.exists())
 
     def test_asset_change_blocks_activation_even_when_index_matches(self):
         self.receipt()
         (self.dist/'assets/index.js').write_text('console.info("other build")')
         with self.assertRaisesRegex(RuntimeError,'differs'):
-            promote(self.dist,self.release,self.output,self.command)
+            self.promote()
         self.assertFalse(self.marker.exists())
 
     def test_matching_build_can_run_activation(self):
         self.receipt()
-        value = promote(self.dist,self.release,self.output,self.command)
+        source = 'b'*40
+        with patch('tools.check_workbench_release.source_probe',
+                   side_effect=[self.inventory(source),dict(sourceRelease=source,compatible=True),self.inventory(source)]):
+            value = self.promote()
         self.assertEqual(build_identity(self.dist)['distSha256'],value['distSha256'])
-        self.assertTrue(self.marker.exists())
+        self.assertEqual(self.marker.read_text(),source)
 
     def test_failed_browser_run_replaces_a_previous_pass(self):
         self.receipt()
@@ -60,8 +72,35 @@ class WorkbenchBrowserReleaseTests(unittest.TestCase):
         receipt = json.loads((self.output/'candidate'/RECEIPT).read_text())
         self.assertFalse(receipt['passed'])
         with self.assertRaises(RuntimeError):
-            promote(self.dist,self.release,self.output,self.command)
+            self.promote()
         self.assertFalse(self.marker.exists())
+
+    def test_source_change_rechecks_compatible_runtime_before_activation(self):
+        self.receipt()
+        before,later = 'b'*40,'c'*40
+        with patch('tools.check_workbench_release.source_probe',side_effect=[
+            self.inventory(before),dict(sourceRelease=before,compatible=True),self.inventory(later),
+            dict(sourceRelease=later,compatible=True),self.inventory(later),
+        ]) as probe:
+            self.assertEqual(self.promote()['sourceRelease'],later)
+        checks = [entry.args[2] for entry in probe.call_args_list if entry.args[1]=='compatibility']
+        self.assertEqual(checks,[before,later])
+        self.assertEqual(self.marker.read_text(),later)
+        checked = json.loads((self.output/'preflight'/RECEIPT).read_text())
+        self.assertTrue(checked['passed'])
+        self.assertEqual(checked['runtimeChecks'],[self.inventory(before),self.inventory(later),self.inventory(later)])
+
+    def test_mixed_source_or_failed_compatibility_leaves_activation_untouched(self):
+        self.receipt()
+        source = 'b'*40
+        mixed = self.inventory(source)
+        mixed['ontobase-api']['release'] = 'c'*40
+        for replies in ([mixed], [self.inventory(source),dict(sourceRelease=source,compatible=False),self.inventory(source)]):
+            with patch('tools.check_workbench_release.source_probe',side_effect=replies):
+                with self.assertRaises(RuntimeError):
+                    self.promote()
+            self.assertFalse(self.marker.exists())
+            self.assertFalse(json.loads((self.output/'preflight'/RECEIPT).read_text())['passed'])
 
     def evidence_case(self):
         uid = lambda index: str(UUID(int=index))

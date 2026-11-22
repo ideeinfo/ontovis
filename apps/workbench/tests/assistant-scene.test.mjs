@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {ApiError} from '../src/api.ts';
-import {assistantInstanceOptions,canEditAssistantScene,openAssistantScene,verifyAssistantScene} from '../src/assistantScene.ts';
+import {assistantInstanceOptions,canEditAssistantScene,openAssistantScene,verifyAssistantScene,verifyAssistantSceneEdit} from '../src/assistantScene.ts';
 
 const project={projectCode:'P',ontobaseConnectionId:'source'};
 const target={sceneId:'s1',sceneRevision:'scene:earlier',title:'Saved scene'};
@@ -107,6 +107,21 @@ test('the editor opens only the exact writable head in the active project',()=>{
  ])assert.equal(canEditAssistantScene(changed,'P',target),false);
  assert.throws(()=>verifyAssistantScene({...current,sceneId:'another-scene'},'P',target),{code:'SCENE_CHANGED'});
  assert.throws(()=>verifyAssistantScene(current,'Other',target),{code:'PROJECT_SCOPE_MISMATCH'});
+});
+
+test('model-use edit handoff pins both the saved instance and the model version',()=>{
+ const other={...savedInstance,sceneModelInstanceId:'b'};
+ const scene={...old,headRevision:old.sceneRevision,capabilities:{canWrite:true},
+  snapshot:{instances:[other,savedInstance]},resourceRefs:[{modelVersionId:'model-a'}]};
+ const edit={sceneId:old.sceneId,sceneRevision:old.sceneRevision,instanceId:'a',modelVersionId:'model-a'};
+ assert.equal(verifyAssistantSceneEdit(scene,'P',edit),savedInstance);
+ assert.equal(canEditAssistantScene(scene,'P',edit),true);
+ for(const target of [{...edit,instanceId:'c'},{...edit,modelVersionId:'model-b'},{...edit,modelVersionId:undefined}]){
+  assert.equal(canEditAssistantScene(scene,'P',target),false);
+  assert.throws(()=>verifyAssistantSceneEdit(scene,'P',target),{code:'SCENE_INSTANCE_CHANGED'});
+ }
+ assert.equal(canEditAssistantScene({...scene,headRevision:'scene:later'},'P',edit),false);
+ assert.equal(canEditAssistantScene({...scene,capabilities:{canWrite:false}},'P',edit),false);
 });
 
 test('instance search accepts name, position number or saved identity and distinguishes duplicates after filtering',()=>{

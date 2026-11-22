@@ -72,19 +72,41 @@ export function setCardPreviewOpen(current:ReadonlySet<string>,id:string,open:bo
 // One workspace owns this short-lived cache. Metadata is authorized on every
 // mount/open; only fixed bytes are reused after that read. Nothing is persisted.
 
-type FileTransfer={abort:AbortController;foreground:boolean};
+type FileTransfer={abort:AbortController;foreground:boolean;refId:string};
 
 export class AnalysisSources{
   private pending=new Map<string,{resolve:(value:EvidenceDetail)=>void;reject:(error:unknown)=>void}[]>();
   private scheduled=false;private disposed=false;private controllers=new Set<AbortController>();
-  private files=new Map<string,{url:string;bytes:number}>();
+  private files=new Map<string,{url:string;bytes:number;refId:string}>();
   private inflight=new Map<string,{promise:Promise<string>;transfer:FileTransfer;users:number}>();
   private decoded=new Map<string,HTMLImageElement>();
+  private unavailable=new Map<string,EvidenceDetail>();
+  private listeners=new Map<string,Set<(value:EvidenceDetail)=>void>>();
   private light=0;private lightQueue:(()=>void)[]=[];
   private fileCount=0;
   private fileQueue:{transfer:FileTransfer;start:()=>void}[]=[];
   readonly api:DraftApi;readonly sessionId:string;
-  constructor(api:DraftApi,sessionId:string){this.api=api;this.sessionId=sessionId;}
+  private readonly epoch:number;private readonly revision:string;
+  constructor(api:DraftApi,sessionId:string){this.api=api;this.sessionId=sessionId;this.epoch=api.epoch;this.revision=api.revision;}
+  private guard(ref?:SourceRef){
+    if(this.disposed||this.api.epoch!==this.epoch||this.api.revision!==this.revision||ref&&this.unavailable.has(ref.id))
+      throw new DOMException('Source access changed','AbortError');
+  }
+  observeUnavailable(ref:SourceRef,listener:(value:EvidenceDetail)=>void){
+    const listeners=this.listeners.get(ref.id)??new Set();
+    listeners.add(listener);this.listeners.set(ref.id,listeners);
+    return()=>{listeners.delete(listener);if(!listeners.size)this.listeners.delete(ref.id);};
+  }
+  private withdraw(id:string,detail:EvidenceDetail){
+    this.unavailable.set(id,detail);
+    for(const {transfer} of this.inflight.values())if(transfer.refId===id)transfer.abort.abort();
+    for(const [key,file] of this.files)if(file.refId===id){
+      URL.revokeObjectURL(file.url);this.files.delete(key);
+      const image=this.decoded.get(key);if(image)image.src='';
+      this.decoded.delete(key);
+    }
+    this.listeners.get(id)?.forEach(listener=>listener(detail));
+  }
   decodedImage(url:string){for(const [key,file] of this.files)if(file.url===url){const image=this.decoded.get(key);if(image){this.decoded.delete(key);this.decoded.set(key,image);}return image;}return undefined;}
   private async detailSlot(){
     if(this.disposed)throw new DOMException('Closed','AbortError');
@@ -120,7 +142,7 @@ export class AnalysisSources{
   }
   detail(ref:SourceRef):Promise<EvidenceDetail>{
     return new Promise((resolve,reject)=>{
-      if(this.disposed){reject(new DOMException('Closed','AbortError'));return;}
+      try{this.guard();}catch(error){reject(error);return;}
       const group=this.pending.get(ref.id)||[];group.push({resolve,reject});this.pending.set(ref.id,group);
       if(!this.scheduled){this.scheduled=true;queueMicrotask(()=>void this.flush());}
     });
@@ -129,9 +151,18 @@ export class AnalysisSources{
     this.scheduled=false;const entries=[...this.pending];this.pending.clear();
     for(let start=0;start<entries.length;start+=12){const batch=entries.slice(start,start+12);
       void (async()=>{let acquired=false;const abort=new AbortController();this.controllers.add(abort);
-        try{await this.detailSlot();acquired=true;const result=await this.api.request<{items:EvidenceDetail[]}>(ANALYSIS_ROOT+'/evidence/batch',
+        try{await this.detailSlot();acquired=true;this.guard();
+          const previous=new Map(batch.map(([id])=>[id,this.unavailable.get(id)]));
+          const result=await this.api.request<{items:EvidenceDetail[]}>(ANALYSIS_ROOT+'/evidence/batch',
           {analysisSessionId:this.sessionId,evidenceRefIds:batch.map(([id])=>id)},abort.signal);
-          for(const [id,listeners] of batch){const item=result.items.find(row=>row.evidenceRefId===id);if(!item)throw new Error('资料读取结果不完整');listeners.forEach(listener=>listener.resolve(item));}
+          this.guard();
+          for(const [id,listeners] of batch){
+            const item=result.items.find(row=>row.evidenceRefId===id);if(!item)throw new Error('资料读取结果不完整');
+            const denied=this.unavailable.get(id);
+            if(denied&&denied!==previous.get(id)){listeners.forEach(listener=>listener.resolve(denied));continue;}
+            if(item.availability==='available')this.unavailable.delete(id);else this.withdraw(id,item);
+            listeners.forEach(listener=>listener.resolve(item));
+          }
         }catch(error){batch.forEach(([,listeners])=>listeners.forEach(listener=>listener.reject(error)));}
         finally{this.controllers.delete(abort);if(acquired)this.releaseDetailSlot();}
       })();
@@ -139,7 +170,11 @@ export class AnalysisSources{
   }
   async preview(ref:SourceRef,options:Record<string,string|number>={},signal?:AbortSignal):Promise<SourcePreview>{
     await this.detailSlot();
-    try{return await this.api.request(ANALYSIS_ROOT+'/evidence/preview',{analysisSessionId:this.sessionId,evidenceRefId:ref.id,options},signal);}
+    try{
+      this.guard(ref);
+      const value=await this.api.request<SourcePreview>(ANALYSIS_ROOT+'/evidence/preview',{analysisSessionId:this.sessionId,evidenceRefId:ref.id,options},signal);
+      this.guard(ref);return value;
+    }
     finally{this.releaseDetailSlot();}
   }
   relationships(refs:SourceRef[],signal?:AbortSignal){
@@ -148,16 +183,16 @@ export class AnalysisSources{
   }
   file(ref:SourceRef,source?:EvidenceSource,signal?:AbortSignal,representation:'original'|'preview'='original',pageNumber?:number,
     priority:'foreground'|'background'='background',photo?:{ticket?:string}):Promise<string>{
-    if(signal?.aborted||this.disposed)return Promise.reject(new DOMException('Closed','AbortError'));
+    try{signal?.throwIfAborted();this.guard(ref);}catch(error){return Promise.reject(error);}
     const key=representation+':'+(source?.contentVersionId&&source?.selector?`${source.contentVersionId}:${source.selector.displayRevision}`:ref.id+':'+ref.revision)+':'+(pageNumber||'');
     const cached=this.files.get(key);if(cached){this.files.delete(key);this.files.set(key,cached);return Promise.resolve(cached.url);}
     let entry=this.inflight.get(key);
     if(!entry||entry.transfer.abort.signal.aborted){
-      const abort=new AbortController(),transfer={abort,foreground:priority==='foreground'};
+      const abort=new AbortController(),transfer={abort,foreground:priority==='foreground',refId:ref.id};
       const promise=(async()=>{
         await this.fileSlot(transfer);
         try{
-          if(this.disposed||abort.signal.aborted)throw new DOMException('Closed','AbortError');
+          abort.signal.throwIfAborted();this.guard(ref);
           const route=ANALYSIS_ROOT+(representation==='preview'||pageNumber?'/evidence/preview-content':'/evidence/content');
           const fixedPhoto=photo&&representation==='original'&&!pageNumber;
           const request={
@@ -166,17 +201,17 @@ export class AnalysisSources{
           };
           const blob=fixedPhoto&&this.api.analysisPhoto?await this.api.analysisPhoto(route,request,abort.signal,photo.ticket):
             await this.api.request<Blob>(route,request,abort.signal,'source');
-          if(this.disposed||abort.signal.aborted)throw new DOMException('Closed','AbortError');
+          abort.signal.throwIfAborted();this.guard(ref);
           const url=URL.createObjectURL(blob);
           if(blob.type.startsWith('image/')&&typeof Image!=='undefined'){
             const image=new Image();image.src=url;
-            try{await image.decode();if(this.disposed||abort.signal.aborted)throw new DOMException('Closed','AbortError');}
+            try{await image.decode();abort.signal.throwIfAborted();this.guard(ref);}
             catch(error){image.src='';URL.revokeObjectURL(url);throw error;}
             this.decoded.set(key,image);
             // Keep at most two decoded sources, independently of the byte cache.
             while(this.decoded.size>2){const first=this.decoded.keys().next().value!;this.decoded.get(first)!.src='';this.decoded.delete(first);}
           }
-          this.files.set(key,{url,bytes:blob.size});
+          this.files.set(key,{url,bytes:blob.size,refId:ref.id});
           while(this.files.size>20||[...this.files.values()].reduce((sum,row)=>sum+row.bytes,0)>96*1024*1024){const first=this.files.keys().next().value!;
             URL.revokeObjectURL(this.files.get(first)!.url);this.files.delete(first);const image=this.decoded.get(first);if(image)image.src='';this.decoded.delete(first);}
           return url;
@@ -202,5 +237,5 @@ export class AnalysisSources{
     this.decoded.forEach(image=>{image.src='';});this.decoded.clear();
     this.files.forEach(row=>URL.revokeObjectURL(row.url));this.files.clear();
     const error=new DOMException('Closed','AbortError');this.pending.forEach(rows=>rows.forEach(row=>row.reject(error)));this.pending.clear();
-    this.lightQueue.splice(0).forEach(done=>done());}
+    this.lightQueue.splice(0).forEach(done=>done());this.unavailable.clear();this.listeners.clear();}
 }

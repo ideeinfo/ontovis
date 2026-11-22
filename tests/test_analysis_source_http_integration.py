@@ -393,8 +393,11 @@ class AnalysisSourceHttpTests(unittest.TestCase):
         self.source.permissions['writer']['SYNTHETIC-A']='viewer'
         self.assertEqual(self.request(ROOT+'/evidence/register-batch',request)[0],403)
         # Read paths released their database slot before source work.
-        self.assertTrue(self.sessions.analysis_slots.acquire(blocking=False));self.assertTrue(self.sessions.analysis_slots.acquire(blocking=False))
-        self.assertFalse(self.sessions.analysis_slots.acquire(blocking=False));self.sessions.analysis_slots.release();self.sessions.analysis_slots.release()
+        for _ in range(4):
+            self.assertTrue(self.sessions.analysis_slots.acquire(blocking=False))
+        self.assertFalse(self.sessions.analysis_slots.acquire(blocking=False))
+        for _ in range(4):
+            self.sessions.analysis_slots.release()
 
     def test_revoke_during_source_read_does_not_return_previously_read_content(self):
         from apps.api.analysis_source_reader import AnalysisSourceReader

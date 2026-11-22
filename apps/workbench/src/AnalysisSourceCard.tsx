@@ -43,6 +43,7 @@ export function AnalysisTrend({trends,en,cursor,onCursor}:{trends:SimulatedTrend
 type Props={card:CanvasCard;sources:AnalysisSources;en:boolean;active:boolean;onActivate:()=>void;onDeactivate:()=>void;onOpen:()=>void;onRelated?:(value:EvidenceSource)=>void;onPage?:(page:number,value:EvidenceSource)=>void;onTrend?:(id:string,value:SimulatedTrend)=>void;onAvailability?:(id:string,state:string)=>void;full?:boolean;viewOnly?:boolean;onView?:(view:CardView)=>void;cursor?:number|null;onCursor?:(value:number|null)=>void;anchor?:SourceAnchor|null;onAddMaterial?:(item:Recommendation)=>void;onUpdateWorkOrder?:(item:Recommendation)=>Promise<boolean>;
   onAdoptDocumentVersion?:(source:EvidenceSource,version:FixedDocument,page:number)=>Promise<boolean>};
 const refKey=(card:CanvasCard)=>card.source?.id+':'+card.source?.revision;
+const FIXED_ACCESS_CHECK_MS=15000;
 export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,en,active,onActivate,onDeactivate,onOpen,onRelated,onPage,onTrend,onAvailability,onView,cursor,onCursor,anchor,onAddMaterial,onUpdateWorkOrder,onAdoptDocumentVersion,full=false,viewOnly=false}:Props){
   const [detail,setDetail]=useState<EvidenceDetail|null>(null),[image,setImage]=useState<{url:string;original:boolean}|null>(null),[error,setError]=useState(false),[retry,setRetry]=useState(0),[slow,setSlow]=useState(false),[authorized,setAuthorized]=useState(''),[cancelled,setCancelled]=useState(false);
   const [original,setOriginal]=useState(false),[imagePending,setImagePending]=useState(false),[progressOpen,setProgressOpen]=useState(false);
@@ -52,6 +53,24 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
   const authorizationKey=refKey(card)+':'+active+':'+retry;
   const ref=card.source!;
   const fullPhoto=full&&card.kind==='photo';
+  const checkFixedAccess=full&&['document','drawing','work_order'].includes(card.kind)
+    &&detail?.availability==='available'&&authorized===authorizationKey;
+  useEffect(()=>sources.observeUnavailable(ref,value=>{
+    setDetail(value);setImage(null);setOrderAttachment(null);setOrderBasis(false);setProgressOpen(false);
+    onAvailability?.(ref.id,value.availability);
+  }),[sources,ref.id,ref.revision]);
+  useEffect(()=>{
+    if(!checkFixedAccess)return;
+    let checking=false;
+    const check=()=>{
+      if(checking||document.hidden)return;
+      checking=true;
+      void sources.detail(ref).catch(()=>{}).finally(()=>{checking=false;});
+    };
+    const timer=window.setInterval(check,FIXED_ACCESS_CHECK_MS);
+    document.addEventListener('visibilitychange',check);
+    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',check);};
+  },[sources,ref.id,ref.revision,checkFixedAccess]);
   useEffect(()=>{let live=true;setDetail(null);setAuthorized('');setImage(null);setError(false);setSlow(false);setCancelled(false);setImagePending(false);setImageError(false);
     const timer=setTimeout(()=>{if(live)setSlow(true);},3000);
     void sources.detail(ref).then(value=>{if(live){setDetail(value);setAuthorized(authorizationKey);onAvailability?.(ref.id,value.availability);if(value.source?.samples)onTrend?.(card.id,value.source as SimulatedTrend);}}).catch(()=>{if(live){setError(true);onAvailability?.(ref.id,'unavailable');}}).finally(()=>clearTimeout(timer));

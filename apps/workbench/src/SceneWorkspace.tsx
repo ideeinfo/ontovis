@@ -17,7 +17,7 @@ import {SceneApi} from './sceneApi';
 import {EquipmentApi,type EquipmentConfigurations} from './equipmentApi';
 import {legacyEntryInstance} from './legacySceneEntry';
 import {ReplacementImpact} from './ReplacementImpact';
-import {canEditAssistantScene,verifyAssistantScene} from './assistantScene';
+import {canEditAssistantScene,verifyAssistantSceneEdit,type AssistantSceneEditTarget} from './assistantScene';
 import {SceneObjectsPanel} from './SceneObjectsPanel';
 import {SceneInstanceLinks} from './SceneInstanceLinks';
 import {SceneBindingReview} from './SceneBindingReview';
@@ -54,7 +54,7 @@ const SceneAlarmPanel=lazy(()=>import('./SceneAlarmPanel').then(module=>({defaul
 const SceneViewport=lazy(()=>import('./SceneViewport').then(module=>({default:module.SceneViewport})));
 const ResourcePanel=lazy(()=>import('./ResourcePanel').then(module=>({default:module.ResourcePanel})));
 export interface SceneWorkspaceHandle {requestLeave:(after:()=>void)=>void;cockpitEntry:()=>{sceneId:string;sceneRevision:string;instanceId:string|null;camera?:SceneView}|null}
-export interface SceneWorkspaceTarget {sceneId:string;sceneRevision?:string}
+export interface SceneWorkspaceTarget extends Omit<AssistantSceneEditTarget,'sceneRevision'> {sceneRevision?:string}
 const modelRef=(model:ProjectModelVersion):ModelResourceRef=>({modelAssetId:model.modelAssetId,modelVersionId:model.modelVersionId,contentRevision:model.contentRevision,sha256:model.sha256});
 type ReplacementOperation=Omit<Extract<SceneReplacementCheckRequest,{kind:'model'}>,'sceneId'|'expectedSceneRevision'|'snapshot'>|Omit<Extract<SceneReplacementCheckRequest,{kind:'terrain'}>,'sceneId'|'expectedSceneRevision'|'snapshot'>;
 const finite=(value:string)=>value.trim()!=='' && Number.isFinite(Number(value));
@@ -304,11 +304,15 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
       await readList();
     }catch(value){if(!abort.signal.aborted)failed(value);}finally{done(abort);if(mounted.current)setBusy(false);}
   }
-  useEffect(()=>{
+  function openInitialScene(){
     if(initialEntry)void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry);
-    else if(initialScene)void open(initialScene.sceneId,initialScene.sceneRevision,undefined,!!initialScene.sceneRevision);
+    else if(initialScene){
+      const {sceneRevision,...target}=initialScene;
+      void open(target.sceneId,sceneRevision,undefined,sceneRevision?{...target,sceneRevision}:undefined);
+    }
     else void readList();
-  },[]);
+  }
+  useEffect(()=>{openInitialScene();},[]);
   async function adopt(value:SceneOpen,instanceId?:string){
     savedAnalysis.current=null;
     routeControl.current?.cancel(false);setContinuous(false);setSnap({grid:0,angle:0});setInspectorTab('properties');
@@ -324,17 +328,20 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     setTerrain(null);
     setImageryVersion(null);setMetadataErrors({terrain:null,imagery:null});setMetadataAttempt(value=>value+1);
   }
-  async function open(sceneId:string,revision?:string,entry?:LegacySceneEntryTarget,openForEditing=false){
+  async function open(sceneId:string,revision?:string,entry?:LegacySceneEntryTarget,target?:AssistantSceneEditTarget){
     openRequest.current?.abort();objectIntent.current++;objectRead.current?.abort();locationRead.current?.abort();setFocus(undefined);setComponentFocus(undefined);
     const token=++sequence.current,abort=controller();setBusy(true);setOpening(true);setError(null);
     openRequest.current=abort;
     try{const value=await client.open(sceneId,revision,abort.signal);if(mounted.current&&token===sequence.current&&!abort.signal.aborted){
       const required=entry||(base&&initialEntry?.sceneId===sceneId?{...initialEntry,sceneRevision:revision||value.sceneRevision}:undefined);
-      const target=openForEditing&&revision?{sceneId,sceneRevision:revision}:null;
-      if(target)verifyAssistantScene(value,api.project?.projectCode,target);
-      await adopt(value,required?legacyEntryInstance(value,required):undefined);
+      const instance=target?verifyAssistantSceneEdit(value,api.project?.projectCode,target):undefined;
+      await adopt(value,instance?.sceneModelInstanceId??(required?legacyEntryInstance(value,required):undefined));
       if(mounted.current&&token===sequence.current){
         if(target&&canEditAssistantScene(value,api.project?.projectCode,target))setEditing(true);
+        if(instance){
+          if(!instance.visible)setPersonal({[instance.sceneModelInstanceId]:true});
+          setSide('right');
+        }
         setEntryPending(false);
       }
     }}
@@ -693,7 +700,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
   return <section className="sw-workspace" aria-label={t('scenes')}>
     {lifecycleNotice&&<div className="sw-notice sw-success" role="status"><Check size={15}/><span>{lifecycleNotice}</span><IconBtn label={t('cancel')} onClick={()=>setLifecycleNotice('')}><X size={14}/></IconBtn></div>}
     {saveUnknown&&<div className="sw-notice" role="status"><span>{t('saveUnknown')}</span><Btn disabled={busy||!canWrite} onClick={()=>void save(anchorResult||undefined)}>{t('retry')}</Btn></div>}
-    {errorText&&!spatialDialog&&<div className="sw-notice" role="alert"><span>{errorText}</span>{entryPending&&initialEntry&&<Btn disabled={busy} onClick={()=>void open(initialEntry.sceneId,initialEntry.sceneRevision,initialEntry)}>{t('retry')}</Btn>}<IconBtn label={t('cancel')} onClick={()=>setError(null)}><X size={14}/></IconBtn></div>}
+    {errorText&&!spatialDialog&&<div className="sw-notice" role="alert"><span>{errorText}</span>{entryPending&&<Btn disabled={busy} onClick={openInitialScene}>{t('retry')}</Btn>}<IconBtn label={t('cancel')} onClick={()=>setError(null)}><X size={14}/></IconBtn></div>}
     {opening&&<SceneLoadingProgress locale={locale}/>}
     {!base&&entryPending?<></>:!base?(()=>{
       const focusedScene = list?.items.find(row => row.sceneId === selectedSceneId) ?? list?.items[0] ?? null;

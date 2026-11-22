@@ -2,7 +2,7 @@ import {lazy,Suspense,useCallback,useEffect,useMemo,useRef,useState} from 'react
 import {ApiError,type WorkbenchApi} from './api';
 import {Btn,Modal} from './Primitives';
 import {SceneApi} from './sceneApi';
-import {assistantInstanceOptions,canEditAssistantScene,openAssistantScene,type AssistantSceneTarget} from './assistantScene';
+import {assistantInstanceOptions,canEditAssistantScene,openAssistantScene,type AssistantSceneEditTarget,type AssistantSceneTarget} from './assistantScene';
 import {cockpitInspectionScene} from './cockpitLocation';
 import {useCockpitLocation} from './useCockpitLocation';
 import {sceneLoadingIdentity,sceneLoadingPlan,scenePreparationStatus,type ScenePreparationState} from './sceneLoading';
@@ -14,7 +14,7 @@ const visibility={};
 
 export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFocus}:{
  api:WorkbenchApi;target:AssistantSceneTarget;en:boolean;onClose:()=>void;
- onEdit?:(target:AssistantSceneTarget)=>void;onCloseAutoFocus?:(event:Event)=>void;
+ onEdit?:(target:AssistantSceneEditTarget)=>void;onCloseAutoFocus?:(event:Event)=>void;
 }){
  const t=(zh:string,english:string)=>en?english:zh;
  const [opened,setOpened]=useState<Awaited<ReturnType<typeof openAssistantScene>>|null>(null);
@@ -39,6 +39,8 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
  const fixedIds=useMemo(()=>fixedInstance?[fixedInstance.sceneModelInstanceId]:undefined,[fixedInstance]);
  const options=useMemo(()=>assistantInstanceOptions(instances,modelUse?instanceSearch:''),[instances,modelUse,instanceSearch]);
  const chosen=options.find(item=>item.instance.sceneModelInstanceId===choice)?.instance;
+ const editTarget={...target,instanceId:modelUse?(fixedInstance??chosen)?.sceneModelInstanceId:undefined};
+ const canEdit=!!(onEdit&&scene&&canEditAssistantScene(scene,api.project?.projectCode,editTarget));
  const selected=instances.find(item=>item.sceneModelInstanceId===requested);
  const modelFocus=modelUse?selected:undefined;
  const previewed=fixedInstance??modelFocus;
@@ -73,8 +75,7 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
    <header>
     <span title={target.sceneRevision}>{t('保存版本','Saved revision')} · {target.sceneRevision.replace(/^scene:/,'').slice(0,8)}</span>
     {scene&&scene.headRevision!==scene.sceneRevision&&<span>{t('历史版本','Historical revision')}</span>}
-    {onEdit&&scene&&canEditAssistantScene(scene,api.project?.projectCode,target)&&
-     <Btn onClick={()=>onEdit(target)}>{t('进入场景编辑','Open scene editor')}</Btn>}
+    {canEdit&&!modelUse&&<Btn onClick={()=>onEdit?.(editTarget)}>{t('进入场景编辑','Open scene editor')}</Btn>}
     {previewed&&<span title={previewed.sceneModelInstanceId}>{t('实例','Instance')} · {previewed.displayName}</span>}
     {!fixedInstance&&!!instances.length&&<div className="as-scene-controls">
      {modelUse&&<input className="as-instance-search" type="search" aria-label={t('搜索模型实例','Search model instances')}
@@ -95,7 +96,9 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
      {modelUse&&instanceSearch.trim()&&<small role="status">{options.length?
       t(options.length+' 个匹配实例',options.length===1?'1 match':options.length+' matches'):
       t('没有匹配的实例','No matching instances')}</small>}
+     {canEdit&&modelUse&&<Btn disabled={locked} onClick={()=>onEdit?.(editTarget)}>{t('编辑所选实例','Edit selected instance')}</Btn>}
     </div>}
+    {canEdit&&modelUse&&fixedInstance&&<Btn disabled={locked} onClick={()=>onEdit?.(editTarget)}>{t('编辑所选实例','Edit selected instance')}</Btn>}
    </header>
    <div className="as-scene-status" role="status">
     {previewed&&ready?t('已定位 · 固定实例','Located · fixed instance'):

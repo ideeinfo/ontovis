@@ -8,7 +8,7 @@ import {AssistantEquipmentConfiguration} from './AssistantEquipmentConfiguration
 import type {EquipmentConfigurationEdit,EquipmentConfigurationTarget} from './equipmentApi';
 import {AssistantDeviceMaterials,type DeviceMaterialsTarget} from './AssistantDeviceMaterials';
 import {FixedDocumentPreview,type FixedDocumentTarget} from './FixedDocumentPreview';
-import type {AssistantSceneTarget} from './assistantScene';
+import type {AssistantSceneEditTarget,AssistantSceneTarget} from './assistantScene';
 import {snapshotDigest,canApplyFreshTask,TASK_PROTOCOL,type AssistantModelTarget,type PreparedTask} from './assistantTasks';
 import {AssistantRetrieval} from './AssistantRetrieval';
 import type {SourceAnchor} from './analysisSources';
@@ -24,7 +24,7 @@ import {AssistantWorkOrderDialog} from './AssistantWorkOrderDialog';
 import './assistant.css';
 import {llmTaskNames,type LlmTask} from './llmSettings';
 
-export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,onEditScene,onEditEquipment,initialRunId,queryOnly=false,snapshot,onApplyTask,onHandoff,initialQuestion,onInitialQuestionUsed,hasUnsaved=false,historyJson}:{api:WorkbenchApi;cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string,record?:string)=>void;onEditScene?:(target:AssistantSceneTarget)=>void;onEditEquipment?:(target:EquipmentConfigurationEdit)=>void;initialRunId?:string;queryOnly?:boolean;snapshot?:CanvasSnapshot;hasUnsaved?:boolean;historyJson?:string;initialQuestion?:string;onInitialQuestionUsed?:()=>void;onHandoff?:(run:AssistantRun)=>void;onApplyTask?:(prepared:PreparedTask,baseJson:string)=>Promise<number|null>}){
+export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,onEditScene,onEditEquipment,initialRunId,queryOnly=false,snapshot,onApplyTask,onHandoff,initialQuestion,onInitialQuestionUsed,hasUnsaved=false,historyJson}:{api:WorkbenchApi;cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string,record?:string)=>void;onEditScene?:(target:AssistantSceneEditTarget)=>void;onEditEquipment?:(target:EquipmentConfigurationEdit)=>void;initialRunId?:string;queryOnly?:boolean;snapshot?:CanvasSnapshot;hasUnsaved?:boolean;historyJson?:string;initialQuestion?:string;onInitialQuestionUsed?:()=>void;onHandoff?:(run:AssistantRun)=>void;onApplyTask?:(prepared:PreparedTask,baseJson:string)=>Promise<number|null>}){
  const service=useMemo(()=>new AssistantApi(api),[api]);const t=(zh:string,english:string)=>en?english:zh;
  const mode:AssistantMode|null=snapshot?(queryOnly?'cockpit_query':'workbench'):null;
  const [taskId,setTaskId]=useState<LlmTask>(queryOnly?'query':'analysis');
@@ -180,7 +180,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {documentView&&<FixedDocumentPreview api={api} item={documentView} en={en} onClose={()=>setDocumentView(null)}/>}
   {sceneView&&<AssistantSceneViewer api={api} target={sceneView.target} en={en} onClose={()=>setSceneView(null)}
     onCloseAutoFocus={event=>{if(sceneView.trigger?.isConnected){event.preventDefault();sceneView.trigger.focus();}}}
-    onEdit={!queryOnly&&sceneView.workbench&&onEditScene?target=>{setSceneView(null);onEditScene(target);}:undefined}/>}
+    onEdit={!queryOnly&&sceneView.workbench?onEditScene:undefined}/>}
   {sourceView&&<AssistantSourceViewer api={api} {...sourceView} en={en} onClose={()=>setSourceView(null)}/>}
   {!queryOnly&&transferRun&&<AssistantWorkOrderDialog key={`${context}:${transferRun.runId}`} api={api} run={transferRun} cards={cards} en={en} preferredOrderId={preferredOrderId} faultCode={faultCode} enabled={canTransfer&&!locked} onClose={()=>setTransferRun(null)} onOpenOrder={onOpenOrder} onFocus={onFocus}/>}
   {focusedEarlier&&<p className="ap-caption">{t('正在查看工单采纳的历史轮次。','Viewing the historical turn adopted by the work order.')}<Btn disabled={locked} onClick={()=>void openConversation(conversation!.conversationId)}>{t('打开完整对话后继续','Open full conversation to continue')}</Btn></p>}

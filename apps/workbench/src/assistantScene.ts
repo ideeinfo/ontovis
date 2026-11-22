@@ -6,6 +6,7 @@ import type {SceneModelInstance,SceneOpen} from './sceneTypes';
 type FixedInstanceTarget={instanceId:string;modelVersionId:string;equipmentUid:string};
 export type AssistantSceneTarget={sceneId:string;sceneRevision:string;title:string;instance?:FixedInstanceTarget;modelVersionId?:string};
 type FixedSceneTarget=Pick<AssistantSceneTarget,'sceneId'|'sceneRevision'>;
+export type AssistantSceneEditTarget=FixedSceneTarget&{instanceId?:string;modelVersionId?:string};
 
 export function assistantInstanceOptions(instances:SceneModelInstance[],query='') {
  const normalize=(value:string)=>value.normalize('NFKC').toLowerCase();
@@ -35,10 +36,24 @@ export function verifyAssistantScene(scene:SceneOpen,projectCode:string|undefine
  if(!matchesSceneRevision(scene,target))throw new ApiError(409,'SCENE_CHANGED');
 }
 
+function editInstance(scene:SceneOpen,target:AssistantSceneEditTarget) {
+ if(!target.instanceId||!target.modelVersionId||!scene.resourceRefs.some(ref=>ref.modelVersionId===target.modelVersionId))return;
+ return scene.snapshot.instances.find(item=>item.sceneModelInstanceId===target.instanceId&&item.modelVersionId===target.modelVersionId);
+}
+
+export function verifyAssistantSceneEdit(scene:SceneOpen,projectCode:string|undefined,target:AssistantSceneEditTarget) {
+ verifyAssistantScene(scene,projectCode,target);
+ if(!target.instanceId&&!target.modelVersionId)return;
+ const instance=editInstance(scene,target);
+ if(!instance)throw new ApiError(409,'SCENE_INSTANCE_CHANGED');
+ return instance;
+}
+
 export function canEditAssistantScene(scene:SceneOpen,projectCode:string|undefined,
- target:FixedSceneTarget&Pick<AssistantSceneTarget,'instance'|'modelVersionId'>) {
- return !target.instance&&!target.modelVersionId&&scene.capabilities.canWrite&&scene.projectCode===projectCode&&matchesSceneRevision(scene,target)
-  &&scene.sceneRevision===scene.headRevision;
+ target:AssistantSceneEditTarget&Pick<AssistantSceneTarget,'instance'>) {
+ return !target.instance&&scene.capabilities.canWrite&&scene.projectCode===projectCode&&matchesSceneRevision(scene,target)
+  &&scene.sceneRevision===scene.headRevision
+  &&(!(target.instanceId||target.modelVersionId)||!!editInstance(scene,target));
 }
 
 function verifyFixedInstance(scene:SceneOpen,project:ProjectRef,target:FixedInstanceTarget) {

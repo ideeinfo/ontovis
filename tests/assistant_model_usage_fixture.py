@@ -136,6 +136,14 @@ def configured_site(public, fixture):
         value['description'] = '清单验收期间保存的新修订'
         return fixture.saved(target,value)['sceneRevision']
 
+    def verify_saved(revision):
+        latest = fixture.open_ok(target)
+        assert latest['sceneRevision']==revision
+        expected = deepcopy(target['snapshot']['instances'])
+        expected[1]['displayName'] += ' · 编辑验收'
+        assert latest['snapshot']['instances']==expected
+        assert fixture.open_ok(target,target['sceneRevision'])['snapshot']==target['snapshot']
+
     board = snapshot()
     board.update(schemaVersion=2,projectCode=PROJECT,ontobaseConnectionId=CONNECTION,title=TITLE)
     analysis = fixture.ok(ANALYSIS+'/create',dict(snapshot=board,requestId=str(uuid4())))
@@ -170,7 +178,7 @@ def configured_site(public, fixture):
             facts = dict(origin=origin,title=TITLE,analysisId=analysis['analysisSessionId'],sceneName=SCENE,
                 sceneId=target['sceneId'],sceneRevision=target['sceneRevision'],instanceId=instance['sceneModelInstanceId'],
                 instanceName=instance['displayName'],versionId=fixture.version['modelVersionId'])
-            yield facts, advance, revoked.set, model_calls
+            yield facts, advance, revoked, model_calls, verify_saved
         finally:
             server.shutdown()
             thread.join()

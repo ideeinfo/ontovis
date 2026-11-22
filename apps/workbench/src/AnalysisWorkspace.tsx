@@ -15,7 +15,7 @@ import {noteSections,readNote,writeNote} from './analysisNotes';
 import {applyCanvasAction} from './analysisActions';
 import {checkedTaskSnapshot,type PreparedTask} from './assistantTasks';
 import {AssistantPanel} from './AssistantPanel';
-import type {AssistantSceneTarget} from './assistantScene';
+import type {AssistantSceneEditTarget} from './assistantScene';
 import type {EquipmentConfigurationEdit} from './equipmentApi';
 import {AnalysisTimeWindowForm} from './AnalysisTrendTimeForm';
 import {intersectTimeWindows,timeWindowLabel,timeZoneLabel,type TimeWindow} from './analysisTimeWindow';
@@ -41,7 +41,7 @@ const zhError:Record<string,string>={ANALYSIS_BUSY:'分析读取较忙，请稍�
   ANALYSIS_REVIEW_NOT_CONFIGURED:'当前分析尚未开放结论确认。',ACCESS_CHANGED:'项目权限已变化，请重新打开分析。',
   NOT_FOUND_OR_FORBIDDEN:'分析不存在或当前账号无权查看。',INVALID_REQUEST:'请检查分析名称、内容和时间范围。'};
 
-type WorkspaceProps={presentation?:boolean;api:WorkbenchApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void;initialEntry?:AnalysisEntry|null;onOpenWorkOrder?:(code:string,record?:string)=>void;onEditScene?:(target:AssistantSceneTarget)=>void;onEditEquipment?:(target:EquipmentConfigurationEdit)=>void};
+type WorkspaceProps={presentation?:boolean;api:WorkbenchApi;locale?:string;onDirtyChange?:(dirty:boolean)=>void;initialEntry?:AnalysisEntry|null;onOpenWorkOrder?:(code:string,record?:string)=>void;onEditScene?:(target:AssistantSceneEditTarget)=>void;onEditEquipment?:(target:EquipmentConfigurationEdit)=>void};
 export function AnalysisWorkspace(props:WorkspaceProps){
  const entry=props.initialEntry;
  if(entry&&'workOrderReference' in entry)return <WorkOrderReferenceView api={props.api} entry={entry} en={props.locale==='en'} onReturn={props.onOpenWorkOrder?()=>props.onOpenWorkOrder!(entry.workOrderReference.orderId):undefined}/>;
