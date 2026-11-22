@@ -18,6 +18,7 @@ class EquipmentAuthority(bindings.BindingAuthority):
         self.engineering.objects[engineering.CABINET]['sourceTemplateEntityUid']='definition'
         self.engineering.objects['definition']['objectKind']='cabinet'
         self.adopted=False
+        self.extra_adopters={}
         self.application={'applicationId':str(uuid4()),'revisionId':str(uuid4()),'projectCode':engineering.PROJECT,
             'specification':{'objectKind':'equipment'},'snapshot':{'name':'源端合成共享规格',
                 'specificationRevisionId':str(uuid4()),'rootDefinition':None,
@@ -39,7 +40,8 @@ class EquipmentAuthority(bindings.BindingAuthority):
         if path.endswith('/equipment/shared-photos/query'):return {'items':[],'nextCursor':None}
         if path.endswith('/equipment/shared-photos/regions'):return {'items':[],'nextCursor':None}
         if '/equipment-applications/revisions/' in path and urlsplit(path).path.endswith('/equipment'):
-            adopters=[dict(entityUid=engineering.ROOT,adoptionId=self.adoption_id)] if self.adopted else []
+            active={engineering.ROOT:self.adoption_id,**self.extra_adopters} if self.adopted else {}
+            adopters=[dict(entityUid=uid,adoptionId=active[uid]) for uid in sorted(active)]
             return dict(projectCode=engineering.PROJECT,applicationRevisionId=self.application['revisionId'],
                         items=adopters,total=len(adopters),nextOffset=None,snapshotRevision='adopters:1')
         if '/equipment-applications/revisions/' in path:return copy.deepcopy(self.application)
@@ -220,6 +222,75 @@ class EquipmentHttpTests(unittest.TestCase):
         with patch.object(self.sessions.project_models,'fixed_version_metadata',side_effect=revoke):
             self.expect(self.request(ROOT+'/configurations/detail',dict(configurationId=self.cid,
                 configurationRevision=config['configurationRevision'],includeImpact=True)),403,'FORBIDDEN')
+
+    def test_configuration_instance_pages_prioritize_device_filter_and_keep_fixed_revisions(self):
+        config=self.configure();source=self.authority()
+        source.adopted=False
+        scene=self.create();snapshot=copy.deepcopy(scene['snapshot'])
+        own=self.item('同名设备',engineering.ROOT)
+        own['sceneModelInstanceId']='ffffffff-ffff-4fff-bfff-ffffffffffff'
+        snapshot['instances']=[self.item('同名设备',engineering.OTHER_ROOT) for _ in range(23)]+[own,self.item('未绑定')]
+        scene=self.saved(scene,snapshot)
+        source.extra_adopters[engineering.OTHER_ROOT]=str(uuid4());source.adopted=True
+        target=dict(configurationId=self.cid,configurationRevision=config['configurationRevision'],includeImpact=True,
+                    device=dict(entityUid=engineering.ROOT,entityRevision=source.engineering.objects[engineering.ROOT]['entityRevision']))
+        route=ROOT+'/configurations/detail'
+        legacy=self.request(route,target)[1]['impact']
+        self.assertEqual(legacy['total'],24)
+        self.assertNotIn(own['sceneModelInstanceId'],[row['instanceId'] for row in legacy['items']])
+        status,value,_=self.request(route,{**target,'instanceQuery':{'devicePage':1}})
+        self.assertEqual(status,200,value)
+        pages=value['instancePages']
+        self.assertEqual(pages['others'],{'total':23,'page':None,'items':[]})
+        self.assertEqual(pages['device']['total'],1)
+        fixed=pages['device']['items'][0]
+        self.assertEqual(fixed['instanceId'],own['sceneModelInstanceId'])
+        self.assertEqual(fixed['sceneRevision'],scene['sceneRevision'])
+        self.assertIsNone(value['impact'])
+
+        query={'devicePage':1,'otherPage':1,'sceneName':'双设备','expectedSnapshotRevision':pages['snapshotRevision']}
+        status,value,_=self.request(route,{**target,'instanceQuery':query})
+        self.assertEqual(status,200,value)
+        first=value['instancePages']['others']
+        self.assertEqual((first['total'],len(first['items'])),(23,20))
+        status,value,_=self.request(route,{**target,'instanceQuery':{**query,'otherPage':2}})
+        self.assertEqual(status,200,value)
+        last=value['instancePages']['others']
+        ids=[row['instanceId'] for row in first['items']+last['items']]
+        self.assertEqual(len(ids),23)
+        self.assertEqual(set(ids),{row['sceneModelInstanceId'] for row in snapshot['instances'][:23]})
+        self.assertTrue(all(row['equipmentUid']==engineering.OTHER_ROOT for row in first['items']+last['items']))
+        no_matches=self.request(route,{**target,'instanceQuery':{**query,'sceneName':'%_'}})[1]['instancePages']
+        self.assertEqual((no_matches['device']['total'],no_matches['others']['total']),(0,0))
+        for invalid in ({'devicePage':True},{'devicePage':1,'otherPage':2},{'devicePage':1,'sceneName':['bad']},
+                        {'devicePage':1,'expectedSnapshotRevision':'bad'},None):
+            self.expect(self.request(route,{**target,'instanceQuery':invalid}),422,'INVALID_REQUEST')
+        self.expect(self.request(route,{**target,'device':None,'instanceQuery':{'devicePage':1}}),422,'INVALID_REQUEST')
+        self.expect(self.request(route,{**target,'instanceQuery':{'devicePage':1}},client=False),401,'SESSION_EXPIRED')
+
+        changed=copy.deepcopy(scene['snapshot']);changed['instances'][0]['visible']=False
+        source.adopted=False
+        revised=self.saved(scene,changed)
+        source.adopted=True
+        self.expect(self.request(route,{**target,'instanceQuery':query}),409,'SNAPSHOT_CHANGED')
+        status,value,_=self.request(route,{**target,'instanceQuery':{'devicePage':1}})
+        self.assertEqual(status,200,value)
+        self.assertEqual(value['instancePages']['device']['items'][0]['sceneRevision'],revised['sceneRevision'])
+        self.assertEqual(self.open_ok(scene,scene['sceneRevision'])['snapshot'],scene['snapshot'])
+
+    def test_configuration_instance_pages_enforce_reader_access_and_active_adoption(self):
+        config=self.configure();source=self.authority()
+        source.role='reader'
+        body=dict(configurationId=self.cid,configurationRevision=config['configurationRevision'],includeImpact=True,
+                  device=dict(entityUid=engineering.ROOT,entityRevision=source.engineering.objects[engineering.ROOT]['entityRevision']),
+                  instanceQuery={'devicePage':1})
+        status,value,_=self.request(ROOT+'/configurations/detail',body)
+        self.assertEqual(status,200,value)
+        self.assertFalse(value['canPrepare'])
+        source.adopted=False
+        self.expect(self.request(ROOT+'/configurations/detail',body),409,'ENGINEERING_CHANGED')
+        source.adopted=True;source.allowed=False
+        self.expect(self.request(ROOT+'/configurations/detail',body),403,'FORBIDDEN')
 
     def test_adopted_instance_does_not_accept_a_private_mapping_override(self):
         self.configure();scene=self.create();snapshot=copy.deepcopy(scene['snapshot'])

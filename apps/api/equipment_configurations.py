@@ -5,10 +5,28 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 from uuid import UUID, uuid4
 
 from .authority import PreviewError
 from .scene_bindings import validate_ref
+
+SCENE_INSTANCE_PAGE_SIZE = 20
+_CONFIGURATION_SCENE_INSTANCES = '''
+    select s.id as sceneId,s.head_revision as sceneRevision,
+        json_extract(r.snapshot,'$.displayName') as sceneName,
+        json_extract(i.value,'$.sceneModelInstanceId') as instanceId,
+        json_extract(i.value,'$.displayName') as instanceName,
+        json_extract(i.value,'$.modelVersionId') as modelVersionId,
+        json_extract(i.value,'$.rootBinding.objectRef.entityUid') as equipmentUid
+    from scenes s join scene_revisions r on r.revision=s.head_revision
+    join json_each(r.snapshot,'$.instances') i left join scene_lifecycle l on l.scene_id=s.id
+    where s.project_code=? and coalesce(l.state,'active')='active'
+    and json_extract(i.value,'$.rootBinding.objectRef.ontobaseConnectionId')=?
+    and json_extract(i.value,'$.rootBinding.objectRef.projectCode')=?
+    and json_extract(i.value,'$.rootBinding.objectRef.entityUid') in (select value from json_each(?))
+    and json_extract(i.value,'$.modelVersionId') in (select value from json_each(?))
+'''
 
 
 def require(ok, code='INVALID_REQUEST', status=422):
@@ -32,6 +50,22 @@ def text(value, limit=200):
 
 def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def validate_instance_query(query):
+    require(type(query) is dict and {'devicePage'}<=set(query)<=
+            {'devicePage','otherPage','sceneName','expectedSnapshotRevision'})
+    scene_name = query.get('sceneName', '')
+    if scene_name != '':
+        text(scene_name, 200)
+    for key in ('devicePage','otherPage'):
+        if key in query:
+            require(type(query[key]) is int and 1<=query[key]<=2_147_483_647)
+    if 'expectedSnapshotRevision' in query:
+        revision = query['expectedSnapshotRevision']
+        require(isinstance(revision,str) and re.fullmatch(r'[0-9a-f]{64}',revision))
+    else:
+        require(query['devicePage']==1 and query.get('otherPage',1)==1)
 
 
 class EquipmentConfigurations:
@@ -177,9 +211,12 @@ class EquipmentConfigurations:
         return {'configurationId':configuration_id,'configurationRevision':row['revision'],'snapshot':json.loads(row['snapshot']),'savedAt':row['saved_at']}
 
     def preview(self, configuration_id, revision, authorize, equipment, models, *,
-                can_prepare=False, device=None, proposal=None, require_current=False):
+                can_prepare=False, device=None, proposal=None, require_current=False, instance_query=None):
         """Read one fixed configuration and its current saved-scene scope."""
         text(revision)
+        if instance_query is not None:
+            require(device is not None)
+            validate_instance_query(instance_query)
         fixed = self.detail(configuration_id, revision, authorize)
         head = self.detail(configuration_id, None, authorize)['configurationRevision']
         ref = fixed['snapshot'].get('projectApplicationRef')
@@ -217,7 +254,13 @@ class EquipmentConfigurations:
         if current and device:
             require(device['entityUid'] in adopters,'ENGINEERING_CHANGED',409)
         version_ids = [*attached,*([proposal] if candidate else [])]
-        impact = self._scene_impact(adopters,version_ids) if current else None
+
+        def scene_references():
+            if instance_query is not None:
+                return self._scene_instance_pages(adopters, version_ids, device['entityUid'], revision, instance_query)
+            return self._scene_impact(adopters,version_ids)
+
+        references = scene_references() if current else None
         definitions = {m['objectRef']['entityUid'] for row in fixed['snapshot']['models'] for m in row['mappings']}
         root = fixed['snapshot'].get('rootDefinition')
         if root:
@@ -232,39 +275,53 @@ class EquipmentConfigurations:
             require(equipment.application_equipment(ref['applicationRevisionId'])==adopters,'ENGINEERING_CHANGED',409)
             if device:
                 check_device()
-            require(self._scene_impact(adopters,version_ids)==impact,'SNAPSHOT_CHANGED',409)
+            require(scene_references()==references,'SNAPSHOT_CHANGED',409)
         if candidate:
             require(models.fixed_version_metadata(proposal,authorize)==candidate,'MODEL_ASSET_CHANGED',409)
         require(self.detail(configuration_id, None, authorize)['configurationRevision']==head,'REVISION_CONFLICT',409)
-        return dict(**fixed, models=list(attached.values()), objectNames=names, current=current,
-                    canPrepare=can_prepare and current, equipmentCount=len(adopters) if current else None,
-                    impact=impact, proposal=candidate)
+        value = dict(**fixed, models=list(attached.values()), objectNames=names, current=current,
+                     canPrepare=can_prepare and current, equipmentCount=len(adopters) if current else None,
+                     impact=references if instance_query is None else None, proposal=candidate)
+        if instance_query is not None:
+            value['instancePages'] = references
+        return value
+
+    def _scene_instance_args(self, adopters, version_ids):
+        return (self.scope['project_code'],self.scope['connection_id'],self.scope['project_code'],
+                encoded(adopters),encoded(version_ids))
 
     def _scene_impact(self, adopters, version_ids):
         if not adopters or not version_ids:
             return dict(total=0,items=[])
-        # The bounds come from the source adopter listing and the saved configuration schema.
         with self.library.connect() as db:
-            rows=db.execute('''select s.id as sceneId,s.head_revision as sceneRevision,
-                json_extract(r.snapshot,'$.displayName') as sceneName,
-                json_extract(i.value,'$.sceneModelInstanceId') as instanceId,
-                json_extract(i.value,'$.displayName') as instanceName,
-                json_extract(i.value,'$.modelVersionId') as modelVersionId,
-                json_extract(i.value,'$.rootBinding.objectRef.entityUid') as equipmentUid,
-                count(*) over() as total
-                from scenes s join scene_revisions r on r.revision=s.head_revision
-                join json_each(r.snapshot,'$.instances') i left join scene_lifecycle l on l.scene_id=s.id
-                where s.project_code=? and coalesce(l.state,'active')='active'
-                and json_extract(i.value,'$.rootBinding.objectRef.ontobaseConnectionId')=?
-                and json_extract(i.value,'$.rootBinding.objectRef.projectCode')=?
-                and json_extract(i.value,'$.rootBinding.objectRef.entityUid') in
-                    (select value from json_each(?))
-                and json_extract(i.value,'$.modelVersionId') in (select value from json_each(?))
-                order by s.id,instanceId limit 20''',
-                (self.scope['project_code'],self.scope['connection_id'],self.scope['project_code'],
-                 encoded(adopters),encoded(version_ids))).fetchall()
+            rows = db.execute(f'''select instances.*, count(*) over() as total
+                from ({_CONFIGURATION_SCENE_INSTANCES}) instances order by sceneId,instanceId limit ?''',
+                (*self._scene_instance_args(adopters,version_ids),SCENE_INSTANCE_PAGE_SIZE)).fetchall()
         return dict(total=rows[0]['total'] if rows else 0,
                     items=[{key:row[key] for key in row.keys() if key!='total'} for row in rows])
+
+    def _scene_instance_pages(self, adopters, version_ids, device_uid, configuration_revision, query):
+        device = dict(page=query['devicePage'],total=0,items=[])
+        others = dict(page=query.get('otherPage'),total=0,items=[])
+        name = query.get('sceneName','').casefold()
+        digest = hashlib.sha256(encoded([self.scope,configuration_revision,device_uid,
+                                        sorted(adopters),sorted(version_ids)]).encode())
+        # Hash the whole eligible list while retaining just the requested pages.
+        with self.library.connect() as db:
+            rows = db.execute(_CONFIGURATION_SCENE_INSTANCES+' order by sceneName collate nocase,sceneId,instanceId',
+                              self._scene_instance_args(adopters,version_ids))
+            for row in rows:
+                digest.update(encoded([row['sceneId'],row['sceneRevision'],row['instanceId']]).encode())
+                if name not in row['sceneName'].casefold():
+                    continue
+                group = device if row['equipmentUid']==device_uid else others
+                page = group['page']
+                if page is not None and group['total']//SCENE_INSTANCE_PAGE_SIZE+1==page:
+                    group['items'].append(dict(row))
+                group['total'] += 1
+        snapshot = digest.hexdigest()
+        require(query.get('expectedSnapshotRevision',snapshot)==snapshot,'SNAPSHOT_CHANGED',409)
+        return dict(snapshotRevision=snapshot,limit=SCENE_INSTANCE_PAGE_SIZE,device=device,others=others)
 
     def resolve_scene(self, opened, equipment, authorize):
         """Compose a read projection. Never persist per-device copies of mappings."""

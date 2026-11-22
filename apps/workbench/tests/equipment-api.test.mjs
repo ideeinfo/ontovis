@@ -52,9 +52,12 @@ test('association preview and draft handoff use a fixed project-scoped read rout
   const target={configurationId:'config',configurationRevision:'config:5',device:{entityUid:'device-a',entityRevision:'device-a:3'}};
   await service.configurationPreview(target);
   await service.configurationPreview({...target,proposedModelVersionId:'fixed-version'},true);
-  assert.deepEqual(sent.map(call=>call.path),Array(2).fill('/api/workbench/equipment/configurations/detail'));
+  const instanceQuery={sceneName:'示例场景',devicePage:1,otherPage:2,expectedSnapshotRevision:'a'.repeat(64)};
+  await service.configurationPreview(target,false,undefined,instanceQuery);
+  assert.deepEqual(sent.map(call=>call.path),Array(3).fill('/api/workbench/equipment/configurations/detail'));
   assert.deepEqual(sent[0].body,{...target,includeImpact:true,requireCurrent:false,projectRef:project,expectedSessionRevision:'session:1'});
   assert.deepEqual(sent[1].body,{...sent[0].body,requireCurrent:true,proposedModelVersionId:'fixed-version'});
+  assert.deepEqual(sent[2].body,{...sent[0].body,instanceQuery});
 });
 
 test('shared photo pages and renditions keep source identity and request limits',async()=>{

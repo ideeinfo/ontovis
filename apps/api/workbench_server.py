@@ -182,15 +182,17 @@ class WorkbenchSessions(UserSessions):
                 value['models'].append(self.project_models.model(identity['modelAssetId'],version,authorize))
         elif path=='/api/workbench/equipment/configurations/detail':
             if not {'configurationId'}<=set(body)<={'configurationId','configurationRevision','includeImpact','device',
-                'proposedModelVersionId','requireCurrent'}:raise PreviewError(422,'INVALID_REQUEST')
+                'proposedModelVersionId','requireCurrent','instanceQuery'}:raise PreviewError(422,'INVALID_REQUEST')
             if type(body.get('includeImpact',False)) is not bool or type(body.get('requireCurrent',False)) is not bool:
                 raise PreviewError(422,'INVALID_REQUEST')
             if body.get('includeImpact'):
-                if 'configurationRevision' not in body or ('proposedModelVersionId' in body and body['proposedModelVersionId'] is None):
+                if 'configurationRevision' not in body or any(key in body and body[key] is None
+                    for key in ('proposedModelVersionId','instanceQuery')):
                     raise PreviewError(422,'INVALID_REQUEST')
                 value=self.equipment_store().preview(body['configurationId'],body['configurationRevision'],authorize,equipment,
                     self.project_models,can_prepare=access.get('role')=='admin',device=body.get('device'),
-                    proposal=body.get('proposedModelVersionId'),require_current=body.get('requireCurrent',False))
+                    proposal=body.get('proposedModelVersionId'),require_current=body.get('requireCurrent',False),
+                    instance_query=body.get('instanceQuery'))
             else:
                 if set(body)-{'configurationId','configurationRevision','includeImpact'}:raise PreviewError(422,'INVALID_REQUEST')
                 value=self.equipment_store().detail(body['configurationId'],body.get('configurationRevision'),authorize)

@@ -156,6 +156,15 @@
 .as-configuration-instances{list-style:none;padding:0}
 .as-configuration-instances li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--borderSubtle)}
 .as-configuration-instances .ov-btn{flex:none}
+.as-instance-browser{display:grid;gap:10px}
+.as-instance-browser form,.as-instance-pagination{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.as-instance-browser input{flex:1;min-width:min(160px,100%);height:32px;padding:4px 8px;background:var(--surface);color:var(--text);border:1px solid var(--borderControl);border-radius:6px;font:inherit}
+.as-instance-device h4{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin:3px 0 5px;font-size:13px}
+.as-instance-pagination{justify-content:flex-end;margin-top:8px}
+.as-instance-disclosure{display:flex;align-items:center;gap:8px;min-height:34px;text-align:start;padding:6px 8px;border:1px solid var(--borderSubtle);border-radius:6px;background:var(--surface);color:var(--text);font:inherit;cursor:pointer}
+.as-instance-disclosure>small{margin-inline-start:auto}
+.as-instance-disclosure>svg{flex:none}
+.as-instance-disclosure:disabled{opacity:.55;cursor:default}
 .as-configuration .as-configuration-proposal{border:1px solid var(--borderSubtle);background:var(--selected);padding:12px;border-radius:6px}
 .as-configuration-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--borderSubtle);padding-top:12px}
 .as-result-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}

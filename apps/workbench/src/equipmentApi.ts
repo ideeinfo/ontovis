@@ -16,9 +16,20 @@ export interface EquipmentConfigurationTarget {
   device?:{entityUid:string;entityRevision:string};
 }
 type FixedModelSummary=Pick<ProjectModelVersion,'modelAssetId'|'modelVersionId'|'displayName'|'contentRevision'|'representationType'|'assetState'|'assetRevision'>;
+export interface ConfigurationSceneInstance {
+  sceneId:string;sceneRevision:string;sceneName:string;instanceId:string;instanceName:string;
+  modelVersionId:string;equipmentUid:string;
+}
+export interface ConfigurationInstanceQuery {
+  devicePage:number;otherPage?:number;sceneName?:string;expectedSnapshotRevision?:string;
+}
+export interface ConfigurationInstancePage {
+  page:number|null;total:number;items:ConfigurationSceneInstance[];
+}
 export interface EquipmentConfigurationPreview extends EquipmentConfiguration {
   current:boolean;canPrepare:boolean;models:FixedModelSummary[];objectNames:Record<string,string>;
-  impact:{total:number;items:{sceneId:string;sceneRevision:string;sceneName:string;instanceId:string;instanceName:string;modelVersionId:string;equipmentUid:string}[]}|null;
+  impact:{total:number;items:ConfigurationSceneInstance[]}|null;
+  instancePages?:{snapshotRevision:string;limit:number;device:ConfigurationInstancePage;others:ConfigurationInstancePage}|null;
   proposal:FixedModelSummary|null;
 }
 export type EquipmentConfigurationEdit=EquipmentConfigurationTarget&{proposedModelVersionId?:string};
@@ -56,8 +67,9 @@ export class EquipmentApi {
   constructor(api:Pick<WorkbenchApi,'request'>){this.api=api;}
   catalogue(q='',cursor:string|null=null,signal?:AbortSignal){return this.api.request<EquipmentCatalogue>(ROOT,{q,cursor,limit:50,rootsOnly:true},signal);}
   configurations(signal?:AbortSignal){return this.api.request<EquipmentConfigurations>(ROOT+'/configurations',{},signal);}
-  configurationPreview(target:EquipmentConfigurationEdit,requireCurrent=false,signal?:AbortSignal){
-    return this.api.request<EquipmentConfigurationPreview>(ROOT+'/configurations/detail',{...target,includeImpact:true,requireCurrent},signal);
+  configurationPreview(target:EquipmentConfigurationEdit,requireCurrent=false,signal?:AbortSignal,instanceQuery?:ConfigurationInstanceQuery){
+    return this.api.request<EquipmentConfigurationPreview>(ROOT+'/configurations/detail',
+      {...target,includeImpact:true,requireCurrent,...(instanceQuery?{instanceQuery}:{})},signal);
   }
   resolve(entityUids:string[],signal?:AbortSignal){return this.api.request<{items:EquipmentRecord[]}>(ROOT+'/resolve',{entityUids},signal);}
   modelMaterials(specificationId:string,scope='',kind='',cursor:string|null=null,signal?:AbortSignal){return this.api.request<EquipmentMaterialPage>(ROOT+'/materials/models',{specificationId,scope,kind,cursor,limit:20},signal);}
