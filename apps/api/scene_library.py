@@ -1648,14 +1648,30 @@ class SceneLibrary:
             authorize()
             return result
 
+    def model_use_scope(self, q, authorize: Authorize):
+        """Read the scene catalogue revision and optionally the models used by matching heads."""
+        _require(type(q) is str and len(q) <= 200 and callable(authorize)); authorize()
+        with self.library.connect() as db:
+            db.execute('begin')
+            revision, _ = self._catalog(db)
+            versions = None
+            if q:
+                versions = {row[0] for row in db.execute('''select distinct u.model_version_id
+                    from scenes s join scene_resource_uses u on u.revision=s.head_revision
+                    left join scene_lifecycle l on l.scene_id=s.id
+                    where s.project_code=? and coalesce(l.state,'active')='active'
+                    and instr(lower(s.display_name),lower(?))>0''', (self.project_code, q))}
+            authorize()
+            return revision, versions
+
     def uses(self, model_version_id, actor, authorize: Authorize, *, access_revision, scope='current_or_retained',
-             cursor=None, limit=50):
+             cursor=None, limit=50, q=''):
         """Count distinct scene/instance identities separately from historical revision references."""
         actor, access_revision = _text(actor), _text(access_revision)
         version_id = _uuid(model_version_id)
         _require(callable(authorize)); authorize()
         _require(scope in ('current', 'retained', 'current_or_retained')
-                 and type(limit) is int and 1 <= limit <= 100)
+                 and type(limit) is int and 1 <= limit <= 100 and type(q) is str and len(q) <= 200)
         with self.library.connect() as db:
             db.execute('begin')
             if self.shared_models:
@@ -1666,6 +1682,8 @@ class SceneLibrary:
             revision, key = self._catalog(db)
             context = {'kind': 'model_uses', 'project': self.project_code, 'actor': actor,
                        'accessRevision': access_revision, 'versionId': version_id, 'scope': scope, 'limit': limit}
+            if q:
+                context['q'] = q
             last = None
             if cursor is not None:
                 page = self._uncursor(cursor, key)
@@ -1680,15 +1698,19 @@ class SceneLibrary:
                 from scene_resource_uses u join scene_revisions r on r.revision=u.revision
                 join scenes s on s.id=r.scene_id
                 left join scene_lifecycle l on l.scene_id=s.id
-                where s.project_code=? and u.model_version_id=? group by s.id,s.display_name,s.head_revision,l.state'''
+                where s.project_code=? and u.model_version_id=?'''
+            parameters = [self.project_code, version_id]
+            if q:
+                grouped += ' and instr(lower(s.display_name),lower(?))>0'
+                parameters.append(q)
+            grouped += ' group by s.id,s.display_name,s.head_revision,l.state'
             condition = {'current': 'current_instances>0', 'retained': 'retained_refs>0',
                          'current_or_retained': '1=1'}[scope]
-            total_current, total_retained, total_retained_refs = db.execute(
-                'select coalesce(sum(current_instances),0),coalesce(sum(retained_instances),0),'
+            total_scenes, total_current, total_retained, total_retained_refs = db.execute(
+                'select count(*),coalesce(sum(current_instances),0),coalesce(sum(retained_instances),0),'
                 'coalesce(sum(retained_refs),0) from ('
-                + grouped + ') where ' + condition, (self.project_code, version_id)).fetchone()
+                + grouped + ') where ' + condition, parameters).fetchone()
             tail = ' and id>?' if last is not None else ''
-            parameters = [self.project_code, version_id]
             if last is not None:
                 parameters.append(last)
             rows = db.execute('select * from (' + grouped + ') where ' + condition + tail
@@ -1698,6 +1720,7 @@ class SceneLibrary:
             result = {'versionId': version_id, 'currentInstanceCount': total_current,
                       'retainedInstanceCount': total_retained,
                       'retainedReferenceCount': total_retained_refs,
+                      'totalScenes': total_scenes,
                       'items': [{'sceneId': row['id'], 'displayName': row['display_name'],
                                  'sceneState': row['scene_state'],
                                  'currentSceneRevision': row['head_revision'] if row['current_instances'] else None,

@@ -1,4 +1,4 @@
-async (page, {origin, release}) => {
+async (page, {origin, release, indexSha256}) => {
   const check = (value, message) => { if (!value) throw Error(message); };
   const healthResponse = await page.request.get(origin + '/health');
   check(healthResponse.ok(), 'Could not read the deployed version');
@@ -31,7 +31,15 @@ async (page, {origin, release}) => {
   check(replaySource.alarms.map(event=>event.state).join(',') === 'active,cleared','The fixed alarm events changed');
 
   await page.setViewportSize({width:1500,height:956});
-  await page.goto(origin+'/');
+  const entry = await page.goto(origin+'/');
+  if (indexSha256) {
+    check(entry?.ok(), 'The public workbench page could not be opened');
+    const deployedSha = await page.evaluate(async bytes => {
+      const digest = await crypto.subtle.digest('SHA-256',Uint8Array.from(bytes));
+      return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2,'0')).join('');
+    }, Array.from(await entry.body()));
+    check(deployedSha === indexSha256, 'The deployed entry differs from the browser-tested build');
+  }
   const button = (name, within=page) => within.getByRole('button',{name,exact:true});
   await page.getByRole('button',{name:/Demo-PDS/}).first().click();
   await button('进入项目').click();

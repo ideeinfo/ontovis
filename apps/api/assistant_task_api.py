@@ -7,7 +7,7 @@ from .assistant_tasks import PROTOCOL,snapshot,draft_history,ProjectTools
 from .assistant_transport import call_source
 
 
-def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,prepare,authorize,prefix):
+def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,prepare,project_reader,authorize,prefix):
     if action=='task-start':
         fields={'protocol','mode','snapshotJson','analysisSessionId','expectedAnalysisRevision','evidenceRefIds','requestId','question',
             'conversationId','expectedConversationVersion','parentRunId','expectedPolicyRevision','expectedAccessRevision','expectedServiceRevision','taskId'}
@@ -59,6 +59,29 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
     require(runtime.store.policy(project)['revision']==record['policy_revision'],'ASSISTANT_POLICY_CHANGED',409)
     selected=service(original['taskId'])
     require(selected.get('canRun') and selected['serviceRevision']==record['service_revision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
+    if action=='task-page' and 'modelUsage' in body:
+        fields={'query','sceneName','page','expectedSnapshotRevision'}
+        usage=body['modelUsage']
+        require(set(body)=={'runId','modelUsage'} and type(usage) is dict and fields<=set(usage)<=fields|{'sceneTarget'})
+        require(any(trace['tool']=='adopted_models' and trace['state']=='complete' for trace in task['trace'])
+                and 'model' in runtime.store.policy(project)['policy']['allowedKinds'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
+        require(all(type(usage[key]) is str and len(usage[key])<=200 and '\0' not in usage[key] for key in ('query','sceneName')))
+        expected=usage['expectedSnapshotRevision'];page=usage['page']
+        require(type(page) is int and 1<=page<=10000)
+        require(expected is None or type(expected) is str and len(expected)==64)
+        require(page==1 or expected is not None)
+        browse=dict(sceneName=usage['sceneName'].strip(),page=page,expectedSnapshotRevision=expected)
+        if 'sceneTarget' in usage:
+            target=usage['sceneTarget']
+            require(expected is not None and type(target) is dict and set(target)=={'configurationId','modelVersionId','cursor'})
+            identifier(target['configurationId']);identifier(target['modelVersionId'])
+            cursor=target['cursor'];require(cursor is None or type(cursor) is str and 0<len(cursor)<=8192)
+            browse['sceneTarget']=target
+        reader=project_reader(authorize)
+        require(callable(reader.adopted_model_listing),'MODEL_UNAVAILABLE',503)
+        result=reader.adopted_model_listing(usage['query'].strip(),browse=browse)
+        authorize(True)
+        return result
     if action in ('task-source','task-source-preview','task-source-content'):
         require({'runId','sourceKey'}<=set(body)<={'runId','sourceKey','options'})
         sources=json.loads(record['sources_json'])

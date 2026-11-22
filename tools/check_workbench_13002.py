@@ -155,7 +155,7 @@ def cookie_handoff(cookies):
             thread.join()
 
 
-def public(browser, origin, release):
+def public(browser, origin, release, index_sha=None):
     with signed_in(origin,release) as cookies:
         browser.open('public')
         with cookie_handoff(cookies) as url:
@@ -165,7 +165,7 @@ def public(browser, origin, release):
               await page.context().addCookies(await response.json());
             }""", url)
         return browser.run('public',(SCRIPTS/'work_order_13002_public.js').read_text(),
-                           dict(origin=origin,release=release))
+                           dict(origin=origin,release=release,indexSha256=index_sha))
 
 
 def main():

@@ -59,6 +59,40 @@ class AssistantProjectModelsTests(unittest.TestCase):
                 self.read()
         self.assertEqual('SNAPSHOT_CHANGED',changed.exception.code)
 
+    def test_browse_filters_saved_scene_uses_and_pages_the_catalogue_and_scenes(self):
+        versions = [str(uuid4()) for _ in range(6)]
+        self.configs[0]['snapshot']['models'] = [dict(modelVersionId=value) for value in versions]
+        self.scenes.model_use_scope = Mock(return_value=('scene-list:1',set(versions[1:])))
+        self.scenes.uses.return_value.update(totalScenes=5,nextCursor='next-scene')
+        options = dict(sceneName='Matching scene',page=1,expectedSnapshotRevision=None)
+
+        def browse():
+            return catalogue(self.reader,self.configurations,self.scenes,self.models,'actor',self.guard,
+                             'P-grant','Model 3000',browse=options)
+
+        with patch('apps.api.assistant_project_models.current_applications',return_value=[self.application]):
+            first = browse()
+            self.assertEqual((5,1,4), (first['total'],first['page'],first['pageSize']))
+            self.assertEqual(versions[1:5],[row['version'] for row in first['items']])
+            options.update(page=2,expectedSnapshotRevision=first['snapshotRevision'])
+            second = browse()
+            self.assertEqual([versions[-1]],[row['version'] for row in second['items']])
+            row = second['items'][0]
+            self.assertEqual(5,row['totalScenes'])
+            options['sceneTarget'] = dict(configurationId=row['configurationId'],
+                                          modelVersionId=row['version'],cursor=row['nextSceneCursor'])
+            self.assertEqual(row,browse()['items'][0])
+            self.scenes.uses.assert_called_with(row['version'],'actor',self.guard,access_revision='P-grant',
+                                              scope='current',limit=4,q='Matching scene',cursor='next-scene')
+            options['sceneTarget']['modelVersionId'] = self.stale
+            with self.assertRaises(PreviewError) as denied:
+                browse()
+            self.assertEqual(404,denied.exception.status)
+            self.scenes.model_use_scope.return_value = ('scene-list:2',set(versions[1:]))
+            with self.assertRaises(PreviewError) as expired:
+                browse()
+            self.assertEqual((409,'SNAPSHOT_EXPIRED'),(expired.exception.status,expired.exception.code))
+
     def test_read_only_negotiation_uses_the_model_budget_and_bounded_summary(self):
         query = dict(tool='adopted_models',query='',faultCode='',orderId='')
         plan = dict(intent='query',queries=[query],actions=[])

@@ -310,6 +310,23 @@ class SceneLibraryTests(unittest.TestCase):
         self.create('C')
         self.expect('SNAPSHOT_EXPIRED', lambda: self.uses(limit=1, cursor=page['nextCursor']))
 
+    def test_model_uses_scene_filter_covers_later_pages_and_fixed_revisions(self):
+        fixed = {}
+        for name in ['East field']*5+['West field']:
+            scene = self.create(name)
+            saved = self.save(self.body(scene, [self.item()]))
+            if name=='East field':
+                fixed[scene['sceneId']] = saved['sceneRevision']
+        revision, versions = self.scenes.model_use_scope('eAsT',self.authorize)
+        self.assertEqual({self.model['versionId']},versions)
+        self.assertEqual(set(),self.scenes.model_use_scope('Missing',self.authorize)[1])
+        first = self.uses(scope='current',q='eAsT',limit=4)
+        self.assertEqual((revision,5,5),(first['snapshotRevision'],first['totalScenes'],first['currentInstanceCount']))
+        second = self.uses(scope='current',q='eAsT',limit=4,cursor=first['nextCursor'])
+        self.assertEqual(fixed,{row['sceneId']:row['currentSceneRevision'] for row in first['items']+second['items']})
+        self.assertIsNone(second['nextCursor'])
+        self.expect('INVALID_REQUEST',lambda: self.uses(scope='current',q='West',limit=4,cursor=first['nextCursor']))
+
     def test_history_counts_distinct_instances_separately_from_revision_references(self):
         scene = self.create()
         item = self.item()

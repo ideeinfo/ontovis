@@ -162,6 +162,26 @@ class TaskHttpTests(unittest.TestCase):
         self.assertEqual('Demo-PDS:admin',directory.call_args.args[6])
         self.assertEqual(version,run['result']['task']['results'][0]['version'])
         selection = dict(runId=run['runId'],selectedKeys=['R1'],snapshotJson=self.body['snapshotJson'])
+        params = dict(query='Example',sceneName='East',page=1,expectedSnapshotRevision=None)
+        browse = dict(runId=run['runId'],modelUsage=params)
+        page = dict(items=[],total=0,page=1,pageSize=4,snapshotRevision='f'*64)
+        with (patch('apps.api.assistant_project_models.catalogue',return_value=page) as directory,
+              patch('apps.api.assistant_task_api.call_source') as generate):
+            status, read = self.request('task-page',browse)
+            self.assertEqual(200,status,read)
+            self.assertEqual((200,'f'*64),(status,read['snapshotRevision']))
+            self.assertEqual('Example',directory.call_args.args[-1])
+            self.assertEqual('East',directory.call_args.kwargs['browse']['sceneName'])
+            self.assertEqual(422,self.request('task-page',dict(browse,modelUsage=dict(params,page=2)))[0])
+            self.assertEqual(404,self.request('task-page',{**browse,'runId':str(uuid4())})[0])
+            self.assertEqual(run['result'],self.request('status',{'runId':run['runId']})[1]['result'])
+            fixture.ProjectsAuthority.permissions['member'].pop('Demo-PDS')
+            try:
+                self.assertEqual(403,self.request('task-page',browse)[0])
+            finally:
+                fixture.ProjectsAuthority.permissions['member']['Demo-PDS']='admin'
+            self.assertEqual(1,directory.call_count)
+            generate.assert_not_called()
         with patch('apps.api.assistant_task_api.analysis_store') as store:
             status,error = self.request('task-prepare',selection)
             self.assertEqual((403,'ASSISTANT_TOOL_NOT_ALLOWED'),(status,error['code']))

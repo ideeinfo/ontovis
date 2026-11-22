@@ -56,12 +56,22 @@ def device_catalogue(reader, configurations, guard, query):
                 snapshotRevision=digest([page['snapshotRevision'],items]))
 
 
-def catalogue(reader, configurations, scenes, models, actor, guard, access_revision, query):
+def catalogue(reader, configurations, scenes, models, actor, guard, access_revision, query, *, browse=None):
     equipment = EquipmentReader(reader)
     applications = current_applications(equipment)
     configured = configurations.catalogue(guard)['items']
     by_application = {(row['applicationId'], row['revisionId'], row['specificationRevisionId']): row
                       for row in applications}
+    page = browse['page'] if browse else 1
+    scene_name = browse['sceneName'] if browse else ''
+    scene_target = browse.get('sceneTarget') if browse else None
+    scene_revision, versions_in_scope, revision = None, None, None
+    if browse:
+        scene_revision, versions_in_scope = scenes.model_use_scope(scene_name,guard)
+        revision = digest([access_revision,scene_revision,applications,configured])
+        expected = browse['expectedSnapshotRevision']
+        require(expected is None or expected==revision,'SNAPSHOT_EXPIRED',409)
+
     matches = []
     needle = query.casefold().strip()
     for config in configured:
@@ -76,25 +86,38 @@ def catalogue(reader, configurations, scenes, models, actor, guard, access_revis
             snapshot['displayName'],application['name'],application['specificationName'])):
             continue
         for model in snapshot['models']:
-            matches.append((config,model['modelVersionId']))
+            version_id = model['modelVersionId']
+            if versions_in_scope is None or version_id in versions_in_scope:
+                matches.append((config,version_id))
 
-    uses, versions, items, scene_revision = {}, {}, [], None
-    for config,version_id in matches[:LIMIT]:
+    offset = (page-1)*LIMIT
+    visible = matches[offset:offset+LIMIT]
+    if scene_target:
+        visible = [(config,version_id) for config,version_id in visible
+                   if config['configurationId']==scene_target['configurationId'] and version_id==scene_target['modelVersionId']]
+        require(len(visible)==1,'NOT_FOUND_OR_FORBIDDEN',404)
+
+    uses, versions, items = {}, {}, []
+    for config,version_id in visible:
         if version_id not in uses:
             versions[version_id] = models.fixed_version_metadata(version_id,guard)
+            options = dict(q=scene_name,cursor=scene_target['cursor'] if scene_target else None) if browse else {}
             uses[version_id] = scenes.uses(version_id,actor,guard,access_revision=access_revision,
-                                          scope='current',limit=SCENE_LIMIT)
+                                          scope='current',limit=SCENE_LIMIT,**options)
         report = uses[version_id]
         require(scene_revision is None or report['snapshotRevision']==scene_revision,'SNAPSHOT_CHANGED',409)
         scene_revision = report['snapshotRevision']
         model = versions[version_id]
-        items.append(dict(title=model['displayName'],identifier=model['modelAssetId'],version=version_id,
+        item = dict(title=model['displayName'],identifier=model['modelAssetId'],version=version_id,
             configuration=config['snapshot']['displayName'],configurationRevision=config['configurationRevision'],
             configurationId=config['configurationId'],
             representation=model['representationType'],state=model['assetState'],
             instanceCount=report['currentInstanceCount'],moreScenes=report['nextCursor'] is not None,
             scenes=[dict(title=row['displayName'],instanceCount=row['currentInstanceCount'],
-                         sceneId=row['sceneId'],sceneRevision=row['currentSceneRevision']) for row in report['items']]))
+                         sceneId=row['sceneId'],sceneRevision=row['currentSceneRevision']) for row in report['items']])
+        if browse:
+            item.update(totalScenes=report['totalScenes'],nextSceneCursor=report['nextCursor'])
+        items.append(item)
 
     require(current_applications(equipment)==applications,'ENGINEERING_CHANGED',409)
     require(configurations.catalogue(guard)['items']==configured,'REVISION_CONFLICT',409)
@@ -105,6 +128,8 @@ def catalogue(reader, configurations, scenes, models, actor, guard, access_revis
         require(latest['snapshotRevision']==scene_revision,'SNAPSHOT_CHANGED',409)
     guard()
     total = len(matches)
+    if browse:
+        return dict(items=items,total=total,page=page,pageSize=LIMIT,snapshotRevision=revision)
     revision = digest([scene_revision, total, items])
     return dict(items=items, total=total, snapshotRevision=revision, truncated=total>LIMIT,
                 sceneUsageTruncated=any(row['moreScenes'] for row in items))
