@@ -15,7 +15,7 @@ from tools.check_workbench_13002 import (
 )
 
 RECEIPT = 'workbench-release-check.json'
-SUITES = {'13002','assistantModelUsage','analysisSaveRecovery','fixedEvidenceAccess','imageryRecovery'}
+SUITES = {'13002','assistantModelUsage','analysisSaveRecovery','fixedEvidenceAccess','imageryRecovery','cockpitNavigation'}
 SOURCE_SERVICES = {'ontobase-api','ontobase-web','ontobase-worker','ontobase-region-ocr'}
 SOURCE_RELEASE_ENV = 'ONTOVIS_EXPECTED_SOURCE_RELEASE'
 
@@ -154,12 +154,27 @@ def imagery_recovery(browser, dist):
             return dict(disconnected=disconnected,refreshed=refreshed,completed=completed,processRestart=True)
 
 
+def cockpit_navigation(browser, dist):
+    from tests.cockpit_navigation_fixture import browser_site
+
+    script=(SCRIPTS/'cockpit_navigation.js').read_text()
+    with browser_site(dist) as facts:
+        results={}
+        for mode in ('directory','history'):
+            role='cockpit-'+mode
+            browser.open(role)
+            results[mode]=browser.run(role,script,facts,mode)
+            verify(type(results[mode]) is dict,'Missing cockpit '+mode+' receipt')
+        return results
+
+
 def candidate(browser, release, dist, output):
     receipt = dict(mode='candidate',release=release,recordedAt=timestamp(),passed=False)
     record(output,receipt)
     identity = build_identity(dist)
     try:
-        results = {'assistantModelUsage':assistant_model_usage(browser,dist),
+        results = {'cockpitNavigation':cockpit_navigation(browser,dist),
+                   'assistantModelUsage':assistant_model_usage(browser,dist),
                    'analysisSaveRecovery':analysis_save_recovery(browser,dist),
                    'fixedEvidenceAccess':fixed_evidence_access(browser,dist),'imageryRecovery':imagery_recovery(browser,dist),
                    '13002':isolated(browser,dist)}

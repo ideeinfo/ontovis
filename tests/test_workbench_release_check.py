@@ -36,7 +36,7 @@ class WorkbenchBrowserReleaseTests(unittest.TestCase):
         value = dict(mode='candidate',release=self.release,passed=True,**build_identity(self.dist),
                      results={'13002':{'tested':True},'assistantModelUsage':{'tested':True},
                               'analysisSaveRecovery':{'tested':True},'fixedEvidenceAccess':{'tested':True},
-                              'imageryRecovery':{'tested':True}})
+                              'imageryRecovery':{'tested':True},'cockpitNavigation':{'tested':True}})
         record(self.output/'candidate',{**value,**overrides})
 
     def test_failed_or_unrelated_receipts_never_run_activation(self):
@@ -67,7 +67,7 @@ class WorkbenchBrowserReleaseTests(unittest.TestCase):
     def test_failed_browser_run_replaces_a_previous_pass(self):
         self.receipt()
         browser = Mock()
-        with patch('tools.check_workbench_release.assistant_model_usage',side_effect=RuntimeError('simulated failure')):
+        with patch('tools.check_workbench_release.cockpit_navigation',side_effect=RuntimeError('simulated failure')):
             with self.assertRaisesRegex(RuntimeError,'simulated failure'):
                 candidate(browser,self.release,self.dist,self.output/'candidate')
         browser.close.assert_called_once_with()

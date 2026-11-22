@@ -71,6 +71,21 @@ class FixedMaterialTests(unittest.TestCase):
         with self.assertRaises(PreviewError) as error:reader.content(body)
         self.assertEqual(error.exception.status,410);source.authority.document_page.assert_not_called()
 
+    def test_current_fixed_photo_uses_version_from_document_response(self):
+        source = DocumentReader()
+        document = dict(source.document, current_version_id=VERSION)
+        version = dict(source.version, preview_kind='image')
+        source._request = Mock(return_value={'item':document,'current_version':version})
+        body = dict(documentId=DOC,contentVersionId=VERSION,sourceSha256='a'*64)
+        reader = FixedDocuments(source)
+        self.assertEqual(reader.metadata(body)['kind'],'photo')
+        source._request.assert_called_once_with('GET',f'{source.prefix}/documents/{DOC}')
+        version['source_sha256'] = 'd'*64
+        with self.assertRaises(PreviewError) as failure:
+            reader.metadata(body)
+        self.assertEqual(failure.exception.code,'SOURCE_CHANGED')
+        source.authority.document_page.assert_not_called()
+
     def test_photo_preview_is_bounded_cached_and_still_revalidates_before_every_read(self):
         from PIL import Image
         source=DocumentReader();source.version['preview_kind']='image'

@@ -261,7 +261,7 @@ def handler_type(sessions: UserSessions, origin: str, *, development=False, phot
                            '/api/workbench/scenes/replacement-check','/api/workbench/scenes/locate',
                            '/api/workbench/scenes/delete','/api/workbench/scenes/restore',
                            '/api/workbench/scenes/thumbnail/content')
-            project_paths = ('/api/workbench/projects', '/api/workbench/projects/access')
+            project_paths = ('/api/workbench/projects', '/api/workbench/projects/access', '/api/workbench/regional-catalog')
             from .work_order_routes import WORKFLOW_PATHS
             workflow_paths = tuple('/api/workbench/work-orders/' + suffix for suffix in WORKFLOW_PATHS
                                    if suffix != 'attachments/part')

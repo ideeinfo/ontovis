@@ -87,3 +87,19 @@
 .pc-viewport .ov-scene-imagery-attribution,
 .pc-viewport .ev-status{background:var(--pc-panel)!important;backdrop-filter:var(--pc-blur)!important;-webkit-backdrop-filter:var(--pc-blur)!important;border:1px solid var(--pc-border)!important;border-radius:8px!important;color:var(--pc-muted)!important;box-shadow:0 6px 18px rgba(0,0,0,.2)!important}
 .pc-viewport .ev-status button{border:1px solid var(--pc-border)!important;background:var(--pc-panel-strong)!important;color:var(--pc-text)!important}
+
+.pc-portfolios>header .pc-regional-entry{margin-inline-start:auto;font-size:13px;white-space:nowrap}
+.pc-regional-dialog{width:min(640px,calc(100vw - 24px))}
+.pc-regional-form{display:flex;gap:8px;flex-wrap:wrap}
+.pc-regional-form input{flex:1 1 160px}
+.pc-regional-form input,.pc-regional-form select{min-width:0;max-width:100%;padding:6px 8px;border:1px solid var(--borderSubtle);border-radius:6px;background:var(--surface);color:var(--text);font:inherit}
+.pc-regional-dialog .pc-regional-meta{margin:8px 0;color:var(--textSecondary);font-size:11px}
+.pc-regional-list{list-style:none;padding:0;margin:0;border:1px solid var(--borderSubtle);border-radius:8px}
+.pc-regional-list li+li{border-top:1px solid var(--borderSubtle)}
+.pc-regional-list li>button{display:grid;width:100%;gap:3px;padding:8px 10px;text-align:start;background:none;border:0;color:var(--text);font:inherit;cursor:pointer}
+.pc-regional-list li>button:hover,.pc-regional-list li>button[aria-expanded=true]{background:var(--selected);color:var(--onSelected)}
+.pc-regional-list li>button strong{font-size:13px;overflow-wrap:anywhere}
+.pc-regional-list li>button small{font-size:11px;color:var(--textSecondary)}
+.pc-regional-detail{padding:8px 12px}
+.pc-regional-pages{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+.pc-globe-reference{cursor:default}

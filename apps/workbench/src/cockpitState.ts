@@ -93,7 +93,11 @@ export async function readCockpitCatalog(api:WorkbenchApi,signal:AbortSignal,opt
       if(cursor)equipmentCursors.add(cursor);
     }while(cursor);
     equipmentReady=true;if(scenes.length)publish();
-  })();
+  })().catch(error=>{
+    guard();
+    if(!(error instanceof ApiError)||![502,503,504].includes(error.status))throw error;
+    equipment.length=0;
+  });
   // Observe a failed independent read immediately, including when the scene list is slower.
   void equipmentTask.catch(()=>undefined);
   let cursor:string|null=null,sceneRevision='';

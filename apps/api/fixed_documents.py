@@ -19,8 +19,11 @@ class FixedDocuments:
             sha=body['sourceSha256']
             d.require(type(sha) is str and len(sha)==64 and all(c in '0123456789abcdef' for c in sha), 'INVALID_REQUEST', 422)
         prefix = self.reader.prefix + '/documents/' + document_id
-        document = self.reader._request('GET', prefix)['item']
-        version = self.reader._request('GET', prefix + '/versions/' + version_id)['item']
+        detail = self.reader._request('GET', prefix)
+        document = detail['item']
+        version = detail.get('current_version') if document.get('current_version_id') == version_id else None
+        if version is None:
+            version = self.reader._request('GET', prefix + '/versions/' + version_id)['item']
         d.require(document.get('id') == document_id and version.get('id') == version_id
                   and version.get('document_id') == document_id, 'SOURCE_CHANGED', 409)
         d.require(document.get('status') in ('active', 'archived'), 'ANALYSIS_SOURCE_UNAVAILABLE', 410)

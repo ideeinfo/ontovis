@@ -17,7 +17,7 @@ import {ProjectModelCenter} from './ProjectModelCenter';
 import type {ModelInfoReceipt,ModelInfoTarget} from './resourceTypes';
 import { BindingEditor } from './BindingEditor';
 import type {SceneWorkspaceHandle,SceneWorkspaceTarget} from './SceneWorkspace';
-import type {CockpitEntry} from './ProjectCockpit';
+import {cockpitAddress,readCockpitAddress,type CockpitEntry} from './cockpitAddress';
 import './projectCockpit.css';
 import {SceneApi} from './sceneApi';
 import {LegacySceneEntryReader} from './legacySceneEntry';
@@ -71,16 +71,28 @@ export function Workbench() {
   const [focusSignal, setFocusSignal] = useState(0);
   const [page, setPage] = useState<Page>('project');
   const [cockpitOpen,setCockpitOpen]=useState(false),[cockpitVisited,setCockpitVisited]=useState(false),[cockpitPicker,setCockpitPicker]=useState(false);
-  const [cockpitEntry,setCockpitEntry]=useState<CockpitEntry|null>(null);
+  const [cockpitStart,setCockpitStart]=useState<{entry:CockpitEntry|null}>({entry:null});
   const cockpitButton=useRef<HTMLButtonElement>(null);
-  function closeCockpit(){setCockpitOpen(false);const target=isGlobalPage(page)?null:project?.projectRef||null;if(JSON.stringify(api.project)!==JSON.stringify(target))api.selectProject(target);requestAnimationFrame(()=>cockpitButton.current?.focus());}
+  const addressRequest=useRef<AbortController|null>(null),handledAddress=useRef<string|null>(null);
+  function writeCockpitAddress(hash:string,replace=false){
+    handledAddress.current=hash;
+    if(hash!==window.location.hash)window.history[replace?'replaceState':'pushState'](null,'',hash||window.location.pathname+window.location.search);
+  }
+  function hideCockpit(fromHistory=false){addressRequest.current?.abort();addressRequest.current=null;if(!fromHistory)writeCockpitAddress('');setCockpitOpen(false);}
+  function closeCockpit(fromHistory=false){hideCockpit(fromHistory);const target=isGlobalPage(page)?null:project?.projectRef||null;if(JSON.stringify(api.project)!==JSON.stringify(target))api.selectProject(target);requestAnimationFrame(()=>cockpitButton.current?.focus());}
+  function showCockpit(value:ProjectSummary,entry:CockpitEntry|null,fromHistory=false){
+    addressRequest.current?.abort();addressRequest.current=null;
+    if(JSON.stringify(api.project)!==JSON.stringify(value.projectRef))api.selectProject(value.projectRef);
+    setProject(value);setProjectName(value.displayName);setCockpitStart({entry});setCockpitPicker(false);setCockpitVisited(true);setCockpitOpen(true);
+    if(!fromHistory)writeCockpitAddress(cockpitAddress(value.projectRef,entry));
+  }
   function openCockpit(){
     if(modelInfoVisit){navigate('models',null,'',null,()=>setCockpitPicker(true));return;}
     const change=()=>{if(isGlobalPage(page)||!project){setCockpitPicker(true);return;}
-      setCockpitEntry(page==='scene'?sceneWorkspace.current?.cockpitEntry()||null:null);setCockpitVisited(true);setCockpitOpen(true);};
+      showCockpit(project,page==='scene'?sceneWorkspace.current?.cockpitEntry()||null:null);};
     if(page==='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else leaveOrders(change);
   }
-  function chooseCockpitProject(value:ProjectSummary){api.selectProject(value.projectRef);setProject(value);setProjectName(value.displayName);setCockpitEntry(null);setCockpitPicker(false);setCockpitVisited(true);setCockpitOpen(true);}
+  function chooseCockpitProject(value:ProjectSummary){showCockpit(value,null);}
   const [navExpanded, setNavExpanded] = useState(false);
   const [layout, setLayout] = useState('balanced');
   const [modelVersionId,setModelVersionId] = useState<string|null>(null);
@@ -139,7 +151,7 @@ export function Workbench() {
   }
 
   function clear(state:string, text:MessageKey | null) {
-    setCockpitOpen(false);setCockpitVisited(false);setCockpitPicker(false);setCockpitEntry(null);
+    hideCockpit(true);handledAddress.current=null;setCockpitVisited(false);setCockpitPicker(false);setCockpitStart({entry:null});
     setPendingOrderLeave(null);setOrdersDirty(false);
     sessionReady.current=false;setSessionCheck('loading');
     legacyEntry.current.cancel();setSceneEntry(null);setResourceScene(undefined);setInitialEquipment(undefined);clearModelInfoVisit();setLegacyReady(null);
@@ -185,7 +197,7 @@ export function Workbench() {
   }
   useEffect(() => {
     mounted.current=true;
-    api.onProjectDenied=()=>{clearModelInfoVisit();setPendingOrderLeave(null);setOrdersDirty(false);setCockpitOpen(false);setCockpitVisited(false);setCockpitPicker(false);setCockpitEntry(null);api.selectProject(null);setProject(null);setProjectName('');setSceneEntry(null);setResourceScene(undefined);setContext(null);setDetail(null);setModel(null);setPage('project');setError(new ApiError(403,'FORBIDDEN'));};
+    api.onProjectDenied=()=>{clearModelInfoVisit();setPendingOrderLeave(null);setOrdersDirty(false);hideCockpit(true);setCockpitVisited(false);setCockpitPicker(false);setCockpitStart({entry:null});api.selectProject(null);setProject(null);setProjectName('');setSceneEntry(null);setResourceScene(undefined);setContext(null);setDetail(null);setModel(null);setPage('project');setError(new ApiError(403,'FORBIDDEN'));};
     api.onDenied = status => {const checking=!!inspection.current;cancelInspection();clear(status === 401 ? 'expired' : 'denied', status === 401 ? 'expired' : 'denied');if(checking){setSessionCheck('failed');
       if(mustSignOut.current){setMessage('logoutFailed');loginOpen.current=true;setModal('login');}}else if(!authBusy.current)void inspect();};
     void inspect();
@@ -292,6 +304,39 @@ export function Workbench() {
     setDetail(null); setSelection({uid,scope}); setLeft(false);
   }
   const active = session?.state === 'active'&&!mustSignOut.current;
+  const addressAction=useRef<()=>void>(()=>{});
+  addressAction.current=()=>{
+    const hash=window.location.hash;
+    if(hash===handledAddress.current)return;
+    handledAddress.current=hash;addressRequest.current?.abort();addressRequest.current=null;
+    const address=readCockpitAddress(hash);
+    if(address===undefined){if(cockpitOpen)closeCockpit(true);return;}
+    if(!address){if(cockpitOpen)closeCockpit(true);setError(new ApiError(400,'COCKPIT_ADDRESS_INVALID'));return;}
+    const controller=new AbortController(),revision=api.revision;
+    addressRequest.current=controller;
+    void api.request<ProjectAccess>('/api/workbench/projects/access',{projectRef:address.projectRef},controller.signal).then(access=>{
+      if(controller.signal.aborted||revision!==api.revision||window.location.hash!==hash)return;
+      const ref=address.projectRef;
+      if(access.projectRef.ontobaseConnectionId!==ref.ontobaseConnectionId||access.projectRef.projectCode!==ref.projectCode)throw new ApiError(409,'PROJECT_SCOPE_MISMATCH');
+      const same=project?.projectRef.ontobaseConnectionId===ref.ontobaseConnectionId&&project.projectRef.projectCode===ref.projectCode;
+      const apply=()=>{
+        if(revision!==api.revision||window.location.hash!==hash)return;
+        if(!same){clearModelInfoVisit();setSceneEntry(null);setResourceScene(undefined);setPage('project');}
+        setError(null);showCockpit(same?project:{projectRef:ref,displayName:access.projectName,sourceDescription:'',status:'active',workspaceState:'ready',sceneCount:0},address.entry,true);
+      };
+      if(!cockpitOpen&&page==='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(apply);else if(!cockpitOpen)leaveOrders(apply);else apply();
+    }).catch(value=>{
+      if(controller.signal.aborted||cancelled(value))return;
+      if(cockpitOpen)closeCockpit(true);
+      setError(value);
+    }).finally(()=>{if(addressRequest.current===controller)addressRequest.current=null;});
+  };
+  useEffect(()=>{
+    if(!active)return;
+    const read=()=>addressAction.current();
+    window.addEventListener('popstate',read);window.addEventListener('hashchange',read);read();
+    return()=>{window.removeEventListener('popstate',read);window.removeEventListener('hashchange',read);addressRequest.current?.abort();addressRequest.current=null;handledAddress.current=null;};
+  },[active,session?.sessionRevision]);
   const canLogin=sessionCheck==='ready'&&sessionReady.current&&!!session?.sessionRevision&&session.sessionRevision===api.revision&&
     ['signedOut','expired'].includes(session.state)&&!mustSignOut.current&&!signingIn&&!signingOut;
   const location = modelLocation(detail,model);
@@ -347,7 +392,7 @@ export function Workbench() {
         </aside>
       </div>}</main>
     </div></div>}
-    {active&&project&&cockpitVisited&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><ProjectCockpit key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}`} api={api} project={project} active={cockpitOpen} initialEntry={cockpitEntry} onExit={closeCockpit} onAnalysisWorkspace={entry=>navigate('analysis',null,'',entry,()=>{setCockpitOpen(false);setReload(value=>value+1);})} onWorkspace={sceneId=>{setCockpitOpen(false);navigate('scene');setResourceScene(sceneId?{sceneId}:undefined);}}/></Suspense>}
+    {active&&project&&cockpitVisited&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><ProjectCockpit key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}`} api={api} project={project} active={cockpitOpen} start={cockpitStart} onLocationChange={(entry,replace)=>{if(cockpitOpen&&!addressRequest.current)writeCockpitAddress(cockpitAddress(project.projectRef,entry),replace);}} onExit={()=>closeCockpit()} onAnalysisWorkspace={entry=>navigate('analysis',null,'',entry,()=>{hideCockpit();setReload(value=>value+1);})} onWorkspace={sceneId=>{hideCockpit();navigate('scene');setResourceScene(sceneId?{sceneId}:undefined);}}/></Suspense>}
     {active&&cockpitPicker&&<Modal className="pc-project-picker" title={locale==='zh'?'选择驾驶舱项目':'Choose a cockpit project'} description={locale==='zh'?'选择本人有权访问的项目。':'Select an accessible project.'} onClose={()=>setCockpitPicker(false)}><ProjectsPanel api={api} onSelect={chooseCockpitProject}/></Modal>}
     {pendingOrderLeave&&<ConfirmationDialog
       title={page==='data'?(locale==='zh'?'天气配置尚未保存':'Unsaved weather settings'):

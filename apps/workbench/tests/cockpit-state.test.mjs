@@ -101,6 +101,17 @@ test('revocation clears a warm cache even when no scene snapshot needs reopening
  const api=fake(),cache=new CockpitCatalogCache(api),signal=new AbortController().signal;await cache.read(signal,()=>{});
  api.request=async()=>{throw new ApiError(403,'FORBIDDEN');};await assert.rejects(cache.read(signal,()=>{}),{status:403});assert.equal(cache.peek(),null);
 });
+test('source equipment outage leaves authorized scenes available without publishing partial counts',async()=>{
+ const api=fake(),request=api.request;
+ api.request=async(path,body)=>{
+  if(path.endsWith('/equipment'))throw new ApiError(502,'SOURCE_UNAVAILABLE');
+  return request(path,body);
+ };
+ const result=await readCockpitCatalog(api,new AbortController().signal);
+ assert.equal(result.scenes[0].opened.sceneRevision,'r1');
+ assert.equal(result.equipmentReady,false);
+ assert.equal(catalogIdentity(result,project).complete,false);
+});
 test('cancelling retains completed memory but late responses cannot publish; selected scenes get the next slot',async()=>{
  const api=fake(),request=api.request,gates=Array.from({length:5},deferred),opened=[],updates=[],abort=new AbortController();let priority='';
  api.request=async(path,body)=>{

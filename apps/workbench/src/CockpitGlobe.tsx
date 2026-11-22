@@ -116,7 +116,7 @@ export function CockpitGlobe({points,active,en,light,flight,focusTarget,onSelect
    const currentDistance=runtime.current?.distance()??3.65,height=runtime.current?.height()??900;
    const targetDistance=globeClusterFocusDistance(group,height),targetDegrees=globeClusterDegrees(targetDistance,height);
    if(group.points.length>1&&!group.coincident&&targetDegrees<clusterDegrees&&currentDistance>targetDistance+.04){setSelected('');setSelectedScene('');onSelectScene?.('');runtime.current?.focus(group.longitude,group.latitude,targetDistance);return;}
-   if(group.points.length===1&&selected===group.id){onOpen(group.points[0].sceneId);return;}
+   if(group.points.length===1&&selected===group.id&&!group.points[0].reference){onOpen(group.points[0].sceneId);return;}
    setSelected(group.id);setSelectedScene(group.points[0]?.sceneId||'');onSelectScene?.(group.points[0]?.sceneId||'');runtime.current?.focus(group.longitude,group.latitude,Math.min(currentDistance,targetDistance));
   }}>
    <span className="pc-globe-pin-icon">
@@ -126,16 +126,20 @@ export function CockpitGlobe({points,active,en,light,flight,focusTarget,onSelect
    </span>
    {group.points.length===1?<span className="pc-globe-pin-label">{group.points[0].name}</span>:group.coincident?<span className="pc-globe-pin-label">{group.points[0].name} +{group.points.length-1}</span>:null}
   </button>)}
-  {selectedGroup&&<aside className="pc-globe-choice" aria-label={en?'Scene reference points':'场景参考点'}>
+  {selectedGroup&&<aside className="pc-globe-choice" aria-label={selectedGroup.points.some(point=>point.reference)?
+    (en?'Geographic reference points':'地理参考点'):(en?'Scene reference points':'场景参考点')}>
    <header>
     <div className="pc-globe-choice-head">
-     <strong>{en?'Scene reference points':'场景参考点'}</strong>
+     <strong>{selectedGroup.points.some(point=>point.reference)?(en?'Geographic reference points':'地理参考点'):(en?'Scene reference points':'场景参考点')}</strong>
      <small>{selectedGroup.coincident?(en?'Same reference coordinates · accuracy unverified':'同参考坐标场景 · 位置精度未核实'):(en?'Location accuracy unverified':'位置精度未核实')}</small>
     </div>
     <button className="pc-globe-choice-close" aria-label={en?'Close panel':'关闭'} onClick={()=>{setSelected('');setSelectedScene('');onSelectScene?.('');}}><X size={15}/></button>
    </header>
    <div className="pc-globe-choice-list">
-    {selectedGroup.points.map(point=><button key={point.sceneId} className="pc-globe-choice-item" onClick={()=>onOpen(point.sceneId)} aria-label={`${en?'Enter':'进入场景'} ${point.name}`}>
+    {selectedGroup.points.map(point=>point.reference?<div key={point.sceneId} className="pc-globe-choice-item pc-globe-reference">
+      <span className="pc-globe-choice-info"><Globe2 size={15}/><span className="pc-globe-choice-name" title={point.name}>{point.name}</span></span>
+      <small>{point.reference}</small>
+     </div>:<button key={point.sceneId} className="pc-globe-choice-item" onClick={()=>onOpen(point.sceneId)} aria-label={`${en?'Enter':'进入场景'} ${point.name}`}>
      <span className="pc-globe-choice-info">
       <WindTurbineIcon size={15}/>
       <span className="pc-globe-choice-name" title={point.name}>{point.name}</span>

@@ -1,6 +1,6 @@
 import type {CockpitScene} from './cockpitState.ts';
 
-export type GlobePoint={sceneId:string;revision:string;name:string;longitude:number;latitude:number};
+export type GlobePoint={sceneId:string;revision:string;name:string;longitude:number;latitude:number;reference?:string};
 export type GlobeCluster={id:string;points:GlobePoint[];longitude:number;latitude:number;spanDegrees:number;coincident:boolean};
 export function globeVector(longitude:number,latitude:number):[number,number,number]{
  const lon=longitude*Math.PI/180,lat=latitude*Math.PI/180;

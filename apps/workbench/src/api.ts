@@ -370,6 +370,7 @@ export function failureMessage(error: unknown, locale = 'zh'): string {
     RENDITION_UNAVAILABLE:['该固定版本的照片显示或区域不可用，未替换为其他版本。','The fixed photo display or region is unavailable. No replacement was opened.'],
     PROJECT_REQUIRED:['请先选择所属项目。','Select a project first.'],
     PROJECT_SCOPE_MISMATCH:['项目范围不一致，请返回项目目录重新选择。','The project scope changed. Select the project again.'],
+    COCKPIT_ADDRESS_INVALID:['驾驶舱位置链接无效，请从项目重新进入。','The cockpit link is invalid. Open the cockpit from the project.'],
     WORKSPACE_SCOPE_INVALID:['项目存储归属需要核对，当前已停止写入。','The project storage scope requires review. Writes are blocked.'],
     SCENE_INFO_WRITE_VERSION_REQUIRED:['请刷新新版工作台，完整保留场景说明后再保存。','Reload the workbench to preserve the scene description before saving.'],
     SCENE_INFORMATION_SCOPE:['仅基本信息保存不能包含布局、模型或绑定修改，请回到场景分别处理。当前输入已保留。','Information-only saves cannot include layout, model or binding edits. Your input is retained; handle those changes in the scene.'],

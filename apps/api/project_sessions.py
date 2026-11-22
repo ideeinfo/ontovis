@@ -41,6 +41,7 @@ class ProjectSessions(UserSessions):
         self.connection_id = text(ontobase_connection_id)
         self.options = kwargs
         self.model_root = model_root
+        self.regional_catalog_root = Path(library_root).parent/'regional-catalog'
         registry_type = ProjectWorkspaces
         registry_options = {}
         if registry_backend == 'postgres':
@@ -139,6 +140,13 @@ class ProjectSessions(UserSessions):
 
     def projects_request(self, sid, path, payload):
         row = self._session(sid, payload)
+        if path == '/api/workbench/regional-catalog':
+            from .regional_catalog import read
+            code = self._ref(payload.get('projectRef'))
+            self._access(sid,row,code)
+            value = read(self.regional_catalog_root,{k:v for k,v in payload.items() if k not in ('projectRef','expectedSessionRevision')})
+            self.guard(sid,row)
+            return {**value,'sessionRevision':row.revision}
         body = {k: v for k, v in payload.items() if k != 'expectedSessionRevision'}
         if path.endswith('/projects/access') and set(body) == {'projectRef'}:
             code = self._ref(body['projectRef'])
