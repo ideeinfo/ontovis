@@ -15,7 +15,7 @@ from tools.check_workbench_13002 import (
 )
 
 RECEIPT = 'workbench-release-check.json'
-SUITES = {'13002','assistantModelUsage','analysisSaveRecovery','fixedEvidenceAccess'}
+SUITES = {'13002','assistantModelUsage','analysisSaveRecovery','fixedEvidenceAccess','imageryRecovery'}
 SOURCE_SERVICES = {'ontobase-api','ontobase-web','ontobase-worker','ontobase-region-ocr'}
 SOURCE_RELEASE_ENV = 'ONTOVIS_EXPECTED_SOURCE_RELEASE'
 
@@ -52,7 +52,7 @@ def assistant_model_usage(browser, dist):
     from tests.assistant_model_usage_fixture import browser_site
 
     script = (SCRIPTS/'assistant_model_usage.js').read_text()
-    with browser_site(dist) as (facts,advance,revoked,model_calls,verify_saved):
+    with browser_site(dist) as (facts,advance,revoked,model_calls,verify_saved,verify_info):
         browser.open('models')
         details = browser.run('models',script,facts,'browse')
         verify(details and details['laterScene'], 'Missing model catalogue pagination receipt')
@@ -68,7 +68,14 @@ def assistant_model_usage(browser, dist):
         verify(edited and edited['enteredEditor'] and model_calls==['plan','answer'],
                'Scene edit handoff or no-generation check failed')
         verify_saved(edited['savedRevision'])
-        return {**details,**changed,**denied,**edited,'modelCallsDuringBrowsing':0}
+        info_script = (SCRIPTS/'assistant_model_info.js').read_text()
+        info = {}
+        for mode in ('readonly','stale','edit'):
+            role = 'model-info-'+mode
+            browser.open(role)
+            info[mode] = browser.run(role,info_script,facts,mode)
+        verify_info(info['edit']['savedRevision'])
+        return {**details,**changed,**denied,**edited,'modelCallsDuringBrowsing':0,'modelInfo':info}
 
 
 def analysis_save_recovery(browser, dist):
@@ -124,6 +131,29 @@ def fixed_evidence_access(browser, dist):
         return results
 
 
+def imagery_recovery(browser, dist):
+    from tests.imagery_recovery_fixture import imagery_browser_site, imagery_workspace
+
+    script = (SCRIPTS/'imagery_recovery.js').read_text()
+    role = 'imagery-recovery'
+    browser.open(role)
+    with imagery_workspace() as (root, facts):
+        with imagery_browser_site(dist, root) as (origin, first_pid):
+            facts['origin'] = origin
+            disconnected = browser.run(role, script, facts, 'disconnect')
+            verify(disconnected and disconnected['receivedBytes']==facts['chunkBytes'], 'Missing imagery disconnect receipt')
+            facts['uploadId'] = disconnected['uploadId']
+            refreshed = browser.run(role, script, facts, 'refresh')
+            verify(refreshed and refreshed['uploadId']==facts['uploadId'] and refreshed['wrongFileRejected'] and
+                   refreshed['receivedBytes']==2*facts['chunkBytes'], 'Missing imagery refresh receipt')
+        with imagery_browser_site(dist, root, urlsplit(origin).port) as (restarted_origin, restarted_pid):
+            verify(restarted_origin==origin and restarted_pid!=first_pid, 'The isolated workbench did not restart')
+            completed = browser.run(role, script, facts, 'restart')
+            verify(completed and completed['sourceSha256']==facts['sourceSha256'] and completed['idempotent'] and
+                   completed['pinnedRevision']==facts['pinnedRevision'], 'Missing imagery restart or exact readback receipt')
+            return dict(disconnected=disconnected,refreshed=refreshed,completed=completed,processRestart=True)
+
+
 def candidate(browser, release, dist, output):
     receipt = dict(mode='candidate',release=release,recordedAt=timestamp(),passed=False)
     record(output,receipt)
@@ -131,7 +161,8 @@ def candidate(browser, release, dist, output):
     try:
         results = {'assistantModelUsage':assistant_model_usage(browser,dist),
                    'analysisSaveRecovery':analysis_save_recovery(browser,dist),
-                   'fixedEvidenceAccess':fixed_evidence_access(browser,dist),'13002':isolated(browser,dist)}
+                   'fixedEvidenceAccess':fixed_evidence_access(browser,dist),'imageryRecovery':imagery_recovery(browser,dist),
+                   '13002':isolated(browser,dist)}
         verify(build_identity(dist)==identity, 'The build changed during browser checks')
     finally:
         browser.close()
@@ -258,6 +289,17 @@ def public_evidence(browser, role, origin, case):
     return results
 
 
+def public_model_info(browser, role, origin, case):
+    script = (SCRIPTS/'assistant_model_info_public.js').read_text()
+    results = {}
+    for mode in ('workbench','cockpit_query'):
+        row = browser.run(role,script,origin,case,mode)
+        verify(type(row) is dict and row.get('editorOpened')==(mode=='workbench') and row.get('domainWrites')==0,
+               f'Missing model information receipt for {mode}')
+        results[mode] = row
+    return results
+
+
 def timestamp():
     return datetime.now(timezone.utc).isoformat()
 
@@ -314,7 +356,8 @@ def main():
             if args.phase=='activate':
                 verify(orders.get('sourceRelease')==verified['sourceRelease'],
                        'The public release reports a different source than preflight')
-            results = {'13002':orders,'evidence13001':public_evidence(browser,role,origin,case)}
+            results = {'13002':orders,'evidence13001':public_evidence(browser,role,origin,case),
+                       'modelInfo':public_model_info(browser,role,origin,case)}
     finally:
         browser.close()
     receipt.update(passed=True,indexSha256=verified['indexSha256'],distSha256=verified['distSha256'],results=results)

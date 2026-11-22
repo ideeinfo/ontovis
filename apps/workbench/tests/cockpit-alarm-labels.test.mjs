@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {cockpitAlarmLabels} from '../src/cockpitAlarmLabels.ts';
+import {replayKey} from '../src/cockpitAlarms.ts';
 import {layoutAlarmLabels} from '../src/sceneAlarm.ts';
 const start='2026-10-25T00:00:00Z';
 const row=(id='alarm',instanceId='wind-1',entityUid='cabinet',severity='warning')=>({dataset:{datasetId:id,datasetRevision:'fixed:1',timeFrom:start,faultCode:'13001',title:'柜温高报警'},detail:{alarms:[{updatedAt:'2026-10-25T00:00:30Z',state:'active',severity}]},target:{sceneId:'scene',instanceId,entityUid,rootName:'风机名称',displayName:'柜体名称'}});
@@ -63,6 +64,15 @@ test('absent, cleared, wrong scene and unbound targets do not receive active lab
  assert.deepEqual(cockpitAlarmLabels([a],'other',null),[]);
  assert.equal(cockpitAlarmLabels([a],'scene',null,true)[0].detail,'1 alarm');
  assert.equal(cockpitAlarmLabels([a,row('recurrence')],'scene','wind-1',true,undefined,mapped)[0].detail,'2 alarms');
+});
+test('review recovery and stale readings remove only those events from both label levels',()=>{
+ const recovered=row('13001'),stale=row('13002'),separate=row('13001-recurrence');
+ recovered.detail.alarms.push({updatedAt:'2026-10-25T00:02:30Z',state:'cleared',severity:'warning'});
+ const positions={[replayKey(recovered.dataset)]:{second:150,stale:false},[replayKey(stale.dataset)]:{second:60,stale:true}};
+ for(const instance of [null,'wind-1']){
+  const labels=cockpitAlarmLabels([recovered,stale,separate],'scene',instance,false,undefined,mapped,positions);
+  assert.equal(labels.length,1);assert.equal(labels[0].selection.datasetId,'13001-recurrence');
+ }
 });
 test('nearby labels keep separate readable rectangles and stay within the viewport',()=>{
  const items=[{id:'asset',x:400,y:300,width:180,height:50},{id:'component',x:410,y:308,width:190,height:60},{id:'edge',x:2,y:12,width:130,height:44}];

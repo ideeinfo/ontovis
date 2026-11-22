@@ -22,7 +22,7 @@ const processingLabels:Record<string,[string,string]>={
 export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,onViewScene,onViewDevice,onViewDocument,onViewModel,onViewConfiguration,loadModelUsage,hasUnsaved=false}:{
  run:AssistantRun;en:boolean;locked:boolean;onExecute?:(keys:string[])=>void;onPage:(index:number)=>void;onHandoff?:()=>void;
  onViewScene?:(target:AssistantSceneTarget,trigger?:HTMLButtonElement)=>void;onViewDevice?:(target:DeviceMaterialsTarget)=>void;
- onViewDocument?:(target:FixedDocumentTarget)=>void;onViewModel?:(target:AssistantModelTarget)=>void;
+ onViewDocument?:(target:FixedDocumentTarget)=>void;onViewModel?:(target:AssistantModelTarget,trigger:HTMLButtonElement)=>void;
  onViewConfiguration?:(target:EquipmentConfigurationTarget,title:string)=>void;
  loadModelUsage?:(query:ModelUsageQuery,signal:AbortSignal)=>Promise<ModelUsagePage>;hasUnsaved?:boolean}){
  const task=run.result?.task;if(!task)return null;
@@ -54,7 +54,7 @@ export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,on
      <small>{row.identifier} · r{row.version}{row.simulated?' · '+t('模拟记录','Simulation'):''}</small><p>{row.reason}{row.state?' · '+row.state:''}</p></>}
     </div><div className="as-result-actions">
      {scene&&onViewScene&&<Btn disabled={locked} onClick={()=>onViewScene({sceneId:row.identifier,sceneRevision:version,title:row.title})}>{t('查看场景','View scene')}</Btn>}
-     {model&&onViewModel&&<Btn aria-haspopup="dialog" disabled={locked} onClick={()=>onViewModel(model)}>{t('查看固定模型','View fixed model')}</Btn>}
+     {model&&onViewModel&&<Btn aria-haspopup="dialog" disabled={locked} onClick={event=>onViewModel(model,event.currentTarget)}>{t('查看固定模型','View fixed model')}</Btn>}
      {configuration&&onViewConfiguration&&<Btn aria-haspopup="dialog" disabled={locked} onClick={()=>onViewConfiguration(configuration,row.kind==='adopted_model'?row.configuration??row.title:row.title)}>{t('查看设备配置','View device configuration')}</Btn>}
      {device&&onViewDevice&&<Btn disabled={locked} onClick={()=>onViewDevice({entityUid:row.identifier,entityRevision:version,title:row.title})}>{t('查看设备资料','View materials')}</Btn>}
      {row.documentPreview&&onViewDocument&&<Btn disabled={locked} onClick={()=>onViewDocument(row.documentPreview!)}>{t('查看原文','View source')}</Btn>}

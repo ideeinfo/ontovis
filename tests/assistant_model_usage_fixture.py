@@ -24,6 +24,7 @@ CONNECTION = 'ontobase-primary'
 TITLE = 'Q-24 隔离验收 · 模型使用清单'
 SCENE = '同名验收场景'
 ASSISTANT = '/api/workbench/assistant'
+MODEL = '/api/workbench/resources/model'
 
 
 class ModelUsageFixture(WorkOrderWorkflowIntegrationTests):
@@ -71,6 +72,7 @@ def configured_site(public, fixture):
     source_request = source.request
     revoked = Event()
     model_calls = []
+    writer_grants = source.permissions['writer'].copy()
 
     def request(account, method, path, body=None):
         route = urlsplit(path).path
@@ -104,12 +106,17 @@ def configured_site(public, fixture):
     fixture.data = glb(fixture.root/'synthetic.glb').read_bytes()
     models = []
     for number in range(1,7):
-        status, model, _ = fixture.upload(fixture.metadata(displayName=f'固定模型 {number}'))
+        status, model, _ = fixture.upload(fixture.metadata(displayName='同名固定模型'))
         assert status==200, model
         status, calibrated, _ = fixture.calibrate(fixture.calibration(model))
         assert status==200 and calibrated['canPlace']
         models.append(calibrated)
     models.sort(key=lambda model:model['modelVersionId'])
+    info = models[0]
+    for number in range(50):
+        status, model, _ = fixture.upload(fixture.metadata(displayName=f'目录模型 {number+1}'))
+        assert status==200, model
+    assert all(row['modelAssetId']!=info['modelAssetId'] for row in fixture.listing()[1]['items'])
     fixture.version = models[-1]
     profile = dict(projectApplicationRef=equipment.source_ref,models=[
         dict(modelVersionId=model['modelVersionId'],mappings=[]) for model in models])
@@ -127,6 +134,12 @@ def configured_site(public, fixture):
         value['instances'] = [first,second,third]
         opened = fixture.saved(created,value)
         saved[opened['sceneId']] = opened
+    info_reference = fixture.ok(SCENES+'/create',dict(displayName='模型信息引用场景',clientRequestId=str(uuid4())))
+    info_snapshot = deepcopy(info_reference['snapshot'])
+    fixture.version = info
+    info_snapshot['instances'] = [fixture.item('固定引用实例')]
+    info_reference = fixture.saved(info_reference,info_snapshot)
+    fixture.version = models[-1]
     equipment.adopted = True
     target = saved[max(saved)]
     instance = target['snapshot']['instances'][1]
@@ -144,6 +157,27 @@ def configured_site(public, fixture):
         assert latest['snapshot']['instances']==expected
         assert fixture.open_ok(target,target['sceneRevision'])['snapshot']==target['snapshot']
 
+    def read_model(model):
+        status, value, _ = fixture.request(MODEL,{key:model[key] for key in ('modelAssetId','modelVersionId')})
+        assert status==200, value
+        return value
+
+    def revise_info():
+        current = read_model(info)
+        status, value, _ = fixture.request(MODEL+'/info/save',dict(modelAssetId=info['modelAssetId'],
+            modelVersionId=info['modelVersionId'],expectedAssetRevision=current['assetRevision'],
+            displayName=current['displayName'],purpose=current['purpose'],description='另一会话更新',clientRequestId=str(uuid4())))
+        assert status==200, value
+
+    def verify_info(revision):
+        value = read_model(info)
+        assert value['assetRevision']==revision and value['displayName']=='同名固定模型 · 人工保存'
+        assert (value['sha256'],value['contentRevision'])==(info['sha256'],info['contentRevision'])
+        sibling = read_model(models[1])
+        assert sibling['displayName']==models[1]['displayName'] and sibling['assetRevision']==models[1]['assetRevision']
+        assert fixture.open_ok(info_reference)['snapshot']==info_reference['snapshot']
+        assert fixture.open_ok(info_reference,info_reference['sceneRevision'])['snapshot']==info_reference['snapshot']
+
     board = snapshot()
     board.update(schemaVersion=2,projectCode=PROJECT,ontobaseConnectionId=CONNECTION,title=TITLE)
     analysis = fixture.ok(ANALYSIS+'/create',dict(snapshot=board,requestId=str(uuid4())))
@@ -157,6 +191,18 @@ def configured_site(public, fixture):
         base = handler_type(fixture.sessions,origin,development=True)
 
         class UI(base):
+            def do_POST(self):
+                path = urlsplit(self.path).path
+                if path=='/test-model-info/revise':
+                    revise_info()
+                elif path=='/test-model-info/viewer':
+                    source.permissions['writer'] = {key:'viewer' for key in writer_grants}
+                elif path=='/test-model-info/restore':
+                    source.permissions['writer'] = writer_grants.copy()
+                else:
+                    return super().do_POST()
+                return self.reply(200,{'ok':True})
+
             def do_GET(self):
                 path = urlsplit(self.path).path
                 if path.startswith('/api/'):
@@ -177,8 +223,9 @@ def configured_site(public, fixture):
         try:
             facts = dict(origin=origin,title=TITLE,analysisId=analysis['analysisSessionId'],sceneName=SCENE,
                 sceneId=target['sceneId'],sceneRevision=target['sceneRevision'],instanceId=instance['sceneModelInstanceId'],
-                instanceName=instance['displayName'],versionId=fixture.version['modelVersionId'])
-            yield facts, advance, revoked, model_calls, verify_saved
+                instanceName=instance['displayName'],versionId=fixture.version['modelVersionId'],
+                info={key:info[key] for key in ('modelAssetId','modelVersionId','displayName','sha256')})
+            yield facts, advance, revoked, model_calls, verify_saved, verify_info
         finally:
             server.shutdown()
             thread.join()

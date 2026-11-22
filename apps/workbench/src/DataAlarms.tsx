@@ -1,19 +1,21 @@
-import {useEffect,useState} from 'react';
+import {useEffect,useRef,useState} from 'react';
 import {ClipboardList,Pause,Play,RefreshCw,Search,Wifi,WifiOff} from 'lucide-react';
 import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
 import {Badge,Btn,IconBtn} from './Primitives';
 import {RowActions,RowContext} from './ListMenus';
 import {alarmAt,initialReplay,sampleAt,trendDomain,trendSegments,type SimulationCatalogue,type SimulationDetail} from './simulatedAlarms';
 import {useSimulationStream} from './useSimulationStream';
-import {requireReplaySelection,type ReplaySelection} from './cockpitAlarms';
+import {HOME_REPLAY_SECOND,replayKey,requireReplaySelection,type ReplayPosition,type ReplayPositions,type ReplaySelection} from './cockpitAlarms';
 import './dataAlarms.css';
 
 const ROOT='/api/workbench/analysis-sessions/simulation';
 type DataApi=Pick<WorkbenchApi,'request'|'revision'|'epoch'|'subscribeSimulation'>;
-export function DataAlarms({api,active=true,locale='zh',initialDataset,onOpenWorkOrders,onAnalyze}:{api:DataApi;active?:boolean;locale?:string;initialDataset?:ReplaySelection;onOpenWorkOrders:(faultCode:string,alarm?:import('./workOrderWorkflow').OrderAlarm)=>void;onAnalyze?:(entry:{datasetId:string;datasetRevision:string})=>void}){
+export function DataAlarms({api,active=true,locale='zh',initialDataset,positions,onPosition,onOpenWorkOrders,onAnalyze}:{api:DataApi;active?:boolean;locale?:string;initialDataset?:ReplaySelection;positions?:ReplayPositions;onPosition?:(selection:ReplaySelection,position:ReplayPosition)=>void;onOpenWorkOrders:(faultCode:string,alarm?:import('./workOrderWorkflow').OrderAlarm)=>void;onAnalyze?:(entry:{datasetId:string;datasetRevision:string})=>void}){
   const en=locale==='en',[catalogue,setCatalogue]=useState<SimulationCatalogue|null>(null),[detail,setDetail]=useState<SimulationDetail|null>(null);
   const [selected,setSelected]=useState(initialDataset?.datasetId||''),[query,setQuery]=useState(''),[metric,setMetric]=useState('sensor_temperature');
-  const [second,setSecond]=useState(60),[playing,setPlaying]=useState(false),[refresh,setRefresh]=useState(0);
+  const [second,setSecond]=useState(HOME_REPLAY_SECOND),[playing,setPlaying]=useState(false),[refresh,setRefresh]=useState(0);
+  const reviewPositions=useRef(positions);
+  useEffect(()=>{reviewPositions.current=positions;},[positions]);
   const [loading,setLoading]=useState(true),[error,setError]=useState<unknown>(null),[unavailable,setUnavailable]=useState(false);
   const [reading,setReading]=useState(false);
   useEffect(()=>{
@@ -28,7 +30,8 @@ export function DataAlarms({api,active=true,locale='zh',initialDataset,onOpenWor
   },[api,api.revision,api.epoch,refresh]);
   const profile=catalogue?.items.find(row=>row.datasetId===selected);
   useEffect(()=>{
-    const abort=new AbortController();setDetail(null);setError(null);setPlaying(false);setSecond(60);
+    const abort=new AbortController();setDetail(null);setError(null);setPlaying(false);
+    setSecond(profile?reviewPositions.current?.[replayKey(profile)]?.second??HOME_REPLAY_SECOND:HOME_REPLAY_SECOND);
     const initial=initialReplay(catalogue,profile);
     if(initial){setDetail(initial);setMetric(initial.trends[0]?.metricId||'');setReading(false);}
     else if(profile){setReading(true);void api.request<SimulationDetail>(ROOT+'/detail',{datasetId:profile.datasetId,datasetRevision:profile.datasetRevision},abort.signal)
@@ -43,6 +46,9 @@ export function DataAlarms({api,active=true,locale='zh',initialDataset,onOpenWor
   useEffect(()=>{if(!active){setPlaying(false);stream.stop();}},[active]);
   const shown=stream.mode?stream.view?.state.detail||null:visible;
   const position=stream.mode?Math.max(0,stream.view?.state.sequence??0):second;
+  useEffect(()=>{
+    if(active&&shown)onPosition?.(shown.dataset,{second:position,stale:stream.stale});
+  },[active,shown?.dataset.datasetId,shown?.dataset.datasetRevision,position,stream.stale,onPosition]);
   const receiving=!!stream.view&&['connecting','connected','catchup','reconnecting'].includes(stream.view.status);
   const streamLabels={connecting:en?'Connecting':'连接中',connected:en?'Receiving':'接收中',catchup:en?'Catching up':'正在补数',
     reconnecting:en?'Reconnecting':'重连中',stopped:en?'Stopped':'已停止',complete:en?'Exercise complete':'演练结束'};
@@ -74,7 +80,7 @@ export function DataAlarms({api,active=true,locale='zh',initialDataset,onOpenWor
           return <RowContext key={row.datasetId} name={row.title} actions={actions}><li className={`ov-list-item ${selected===row.datasetId?'selected':''}`}><button type="button" className="ov-list-main" aria-pressed={selected===row.datasetId} onClick={()=>setSelected(row.datasetId)}><span className="ov-list-copy"><strong>{row.faultCode} · {row.title}</strong><small>{row.cabinet} · {en?'3-minute replay':'3分钟回放'}</small></span></button><RowActions name={row.title} actions={actions} locale={locale}/></li></RowContext>;
         })}</ul>{!catalogue.items.some(row=>`${row.faultCode} ${row.title}`.toLowerCase().includes(query.trim().toLowerCase()))&&<p className="cw-state">{en?'No matching faults':'没有匹配的故障'}</p>}</aside>
       <div className="da-detail">{reading?<p className="cw-state" role="status">{en?'Loading replay…':'正在读取回放…'}</p>:visible&&<>
-        <div className="da-heading"><div><h2>{visible.dataset.title}</h2><p>{visible.dataset.faultCode} · {visible.dataset.primaryRds}</p></div>{onAnalyze&&<Btn primary onClick={()=>onAnalyze({datasetId:visible.dataset.datasetId,datasetRevision:visible.dataset.datasetRevision})}>{en?'Analyze in canvas':'进入分析画布'}</Btn>}<Badge tone={state==='active'?'amber':'neutral'}>{shown?states[state]:(en?'Waiting for data':'等待首帧')}</Badge><Btn onClick={()=>onOpenWorkOrders(visible.dataset.faultCode,visible.dataset)}><ClipboardList size={14}/>{en?'Related work orders':'相关工单'}</Btn></div>
+        <div className="da-heading"><div><h2>{visible.dataset.title}</h2><p>{visible.dataset.faultCode} · {visible.dataset.primaryRds}</p></div>{onAnalyze&&<Btn primary onClick={()=>onAnalyze({datasetId:visible.dataset.datasetId,datasetRevision:visible.dataset.datasetRevision})}>{en?'Analyze in canvas':'进入分析画布'}</Btn>}<Badge tone={shown&&!stream.stale&&state==='active'?'amber':'neutral'}>{!shown?(en?'Waiting for data':'等待首帧'):stream.stale?(en?'Data stale':'数据过期'):states[state]}</Badge><Btn onClick={()=>onOpenWorkOrders(visible.dataset.faultCode,visible.dataset)}><ClipboardList size={14}/>{en?'Related work orders':'相关工单'}</Btn></div>
         <section className="da-card"><header><h3>{stream.mode?(en?'Simulated source clock':'模拟源时钟'):(en?'Replay timeline':'回放时间轴')}</h3><span>{date(visible.dataset.timeFrom)} · UTC+8</span></header><div className="da-replay">{stream.mode?<Wifi size={15}/>:<IconBtn label={playing?(en?'Pause replay':'暂停回放'):(en?'Play replay':'播放回放')} onClick={()=>{if(second>=180)setSecond(0);setPlaying(value=>!value);}}>{playing?<Pause size={15}/>:<Play size={15}/>}</IconBtn>}<input type="range" aria-label={en?'Replay position':'回放位置'} disabled={stream.mode} min="0" max="180" step="1" value={position} onChange={event=>{setPlaying(false);setSecond(Number(event.target.value));}}/><output>{time(new Date(Date.parse(visible.dataset.timeFrom)+position*1000).toISOString())}</output></div><p className="da-caption">{time(visible.dataset.timeFrom)} — {time(visible.dataset.timeTo)} · {stream.mode?(en?'One-second delivery; resume fills missed records. Return to replay to seek.':'每秒接收；续读补齐断线数据，返回回放可调整位置。'):(en?'Alarm occurs at +30s and clears at +150s':'第30秒发生，第150秒恢复')}</p></section>
         <section className="da-card"><header><h3>{en?'Signal trends':'信号趋势'}</h3><select aria-label={en?'Signal':'查看信号'} value={metric} onChange={event=>setMetric(event.target.value)}>{visible.trends.filter(row=>row.metricId!=='reference_temperature').map(row=><option key={row.metricId} value={row.metricId}>{names[row.metricId]||row.metricId}</option>)}</select></header>
           {!shown&&<p className="cw-state">{en?'Waiting for the first stream record…':'正在等待首帧数据…'}</p>}<div className="da-values">{trends.map((row,index)=>{const sample=sampleAt(row,position);return <div key={row.metricId} data-series={index}><span>{names[row.metricId]||row.metricId}</span><strong className={sample?.quality==='good'?'':'da-missing'}>{sample?.quality==='good'&&sample.value!==null?`${sample?.value} ${row.unit==='degC'?'°C':row.unit==='1'?'':row.unit}`.trim():en?'Quality gap':'质量异常'}</strong></div>;})}</div>

@@ -14,6 +14,7 @@ import { objectCategory } from './objectCatalog';
 import { bindingNeedsReview, modelLocation } from './modelLocation';
 import { SourceEvidence } from './SourceEvidence';
 import {ProjectModelCenter} from './ProjectModelCenter';
+import type {ModelInfoTarget} from './resourceTypes';
 import { BindingEditor } from './BindingEditor';
 import type {SceneWorkspaceHandle,SceneWorkspaceTarget} from './SceneWorkspace';
 import type {CockpitEntry} from './ProjectCockpit';
@@ -83,6 +84,7 @@ export function Workbench() {
   const [modelVersionId,setModelVersionId] = useState<string|null>(null);
   const [modelReload,setModelReload] = useState(0);
   const [initialEquipment,setInitialEquipment]=useState<EquipmentConfigurationEdit>();
+  const [initialModelInfo,setInitialModelInfo]=useState<ModelInfoTarget>();
   const [resourceScene,setResourceScene]=useState<SceneWorkspaceTarget>();
   const [sceneEntry,setSceneEntry] = useState<LegacySceneEntryTarget|null>(null);
   const [legacyReady,setLegacyReady] = useState<string|null>(null);
@@ -106,7 +108,7 @@ export function Workbench() {
   function navigate(next:Page,legacyVersionId:string|null=null,orderQuery='',analysisEntry:import('./analysisSources').AnalysisEntry|null=null,afterNavigate?:()=>void,saved=false){
     if(!canNavigate(next,!!project))next='project';
     if(next==='bindings'&&legacyVersionId===null)next='hierarchy';
-    const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setResourceScene(undefined);setInitialEquipment(undefined);setLegacyReady(null);
+    const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setResourceScene(undefined);setInitialEquipment(undefined);setInitialModelInfo(undefined);setLegacyReady(null);
       api.selectProject(next==='models'?null:project?.projectRef||null);setError(null);
       if(next==='bindings'){setModelVersionId(legacyVersionId);setModel(null);setContext(null);setDetail(null);setModelReload(value=>value+1);}
       setInitialOrderQuery(orderQuery);setInitialOrderAlarm(null);setInitialOrderRecord('');setInitialAnalysisEntry(analysisEntry);setPage(next);setLeft(false);setRight(false);afterNavigate?.();};
@@ -117,7 +119,7 @@ export function Workbench() {
     setCockpitOpen(false);setCockpitVisited(false);setCockpitPicker(false);setCockpitEntry(null);
     setPendingOrderLeave(null);setOrdersDirty(false);
     sessionReady.current=false;setSessionCheck('loading');
-    legacyEntry.current.cancel();setSceneEntry(null);setResourceScene(undefined);setInitialEquipment(undefined);setLegacyReady(null);
+    legacyEntry.current.cancel();setSceneEntry(null);setResourceScene(undefined);setInitialEquipment(undefined);setInitialModelInfo(undefined);setLegacyReady(null);
     api.selectProject(null);setProject(null);setPage('project'); setProjectName('');setContext(null); setSelection({uid:'', scope:'equipment'}); setDetail(null); setModel(null);
     setModelVersionId(null);
     const value={state,sessionRevision:current.current?.sessionRevision||api.revision};current.current=value;setSession(value);
@@ -241,7 +243,7 @@ export function Workbench() {
   }
   function closeModal(){loginOpen.current=false;setModal(null);setPassword('');if(authBusy.current==='login')void logout();}
   function refresh() {
-    const change=()=>{legacyEntry.current.cancel();api.invalidate();setLegacyReady(null);
+    const change=()=>{legacyEntry.current.cancel();api.invalidate();setLegacyReady(null);setInitialModelInfo(undefined);
       if(page==='scene'&&sceneEntry){setSceneEntry(null);setPage('bindings');}
       setContext(null); setDetail(null); setSelection({uid:'',scope:'equipment'}); setModel(null); setReload(value => value+1);};
     if(page==='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else leaveOrders(change);
@@ -295,10 +297,11 @@ export function Workbench() {
       {page==='scene'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${JSON.stringify(project?.projectRef)}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceScene?.sceneId||''}:${resourceScene?.sceneRevision||''}:${resourceScene?.instanceId||''}`} api={api} suspended={cockpitOpen} ref={sceneWorkspace} initialEntry={sceneEntry} initialScene={resourceScene} project={project} onProjectCreated={enterProject} onProjectName={setProjectName} onConfigure={()=>navigate('hierarchy')}/></Suspense>}
       {page==='orders'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><WorkOrders key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} initialQuery={initialOrderQuery} initialAlarm={initialOrderAlarm} initialRecord={initialOrderRecord} onDirtyChange={setOrdersDirty} onOpenEditor={(analysisSessionId,analysisRevision,saved)=>navigate('analysis',null,'',{analysisSessionId,analysisRevision,openLatest:true},undefined,saved)} onAnalyze={orderId=>navigate('analysis',null,'',{orderId})} onOpenReference={entry=>navigate('analysis',null,'',entry)} onOpenAnalysis={(analysisSessionId,analysisRevision,assistantRunId)=>navigate('analysis',null,'',{analysisSessionId,analysisRevision,...(assistantRunId?{assistantRunId}:{})})}/></Suspense>}
       {page==='analysis'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><AnalysisWorkspace initialEntry={initialAnalysisEntry}
-        onEditEquipment={target=>navigate('hierarchy',null,'',null,()=>setInitialEquipment(target))} onEditScene={target=>navigate('scene',null,'',null,()=>setResourceScene(target))} onOpenWorkOrder={(code,record)=>navigate('orders',null,code,null,()=>setInitialOrderRecord(record||''))} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onDirtyChange={setOrdersDirty}/></Suspense>}
+        onEditEquipment={target=>navigate('hierarchy',null,'',null,()=>setInitialEquipment(target))}
+        onEditModelInfo={target=>navigate('models',null,'',null,()=>setInitialModelInfo(target))} onEditScene={target=>navigate('scene',null,'',null,()=>setResourceScene(target))} onOpenWorkOrder={(code,record)=>navigate('orders',null,code,null,()=>setInitialOrderRecord(record||''))} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onDirtyChange={setOrdersDirty}/></Suspense>}
       {page==='data'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><ProjectData onDirtyChange={setOrdersDirty} active={!cockpitOpen} onAnalyze={entry=>navigate('analysis',null,'',entry)} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onOpenWorkOrders={(code,alarm)=>navigate('orders',null,code,null,()=>setInitialOrderAlarm(alarm||null))}/></Suspense>}
       {page==='ai'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><AiPolicy key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} en={locale==='en'} onDirtyChange={setOrdersDirty}/></Suspense>}
-      {!workspace&&page!=='ai'&&page!=='scene'&&page!=='orders'&&page!=='analysis'&&page!=='data'&&<div className="cw-page-content">{page==='models'&&active?<ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} onConfigure={()=>navigate('hierarchy')} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>:page==='hierarchy'&&active&&project?<EquipmentHierarchy key={JSON.stringify(project.projectRef)} api={api} initialConfiguration={initialEquipment} onDirtyChange={setOrdersDirty} onOpenScene={()=>navigate('scene')} onAnalyze={entry=>navigate('analysis',undefined,undefined,entry)}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
+      {!workspace&&page!=='ai'&&page!=='scene'&&page!=='orders'&&page!=='analysis'&&page!=='data'&&<div className="cw-page-content">{page==='models'&&active?<ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} initialModelInfo={initialModelInfo} onConfigure={()=>navigate('hierarchy')} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>:page==='hierarchy'&&active&&project?<EquipmentHierarchy key={JSON.stringify(project.projectRef)} api={api} initialConfiguration={initialEquipment} onDirtyChange={setOrdersDirty} onOpenScene={()=>navigate('scene')} onAnalyze={entry=>navigate('analysis',undefined,undefined,entry)}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
       {page==='scene'&&!active&&<p className="cw-state">{t('loginPrompt')}</p>}
       {workspace&&(!active||legacyReady===entryIdentity)&&<div className={`cw-workspace layout-${layout}`}>
         <ObjectsPanel key={`${session?.sessionRevision}:${reload}:${context?.context.hierarchyRevision}`} api={api} view={context} selected={selection.uid} ancestors={detail?.ancestors.path.map(row=>row.object.entityUid) || []} onSelect={select} className={left ? 'is-open' : ''}/>

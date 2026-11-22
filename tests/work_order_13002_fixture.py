@@ -22,8 +22,8 @@ class EndToEnd(WorkOrderWorkflowIntegrationTests):
 
 
 @contextmanager
-def serve_workbench(public, sessions, controls=None):
-    with ThreadingHTTPServer(('127.0.0.1',0),BaseHTTPRequestHandler) as server:
+def serve_workbench(public, sessions, controls=None, *, port=0):
+    with ThreadingHTTPServer(('127.0.0.1',port),BaseHTTPRequestHandler) as server:
         origin = f'http://127.0.0.1:{server.server_port}'
         base = handler_type(sessions,origin,development=True)
 

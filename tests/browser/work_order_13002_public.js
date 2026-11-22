@@ -71,10 +71,42 @@ async (page, {origin, release, indexSha256}) => {
   const status = spatial.locator('.pc-tree-tools [role=status]');
   await status.getByText('已定位',{exact:true}).waitFor({timeout:45000});
   await spatial.locator('.pc-model-dock').waitFor({timeout:30000});
+  await deviceCard.locator('.pc-alarm-status[data-state="active"]').waitFor();
   await page.screenshot({path:'public-13002-device.png'});
-  await button('报警详情',root).click();
+  const openReplay=()=>button('报警详情',spatial.locator('.pc-space-status')).click();
+  await openReplay();
   const replay = page.getByRole('dialog',{name:'模拟报警回放',exact:true});
   await replay.getByRole('heading',{name:/柜温低报警/}).waitFor({timeout:20000});
+  const cursor=replay.getByRole('slider',{name:'回放位置',exact:true});
+  await cursor.press('End');
+  await replay.locator('.da-heading').getByText('已恢复',{exact:true}).waitFor();
+  await button('关闭',replay).click();
+  await deviceCard.locator('.pc-alarm-status[data-state="cleared"]').getByText('已恢复').waitFor();
+  await button('场景总览',nav).click();
+  const summary=spatial.getByRole('region',{name:'场景报警',exact:true});
+  const low=summary.getByRole('button',{name:/^13002 ·/});
+  const high=summary.getByRole('button',{name:/^13001 · 柜温高报警.*CN1/}).first();
+  await low.getByText('已恢复',{exact:true}).waitFor({timeout:30000});
+  await page.screenshot({path:'public-13002-scene-recovered.png'});
+  await high.click();
+  await deviceCard.locator('.pc-alarm-status[data-state="active"]').waitFor();
+  await openReplay();
+  await replay.getByRole('heading',{name:/柜温高报警/}).waitFor();
+  await button('订阅模拟流',replay).click();
+  await replay.locator('.da-stream-status').getByText(/接收中.*源水位/).waitFor({timeout:25000});
+  await button('停止订阅',replay).click();
+  await replay.locator('.da-heading').getByText('数据过期',{exact:true}).waitFor();
+  await button('关闭',replay).click();
+  await deviceCard.locator('.pc-alarm-status[data-state="stale"]').getByText('数据过期').waitFor();
+  await page.screenshot({path:'public-13001-device-stale.png'});
+  await button('场景总览',nav).click();
+  await high.getByText('数据过期',{exact:true}).waitFor();
+  check(await high.isDisabled(),'An expired reading still exposes alarm location');
+  await low.click();
+  await deviceCard.locator('.pc-alarm-status[data-state="cleared"]').waitFor();
+  await openReplay();
+  await replay.getByRole('heading',{name:/柜温低报警/}).waitFor();
+  check(await cursor.inputValue()==='180','The recovered replay position did not survive navigation');
   await button('相关工单', replay).click();
   const orderQuery = root.getByRole('textbox',{name:'搜索工单',exact:true});
   await orderQuery.waitFor({timeout:25000});
@@ -86,7 +118,8 @@ async (page, {origin, release, indexSha256}) => {
   const after = await retained();
   check(JSON.stringify(after) === JSON.stringify(before), 'A previously saved order or analysis reference changed');
   return {equipment:label.split(' · ').at(-1),code:'13002',located:true,readOnly:true,cockpitWriteStatus:403,
-    sourceRelease:health.sourceRelease,datasetRevision:alarmSource.datasetRevision,orders:before};
+    sourceRelease:health.sourceRelease,datasetRevision:alarmSource.datasetRevision,orders:before,
+    alarmStates:{13001:['active','stale'],13002:['active','cleared'],views:['scene','device']}};
 
   async function retained() {
     const scoped = {q:'13002',limit:30};

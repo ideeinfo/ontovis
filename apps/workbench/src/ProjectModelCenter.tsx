@@ -7,7 +7,7 @@ import {usePreferences} from './Preferences';
 import {ResourcePanel} from './ResourcePanel';
 import {SceneApi} from './sceneApi';
 import {ModelComponentTree,ModelComponentProperties,ModelPreviewTools,useModelPreview} from './ModelPreviewInspector';
-import type {ProjectModelVersion} from './resourceTypes';
+import type {ModelInfoTarget,ProjectModelVersion} from './resourceTypes';
 import type {LocalSceneSnapshot,ModelResourceRef,SceneView} from './sceneTypes';
 import type {ProjectRef} from './projectTypes';
 import './projectModelCenter.css';
@@ -19,7 +19,7 @@ const previewScene:LocalSceneSnapshot={displayName:'',coordinateFrame:{mode:'loc
 const ignore=()=>{};
 const emptyRefs:ModelResourceRef[]=[],emptyVisibility:Record<string,boolean>={};
 
-export function ProjectModelCenter({api,onOpenScene,onConfigure,suspended=false}:{api:WorkbenchApi;onOpenScene:(sceneId?:string,projectRef?:ProjectRef)=>void;onConfigure?:()=>void;suspended?:boolean}) {
+export function ProjectModelCenter({api,onOpenScene,onConfigure,initialModelInfo,suspended=false}:{api:WorkbenchApi;onOpenScene:(sceneId?:string,projectRef?:ProjectRef)=>void;onConfigure?:()=>void;initialModelInfo?:ModelInfoTarget;suspended?:boolean}) {
   const {locale}=usePreferences(),text=(zh:string,en:string)=>locale==='zh'?zh:en;
   const [preview,setPreview]=useState<ProjectModelVersion|null>(null),[error,setError]=useState<unknown>(null);
   const client=useMemo(()=>new SceneApi(api),[api]);
@@ -34,7 +34,7 @@ export function ProjectModelCenter({api,onOpenScene,onConfigure,suspended=false}
       <p>{text('模型可供多个项目使用；同一固定版本在各场景中放置为独立实例。','Models are shared across projects. Place independent instances of the same fixed version in each scene.')}</p></div>
       </div>
       <Btn onClick={()=>onOpenScene()}><Layers size={15}/>{text('进入场景布置','Open scene placement')}</Btn></header>
-    <div className="pm-catalog pm-library" hidden={!!preview}><ResourcePanel api={api} modelsOnly detailsTarget={detailsTarget} canPlace={false} canAcquire={false}
+    <div className="pm-catalog pm-library" hidden={!!preview}><ResourcePanel api={api} modelsOnly initialModelInfo={initialModelInfo} detailsTarget={detailsTarget} canPlace={false} canAcquire={false}
       onPlace={ignore} onPreview={show} onTerrainReady={ignore} onOpenScene={onOpenScene}/></div>
     {preview&&<div className="pm-grid"><div className="pm-tree"><ModelComponentTree version={preview} inspection={inspection} onClose={()=>show(null)}/></div>
       <div className="pm-preview">

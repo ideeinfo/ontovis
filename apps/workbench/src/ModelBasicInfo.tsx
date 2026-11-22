@@ -7,9 +7,10 @@ import type {ModelPurpose,ProjectModel,ProjectModelWrite,ProjectTurbineDefinitio
 import {modelRepresentationFields,privateDenial,ResourceRequestGate,ResourceRequestId,resourceFailure,writeDenial} from './resourceForms';
 import {resourceText} from './resourceMessages';
 
-export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPrivateDenied,turbines:initialTurbines}:{
+export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPrivateDenied,turbines:initialTurbines,initialRevision,onInitialEditHandled}:{
   api:SceneApi;version:ProjectModel;canEdit:boolean;onUpdated:(value:ProjectModelWrite)=>void;
   onWriteDenied:()=>void;onPrivateDenied:()=>void;turbines?:ProjectTurbineDefinition[];
+  initialRevision?:string;onInitialEditHandled?:()=>void;
 }) {
   const {locale}=usePreferences(),text=(zh:string,en:string)=>locale==='zh'?zh:en;
   const [editing,setEditing]=useState(false),[name,setName]=useState(''),[purpose,setPurpose]=useState<ModelPurpose>('equipment');
@@ -18,6 +19,7 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
   const [representationType,setRepresentationType]=useState<'appearance'|'detailed'|''>('');
   const [turbines,setTurbines]=useState<ProjectTurbineDefinition[]>(initialTurbines||[]);
   const [busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null);
+  const [launchProblem,setLaunchProblem]=useState<'changed'|'denied'|null>(null);
   const gate=useMemo(()=>new ResourceRequestGate(),[]),requestId=useRef(new ResourceRequestId());
 
   useEffect(()=>()=>gate.cancel(),[gate]);
@@ -42,6 +44,15 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
     setError(null);
     requestId.current.reset();
   }
+
+  useEffect(()=>{
+    if(!initialRevision)return;
+    onInitialEditHandled?.();
+    if(!canEdit){setLaunchProblem('denied');return;}
+    if(version.assetRevision!==initialRevision){setLaunchProblem('changed');return;}
+    fill(version);
+    setEditing(true);
+  },[initialRevision,canEdit,version,onInitialEditHandled]);
 
   function failed(value:unknown){
     if(cancelled(value))return;
@@ -90,8 +101,11 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
   return <section aria-label={text('基本信息','Basic information')}>
     <div className="ov-resource-actions">
       <strong>{text('基本信息','Basic information')}</strong>
-      {canEdit&&version.assetRevision&&<Btn onClick={()=>{fill(version);setEditing(true);}}>{text('编辑','Edit')}</Btn>}
+      {canEdit&&version.assetRevision&&<Btn onClick={()=>{setLaunchProblem(null);fill(version);setEditing(true);}}>{text('编辑','Edit')}</Btn>}
     </div>
+    {launchProblem&&<p role="alert" className="ov-resource-error">{launchProblem==='changed'
+      ?text('基本信息已更新，请核对当前内容后再编辑。','Basic information changed. Review the current details before editing.')
+      :text('当前权限仅可查看模型基本信息。','Your current access allows viewing model information.')}</p>}
     <dl className="ov-resource-facts">
       <dt>{text('名称','Name')}</dt>
       <dd>{version.displayName}</dd>

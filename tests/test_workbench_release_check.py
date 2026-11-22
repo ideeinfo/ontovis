@@ -35,12 +35,14 @@ class WorkbenchBrowserReleaseTests(unittest.TestCase):
     def receipt(self, **overrides):
         value = dict(mode='candidate',release=self.release,passed=True,**build_identity(self.dist),
                      results={'13002':{'tested':True},'assistantModelUsage':{'tested':True},
-                              'analysisSaveRecovery':{'tested':True},'fixedEvidenceAccess':{'tested':True}})
+                              'analysisSaveRecovery':{'tested':True},'fixedEvidenceAccess':{'tested':True},
+                              'imageryRecovery':{'tested':True}})
         record(self.output/'candidate',{**value,**overrides})
 
     def test_failed_or_unrelated_receipts_never_run_activation(self):
         for bad in ({'passed':False},{'release':'b'*40},
-                    {'results':{'13002':{'tested':True},'assistantModelUsage':{'tested':True}}}):
+                    {'results':{'13002':{'tested':True},'assistantModelUsage':{'tested':True},
+                                'analysisSaveRecovery':{'tested':True},'fixedEvidenceAccess':{'tested':True}}}):
             self.receipt(**bad)
             with self.assertRaises(RuntimeError):
                 self.promote()

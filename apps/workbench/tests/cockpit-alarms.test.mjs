@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readCockpitAlarms,replayAlarm,requireReplaySelection,cockpitAlarmPresentation} from '../src/cockpitAlarms.ts';
+import {readCockpitAlarms,replayAlarm,replayKey,requireReplaySelection,cockpitAlarmPresentation} from '../src/cockpitAlarms.ts';
 const start='2026-10-25T00:00:00Z',stamp=s=>new Date(Date.parse(start)+s*1000).toISOString();
 const dataset=(id='SIM-PDS-13001')=>({datasetId:id,datasetRevision:'fixed:1',sourceKind:'simulated',timeFrom:start});
 const detail=d=>({dataset:d,alarms:[{updatedAt:stamp(150),sourceTime:stamp(150),state:'cleared',severity:'warning'},{updatedAt:stamp(30),sourceTime:stamp(30),state:'active',severity:'critical'}],trends:[]});
@@ -41,4 +41,16 @@ test('home and scene cards share source state and severity without promoting abs
  assert.equal(cockpitAlarmPresentation(row).state,'cleared');assert.equal(cockpitAlarmPresentation(row).status,'已恢复');
  row.detail.alarms=[];assert.equal(cockpitAlarmPresentation(row).status,'未发生');assert.equal(cockpitAlarmPresentation(row).alarm,null);
  row.detail=null;assert.equal(cockpitAlarmPresentation(row,true).state,'unavailable');assert.equal(cockpitAlarmPresentation(row,true).status,'Unavailable');
+});
+
+test('review positions affect only the matching fixed event and stale data loses active severity',()=>{
+ const row={dataset:dataset(),detail:detail(dataset())},key=replayKey(row.dataset);
+ const sameCode={...row,dataset:{...row.dataset,datasetRevision:'fixed:2'}};
+ assert.equal(cockpitAlarmPresentation(row,false,{[key]:{second:10,stale:false}}).state,'pending');
+ const recovered=cockpitAlarmPresentation(row,false,{[key]:{second:151,stale:false}});
+ assert.equal(recovered.status,'已恢复');assert.equal(recovered.severity,undefined);assert.equal(recovered.second,151);
+ assert.equal(cockpitAlarmPresentation(sameCode,false,{[key]:{second:151,stale:false}}).state,'active');
+ const stale=cockpitAlarmPresentation(row,false,{[key]:{second:60,stale:true}});
+ assert.equal(stale.status,'数据过期');assert.equal(stale.severity,undefined);
+ assert.equal(cockpitAlarmPresentation(undefined).status,'暂无数据');
 });
