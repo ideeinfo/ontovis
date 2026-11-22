@@ -31,14 +31,19 @@ async (page, {origin, release, indexSha256}) => {
   check(replaySource.alarms.map(event=>event.state).join(',') === 'active,cleared','The fixed alarm events changed');
 
   await page.setViewportSize({width:1500,height:956});
-  const entry = await page.goto(origin+'/');
+  await page.goto(origin+'/');
   if (indexSha256) {
-    check(entry?.ok(), 'The public workbench page could not be opened');
+    // The public proxy can add its own script to a browser document navigation.
+    const entry = await page.request.get(origin+'/');
+    check(entry.ok(), 'The public workbench entry could not be read');
     const deployedSha = await page.evaluate(async bytes => {
       const digest = await crypto.subtle.digest('SHA-256',Uint8Array.from(bytes));
       return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2,'0')).join('');
     }, Array.from(await entry.body()));
     check(deployedSha === indexSha256, 'The deployed entry differs from the browser-tested build');
+    const module = /src="(\/assets\/index-[^"<>]+\.js)"/.exec(await entry.text())?.[1];
+    check(module && await page.locator('script[type="module"][src="'+module+'"]').count() === 1,
+      'Chrome loaded a different workbench entry module');
   }
   const button = (name, within=page) => within.getByRole('button',{name,exact:true});
   await page.getByRole('button',{name:/Demo-PDS/}).first().click();
