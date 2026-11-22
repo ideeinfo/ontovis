@@ -58,7 +58,7 @@ class ProjectSessions(UserSessions):
         self.analysis_store_id, self.analysis_database_url = analysis_store_id, registry_database_url
         # Leave room for the registry and a side-by-side acceptance service in
         # the dedicated account's connection budget. No cross-user grant cache.
-        self.analysis_slots = BoundedSemaphore(2)
+        self.analysis_slots = BoundedSemaphore(4)
         self.simulation_streams = SimulationStreams()
         self.assistant = None
         self.weather = None
