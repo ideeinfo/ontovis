@@ -2,7 +2,7 @@
 from copy import deepcopy
 from base64 import b64encode
 from hashlib import sha256
-from http.client import HTTPConnection
+from http.client import HTTPConnection, RemoteDisconnected
 import json
 import os
 import unittest
@@ -10,7 +10,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from tests import test_analysis_http_integration as fixture
-from tests.test_analysis_drafts import OTHER
+from apps.api.simulated_faults import identity
+from tests.test_analysis_drafts import OTHER, snapshot
 
 ROOT = '/api/workbench/work-orders'
 ANALYSIS = '/api/workbench/analysis-sessions'
@@ -60,6 +61,81 @@ class WorkOrderWorkflowIntegrationTests(unittest.TestCase):
                        'analysis-draft', 'analysis-share', 'seed-demo', 'action'):
             status, value, _ = self.request(ROOT+'/'+action, self.body(**scoped))
             self.assertEqual((status, value['code']), (403, 'WORK_ORDER_QUERY_ONLY'))
+
+    def test_simulated_13002_archives_once_after_losing_the_record_response(self):
+        project = 'Demo-PDS'
+        project_ref = {'ontobaseConnectionId': 'ontobase-primary', 'projectCode': project}
+        self.source.projects[project] = '13002 隔离验收项目'
+        grants = self.source.permissions['writer']
+        grants[project] = 'admin'
+
+        def scoped(route, **fields):
+            return self.ok(route, dict(projectRef=project_ref, **fields))
+
+        alarm = identity('13002')
+        created = scoped('create', requestId=str(uuid4()), title='13002 模拟处置', issue='核对回放读数',
+                         alarm={key: alarm[key] for key in ('datasetId', 'datasetRevision')})
+        order_id = created['orderId']
+        original = scoped('workflow-detail', orderId=order_id)
+        self.assertEqual(original['workflow']['source']['identity']['datasetRevision'], alarm['datasetRevision'])
+
+        def update(action, revision, **fields):
+            return scoped('workflow', orderId=order_id, expectedOrderRevision=revision,
+                          requestId=str(uuid4()), action=action, **fields)
+
+        update('accept', 1)
+        canvas = snapshot()
+        canvas.update(schemaVersion=2, projectCode=project, ontobaseConnectionId=project_ref['ontobaseConnectionId'],
+                      title='13002 模拟分析', reuse={
+            'faultCode': '13002', 'faultSystem': alarm['sourceConnectionId'], 'equipment': alarm['primaryRds'],
+            'simulated': True, 'summary': '核对回放与参照温度', 'advice': '复测并记录',
+        })
+        analysis = scoped(ANALYSIS+'/create', requestId=str(uuid4()), snapshot=canvas)
+        fixed = self.fixed(analysis)
+        update('adopt_analysis', 2, **fixed)
+        canvas['cards'][0]['note'] = '另一个修订的说明'
+        scoped(ANALYSIS+'/save', requestId=str(uuid4()), snapshot=canvas,
+               analysisSessionId=fixed['analysisSessionId'], expectedAnalysisRevision=fixed['analysisRevision'])
+
+        record = dict(orderId=order_id, action='record', expectedOrderRevision=3,
+                      requestId=str(uuid4()), text='已复测回放读数，记录为模拟处置。')
+        request = self.body(projectRef=project_ref, **record)
+        handler = self.server.RequestHandlerClass
+        reply = handler.reply
+
+        def drop_record_response(connection, status, value, **headers):
+            if (connection.path == ROOT+'/workflow' and status == 200 and value.get('orderId') == order_id
+                    and value.get('orderRevision') == 4):
+                connection.close_connection = True
+                return
+            return reply(connection, status, value, **headers)
+
+        with patch.object(handler, 'reply', drop_record_response):
+            with self.assertRaises(RemoteDisconnected):
+                self.request(ROOT+'/workflow', request)
+
+        committed = scoped('workflow-detail', orderId=order_id)
+        self.assertEqual(committed['orderRevision'], 4)
+        replay = scoped('workflow', **record)
+        self.assertEqual(replay['events'], committed['events'])
+        self.assertEqual(replay['workflow']['records'], committed['workflow']['records'])
+        treatment, = replay['workflow']['records']
+        self.assertEqual(treatment['basis']['analysisSha256'], fixed['analysisSha256'])
+        update('complete', 4, recordId=treatment['recordId'])
+        del grants[project]
+        status, denied, _ = self.request(ROOT+'/workflow', request)
+        self.assertEqual((status, denied['code']), (403, 'FORBIDDEN'))
+        grants[project] = 'admin'
+
+        archived = update('archive', 5)
+        self.assertEqual((archived['state'], archived['orderRevision'], len(archived['events'])), ('archived', 6, 6))
+        self.assertEqual(archived['workflow']['result']['text'], record['text'])
+        for retained in (original, scoped('workflow-detail', orderId=order_id, workOrderView='cockpit')):
+            version = scoped('snapshot', orderId=order_id, orderRevision=retained['orderRevision'],
+                             snapshotSha256=retained['snapshotSha256'])
+            self.assertEqual(version['workflow'], retained['workflow'])
+        selected = scoped('analysis-reference', **fixed)
+        self.assertEqual(selected['snapshot']['cards'][0]['note'], '人工草稿，待核查。')
 
     def test_two_orders_share_fixed_revision_and_handler_forks_independently(self):
         self.source.permissions['other']['SYNTHETIC-A'] = 'reviewer'

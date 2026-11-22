@@ -1,5 +1,5 @@
 """Workflow state, retained records and version races in a real SQLite library."""
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import contextmanager
 from pathlib import Path
 import tempfile
