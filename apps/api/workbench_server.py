@@ -47,6 +47,10 @@ from apps.api.equipment_configurations import EquipmentConfigurations
 from apps.api.equipment_reader import EquipmentReader
 
 
+class WorkbenchHTTPServer(ThreadingHTTPServer):
+    request_queue_size = 64
+
+
 class WorkbenchSessions(UserSessions):
     def __init__(self, base_url, project_code, installation_context_id, *, model_root=None, library_root=None, terrain_python=None,
                  terrain_max_upload_bytes=MAX_TERRAIN_BYTES, ontobase_connection_id='ontobase-primary',
@@ -1224,7 +1228,7 @@ def main():
                 ontobase_connection_id=args.ontobase_connection_id, thumbnail_renderer=args.thumbnail_renderer,
                 thumbnail_node=args.thumbnail_node, thumbnail_browser=args.thumbnail_browser)
             try:
-                server = ThreadingHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin,
+                server = WorkbenchHTTPServer(('127.0.0.1', args.port), handler_type(sessions, args.origin,
                     development=args.development, photo_media_origin=os.environ.get('ONTOVIS_PHOTO_MEDIA_ORIGIN')))
                 print('ONTOVis evidence workbench ready', flush=True)
                 try:
