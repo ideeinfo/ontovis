@@ -32,6 +32,21 @@ async (page, facts, phase) => {
       'The original fixed revision was not retained');
     const modal = page.getByRole('dialog',{name:facts.sceneName,exact:true});
     await modal.getByText('历史版本',{exact:true}).waitFor();
+    const search = modal.getByRole('searchbox',{name:'搜索模型实例'});
+    const select = modal.getByLabel('选择模型实例');
+    await search.fill('A99');
+    await modal.getByText('没有匹配的实例',{exact:true}).waitFor();
+    check(await button('定位实例',modal).isDisabled(),'An empty search can still locate a stale selection');
+    await search.fill('Ａ０１');
+    await modal.getByText('2 个匹配实例',{exact:true}).waitFor();
+    const sameNames = await select.locator('option').allTextContents();
+    check(sameNames.length===3 && sameNames[1]!==sameNames[2] && sameNames[2].includes(facts.instanceId.slice(0,8)),
+      'Identical instance names are ambiguous');
+    await search.fill('A01 '+facts.instanceId.slice(0,8));
+    await modal.getByText('1 个匹配实例',{exact:true}).waitFor();
+    await search.press('Enter');
+    check(await select.inputValue()===facts.instanceId,'Keyboard selection did not choose the fixed instance');
+    await button('定位实例',modal).click();
     await modal.getByText('已定位 · 固定实例',{exact:true}).waitFor({timeout:45000});
     check(await modal.getByText('实例 · ' + facts.instanceName,{exact:true}).getAttribute('title') === facts.instanceId,
       'Located a different same-name scene instance');
@@ -53,7 +68,7 @@ async (page, facts, phase) => {
     await sceneButton(facts.newRevision).waitFor();
     check(await title.inputValue() === facts.title + ' · 草稿','The draft changed during navigation');
     return {fixedRevision:scene.sceneRevision, sceneId:scene.sceneId, instanceId:facts.instanceId,
-      refreshAfterChange:true, focusedLink:true, draftRetained:true};
+      refreshAfterChange:true, focusedLink:true, draftRetained:true, searchableInstances:true};
   }
 
   await page.setViewportSize({width:1440,height:960});

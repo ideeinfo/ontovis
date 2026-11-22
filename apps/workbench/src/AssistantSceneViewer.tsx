@@ -2,7 +2,7 @@ import {lazy,Suspense,useCallback,useEffect,useMemo,useRef,useState} from 'react
 import {ApiError,type WorkbenchApi} from './api';
 import {Btn,Modal} from './Primitives';
 import {SceneApi} from './sceneApi';
-import {canEditAssistantScene,openAssistantScene,type AssistantSceneTarget} from './assistantScene';
+import {assistantInstanceOptions,canEditAssistantScene,openAssistantScene,type AssistantSceneTarget} from './assistantScene';
 import {cockpitInspectionScene} from './cockpitLocation';
 import {useCockpitLocation} from './useCockpitLocation';
 import {sceneLoadingIdentity,sceneLoadingPlan,scenePreparationStatus,type ScenePreparationState} from './sceneLoading';
@@ -20,13 +20,14 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
  const [opened,setOpened]=useState<Awaited<ReturnType<typeof openAssistantScene>>|null>(null);
  const [error,setError]=useState<unknown>(null),[reload,setReload]=useState(0);
  const [choice,setChoice]=useState(''),[requested,setRequested]=useState(''),[attempt,setAttempt]=useState(0);
+ const [instanceSearch,setInstanceSearch]=useState('');
  const [preparation,setPreparation]=useState<ScenePreparationState|null>(null);
  const modelUse=!!target.modelVersionId;
  const scope=JSON.stringify([api.epoch,api.revision,api.project,target]);
  const viewerApi=useMemo(()=>target.instance||modelUse?api.assistantScope():api,[api,scope,target.instance,modelUse]);
  useEffect(()=>{
   const abort=new AbortController();
-  setOpened(null);setError(null);setChoice('');setRequested('');setPreparation(null);
+  setOpened(null);setError(null);setChoice('');setRequested('');setInstanceSearch('');setPreparation(null);
   void openAssistantScene(new SceneApi(viewerApi),viewerApi.project,target,abort.signal)
    .then(value=>{if(!abort.signal.aborted)setOpened(value);})
    .catch(reason=>{if(!abort.signal.aborted)setError(reason);});
@@ -36,7 +37,8 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
  const instances=modelUse?opened?.modelInstances??[]:scene?.snapshot.instances??[];
  const fixedInstance=opened?.instance??(modelUse&&instances.length===1?instances[0]:null);
  const fixedIds=useMemo(()=>fixedInstance?[fixedInstance.sceneModelInstanceId]:undefined,[fixedInstance]);
- const chosen=instances.find(item=>item.sceneModelInstanceId===choice);
+ const options=useMemo(()=>assistantInstanceOptions(instances,modelUse?instanceSearch:''),[instances,modelUse,instanceSearch]);
+ const chosen=options.find(item=>item.instance.sceneModelInstanceId===choice)?.instance;
  const selected=instances.find(item=>item.sceneModelInstanceId===requested);
  const modelFocus=modelUse?selected:undefined;
  const previewed=fixedInstance??modelFocus;
@@ -75,15 +77,24 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
      <Btn onClick={()=>onEdit(target)}>{t('进入场景编辑','Open scene editor')}</Btn>}
     {previewed&&<span title={previewed.sceneModelInstanceId}>{t('实例','Instance')} · {previewed.displayName}</span>}
     {!fixedInstance&&!!instances.length&&<div className="as-scene-controls">
+     {modelUse&&<input className="as-instance-search" type="search" aria-label={t('搜索模型实例','Search model instances')}
+      placeholder={t('实例名或机位号','Instance name or number')} maxLength={200} value={instanceSearch}
+      onChange={event=>setInstanceSearch(event.currentTarget.value)} onKeyDown={event=>{
+       if(event.key==='Enter'&&!event.nativeEvent.isComposing&&options.length===1){
+        event.preventDefault();setChoice(options[0].instance.sceneModelInstanceId);
+       }
+      }}/>}
      <select aria-label={modelUse?t('选择模型实例','Select model instance'):t('选择设备','Select equipment')}
-      value={choice} disabled={locked} onChange={event=>setChoice(event.currentTarget.value)}>
+      value={chosen?.sceneModelInstanceId??''} disabled={locked||!options.length} onChange={event=>setChoice(event.currentTarget.value)}>
       <option value="">{modelUse?t('选择模型实例','Select model instance'):t('选择设备','Select equipment')}</option>
-      {instances.map(item=><option key={item.sceneModelInstanceId} value={item.sceneModelInstanceId}>{item.displayName}
-       {instances.filter(other=>other.displayName===item.displayName).length>1?' · '+item.sceneModelInstanceId.slice(0,8):''}
+      {options.map(({instance:item,display})=><option key={item.sceneModelInstanceId} value={item.sceneModelInstanceId}>{display}
        {!modelUse&&!item.rootBinding?' · '+t('未绑定','Unbound'):!item.visible?' · '+t('已隐藏','Hidden'):''}</option>)}
      </select>
      <Btn disabled={locked||!chosen||!modelUse&&(!chosen.visible||!chosen.rootBinding)}
       onClick={()=>{setRequested(choice);setAttempt(value=>value+1);}}>{modelUse?t('定位实例','Locate instance'):t('定位设备','Locate equipment')}</Btn>
+     {modelUse&&instanceSearch.trim()&&<small role="status">{options.length?
+      t(options.length+' 个匹配实例',options.length===1?'1 match':options.length+' matches'):
+      t('没有匹配的实例','No matching instances')}</small>}
     </div>}
    </header>
    <div className="as-scene-status" role="status">
@@ -101,7 +112,11 @@ export function AssistantSceneViewer({api,target,en,onClose,onEdit,onCloseAutoFo
       focusRequest={modelFocus?{token:attempt,instanceId:modelFocus.sceneModelInstanceId}:undefined}
       componentFocus={focus} preparationKey={preparationKey} onPreparationState={prepared}
       presentation editing={false} disabled={locked} personalVisibility={visibleInstances} terrainVisible pendingPlacement={false}
-      onSelect={id=>{if(!locked&&!fixedInstance&&(!modelUse||instances.some(item=>item.sceneModelInstanceId===id)))setChoice(id??'');}}
+      onSelect={id=>{
+       if(locked||fixedInstance||modelUse&&!instances.some(item=>item.sceneModelInstanceId===id))return;
+       if(modelUse&&id&&!options.some(item=>item.instance.sceneModelInstanceId===id))setInstanceSearch('');
+       setChoice(id??'');
+      }}
       onPoint={idle} onMove={preventMove} onViewChange={idle}/>
     </Suspense>}
    </div>

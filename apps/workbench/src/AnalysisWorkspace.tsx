@@ -416,6 +416,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     current.current=step.snapshot;setDraft(step.snapshot);setUndo(step.history.undo);setRedo(step.history.redo);setNotice('');}
   function label(card:CanvasCard){return card.kind==='analysis'||referenceState[card.source!.id]==='available'?card.title:referenceState[card.source!.id]==='restricted'?t('资料访问已撤销','Access removed'):materialNames[card.kind]+t(' · 待读取',' · pending');}
   const errorText=error instanceof Error&&!code(error)?error.message:en?'The request could not be completed. Your local edits are retained.':zhError[code(error)]||'暂时无法完成请求，请重试。';
+  const saveBusy=uncertain&&code(error)==='ANALYSIS_BUSY';
   const statuses=[['analyzing','分析中','Analyzing'],['awaiting_field_check','待现场核查','Awaiting field check'],['awaiting_expert_review','待复核','Awaiting review']];
   const expandedCard=draft?.cards.find(c=>c.id===expanded);
   function openSource(card:CanvasCard,anchor?:SourceAnchor|null){
@@ -455,10 +456,12 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           <IconBtn label={t('修订历史','Revision history')} disabled={!receipt||busy||uncertain} onClick={()=>void history()}><History size={17}/></IconBtn>
           <Btn primary disabled={!writable||busy||fixed||archived||lifecycleUnknown||!dirty} onClick={()=>void commit()}><Save size={14}/>{uncertain?t('重试保存','Retry save'):t('保存','Save')}</Btn>
         </>}</header>
-      {!!error&&<div className="ad-alert" role="alert"><span>{errorText}</span>{!draft&&<Btn onClick={()=>initialEntry?setStartAttempt(v=>v+1):setReload(v=>v+1)}>{t('重试','Retry')}</Btn>}
+      {!!error&&!saveBusy&&<div className="ad-alert" role="alert"><span>{errorText}</span>{!draft&&<Btn onClick={()=>initialEntry?setStartAttempt(v=>v+1):setReload(v=>v+1)}>{t('重试','Retry')}</Btn>}
         {code(error)==='ANALYSIS_CHANGED'&&<><Btn disabled={busy} onClick={()=>void commit(true)}>{t('另存副本','Save a copy')}</Btn><Btn disabled={busy} onClick={()=>change(()=>receipt&&void open(receipt.analysisSessionId))}>{t('重新读取','Reload saved')}</Btn></>}
       </div>}
-      {uncertain&&<div className="ad-alert" role="status">{t('保存结果尚未确认。重试会使用同一请求，避免重复创建。','Save result is unknown. Retry reuses the same request.')}</div>}
+      {uncertain&&!busy&&<div className="ad-alert" role="status">{saveBusy?
+        t('保存繁忙，修改已保留。重试将使用同一请求。','Saving is busy. Your edits are retained. Retry uses the same request.'):
+        t('保存结果尚未确认。重试会使用同一请求，避免重复创建。','Save result is unknown. Retry reuses the same request.')}</div>}
       {lifecycleUnknown&&<div className="ad-alert" role="status">{t('回收站操作结果尚未确认，重试会复用同一请求。','Recycle-bin result is unknown. Retry reuses the same request.')}<Btn disabled={busy} onClick={()=>void manageLifecycle()}>{t('重试回收站操作','Retry recycle-bin operation')}</Btn></div>}
       {lifecycleNotice&&<div className="ad-alert" role="status">{lifecycleNotice}</div>}
       {draft?<>

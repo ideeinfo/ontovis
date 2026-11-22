@@ -11,11 +11,11 @@ from tempfile import NamedTemporaryFile
 from urllib.parse import urlsplit
 
 from tools.check_workbench_13002 import (
-    BrowserCheck, PASSWORD_ENV, SCRIPTS, USERNAME_ENV, isolated, public, verify,
+    BrowserCheck, PASSWORD_ENV, SCRIPTS, USERNAME_ENV, isolated, public_13002, public_browser, verify,
 )
 
 RECEIPT = 'workbench-release-check.json'
-SUITES = {'13002','assistantModelUsage'}
+SUITES = {'13002','assistantModelUsage','analysisSaveRecovery'}
 
 
 def build_identity(dist):
@@ -64,12 +64,48 @@ def assistant_model_usage(browser, dist):
         return {**details,**changed,**denied,'modelCallsDuringBrowsing':0}
 
 
+def analysis_save_recovery(browser, dist):
+    from tests.analysis_save_recovery_fixture import browser_site
+
+    script = (SCRIPTS/'analysis_save_recovery.js').read_text()
+    with browser_site(dist) as (facts,hold_slots,detail,advance,revisions):
+        browser.open('analysis-save')
+
+        def run(phase):
+            result = browser.run('analysis-save',script,facts,phase)
+            verify(type(result) is dict, f'Missing analysis save receipt for {phase}')
+            return result
+
+        run('open')
+        with hold_slots():
+            busy = run('busy')
+        unchanged = detail()
+        verify(unchanged['analysisRevision']==1 and unchanged['contentSha256']==facts['initialSha'],
+               'The busy request changed the canvas')
+        facts['originalRequest'] = busy.pop('originalRequest')
+        saved = run('retry-busy')
+        dropped = run('disconnect')
+        facts.update(originalRequest=dropped.pop('originalRequest'),committedSha=dropped['sha256'])
+        verify(detail()['contentSha256']==dropped['sha256'], 'The disconnected response did not persist revision 3')
+        replayed = run('retry-disconnect')
+        verify(revisions()==[3,2,1], 'Retried save created a duplicate or missing revision')
+        new_head = advance()
+        conflict = run('conflict')
+        final_revisions = revisions()
+        verify(final_revisions==[4,3,2,1] and detail()['contentSha256']==new_head['contentSha256'],
+               'A stale write changed the saved canvas')
+        verify(detail(1)['contentSha256']==facts['initialSha'] and detail(2)['contentSha256']==saved['sha256']
+               and detail(3)['contentSha256']==dropped['sha256'], 'An earlier revision changed')
+        return dict(busy=busy,saved=saved,disconnected=dropped,replayed=replayed,conflict=conflict,revisions=final_revisions)
+
+
 def candidate(browser, release, dist, output):
     receipt = dict(mode='candidate',release=release,recordedAt=timestamp(),passed=False)
     record(output,receipt)
     identity = build_identity(dist)
     try:
-        results = {'assistantModelUsage':assistant_model_usage(browser,dist),'13002':isolated(browser,dist)}
+        results = {'assistantModelUsage':assistant_model_usage(browser,dist),
+                   'analysisSaveRecovery':analysis_save_recovery(browser,dist),'13002':isolated(browser,dist)}
         verify(build_identity(dist)==identity, 'The build changed during browser checks')
     finally:
         browser.close()
@@ -99,6 +135,53 @@ def promote(dist, release, output, command):
     return receipt
 
 
+def load_evidence_case(path):
+    case = json.loads(path.read_text())
+    def matches(value, pattern):
+        return type(value) is str and re.fullmatch(pattern,value) is not None
+
+    identifier = r'[A-Za-z0-9_.:-]{1,200}'
+    digest = r'[a-f0-9]{64}'
+    uuid = r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}'
+    verify(type(case) is dict and set(case)=={'analysisSessionId','analysisRevision','contentSha256','datasetRevision','cards'}
+           and matches(case['analysisSessionId'],uuid) and type(case['analysisRevision']) is int
+           and 1<=case['analysisRevision']<=1000 and all(matches(case[key],digest) for key in ('contentSha256','datasetRevision'))
+           and type(case['cards']) is list and len(case['cards'])==6, 'Invalid 13001 acceptance case')
+
+    extra = {
+        'document':{'documentId':uuid,'contentVersionId':uuid,'knowledgeReleaseId':uuid,'sourceSha256':digest},
+        'drawing':{'drawingUid':identifier,'contentSha256':digest},
+        'work_order':{'orderId':identifier},
+    }
+    checked = {'document':[],'drawing':[],'work_order':[]}
+    for card in case['cards']:
+        verify(type(card) is dict and type(card.get('kind')) is str and card['kind'] in extra, 'Invalid fixed source kind')
+        kind = card['kind']
+        number = 'orderRevision' if kind=='work_order' else 'pageNumber'
+        fields = dict(extra[kind],cardId=identifier,evidenceRefId=uuid,sourceRevision=digest)
+        verify(set(card)==set(fields)|{'kind',number} and all(matches(card[name],pattern) for name,pattern in fields.items())
+               and type(card[number]) is int and card[number]>0, 'Invalid fixed source in the 13001 acceptance case')
+        checked[kind].append(card[number])
+    verify(len({card['cardId'] for card in case['cards']})==len({card['evidenceRefId'] for card in case['cards']})==6
+           and sorted(checked['document'])==[9,53] and sorted(checked['drawing'])==[89,189,228]
+           and checked['work_order']==[6], '13001 needs both manual pages, three drawings and the historical order')
+    return case
+
+
+def public_evidence(browser, role, origin, case):
+    script = (SCRIPTS/'analysis_13001_public.js').read_text()
+    results = {}
+    for mode in ('workbench','cockpit'):
+        row = browser.run(role,script,origin,case,mode)
+        verify(type(row) is dict and row.get('analysisRevision')==case['analysisRevision']
+               and row.get('analysisSha256')==case['contentSha256'] and row.get('readOnly') is True
+               and len(row.get('sources',[]))==len(case['cards']), f'Missing fixed evidence receipt for {mode}')
+        results[mode] = row
+    verify(results['workbench']['sources']==results['cockpit']['sources'],
+           'Workbench and cockpit opened different fixed sources')
+    return results
+
+
 def timestamp():
     return datetime.now(timezone.utc).isoformat()
 
@@ -112,6 +195,7 @@ def main():
     parser.add_argument('--playwright-cli',default='playwright-cli')
     parser.add_argument('--browser',default='chrome')
     parser.add_argument('--origin',default='https://vis.ontobase.ai')
+    parser.add_argument('--evidence-case',type=Path,help='Private JSON manifest of the fixed 13001 acceptance canvas')
     parser.add_argument('--activation-command',nargs=argparse.REMAINDER,
                         help='Existing deployment command, supplied last for the activate phase')
     args = parser.parse_args()
@@ -137,12 +221,20 @@ def main():
     area = output/'public'
     receipt = dict(mode='public',release=args.release,recordedAt=timestamp(),passed=False)
     record(area,receipt)
+    if not args.evidence_case:
+        parser.error('Public checks require --evidence-case')
+    try:
+        case = load_evidence_case(args.evidence_case)
+    except (OSError,ValueError,RuntimeError) as error:
+        parser.error(str(error))
     verified = (promote(args.dist,args.release,output,args.activation_command) if args.phase=='activate'
                 else require_candidate(args.dist,args.release,output))
     browser = BrowserCheck(cli,area,args.browser)
     try:
-        results = public(browser,origin,args.release,verified['indexSha256'])
-        verify(bool(results),'The public browser check returned no receipt')
+        with public_browser(browser,origin,args.release) as role:
+            orders = public_13002(browser,role,origin,args.release,verified['indexSha256'])
+            verify(bool(orders),'The public 13002 browser check returned no receipt')
+            results = {'13002':orders,'evidence13001':public_evidence(browser,role,origin,case)}
     finally:
         browser.close()
     receipt.update(passed=True,indexSha256=verified['indexSha256'],distSha256=verified['distSha256'],results=results)

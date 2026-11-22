@@ -22,6 +22,37 @@ class EndToEnd(WorkOrderWorkflowIntegrationTests):
 
 
 @contextmanager
+def serve_workbench(public, sessions):
+    with ThreadingHTTPServer(('127.0.0.1',0),BaseHTTPRequestHandler) as server:
+        origin = f'http://127.0.0.1:{server.server_port}'
+        base = handler_type(sessions,origin,development=True)
+
+        class UI(base):
+            def do_GET(self):
+                path = urlsplit(self.path).path
+                if path.startswith('/api/'):
+                    return super().do_GET()
+                file = (public/(path.lstrip('/') or 'index.html')).resolve()
+                if not file.is_relative_to(public) or not file.is_file():
+                    return self.send_error(404)
+                data = file.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type',guess_type(file.name)[0] or 'application/octet-stream')
+                self.send_header('Content-Length',str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        server.RequestHandlerClass = UI
+        thread = Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        try:
+            yield origin
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+@contextmanager
 def browser_site(public):
     public = public.resolve(strict=True)
     if not (public/'index.html').is_file():
@@ -67,35 +98,10 @@ def browser_site(public):
         canvas['cards'][0]['note'] = '后续 r3 仅用于核对 r2 引用保持。'
         latest = fixture.ok(ANALYSIS+'/save', {'requestId':str(uuid4()), 'snapshot':canvas,
                             'analysisSessionId':first['analysisSessionId'], 'expectedAnalysisRevision':2})
-        with ThreadingHTTPServer(('127.0.0.1', 0), BaseHTTPRequestHandler) as server:
-            origin = f'http://127.0.0.1:{server.server_port}'
-            base = handler_type(fixture.sessions, origin, development=True)
-
-            class UI(base):
-                def do_GET(self):
-                    path = urlsplit(self.path).path
-                    if path.startswith('/api/'):
-                        return super().do_GET()
-                    file = (public / (path.lstrip('/') or 'index.html')).resolve()
-                    if not file.is_relative_to(public) or not file.is_file():
-                        return self.send_error(404)
-                    data = file.read_bytes()
-                    self.send_response(200)
-                    self.send_header('Content-Type', guess_type(file.name)[0] or 'application/octet-stream')
-                    self.send_header('Content-Length', str(len(data)))
-                    self.end_headers()
-                    self.wfile.write(data)
-
-            server.RequestHandlerClass = UI
-            thread = Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            try:
-                yield dict(origin=origin, analysis=fixed, latest=latest['analysisRevision'],
-                           title=TITLE, text=RECORD, projectCode=PROJECT,
-                           alarm={key:sample[key] for key in ('datasetId','datasetRevision')}), revoked.set
-            finally:
-                server.shutdown()
-                thread.join()
+        with serve_workbench(public,fixture.sessions) as origin:
+            yield dict(origin=origin, analysis=fixed, latest=latest['analysisRevision'],
+                       title=TITLE, text=RECORD, projectCode=PROJECT,
+                       alarm={key:sample[key] for key in ('datasetId','datasetRevision')}), revoked.set
     finally:
         fixture.doCleanups()
         fixture.tearDownClass()

@@ -1,11 +1,30 @@
 import {ApiError} from './api.ts';
 import type {ProjectRef} from './projectTypes';
 import type {SceneApi} from './sceneApi';
-import type {SceneOpen} from './sceneTypes';
+import type {SceneModelInstance,SceneOpen} from './sceneTypes';
 
 type FixedInstanceTarget={instanceId:string;modelVersionId:string;equipmentUid:string};
 export type AssistantSceneTarget={sceneId:string;sceneRevision:string;title:string;instance?:FixedInstanceTarget;modelVersionId?:string};
 type FixedSceneTarget=Pick<AssistantSceneTarget,'sceneId'|'sceneRevision'>;
+
+export function assistantInstanceOptions(instances:SceneModelInstance[],query='') {
+ const normalize=(value:string)=>value.normalize('NFKC').toLowerCase();
+ const words=normalize(query).trim().split(/\s+/).filter(Boolean);
+ const counts=new Map<string,number>();
+ const prefixes=new Map<string,number>();
+ for(const instance of instances){
+  const name=normalize(instance.displayName),prefix=name+'\0'+instance.sceneModelInstanceId.slice(0,8);
+  counts.set(name,(counts.get(name)??0)+1);
+  prefixes.set(prefix,(prefixes.get(prefix)??0)+1);
+ }
+ return instances.flatMap(instance=>{
+  const name=normalize(instance.displayName),id=instance.sceneModelInstanceId;
+  if(!words.every(word=>name.includes(word)||id.toLowerCase().includes(word)))return [];
+  const prefix=id.slice(0,8),idLabel=(prefixes.get(name+'\0'+prefix)??0)>1?id:prefix;
+  const display=(counts.get(name)??0)>1?instance.displayName+' · '+idLabel:instance.displayName;
+  return [{instance,display}];
+ });
+}
 
 function matchesSceneRevision(scene:SceneOpen,target:FixedSceneTarget) {
  return scene.sceneId===target.sceneId&&scene.sceneRevision===target.sceneRevision;

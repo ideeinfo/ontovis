@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {ApiError} from '../src/api.ts';
-import {canEditAssistantScene,openAssistantScene,verifyAssistantScene} from '../src/assistantScene.ts';
+import {assistantInstanceOptions,canEditAssistantScene,openAssistantScene,verifyAssistantScene} from '../src/assistantScene.ts';
 
 const project={projectCode:'P',ontobaseConnectionId:'source'};
 const target={sceneId:'s1',sceneRevision:'scene:earlier',title:'Saved scene'};
@@ -107,4 +107,19 @@ test('the editor opens only the exact writable head in the active project',()=>{
  ])assert.equal(canEditAssistantScene(changed,'P',target),false);
  assert.throws(()=>verifyAssistantScene({...current,sceneId:'another-scene'},'P',target),{code:'SCENE_CHANGED'});
  assert.throws(()=>verifyAssistantScene(current,'Other',target),{code:'PROJECT_SCOPE_MISMATCH'});
+});
+
+test('instance search accepts name, position number or saved identity and distinguishes duplicates after filtering',()=>{
+ const first={...savedInstance,sceneModelInstanceId:'11111111-first',displayName:'机位组 · A01'};
+ const second={...first,sceneModelInstanceId:'22222222-second',visible:false};
+ const third={...first,sceneModelInstanceId:'33333333-third',displayName:'机位组 · A02'};
+ const instances=[first,second,third];
+ assert.equal(assistantInstanceOptions(instances,' 机位 Ａ０１ ').length,2);
+ assert.deepEqual(assistantInstanceOptions(instances,'a01 22222222'),[{instance:second,display:'机位组 · A01 · 22222222'}]);
+ assert.deepEqual(assistantInstanceOptions(instances,'A03'),[]);
+ assert.deepEqual(assistantInstanceOptions(instances).map(option=>option.instance),instances);
+ const samePrefix={...first,sceneModelInstanceId:first.sceneModelInstanceId.slice(0,8)+'-another'};
+ assert.deepEqual(assistantInstanceOptions([first,samePrefix]).map(option=>option.display),
+  [first,samePrefix].map(instance=>instance.displayName+' · '+instance.sceneModelInstanceId));
+ assert.equal(second.visible,false);
 });

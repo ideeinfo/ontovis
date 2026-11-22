@@ -120,13 +120,16 @@ def configured_site(public, fixture):
     for number in range(1,6):
         created = fixture.ok(SCENES+'/create',dict(displayName=SCENE,clientRequestId=str(uuid4())))
         value = deepcopy(created['snapshot'])
-        item = fixture.item(f'合成实例 {number}')
-        value['instances'] = [item]
+        first, second, third = [fixture.item(name) for name in ('合成机位 A01','合成机位 A01','合成机位 A02')]
+        second['visible'] = False
+        second['placement']['position']['xM'] = 35
+        third['placement']['position']['xM'] = 70
+        value['instances'] = [first,second,third]
         opened = fixture.saved(created,value)
         saved[opened['sceneId']] = opened
     equipment.adopted = True
     target = saved[max(saved)]
-    instance = target['snapshot']['instances'][0]
+    instance = target['snapshot']['instances'][1]
 
     def advance():
         value = deepcopy(target['snapshot'])

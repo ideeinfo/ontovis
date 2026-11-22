@@ -155,7 +155,8 @@ def cookie_handoff(cookies):
             thread.join()
 
 
-def public(browser, origin, release, index_sha=None):
+@contextmanager
+def public_browser(browser, origin, release):
     with signed_in(origin,release) as cookies:
         browser.open('public')
         with cookie_handoff(cookies) as url:
@@ -164,8 +165,17 @@ def public(browser, origin, release, index_sha=None):
               if(!response.ok())throw Error('Could not transfer browser session');
               await page.context().addCookies(await response.json());
             }""", url)
-        return browser.run('public',(SCRIPTS/'work_order_13002_public.js').read_text(),
-                           dict(origin=origin,release=release,indexSha256=index_sha))
+        yield 'public'
+
+
+def public_13002(browser, role, origin, release, index_sha=None):
+    return browser.run(role,(SCRIPTS/'work_order_13002_public.js').read_text(),
+                       dict(origin=origin,release=release,indexSha256=index_sha))
+
+
+def public(browser, origin, release, index_sha=None):
+    with public_browser(browser,origin,release) as role:
+        return public_13002(browser,role,origin,release,index_sha)
 
 
 def main():
