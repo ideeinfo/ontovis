@@ -7,10 +7,10 @@ import type {ModelPurpose,ProjectModel,ProjectModelWrite,ProjectTurbineDefinitio
 import {modelRepresentationFields,privateDenial,ResourceRequestGate,ResourceRequestId,resourceFailure,writeDenial} from './resourceForms';
 import {resourceText} from './resourceMessages';
 
-export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPrivateDenied,turbines:initialTurbines,initialRevision,onInitialEditHandled}:{
+export function ModelBasicInfo({api,version,canEdit,onUpdated,onCancel,onWriteDenied,onPrivateDenied,turbines:initialTurbines,initialRevision,onInitialEditHandled}:{
   api:SceneApi;version:ProjectModel;canEdit:boolean;onUpdated:(value:ProjectModelWrite)=>void;
   onWriteDenied:()=>void;onPrivateDenied:()=>void;turbines?:ProjectTurbineDefinition[];
-  initialRevision?:string;onInitialEditHandled?:()=>void;
+  initialRevision?:string;onInitialEditHandled?:()=>void;onCancel?:()=>void;
 }) {
   const {locale}=usePreferences(),text=(zh:string,en:string)=>locale==='zh'?zh:en;
   const [editing,setEditing]=useState(false),[name,setName]=useState(''),[purpose,setPurpose]=useState<ModelPurpose>('equipment');
@@ -97,6 +97,7 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
   }
 
   const conflict=error instanceof ApiError&&error.code==='MODEL_ASSET_CHANGED';
+  function cancelEdit(){setEditing(false);onCancel?.();}
 
   return <section aria-label={text('基本信息','Basic information')}>
     <div className="ov-resource-actions">
@@ -125,7 +126,7 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
       <dt>{text('说明','Description')}</dt>
       <dd>{version.description||'—'}</dd>
     </dl>
-    {editing&&<Modal title={text('编辑模型基本信息','Edit model information')} description={text('修改模型名称、形态与用途；项目型号关联在设备层级中管理。','Edit the model name, representation and purpose. Manage project type associations in Equipment hierarchy.')} onClose={()=>{if(!busy)setEditing(false);}}>
+    {editing&&<Modal title={text('编辑模型基本信息','Edit model information')} description={text('修改模型名称、形态与用途；项目型号关联在设备层级中管理。','Edit the model name, representation and purpose. Manage project type associations in Equipment hierarchy.')} onClose={cancelEdit} closeDisabled={busy}>
       <form className="ov-resource-form" onSubmit={event=>{event.preventDefault();void save();}}>
         <label>
           {text('工程对象定义（兼容关联）','Engineering object definition (legacy)')}
@@ -176,7 +177,7 @@ export function ModelBasicInfo({api,version,canEdit,onUpdated,onWriteDenied,onPr
         {!!error&&<p role="alert" className="ov-resource-error">{conflict?text('基本信息已更新，当前修改已保留。','Basic information has changed. Your edits are retained.'):resourceFailure(error,locale)}</p>}
         {conflict&&<><p className="ov-resource-caption">{text('重新读取将替换当前修改。','Reloading replaces your current edits.')}</p><Btn disabled={busy} onClick={()=>void reload()}>{text('重新读取','Reload')}</Btn></>}
         <div className="ov-resource-actions end">
-          <Btn disabled={busy} onClick={()=>setEditing(false)}>{text('取消','Cancel')}</Btn>
+          <Btn disabled={busy} onClick={cancelEdit}>{text('取消','Cancel')}</Btn>
           <button type="submit" className="ov-btn primary" disabled={busy||!canEdit||!name.trim()}>{busy?text('保存中…','Saving…'):text('保存','Save')}</button>
         </div>
       </form>

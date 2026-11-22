@@ -34,6 +34,10 @@
 .cw-workspace.layout-drawingLayout{grid-template-columns:220px minmax(200px,1fr) 380px}
 .cw-workspace[hidden]{display:none}
 .cw-page-content{flex:1;min-height:0;overflow:auto;padding:0 16px 16px}
+.cw-analysis-view{display:flex;flex:1;min-width:0;min-height:0}
+.cw-analysis-view[hidden]{display:none}
+.cw-model-return{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0}
+.cw-model-return>span{color:var(--textSecondary);font-size:13px}
 .cw-page-content>.cw-panel{max-width:960px}
 .cw-page-body{padding:16px;max-width:720px}
 .cw-page-body>.cw-kv{grid-template-columns:100px minmax(0,1fr)}

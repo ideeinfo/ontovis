@@ -65,16 +65,20 @@ def isolated(browser, dist):
     from tests.work_order_13002_fixture import browser_site
 
     script = (SCRIPTS/'work_order_13002.js').read_text()
-    roles = {'create':'manager','treat':'handler','revoke':'handler','archive':'manager','view':'viewer'}
+    roles = {'create':'manager','treat':'handler','reuse-two':'reuse','revoke':'handler','archive':'manager','view':'viewer'}
     results = {}
-    with browser_site(dist) as (facts, revoke):
+    with browser_site(dist) as (facts, revoke, prepare_reuse, verify_original):
         for phase, role in roles.items():
             if role not in browser.sessions:
                 browser.open(role)
             if phase == 'revoke':
                 revoke()
+            if phase == 'reuse-two':
+                facts.update(prepare_reuse())
             row = browser.run(role, script, facts, phase)
             verify(isinstance(row,dict), f'Missing {phase} receipt')
+            if phase == 'reuse-two':
+                row.update(verify_original())
             for key in ('orderId','initialSha256','recordId','replayBody'):
                 if key in row:
                     facts[key] = row[key]

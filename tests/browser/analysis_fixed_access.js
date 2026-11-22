@@ -43,7 +43,8 @@ async (page, facts, phase) => {
   await button('登录',login).click();
   await page.getByRole('button',{name:/^Q-26 固定资料试验 Demo-PDS/}).click();
   await button('进入项目').click();
-  const cockpit = phase==='expire-session'||phase==='withdraw-project';
+  const photoPhase=phase==='withdraw-photo'||phase==='switch-photo-project';
+  const cockpit = phase==='expire-session'||phase==='withdraw-project'||phase==='withdraw-photo';
   let canvas;
   if(cockpit){
     await button('驾驶舱').click();
@@ -60,13 +61,36 @@ async (page, facts, phase) => {
     await canvas.locator('.ad-list-items .ov-list-main').filter({hasText:title}).click();
     await button('适应全部',canvas).click();
   }
-  const kind = phase==='withdraw-document'?'document':phase==='expire-session'?'work_order':'drawing';
+  const kind = photoPhase?'photo':phase==='withdraw-document'?'document':phase==='expire-session'?'work_order':'drawing';
   const target=facts.cards[kind];
   const card=canvas.locator('[data-card-id="'+target.id+'"]');
   const open=button((cockpit?'放大查看：':'')+target.title,card);
   const dialog=page.getByRole('dialog',{name:target.title,exact:true});
   if(cockpit) await open.focus();
 
+  if(photoPhase){
+    await open.click();
+    const image=dialog.locator('.ac-photo-view img');
+    await image.waitFor();
+    const url=await image.evaluate(async node=>{await node.decode();return node.currentSrc;});
+    await button('关闭',dialog).click();
+    await dialog.waitFor({state:'hidden'});
+    const readable=()=>page.evaluate(url=>fetch(url).then(response=>response.ok,()=>false),url);
+    check(await readable(),'Closed photo had no retained preview to check');
+    if(phase==='withdraw-photo'){
+      await change('withdraw-photo');
+      await open.click();
+      await dialog.getByRole('status').getByText('资料访问已撤销',{exact:true}).waitFor();
+      check(await image.count()===0&&!await readable(),'Revoked photo reopened from the old preview cache');
+      return {photoDenied:true,cachedPreviewRevoked:true,cockpit:true};
+    }
+    await button('项目中心').click();
+    await page.getByRole('button',{name:/^Q-26 另一项目 B/}).click();
+    await button('进入项目').click();
+    await page.getByRole('heading',{name:'场景与可视化',exact:true}).waitFor();
+    check(await dialog.count()===0&&!await readable(),'The new project retained the previous project photo preview');
+    return {photoClearedOnProjectSwitch:true,cachedPreviewRevoked:true,cockpit:false};
+  }
   if(phase==='switch-project'){
     const held=await hold('content',target.ref);
     try{

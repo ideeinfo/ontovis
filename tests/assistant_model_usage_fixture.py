@@ -197,6 +197,8 @@ def configured_site(public, fixture):
                     revise_info()
                 elif path=='/test-model-info/viewer':
                     source.permissions['writer'] = {key:'viewer' for key in writer_grants}
+                elif path=='/test-model-info/project-denied':
+                    source.permissions['writer'] = {}
                 elif path=='/test-model-info/restore':
                     source.permissions['writer'] = writer_grants.copy()
                 else:

@@ -70,7 +70,7 @@ def assistant_model_usage(browser, dist):
         verify_saved(edited['savedRevision'])
         info_script = (SCRIPTS/'assistant_model_info.js').read_text()
         info = {}
-        for mode in ('readonly','stale','edit'):
+        for mode in ('readonly','stale','project-denied','edit'):
             role = 'model-info-'+mode
             browser.open(role)
             info[mode] = browser.run(role,info_script,facts,mode)
@@ -119,7 +119,7 @@ def fixed_evidence_access(browser, dist):
     script = (SCRIPTS/'analysis_fixed_access.js').read_text()
     results = {}
     with browser_site(dist) as (facts,restore,verify_snapshot):
-        for mode in ('withdraw-document','switch-project','expire-session','withdraw-project'):
+        for mode in ('withdraw-document','switch-project','expire-session','withdraw-project','withdraw-photo','switch-photo-project'):
             browser.open(mode)
             try:
                 result = browser.run(mode,script,facts,mode)

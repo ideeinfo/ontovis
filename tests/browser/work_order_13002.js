@@ -17,7 +17,8 @@ async (page, facts, phase) => {
   };
   const post = async (route,body) => {
     const active = await (await page.request.get(origin+'/api/session')).json();
-    const response = await page.request.post(origin+root+(route?'/'+route:''),{headers:{Origin:origin},
+    const path=route.startsWith('/api/')?route:root+(route?'/'+route:'');
+    const response = await page.request.post(origin+path,{headers:{Origin:origin},
       data:{expectedSessionRevision:active.sessionRevision,
         projectRef:{ontobaseConnectionId:'ontobase-primary',projectCode:facts.projectCode},...body}});
     return {status:response.status(), body:await response.json()};
@@ -176,6 +177,78 @@ async (page, facts, phase) => {
     return {revisions:[3,4,5],analysisRevision:fixed.analysisRevision,analysisSha256:fixed.analysisSha256,
       disconnectedAfterCommit:true,originalRequestRetried:true,replayCount:3,staleStatus:stale.status,
       recordId:record.workflow.records[0].recordId,replayBody:savedBody};
+  }
+  if(phase==='reuse-two'){
+    await open('other');
+    const analysisRoot='/api/workbench/analysis-sessions';
+    const same=(a,b)=>JSON.stringify(ordered(a))===JSON.stringify(ordered(b));
+    const reference=item=>({analysisSessionId:item.analysisSessionId,analysisRevision:item.analysisRevision,
+      analysisSha256:item.analysisSha256??item.contentSha256});
+    const first=await read({orderId});
+    check(first.orderId!==facts.reuseOrderId&&same(reference(first.workflow.adoptedAnalysis),facts.analysis),
+      'First work order did not adopt the shared fixed revision');
+    const original=await read(facts.analysis,'analysis-reference');
+
+    await button('工单').click();
+    await page.locator('.wov-order-list button').filter({hasText:facts.reuseTitle}).click();
+    await detail.getByRole('heading',{name:facts.reuseTitle,exact:true}).waitFor();
+    await button('相关分析',detail).click();
+    const shared=detail.locator('article').filter({has:page.getByRole('heading',{name:facts.title,exact:true})});
+    await shared.getByText(/r2.*同故障码/).waitFor();
+    await button('采纳此分析',shared).click();
+    const [sameAdoption]=await Promise.all([waitReply('workflow','adopt_analysis'),
+      button('确认采纳此版本',dialog('采纳分析')).click()]);
+    const sharedOrder=await sameAdoption.json();
+    check(sameAdoption.ok()&&sharedOrder.orderId===facts.reuseOrderId&&
+      same(reference(sharedOrder.workflow.adoptedAnalysis),facts.analysis),'Second order adopted a different revision');
+
+    await button('基于此分析修改',shared).click();
+    const copy=dialog('基于此分析修改');
+    const copyName='Q-26 隔离验收 · 第二张工单的独立分析';
+    await copy.getByLabel('分析名称',{exact:true}).fill(copyName);
+    const [copyReply]=await Promise.all([waitReply('analysis-draft'),button('另存并编辑',copy).click()]);
+    const created=await copyReply.json();
+    check(copyReply.ok()&&created.analysisSessionId!==facts.analysis.analysisSessionId&&created.analysisRevision===2,
+      'The copy did not create a separate canvas with the copied material: '+copyReply.status());
+    const initialCopy=await read({analysisSessionId:created.analysisSessionId},analysisRoot+'/detail');
+    check(initialCopy.snapshot.workflowOrderId===facts.reuseOrderId&&
+      initialCopy.snapshot.derivedFrom.contentSha256===facts.analysis.analysisSha256,
+      'The copy lost the second order or the fixed shared version');
+    const workspace=page.getByRole('region',{name:'分析工作空间',exact:true});
+    await button('分析复用说明',workspace).click();
+    const reuse=dialog('分析复用说明');
+    const advice='仅用于第二张模拟工单。核对独立参照温度并登记本次复测。';
+    await reuse.getByLabel('排查建议').fill(advice);
+    await button('应用到画布',reuse).click();
+    await button('保存并用于本单',workspace).click();
+    const use=dialog('保存并用于本单');
+    check(await use.getByLabel('关联工单编号',{exact:true}).inputValue()===facts.reuseOrderId,'Save picked the wrong order');
+    const [applied]=await Promise.all([waitReply('workflow','adopt_analysis'),button('保存并采纳',use).click()]);
+    const adopted=await applied.json();
+    const newFixed=reference(adopted.workflow.adoptedAnalysis);
+    check(applied.ok()&&adopted.orderId===facts.reuseOrderId&&adopted.orderRevision===sharedOrder.orderRevision+1&&
+      newFixed.analysisSessionId===created.analysisSessionId&&newFixed.analysisRevision===created.analysisRevision+1&&
+      newFixed.analysisSha256!==facts.analysis.analysisSha256,'The second order did not adopt the edited copy');
+    await workspace.getByText(/分析已保存，工单已更新/).waitFor();
+    await button('返回工单',workspace).click();
+    await detail.getByRole('heading',{name:facts.reuseTitle,exact:true}).waitFor();
+    await button('相关分析',detail).click();
+    await button('查看分析',detail).click();
+    await dialog(copyName).getByText(advice,{exact:true}).waitFor();
+    await dialog(copyName).screenshot({path:'isolated-13002-reuse-derived.png'});
+
+    const [firstAfter,secondAfter,fixedAfter,newAfter]=await Promise.all([
+      read({orderId}),read({orderId:facts.reuseOrderId}),read(facts.analysis,'analysis-reference'),
+      read(newFixed,'analysis-reference'),
+    ]);
+    check(firstAfter.snapshotSha256===first.snapshotSha256&&firstAfter.orderRevision===first.orderRevision&&
+      same(firstAfter.workflow.adoptedAnalysis,first.workflow.adoptedAnalysis),'The first order changed after editing the copy');
+    check(same(reference(secondAfter.workflow.adoptedAnalysis),newFixed)&&newAfter.snapshot.reuse.advice===advice&&
+      secondAfter.analysisLinks.some(item=>same(reference(item),facts.analysis)),'The second order lost its current or past fixed reference');
+    check(same(fixedAfter.snapshot,original.snapshot),'Original shared analysis changed');
+    return {firstOrderRevision:firstAfter.orderRevision,firstOrderSha256:firstAfter.snapshotSha256,
+      secondOrderRevision:secondAfter.orderRevision,shared:facts.analysis,derived:newFixed,
+      independent:true};
   }
   if (phase==='revoke') {
     const denied=await post('workflow',facts.replayBody);

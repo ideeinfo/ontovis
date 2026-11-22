@@ -132,6 +132,7 @@ export interface ModelLifecycleResult extends ResourceResponse {
 export type ProjectModel = ProjectModelVersion & ResourceResponse;
 export type ModelInfoTarget=Pick<ProjectModelVersion,'modelAssetId'|'modelVersionId'>&{expectedAssetRevision:string};
 export type ProjectModelWrite = ProjectModel & {libraryRevision: string; assetRevision: string};
+export type ModelInfoReceipt=Pick<ProjectModelWrite,'modelAssetId'|'modelVersionId'|'assetRevision'>;
 export type ModelUploadJob={jobId:string;jobRevision:number;state:'queued'|'processing'|'ready'|'failed'|'cancelled';
   errorCode:string|null;result:ProjectModelWrite|null};
 export interface ModelInfoRequest {

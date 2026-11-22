@@ -3,6 +3,11 @@ async (page, facts, mode) => {
   const check = (value,message) => {if(!value)throw Error(message);};
   const target = facts.info;
   const modelPath = '/api/workbench/resources/model';
+  const accessPath = '/api/workbench/projects/access';
+  const saveRequests=[];
+  page.on('request',request=>{
+    if(new URL(request.url()).pathname===modelPath+'/info/save')saveRequests.push(request);
+  });
   const watch = (path,predicate=()=>true) => page.waitForResponse(response=>
     new URL(response.url()).pathname===path&&predicate(response.request().postDataJSON()),{timeout:35000});
   const control = async action => {
@@ -24,7 +29,8 @@ async (page, facts, mode) => {
   const title=page.getByRole('textbox',{name:'分析名称',exact:true});
   await title.waitFor();
   if(await title.inputValue()!==facts.title)await page.locator('.ad-list-items .ov-list-main').filter({hasText:facts.title}).click();
-  await title.fill(facts.title+' · 模型编辑草稿');
+  const draftTitle=facts.title+' · 模型编辑草稿';
+  await title.fill(draftTitle);
   const assistant=page.locator('.ad-assistant .as-panel');
   if(!await assistant.isVisible())await button('分析助手').click();
   await assistant.getByRole('textbox',{name:'向分析助手提问',exact:true}).fill('查询项目采用模型');
@@ -33,29 +39,39 @@ async (page, facts, mode) => {
   const row=results.locator('article').filter({has:page.locator('small[title="'+target.modelVersionId+'"]')});
   const [opened]=await Promise.all([watch(modelPath,matches),button('查看固定模型',row).click()]);
   const version=await opened.json();
+  const turn=results.locator('xpath=../..').locator('.as-turn');
+  const runId=await turn.getAttribute('data-run-id');
+  check(runId,'The result must belong to a recorded turn');
   check(opened.ok()&&version.sha256===target.sha256,'Assistant opened another model version');
   check(await results.getByText(target.displayName,{exact:true}).count()>1,'Expected similarly named assets');
   const preview=page.getByRole('dialog',{name:target.displayName,exact:true});
   const edit=button('编辑模型基本信息',preview);
+  const activePreview=page.locator('.as-fixed-model');
+  const form=page.getByRole('dialog',{name:'编辑模型基本信息',exact:true});
+  const name=form.getByRole('textbox',{name:'名称',exact:true});
+  const back=button('返回分析助手');
+  async function verifyReturn(reply,expectedRevision){
+    const actual=await reply.json();
+    check(reply.ok()&&matches(actual)&&actual.sha256===target.sha256&&
+      actual.assetRevision===expectedRevision,'Returned to a different or stale model');
+    await activePreview.getByText(target.modelVersionId.slice(0,8),{exact:true}).waitFor();
+    await activePreview.locator('.ac-expanded').waitFor();
+  }
+  async function verifyDraft(){
+    await button('关闭',activePreview).click();
+    await title.waitFor();
+    check(await title.inputValue()===draftTitle,'The round trip discarded canvas edits');
+    await button('查看固定模型',row).waitFor();
+    await assistant.locator(`.as-turn[data-run-id="${runId}"]`).waitFor();
+  }
   await edit.waitFor();
   if(mode==='readonly')await control('viewer');
   if(mode==='stale')await control('revise');
-  await edit.click();
-  const leave=page.getByRole('dialog',{name:'分析修改尚未保存',exact:true});
-  if(mode==='edit'){
-    await button('继续编辑',leave).click();
-    await preview.getByText(target.modelVersionId.slice(0,8),{exact:true}).waitFor();
-    await button('关闭',preview).click();
-    check(await title.inputValue()===facts.title+' · 模型编辑草稿','Cancelling the handoff discarded the draft');
-    await button('查看固定模型',row).click();
-    await edit.click();
-  }
-  const [read]=await Promise.all([watch(modelPath,matches),button('放弃并离开',leave).click()]);
+  const [read]=await Promise.all([watch(modelPath,matches),edit.click()]);
   const current=await read.json();
   check(read.ok()&&current.modelAssetId===target.modelAssetId&&current.modelVersionId===target.modelVersionId,
     'Model center did not reopen the exact resource');
   const panel=page.getByRole('region',{name:'共享模型资源',exact:true});
-  const form=page.getByRole('dialog',{name:'编辑模型基本信息',exact:true});
   if(mode==='readonly'){
     await panel.getByText('当前权限仅可查看模型基本信息。',{exact:true}).waitFor();
     check(!await form.count(),'Withdrawn permission still opened the form');
@@ -65,18 +81,42 @@ async (page, facts, mode) => {
       displayName:'Synthetic denial',description:'',purpose:'equipment',clientRequestId:await page.evaluate(()=>crypto.randomUUID()),
       expectedSessionRevision:session.sessionRevision}});
     check(denied.status()===403,'The model write route granted a viewer access');
+    const [returned]=await Promise.all([watch(modelPath,matches),back.click()]);
+    await verifyReturn(returned,current.assetRevision);
+    check(await edit.count()===0,'Returned preview exposed edit access after downgrade');
+    await verifyDraft();
     await control('restore');
-    return {accessChanged:true,writeDenied:403};
+    return {accessChanged:true,writeDenied:403,returned:true};
   }
   if(mode==='stale'){
     await panel.getByText('基本信息已更新，请核对当前内容后再编辑。',{exact:true}).waitFor();
     check(!await form.count()&&current.assetRevision!==version.assetRevision,'A stale handoff opened a form');
-    return {handoffConflict:true};
+    const [returned]=await Promise.all([watch(modelPath,matches),back.click()]);
+    await verifyReturn(returned,current.assetRevision);
+    await verifyDraft();
+    return {handoffConflict:true,returned:true};
   }
   await form.waitFor();
-  const name=form.getByRole('textbox',{name:'名称',exact:true});
   check(await name.inputValue()===target.displayName,'The editor prefilled a different model');
+  check(!await title.isVisible(),'The draft is visible behind the temporary model center');
+  if(mode==='project-denied'){
+    await control('project-denied');
+    const [denied]=await Promise.all([watch(accessPath),button('取消',form).click()]);
+    check(denied.status()===403,'Return did not check the original project grant');
+    await page.getByRole('heading',{name:'项目中心',exact:true}).waitFor();
+    check(!await title.count()&&!await activePreview.count(),'Revoked analysis content was restored');
+    await control('restore');
+    return {projectDenied:403,cachedDraftCleared:true};
+  }
   await form.screenshot({path:'assistant-model-info.png'});
+  await name.fill(target.displayName+' · 取消');
+  const [cancelled]=await Promise.all([watch(modelPath,matches),button('取消',form).click()]);
+  await verifyReturn(cancelled,current.assetRevision);
+  check(saveRequests.length===0&&await activePreview.locator('.as-model-edit-receipt').count()===0,
+    'Cancelling sent a write or reported a save');
+  await verifyDraft();
+  await button('查看固定模型',row).click();
+  await edit.click();
   await name.fill(target.displayName+' · 尝试保存');
   await control('revise');
   const [conflict]=await Promise.all([watch(modelPath+'/info/save',matches),button('保存',form).click()]);
@@ -87,10 +127,21 @@ async (page, facts, mode) => {
   await form.getByRole('textbox',{name:'说明',exact:true}).waitFor();
   await page.waitForFunction(()=>document.querySelector('.ov-resource-form textarea')?.value==='另一会话更新');
   await name.fill(target.displayName+' · 人工保存');
+  await page.route('**'+accessPath,route=>route.fulfill({status:503,json:{code:'SOURCE_UNAVAILABLE'}}),{times:1});
   const [saved]=await Promise.all([watch(modelPath+'/info/save',matches),button('保存',form).click()]);
   const receipt=await saved.json();
   check(saved.ok()&&receipt.sha256===target.sha256&&receipt.modelVersionId===target.modelVersionId,'Manual save changed the fixed model');
-  await form.waitFor({state:'hidden'});
+  await page.getByRole('alert').filter({hasText:'模型信息已保存。暂时无法返回，请重试。'}).waitFor();
+  const [returned]=await Promise.all([watch(modelPath,matches),back.click()]);
+  await verifyReturn(returned,receipt.assetRevision);
+  await activePreview.getByRole('heading',{name:receipt.displayName,exact:true}).waitFor();
+  const savedStatus=activePreview.locator('.as-model-edit-receipt');
+  check(await savedStatus.locator('code').getAttribute('title')===receipt.assetRevision&&
+    await savedStatus.locator('code').innerText()==='r'+receipt.assetRevision.split(':').at(-1),
+    'The visible receipt does not match the server-confirmed revision');
+  await savedStatus.screenshot({path:'assistant-model-info-return.png'});
+  await verifyDraft();
+  check(saveRequests.length===2,'Retrying the return repeated the save');
   return {modelAssetId:target.modelAssetId,modelVersionId:target.modelVersionId,savedRevision:receipt.assetRevision,
-    cancelledDraftKept:true,sameNameChecked:true,conflict:409};
+    cancelledDraftKept:true,sameNameChecked:true,conflict:409,returnRetry:true,savedDraftKept:true};
 }

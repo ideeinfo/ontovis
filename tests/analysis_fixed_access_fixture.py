@@ -28,8 +28,13 @@ def browser_site(public: Path):
         source.permissions = {'writer':{PROJECT:'admin','B':'admin'}}
         fixture.admin = fixture.login('writer')
         blocked = Event()
+        photo_blocked = Event()
         original = source.request
         fixed = DocumentReader()
+        photo = DocumentReader()
+        photo_id, photo_version = str(uuid4()), str(uuid4())
+        photo.document.update(id=photo_id, kind='photo', name='Q-23 合成固定照片', current_version_id=photo_version)
+        photo.version.update(id=photo_version, document_id=photo_id, preview_kind='image')
         sample = identity('13001')
         primary = dict(entityUid='fixture-13001-primary',entityRevision='object:1',lifecycle='active',
                        objectScope='definition',displayName='合成测温对象',objectKind='device',reviewStatus='accepted',
@@ -43,6 +48,10 @@ def browser_site(public: Path):
         def request(account, method, path, body=None):
             url = urlsplit(path)
             route = url.path
+            if f'/documents/{photo_id}' in route:
+                if photo_blocked.is_set():
+                    raise PreviewError(403,'NOT_FOUND_OR_FORBIDDEN')
+                return photo._request(method,path,body)
             if '/documents/' in route:
                 if blocked.is_set():
                     raise PreviewError(403,'NOT_FOUND_OR_FORBIDDEN')
@@ -67,10 +76,12 @@ def browser_site(public: Path):
                         session.created = fixture.sessions.clock()-MAX_SECONDS-1
 
         commands = {'/test-evidence/withdraw-document':blocked.set,
+                    '/test-evidence/withdraw-photo':photo_blocked.set,
                     '/test-evidence/expire-session':expire_browser_sessions,
                     '/test-evidence/withdraw-project':lambda:source.permissions['writer'].pop(PROJECT,None)}
         def restore():
             blocked.clear()
+            photo_blocked.clear()
             source.permissions['writer'][PROJECT] = 'admin'
 
         with patch.object(source,'document_page',lambda *_args,**_kw:img,create=True), \
@@ -92,6 +103,7 @@ def browser_site(public: Path):
             board['context'].update({key:sample[key] for key in keys},eventId=sample['datasetId']+'-event-1')
             entries = [
                 ('document','Q-26 合成固定手册',dict(documentId=DOC,contentVersionId=VERSION,pageNumber=2)),
+                ('photo',photo.document['name'],dict(sourceType='project_document',documentId=photo_id,contentVersionId=photo_version)),
                 ('drawing','Q-26 合成固定图纸',dict(drawingUid=drawing,expectedContentSha256=pdf['sha256'])),
                 ('work_order','Q-26 合成固定工单',dict(orderId=order['orderId'],expectedOrderRevision=order['orderRevision'])),
                 ('alarm','13001 合成报警',{key:board['context'][key] for key in ('eventId','datasetId','datasetRevision')}),

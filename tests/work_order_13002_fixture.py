@@ -14,6 +14,7 @@ from tests.test_work_order_workflow_integration import ANALYSIS, WorkOrderWorkfl
 PROJECT = 'Demo-PDS'
 TITLE = 'Q-26 隔离验收 · 13002 既有分析'
 RECORD = '软件模拟验收。已核对 13002 回放的低读数与参照温度，按固定分析记录复测，等待现场资料。'
+REUSE_TITLE = 'Q-26 隔离验收 · 13002 复用工单'
 
 
 class EndToEnd(WorkOrderWorkflowIntegrationTests):
@@ -105,10 +106,22 @@ def browser_site(public):
         canvas['cards'][0]['note'] = '后续 r3 仅用于核对 r2 引用保持。'
         latest = fixture.ok(ANALYSIS+'/save', {'requestId':str(uuid4()), 'snapshot':canvas,
                             'analysisSessionId':first['analysisSessionId'], 'expectedAnalysisRevision':2})
+        def prepare_reuse():
+            order = fixture.ok('create', dict(title=REUSE_TITLE, issue='隔离合成任务，复用同码分析。',
+                faultCode=sample['faultCode'], faultSystem=sample['sourceConnectionId'], equipment=sample['primaryRds'],
+                simulated=True, requestId=str(uuid4())))
+            fixture.update(order, 'assign', handlerId=OTHER)
+            return dict(reuseOrderId=order['orderId'], reuseTitle=REUSE_TITLE)
+
+        def verify_original():
+            actual = fixture.ok(ANALYSIS+'/detail', dict(analysisSessionId=first['analysisSessionId']))
+            assert (actual['analysisRevision'], actual['contentSha256']) == (latest['analysisRevision'], latest['contentSha256'])
+            return dict(originalHeadRevision=actual['analysisRevision'], originalHeadSha256=actual['contentSha256'])
+
         with serve_workbench(public,fixture.sessions) as origin:
             yield dict(origin=origin, analysis=fixed, latest=latest['analysisRevision'],
                        title=TITLE, text=RECORD, projectCode=PROJECT,
-                       alarm={key:sample[key] for key in ('datasetId','datasetRevision')}), revoked.set
+                       alarm={key:sample[key] for key in ('datasetId','datasetRevision')}), revoked.set, prepare_reuse, verify_original
     finally:
         fixture.doCleanups()
         fixture.tearDownClass()

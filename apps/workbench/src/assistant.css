@@ -186,6 +186,7 @@
 .as-result-actions:empty{display:none}
 
 .as-fixed-model .ac-expanded{height:min(68dvh,760px)}
+.as-model-edit-receipt{display:flex;align-items:center;gap:8px;margin:8px 0;padding:6px 10px;border-radius:6px;background:var(--selected);color:var(--onSelected);font-size:13px}
 @media(max-width:650px){
   .as-fixed-model .ac-expanded,.as-fixed-model .ac-expanded .ac-model-full{height:auto}
   .as-fixed-model .ac-model-full{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(100px,160px) minmax(300px,55dvh) auto}

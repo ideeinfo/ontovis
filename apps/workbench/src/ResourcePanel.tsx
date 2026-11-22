@@ -20,7 +20,7 @@ import type {ImageryVersion,ModelUploadJob} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
   validateResourceFile, writeDenial, modelPlacementIssue, placementModelVersion, resourceCalibrationKey, type ModelResourceSelection} from './resourceForms';
 import {resourceText} from './resourceMessages';
-import type {LegacyModelCandidate, LegacyModelCatalog, ModelInfoTarget, ModelPurpose, ModelThumbnailInfo, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion,  ProjectTurbineDefinition} from './resourceTypes';
+import type {LegacyModelCandidate, LegacyModelCatalog, ModelInfoReceipt, ModelInfoTarget, ModelPurpose, ModelThumbnailInfo, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion,  ProjectTurbineDefinition} from './resourceTypes';
 import './resourcePanel.css';
 
 export interface Props {
@@ -33,6 +33,7 @@ export interface Props {
   canAcquire?:boolean;modelsOnly?:boolean;onOpenScene?:(sceneId:string,projectRef?:ProjectRef)=>void;
   modelSelection?:ModelResourceSelection|null;onModelSelected?:(value:ModelResourceSelection|null)=>void;
   initialModelInfo?:ModelInfoTarget;
+  onModelInfoExit?:(saved?:ModelInfoReceipt)=>void;
   projectCode?:string;
   onEnterEdit?:()=>void;
   onPlaceTurbine?:(turbine:ProjectTurbineDefinition)=>void;
@@ -40,7 +41,7 @@ export interface Props {
 const purposes=['equipment','simplified_scene','environment'] as const;
 const jobRunning=(job:ModelUploadJob)=>job.state==='queued'||job.state==='processing';
 
-export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,publicGeoCenter,onImageryReady,geographic=false,modelSelection,onModelSelected,projectCode,onEnterEdit,onPlaceTurbine,initialModelInfo}:Props) {
+export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,publicGeoCenter,onImageryReady,geographic=false,modelSelection,onModelSelected,projectCode,onEnterEdit,onPlaceTurbine,initialModelInfo,onModelInfoExit}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
   const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
@@ -353,6 +354,10 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
         assetRevision:value.assetRevision,versions:asset.versions.map(item=>({...item,displayName:value.displayName}))}:asset)}:previous);
     if(modelsOnly)onPreview(value);
     setTurbineRefresh(value=>value+1);
+    if(value.modelAssetId===initialModelInfo?.modelAssetId&&value.modelVersionId===initialModelInfo.modelVersionId){
+      const {modelAssetId,modelVersionId,assetRevision}=value;
+      onModelInfoExit?.({modelAssetId,modelVersionId,assetRevision});
+    }
   }
   async function updateFormLibrary() {
     const revision=await readCatalog();
@@ -386,6 +391,7 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
             canEditInfo={catalog?.capabilities.canEditInfo===true&&detailVersion.capabilities.canEditInfo===true&&detailVersion.assetState!=='deleted'&&!denied}
             initialInfoRevision={modelInfo?.modelVersionId===detailVersion.modelVersionId?modelInfo.expectedAssetRevision:undefined}
             onInitialInfoHandled={()=>setModelInfo(null)} onInfoUpdated={infoUpdated}
+            onInfoCancel={detailVersion.modelAssetId===initialModelInfo?.modelAssetId&&detailVersion.modelVersionId===initialModelInfo.modelVersionId?onModelInfoExit:undefined}
             canReplace={canReplace&&detailVersion.assetState!=='deleted'&&version.modelVersionId!==replaceTargetVersion} onReplace={onReplace?()=>onReplace(version):undefined}
             onOpenScene={onOpenScene} onPreview={()=>onPreview(version)} onPlace={()=>{if(canPlace&&!modelPlacementIssue(version,geographic)){onPreview(null);onPlace(version);}}} onUpdated={updated}
             canGenerateThumbnail={catalog?.capabilities.canGenerateThumbnails===true&&!denied} onThumbnailUpdated={thumbnailUpdated}

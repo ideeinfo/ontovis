@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
-import { Boxes, Building2, ChevronDown, ChevronRight, ClipboardList, Database, FileClock, Focus, GitBranch, Languages, Layers, LayoutDashboard, LogOut, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
+import { ArrowLeft, Boxes, Building2, ChevronDown, ChevronRight, ClipboardList, Database, FileClock, Focus, GitBranch, Languages, Layers, LayoutDashboard, LogOut, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, RefreshCw, Sparkles, Sun, User } from 'lucide-react';
 import logo from '../../../assets/brand/ONTOVis.png';
 import { ApiError, cancelled, failureMessage, WorkbenchApi } from './api';
 import type { ContextView, ModelView, ObjectView, SessionView } from './types';
@@ -14,7 +14,7 @@ import { objectCategory } from './objectCatalog';
 import { bindingNeedsReview, modelLocation } from './modelLocation';
 import { SourceEvidence } from './SourceEvidence';
 import {ProjectModelCenter} from './ProjectModelCenter';
-import type {ModelInfoTarget} from './resourceTypes';
+import type {ModelInfoReceipt,ModelInfoTarget} from './resourceTypes';
 import { BindingEditor } from './BindingEditor';
 import type {SceneWorkspaceHandle,SceneWorkspaceTarget} from './SceneWorkspace';
 import type {CockpitEntry} from './ProjectCockpit';
@@ -45,6 +45,7 @@ const navigation = [
   ['ai', 'aiPolicy', Sparkles], ['audit', 'evidenceAudit', FileClock],
 ] as const;
 type Page = WorkbenchPage;
+type ModelInfoVisit={target:ModelInfoTarget;saved?:ModelInfoReceipt;returning?:boolean;error?:unknown};
 export function Workbench() {
   const {t, locale, theme, setTheme, setLocale} = usePreferences();
   const [session, setSession] = useState<SessionView | null>(null);
@@ -74,6 +75,7 @@ export function Workbench() {
   const cockpitButton=useRef<HTMLButtonElement>(null);
   function closeCockpit(){setCockpitOpen(false);const target=isGlobalPage(page)?null:project?.projectRef||null;if(JSON.stringify(api.project)!==JSON.stringify(target))api.selectProject(target);requestAnimationFrame(()=>cockpitButton.current?.focus());}
   function openCockpit(){
+    if(modelInfoVisit){navigate('models',null,'',null,()=>setCockpitPicker(true));return;}
     const change=()=>{if(isGlobalPage(page)||!project){setCockpitPicker(true);return;}
       setCockpitEntry(page==='scene'?sceneWorkspace.current?.cockpitEntry()||null:null);setCockpitVisited(true);setCockpitOpen(true);};
     if(page==='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else leaveOrders(change);
@@ -84,7 +86,9 @@ export function Workbench() {
   const [modelVersionId,setModelVersionId] = useState<string|null>(null);
   const [modelReload,setModelReload] = useState(0);
   const [initialEquipment,setInitialEquipment]=useState<EquipmentConfigurationEdit>();
-  const [initialModelInfo,setInitialModelInfo]=useState<ModelInfoTarget>();
+  const [modelInfoVisit,setModelInfoVisit]=useState<ModelInfoVisit|null>(null);
+  const [modelInfoReceipt,setModelInfoReceipt]=useState<ModelInfoReceipt>();
+  const modelInfoReturn=useRef<AbortController|null>(null);
   const [resourceScene,setResourceScene]=useState<SceneWorkspaceTarget>();
   const [sceneEntry,setSceneEntry] = useState<LegacySceneEntryTarget|null>(null);
   const [legacyReady,setLegacyReady] = useState<string|null>(null);
@@ -104,11 +108,30 @@ export function Workbench() {
   const [initialOrderRecord,setInitialOrderRecord]=useState('');
   const [initialAnalysisEntry,setInitialAnalysisEntry]=useState<import('./analysisSources').AnalysisEntry|null>(null);
   const [pendingOrderLeave,setPendingOrderLeave]=useState<(()=>void)|null>(null);
-  function leaveOrders(change:()=>void){if((page==='orders'||page==='analysis'||page==='hierarchy'||page==='ai'||page==='data')&&ordersDirty)setPendingOrderLeave(()=>change);else change();}
+  function leaveOrders(change:()=>void){if((modelInfoVisit||page==='orders'||page==='analysis'||page==='hierarchy'||page==='ai'||page==='data')&&ordersDirty)setPendingOrderLeave(()=>change);else change();}
+  function clearModelInfoVisit(){modelInfoReturn.current?.abort();modelInfoReturn.current=null;setModelInfoVisit(null);setModelInfoReceipt(undefined);}
+  function editModelInfo(target:ModelInfoTarget){
+    setModelInfoReceipt(undefined);setError(null);setModelInfoVisit({target});setPage('models');
+  }
+  async function returnToAssistant(saved=modelInfoVisit?.saved){
+    if(!modelInfoVisit||!project||modelInfoReturn.current)return;
+    const request=new AbortController();modelInfoReturn.current=request;
+    setModelInfoVisit({...modelInfoVisit,saved,returning:true,error:undefined});
+    try{
+      await api.request<ProjectAccess>('/api/workbench/projects/access',{projectRef:project.projectRef},request.signal);
+      if(request.signal.aborted)return;
+      setModelInfoReceipt(saved);setModelInfoVisit(null);setPage('analysis');
+    }catch(error){
+      if(request.signal.aborted||cancelled(error))return;
+      if(error instanceof ApiError&&(error.status===403||error.status===404)){api.onProjectDenied();return;}
+      setModelInfoVisit({...modelInfoVisit,saved,returning:false,error});
+    }finally{if(modelInfoReturn.current===request)modelInfoReturn.current=null;}
+  }
   function navigate(next:Page,legacyVersionId:string|null=null,orderQuery='',analysisEntry:import('./analysisSources').AnalysisEntry|null=null,afterNavigate?:()=>void,saved=false){
     if(!canNavigate(next,!!project))next='project';
     if(next==='bindings'&&legacyVersionId===null)next='hierarchy';
-    const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setResourceScene(undefined);setInitialEquipment(undefined);setInitialModelInfo(undefined);setLegacyReady(null);
+    if(modelInfoVisit&&next==='analysis'&&!analysisEntry){void returnToAssistant();return;}
+    const change=()=>{legacyEntry.current.cancel();setSceneEntry(null);setResourceScene(undefined);setInitialEquipment(undefined);clearModelInfoVisit();setLegacyReady(null);
       api.selectProject(next==='models'?null:project?.projectRef||null);setError(null);
       if(next==='bindings'){setModelVersionId(legacyVersionId);setModel(null);setContext(null);setDetail(null);setModelReload(value=>value+1);}
       setInitialOrderQuery(orderQuery);setInitialOrderAlarm(null);setInitialOrderRecord('');setInitialAnalysisEntry(analysisEntry);setPage(next);setLeft(false);setRight(false);afterNavigate?.();};
@@ -119,7 +142,7 @@ export function Workbench() {
     setCockpitOpen(false);setCockpitVisited(false);setCockpitPicker(false);setCockpitEntry(null);
     setPendingOrderLeave(null);setOrdersDirty(false);
     sessionReady.current=false;setSessionCheck('loading');
-    legacyEntry.current.cancel();setSceneEntry(null);setResourceScene(undefined);setInitialEquipment(undefined);setInitialModelInfo(undefined);setLegacyReady(null);
+    legacyEntry.current.cancel();setSceneEntry(null);setResourceScene(undefined);setInitialEquipment(undefined);clearModelInfoVisit();setLegacyReady(null);
     api.selectProject(null);setProject(null);setPage('project'); setProjectName('');setContext(null); setSelection({uid:'', scope:'equipment'}); setDetail(null); setModel(null);
     setModelVersionId(null);
     const value={state,sessionRevision:current.current?.sessionRevision||api.revision};current.current=value;setSession(value);
@@ -162,7 +185,7 @@ export function Workbench() {
   }
   useEffect(() => {
     mounted.current=true;
-    api.onProjectDenied=()=>{setCockpitOpen(false);setCockpitVisited(false);setCockpitPicker(false);setCockpitEntry(null);api.selectProject(null);setProject(null);setProjectName('');setSceneEntry(null);setResourceScene(undefined);setContext(null);setDetail(null);setModel(null);setPage('project');setError(new ApiError(403,'FORBIDDEN'));};
+    api.onProjectDenied=()=>{clearModelInfoVisit();setPendingOrderLeave(null);setOrdersDirty(false);setCockpitOpen(false);setCockpitVisited(false);setCockpitPicker(false);setCockpitEntry(null);api.selectProject(null);setProject(null);setProjectName('');setSceneEntry(null);setResourceScene(undefined);setContext(null);setDetail(null);setModel(null);setPage('project');setError(new ApiError(403,'FORBIDDEN'));};
     api.onDenied = status => {const checking=!!inspection.current;cancelInspection();clear(status === 401 ? 'expired' : 'denied', status === 401 ? 'expired' : 'denied');if(checking){setSessionCheck('failed');
       if(mustSignOut.current){setMessage('logoutFailed');loginOpen.current=true;setModal('login');}}else if(!authBusy.current)void inspect();};
     void inspect();
@@ -178,7 +201,7 @@ export function Workbench() {
     const visible = () => {if (!document.hidden) void inspect();}; document.addEventListener('visibilitychange',visible);
     return () => {mounted.current=false;authIntent.current++;cancelInspection();window.clearInterval(poll); channel.current?.close(); api.onDenied=() => {};api.onProjectDenied=()=>{};
       window.removeEventListener('pointerdown',activity); window.removeEventListener('keydown',activity);
-      document.removeEventListener('visibilitychange',visible); legacyEntry.current.cancel();api.invalidate();};
+      document.removeEventListener('visibilitychange',visible);modelInfoReturn.current?.abort();modelInfoReturn.current=null;legacyEntry.current.cancel();api.invalidate();};
   }, []);
   useEffect(() => {
     if (session?.state !== 'active'||page!=='bindings'||!project) {setLoading(false);if(page==='scene')setError(null);return;}
@@ -243,13 +266,13 @@ export function Workbench() {
   }
   function closeModal(){loginOpen.current=false;setModal(null);setPassword('');if(authBusy.current==='login')void logout();}
   function refresh() {
-    const change=()=>{legacyEntry.current.cancel();api.invalidate();setLegacyReady(null);setInitialModelInfo(undefined);
+    const change=()=>{legacyEntry.current.cancel();api.invalidate();setLegacyReady(null);clearModelInfoVisit();
       if(page==='scene'&&sceneEntry){setSceneEntry(null);setPage('bindings');}
       setContext(null); setDetail(null); setSelection({uid:'',scope:'equipment'}); setModel(null); setReload(value => value+1);};
     if(page==='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else leaveOrders(change);
   }
   function enterProject(value:ProjectSummary,sceneId?:string){
-    legacyEntry.current.cancel();api.selectProject(value.projectRef);setProject(value);setProjectName(value.displayName);setSceneEntry(null);setResourceScene(sceneId?{sceneId}:undefined);setContext(null);setDetail(null);setModel(null);setSelection({uid:'',scope:'project'});setPage('scene');setReload(v=>v+1);
+    legacyEntry.current.cancel();clearModelInfoVisit();api.selectProject(value.projectRef);setProject(value);setProjectName(value.displayName);setSceneEntry(null);setResourceScene(sceneId?{sceneId}:undefined);setContext(null);setDetail(null);setModel(null);setSelection({uid:'',scope:'project'});setPage('scene');setReload(v=>v+1);
   }
   function chooseProject(value:ProjectSummary,_access?:ProjectAccess){
     const change=()=>enterProject(value);
@@ -261,8 +284,8 @@ export function Workbench() {
     try{
       const access=await api.request<ProjectAccess>('/api/workbench/projects/access',{projectRef});
       if(revision!==api.revision||current.current?.state!=='active')return;
-      enterProject({projectRef,displayName:access.projectName,sourceDescription:'',status:'active',
-        workspaceState:'ready',sceneCount:0},sceneId);
+      leaveOrders(()=>enterProject({projectRef,displayName:access.projectName,sourceDescription:'',status:'active',
+        workspaceState:'ready',sceneCount:0},sceneId));
     }catch(value){if(!cancelled(value))setError(value);}
   }
   function select(uid:string, scope:'equipment' | 'project' = 'equipment') {
@@ -296,12 +319,21 @@ export function Workbench() {
       {(loading || !!error || message) && <div className="cw-notice" role={error ? 'alert' : 'status'}><span>{loading ? t('loading') : error ? failureMessage(error,locale) : message ? t(message) : ''}</span>{!!error && active && <Btn onClick={refresh}>{t('retry')}</Btn>}{!error&&active&&message==='unavailable'&&sessionCheck==='failed'&&<Btn onClick={()=>void inspect()}>{t('retry')}</Btn>}</div>}
       {page==='scene'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><SceneWorkspace key={`${session?.sessionRevision}:${JSON.stringify(project?.projectRef)}:${reload}:${sceneEntry?.sceneId||''}:${sceneEntry?.sceneRevision||''}:${resourceScene?.sceneId||''}:${resourceScene?.sceneRevision||''}:${resourceScene?.instanceId||''}`} api={api} suspended={cockpitOpen} ref={sceneWorkspace} initialEntry={sceneEntry} initialScene={resourceScene} project={project} onProjectCreated={enterProject} onProjectName={setProjectName} onConfigure={()=>navigate('hierarchy')}/></Suspense>}
       {page==='orders'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><WorkOrders key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} initialQuery={initialOrderQuery} initialAlarm={initialOrderAlarm} initialRecord={initialOrderRecord} onDirtyChange={setOrdersDirty} onOpenEditor={(analysisSessionId,analysisRevision,saved)=>navigate('analysis',null,'',{analysisSessionId,analysisRevision,openLatest:true},undefined,saved)} onAnalyze={orderId=>navigate('analysis',null,'',{orderId})} onOpenReference={entry=>navigate('analysis',null,'',entry)} onOpenAnalysis={(analysisSessionId,analysisRevision,assistantRunId)=>navigate('analysis',null,'',{analysisSessionId,analysisRevision,...(assistantRunId?{assistantRunId}:{})})}/></Suspense>}
-      {page==='analysis'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><AnalysisWorkspace initialEntry={initialAnalysisEntry}
+      {(page==='analysis'||modelInfoVisit)&&active&&project&&<div className="cw-analysis-view" hidden={!!modelInfoVisit}><Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><AnalysisWorkspace initialEntry={initialAnalysisEntry}
         onEditEquipment={target=>navigate('hierarchy',null,'',null,()=>setInitialEquipment(target))}
-        onEditModelInfo={target=>navigate('models',null,'',null,()=>setInitialModelInfo(target))} onEditScene={target=>navigate('scene',null,'',null,()=>setResourceScene(target))} onOpenWorkOrder={(code,record)=>navigate('orders',null,code,null,()=>setInitialOrderRecord(record||''))} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onDirtyChange={setOrdersDirty}/></Suspense>}
+        onEditModelInfo={editModelInfo} modelInfoEditing={!!modelInfoVisit} modelInfoReceipt={modelInfoReceipt}
+        onEditScene={target=>navigate('scene',null,'',null,()=>setResourceScene(target))} onOpenWorkOrder={(code,record)=>navigate('orders',null,code,null,()=>setInitialOrderRecord(record||''))} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onDirtyChange={setOrdersDirty}/></Suspense></div>}
       {page==='data'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><ProjectData onDirtyChange={setOrdersDirty} active={!cockpitOpen} onAnalyze={entry=>navigate('analysis',null,'',entry)} key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} locale={locale} onOpenWorkOrders={(code,alarm)=>navigate('orders',null,code,null,()=>setInitialOrderAlarm(alarm||null))}/></Suspense>}
       {page==='ai'&&active&&project&&<Suspense fallback={<p className="cw-state" role="status">{t('loading')}</p>}><AiPolicy key={`${session?.sessionRevision}:${JSON.stringify(project.projectRef)}:${reload}`} api={api} en={locale==='en'} onDirtyChange={setOrdersDirty}/></Suspense>}
-      {!workspace&&page!=='ai'&&page!=='scene'&&page!=='orders'&&page!=='analysis'&&page!=='data'&&<div className="cw-page-content">{page==='models'&&active?<ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} initialModelInfo={initialModelInfo} onConfigure={()=>navigate('hierarchy')} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>:page==='hierarchy'&&active&&project?<EquipmentHierarchy key={JSON.stringify(project.projectRef)} api={api} initialConfiguration={initialEquipment} onDirtyChange={setOrdersDirty} onOpenScene={()=>navigate('scene')} onAnalyze={entry=>navigate('analysis',undefined,undefined,entry)}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
+      {!workspace&&page!=='ai'&&page!=='scene'&&page!=='orders'&&page!=='analysis'&&page!=='data'&&<div className="cw-page-content">{page==='models'&&active?<>
+        {modelInfoVisit&&<div className="cw-model-return">
+          <Btn disabled={modelInfoVisit.returning} onClick={()=>void returnToAssistant()}><ArrowLeft size={15}/>{locale==='zh'?'返回分析助手':'Return to analysis assistant'}</Btn>
+          {modelInfoVisit.returning&&<span role="status">{locale==='zh'?'正在核对项目权限…':'Checking project access…'}</span>}
+          {!!modelInfoVisit.error&&<span role="alert">{modelInfoVisit.saved&&(locale==='zh'?'模型信息已保存。':'Model information was saved. ')}{locale==='zh'?'暂时无法返回，请重试。':'Unable to return. Try again.'}</span>}
+        </div>}
+        <ProjectModelCenter key={`${session?.sessionRevision}:${reload}`} api={api} initialModelInfo={modelInfoVisit?.target}
+          onModelInfoExit={modelInfoVisit?saved=>void returnToAssistant(saved):undefined} onConfigure={()=>navigate('hierarchy')} onOpenScene={(sceneId,ref)=>void openModelScene(sceneId,ref)}/>
+      </>:page==='hierarchy'&&active&&project?<EquipmentHierarchy key={JSON.stringify(project.projectRef)} api={api} initialConfiguration={initialEquipment} onDirtyChange={setOrdersDirty} onOpenScene={()=>navigate('scene')} onAnalyze={entry=>navigate('analysis',undefined,undefined,entry)}/>:active?<ProjectsPanel key={`${session?.sessionRevision}:${reload}`} api={api} onSelect={chooseProject}/>:null}</div>}
       {page==='scene'&&!active&&<p className="cw-state">{t('loginPrompt')}</p>}
       {workspace&&(!active||legacyReady===entryIdentity)&&<div className={`cw-workspace layout-${layout}`}>
         <ObjectsPanel key={`${session?.sessionRevision}:${reload}:${context?.context.hierarchyRevision}`} api={api} view={context} selected={selection.uid} ancestors={detail?.ancestors.path.map(row=>row.object.entityUid) || []} onSelect={select} className={left ? 'is-open' : ''}/>
@@ -321,7 +353,7 @@ export function Workbench() {
       title={page==='data'?(locale==='zh'?'天气配置尚未保存':'Unsaved weather settings'):
         page==='ai'?(locale==='zh'?'AI 策略尚未生效':'Unapplied AI policy changes'):
         page==='hierarchy'?(locale==='zh'?'设备配置尚未保存':'Unsaved equipment settings'):
-        page==='analysis'?(locale==='zh'?'分析修改尚未保存':'Unsaved analysis changes'):
+        (page==='analysis'||modelInfoVisit)?(locale==='zh'?'分析修改尚未保存':'Unsaved analysis changes'):
         (locale==='zh'?'工单修改尚未保存':'Unsaved work order changes')}
       description={locale==='zh'?'离开会丢失当前修改。':'Leaving discards the current edits.'}
       cancelLabel={locale==='zh'?'继续编辑':'Keep editing'} onClose={()=>setPendingOrderLeave(null)}>

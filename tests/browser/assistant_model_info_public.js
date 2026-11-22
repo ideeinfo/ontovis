@@ -58,13 +58,6 @@ async (page, origin, evidence, mode) => {
       await preview.locator('.ac-expanded').waitFor();
       check(await entry.count()===0,'Cockpit exposed the model editor');
     }else{
-      await entry.click();
-      await button('继续编辑',page.getByRole('dialog',{name:'分析修改尚未保存'})).click();
-      await preview.waitFor();
-      await button('关闭',preview).click();
-      check(await title.inputValue()===originalTitle+' · 取消验收草稿','Cancelling removed the canvas draft');
-      await title.fill(originalTitle);
-      await show.click();
       const [read]=await Promise.all([watch(path,body=>body.modelVersionId===model.modelVersionId),entry.click()]);
       const current=await read.json();
       check(read.ok()&&current.modelAssetId===model.modelAssetId&&current.contentRevision===model.contentRevision&&
@@ -74,12 +67,20 @@ async (page, origin, evidence, mode) => {
       check(await form.getByRole('textbox',{name:'名称',exact:true}).inputValue()===model.displayName,
         'The original edit form did not show the fixed model');
       await form.screenshot({path:'public-model-info.png'});
-      await button('取消',form).click();
-      await form.waitFor({state:'hidden'});
+      const [returned]=await Promise.all([watch(path,body=>body.modelVersionId===model.modelVersionId),button('取消',form).click()]);
+      const reopened=await returned.json();
+      check(returned.ok()&&reopened.sha256===model.sha256&&reopened.assetRevision===model.assetRevision,
+        'Cancelling did not restore the same fixed model');
+      await preview.locator('.ac-expanded').waitFor();
+      check(await preview.locator('.as-model-edit-receipt').count()===0,'Cancelling displayed a saved receipt');
+      await button('关闭',preview).click();
+      check(await title.inputValue()===originalTitle+' · 取消验收草稿','Cancelling removed the canvas draft');
+      await show.waitFor();
+      await title.fill(originalTitle);
     }
     check(writes.length===0,'The public navigation unexpectedly sent a save request');
     return {mode,modelVersionId:model.modelVersionId,assetRevision:model.assetRevision,sha256:model.sha256,
-      editorOpened:!cockpit,domainWrites:0};
+      editorOpened:!cockpit,returnedToOriginal:!cockpit,domainWrites:0};
   }finally{
     page.off('request',observe);
   }
