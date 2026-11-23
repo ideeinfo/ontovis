@@ -27,6 +27,13 @@ def location_for(path):
 
 
 class WorkbenchDeploymentTests(unittest.TestCase):
+    def test_regional_directory_uses_the_bounded_project_read_proxy(self):
+        path='/api/workbench/regional-catalog'
+        self.assertEqual(location_for(path),location_for('/api/workbench/projects/access'))
+        for suffix in ('/','/extra'):
+            with self.assertRaises(AssertionError):
+                location_for(path+suffix)
+
     def test_work_order_workflow_uses_explicit_json_routes_and_bounded_upload_parts(self):
         from apps.api.work_order_routes import WORKFLOW_PATHS
         for suffix in WORKFLOW_PATHS:
