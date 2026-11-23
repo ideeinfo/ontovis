@@ -103,13 +103,19 @@ async (page, facts, mode) => {
   await result.first().waitFor({timeout:20000});
   if(mode==='public'){
     verify(await result.count()===20,'Default directory page is not bounded');
-    const first=await result.first().innerText();
-    await label('下一页',modal).click();
-    await result.first().waitFor();
-    verify(await result.first().innerText()!==first,'Next page did not move the directory listing');
-    await label('上一页',modal).click();
-    await result.first().waitFor();
-    verify(await result.first().innerText()===first,'Previous page did not restore the original listing');
+    const first=await result.first().locator('strong').innerText();
+    async function turn(name,offset){
+      const [response]=await Promise.all([
+        page.waitForResponse(reply=>new URL(reply.url()).pathname===catalogPath&&reply.request().postDataJSON()?.offset===offset),
+        label(name,modal).click(),
+      ]);
+      verify(response.ok(),'The protected directory page could not be read');
+      const {items}=await response.json();
+      await result.first().getByText(items[0].name,{exact:true}).waitFor();
+      return items[0].name;
+    }
+    verify(await turn('下一页',20)!==first,'Next page did not move the directory listing');
+    verify(await turn('上一页',0)===first,'Previous page did not restore the original listing');
   }
   const input=modal.getByRole('textbox',{name:'风场名称'});
   const source=modal.getByRole('combobox',{name:'区域目录来源'});
