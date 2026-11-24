@@ -92,6 +92,37 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
   };
   node.addEventListener('wheel',wheel,{passive:false,capture:true});return()=>node.removeEventListener('wheel',wheel,true);
  },[!!detail,hand,minZoom]);
+ useEffect(()=>{
+  const node=board.current;if(!active||!node)return;
+  const doc=node.ownerDocument;
+  const cardSelection=()=>{
+   const selection=doc.getSelection(),anchor=selection?.anchorNode;
+   if(!selection||selection.isCollapsed||!anchor||!node.contains(anchor))return null;
+   const card=(anchor instanceof Element?anchor:anchor.parentElement)?.closest('.pa-card');
+   return card?{card,selection}:null;
+  };
+  function keepSelectionInCard(){
+   const current=cardSelection();if(!current)return;
+   const {card,selection}=current,focus=selection.focusNode;
+   if(!focus||card.contains(focus))return;
+   const range=doc.createRange();range.selectNodeContents(card);
+   const boundary=range.comparePoint(focus,selection.focusOffset)<0?0:card.childNodes.length;
+   selection.extend(card,boundary);
+  }
+  function clearSelectionOnPress(event:PointerEvent){
+   if(event.button!==0||!event.isPrimary)return;
+   const current=cardSelection();if(!current)return;
+   if(event.shiftKey&&event.target instanceof Node&&current.card.contains(event.target))return;
+   current.selection.removeAllRanges();
+  }
+  doc.addEventListener('selectionchange',keepSelectionInCard);
+  // Clear before the canvas cancels the browser's default action to start panning.
+  doc.addEventListener('pointerdown',clearSelectionOnPress,true);
+  return()=>{
+   doc.removeEventListener('selectionchange',keepSelectionInCard);
+   doc.removeEventListener('pointerdown',clearSelectionOnPress,true);
+  };
+ },[active,!!detail]);
  const sourceRelations=useSourceRelations(sources,detail?.snapshot.cards||[]);
  const links=cockpitRelationGraph(detail?.snapshot.cards||[],layout.cards,sourceRelations.relations,detail?.snapshot.relations||[],availability,sourceRelations.gaps,en).map(link=>({...link,route:cockpitRelationRoute(link.from,link.to)}));
  const linkSignature=JSON.stringify(links.map(link=>[link.id,link.label,link.route]));

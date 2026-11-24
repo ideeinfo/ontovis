@@ -30,7 +30,8 @@
 .pa-frame{--pa-frame-border:color-mix(in srgb,var(--pc-green) 34%,var(--pc-border));position:absolute;box-sizing:border-box;border:1px solid var(--pa-frame-border);border-radius:8px;background:color-mix(in srgb,var(--pc-green) 7%,transparent);pointer-events:none}
 .pa-frame>h3{position:absolute;bottom:100%;left:-1px;transform-origin:left bottom;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 7px;border:1px solid var(--pa-frame-border);border-radius:6px 6px 0 0;background:var(--pc-panel);color:var(--pc-text);font-size:13px;line-height:1.25;font-weight:600;pointer-events:auto}
 .pa-card>footer>.pa-card-frame{min-width:0;margin-left:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pa-board{touch-action:none;cursor:grab;overflow:clip}
+.pa-board{touch-action:none;cursor:grab;overflow:clip;-webkit-user-select:none;user-select:none}
+.pa-card-body,.pa-card>footer{-webkit-user-select:text;user-select:text}
 .pa-board:focus-visible{outline:2px solid var(--pc-green);outline-offset:-2px}
 .pa-board[data-panning]{cursor:grabbing;user-select:none}
 .pa-board[data-panning] .pa-world{pointer-events:none}

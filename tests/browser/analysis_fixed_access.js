@@ -115,8 +115,46 @@ async (page, facts, phase) => {
     await button('恢复布局',canvas).click();
     check(same(await rect(moving),savedRect(card))&&same(await rect(ownerNode),savedRect(owner)),
       'Reset did not restore the saved card and frame');
+    const note=cardNode('note-1').locator('.pa-note p');
+    const alarm=cardNode(facts.cards.alarm.id).locator('.ac-source-alarm > p');
+    await note.waitFor();
+    await alarm.waitFor();
+    const textPoint=(locator,fraction)=>locator.evaluate((node,fraction)=>{
+      const text=document.createTreeWalker(node,NodeFilter.SHOW_TEXT).nextNode();
+      const offset=Math.floor((text.length-1)*fraction),range=document.createRange();
+      range.setStart(text,offset);
+      range.setEnd(text,offset+1);
+      const box=range.getBoundingClientRect();
+      return {x:box.x+box.width/2,y:box.y+box.height/2};
+    },fraction);
+    const selectedText=()=>page.evaluate(()=>window.getSelection().toString());
+    const startText=await textPoint(note,.15),endText=await textPoint(note,.85),otherText=await textPoint(alarm,.3);
+    const dragText=async(start,end,cardId)=>{
+      await page.mouse.move(start.x,start.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x,end.y,{steps:12});
+      const stayedInside=()=>page.evaluate(id=>{
+        const card=document.querySelector(`.pa-card[data-card-id="${id}"]`),selection=window.getSelection();
+        return !!selection.toString().trim()&&card.contains(selection.anchorNode)&&card.contains(selection.focusNode);
+      },cardId);
+      check(await stayedInside(),'The selection escaped the starting card during the drag');
+      await page.mouse.up();
+      check(await stayedInside(),'The selection escaped the starting card after the drop');
+    };
+    await dragText(startText,endText,'note-1');
+    const selected=await selectedText();
+    await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+    await page.keyboard.press('ControlOrMeta+c');
+    check(await page.evaluate(()=>navigator.clipboard.readText())===selected,'Text selected inside the card could not be copied');
+    await dragText(startText,otherText,'note-1');
+    const empty=await plot.boundingBox();
+    await page.mouse.click(empty.x+8,empty.y+empty.height/2);
+    check(await selectedText()==='','Clicking the canvas background did not clear the card selection');
+    await dragText(otherText,endText,facts.cards.alarm.id);
+    await page.mouse.click(endText.x,endText.y);
+    check(await selectedText()==='','Clicking another card did not clear the selection');
     return {groups:facts.frames.length,cards:await plot.locator('.pa-card').count(),dragPastBounds:true,
-      expands:true,shrinks:true,linkFollows:true,fit:true,reset:true};
+      expands:true,shrinks:true,linkFollows:true,fit:true,reset:true,cardTextSelection:true,copySelectedText:true};
   }
   const kind = photoPhase?'photo':phase==='withdraw-document'?'document':phase==='expire-session'?'work_order':'drawing';
   const target=facts.cards[kind];
