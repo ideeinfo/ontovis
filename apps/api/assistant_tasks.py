@@ -25,6 +25,19 @@ def equipment_configuration_question(value):
     return term if len(term)<=200 else None
 
 
+def replay_equipment_context(context, fixed, question):
+    from . import simulated_faults
+    if context.get('sourceConnectionId')!=simulated_faults.SOURCE_ID:
+        return None
+    # The selected alarm is an owned, fixed source on this canvas revision.
+    if not any(ref['sourceKind']=='alarm' and all(descriptor.get(key)==context.get(key)
+               for key in ('eventId','datasetId','datasetRevision')) for ref,descriptor in fixed):
+        return None
+    if not re.search(r'这台设备|这个(?:设备|柜体|柜)|(?:这条|本次|当前)(?:模拟)?报警|(?:this|current) (?:equipment|cabinet|alarm)',question,re.I):
+        return None
+    return simulated_faults.dataset(context['datasetId'],context['datasetRevision'])
+
+
 def snapshot(body, connection, project):
     from .analysis_drafts import validate_snapshot
     raw=body.get('snapshotJson')
@@ -137,7 +150,7 @@ class ProjectTools:
             gaps.append(dict(text='只显示本轮读取的范围。可按更具体的名称继续查找。',refs=[]))
         return dict(observations=self.catalogue_observations,hypotheses=[],gaps=gaps,nextSteps=[])
 
-    def query(self,q):
+    def query(self,q,*,replay=None,drawings=False):
         reader=self.reader;tool=q['tool'];needle=q['query'];fault=q['faultCode']
         prefix=reader.reader.prefix
         if tool=='work_orders':
@@ -220,7 +233,7 @@ class ProjectTools:
             query(self,q)
         elif tool=='equipment_materials':
             from .assistant_device_materials import query
-            query(self,needle)
+            query(self,needle,replay=replay,drawings=drawings)
         elif tool=='processing_tasks':
             from .assistant_processing import query
             query(self,needle)
@@ -324,7 +337,12 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             context['processingTasks']=True
         equipment_query=equipment_configuration_question(body['question'])
         explicit_equipment=equipment_query is not None
-        if explicit_equipment:
+        question=body['question']
+        replay=replay_equipment_context(draft['context'],fixed,question) if equipment_materials and 'alarm' in kinds else None
+        replay_materials=replay is not None and re.fullmatch(r'(?:请问\s*)?(?:这台设备|这个(?:设备|柜体|柜))\s*有(?:哪些)?\s*(?:图纸|说明书|资料)(?:和(?:图纸|说明书|资料))?[？?。]?',question.strip())
+        if replay_materials and not explicit_equipment:
+            proposed=dict(intent='query',queries=[dict(tool='equipment_materials',query=replay['primaryRds'],faultCode='')],actions=[])
+        elif explicit_equipment:
             require(equipment_configurations,'ASSISTANT_TOOL_NOT_ALLOWED',403)
             proposed=dict(intent='query',queries=[dict(tool='equipment_configurations',query=equipment_query,faultCode='')],actions=[])
         else:
@@ -339,7 +357,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         prefer_selected=body.get('preferSelectedEvidence',False) and not explicit_equipment
         selected_reads=read_selected_evidence(tools,fixed) if prefer_selected else []
         for q in plan['queries']:
-            try:tools.query(q)
+            try:tools.query(q,replay=replay,drawings=bool(re.search(r'图纸|drawings?',question,re.I)))
             except PreviewError as error:
                 if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
                 state='budget_limited' if error.code=='ASSISTANT_READ_LIMIT' else 'unavailable'

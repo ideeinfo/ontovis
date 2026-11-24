@@ -27,13 +27,15 @@ def matches_project_identifier(item, identifier, project_code):
 
 class AnalysisSourceReader:
     def __init__(self, reader, models, orders, authorize, actor, *, scene_library=None, scene_listing=None,
-                 adopted_model_listing=None, equipment_configuration_listing=None, allow_retained_photo_image=False):
+                 adopted_model_listing=None, equipment_configuration_listing=None, simulation_target_lookup=None,
+                 allow_retained_photo_image=False):
         self.reader, self.models, self.orders, self.authorize, self.actor = reader, models, orders, authorize, actor
         self.photos = ScenePhotoReader(reader)
         self.scene_library = scene_library
         self.scene_listing = scene_listing
         self.adopted_model_listing = adopted_model_listing
         self.equipment_configuration_listing = equipment_configuration_listing
+        self.simulation_target_lookup = simulation_target_lookup
         self.allow_retained_photo_image = allow_retained_photo_image
 
     def _selection(self, selector, extra=()):

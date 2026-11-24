@@ -1,10 +1,10 @@
 import {ApiError,cancelled,type WorkbenchApi} from './api.ts';
-import {initialReplay,type SimulatedAlarm,type SimulatedDataset,type SimulationCatalogue,type SimulationDetail} from './simulatedAlarms.ts';
+import {initialReplay,registeredSimulationTarget,type SimulatedAlarm,type SimulatedDataset,type SimulationCatalogue,type SimulationDetail,type SimulationTarget} from './simulatedAlarms.ts';
 
 export type ReplaySelection=Pick<SimulatedDataset,'datasetId'|'datasetRevision'>;
 export type ReplayPosition={second:number;stale:boolean};
 export type ReplayPositions=Readonly<Record<string,ReplayPosition>>;
-export type CockpitAlarmRow={dataset:SimulatedDataset;detail:SimulationDetail|null;error?:unknown};
+export type CockpitAlarmRow={dataset:SimulatedDataset;detail:SimulationDetail|null;registration?:SimulationTarget;error?:unknown};
 export type CockpitAlarmPresentation={
  alarm:SimulatedAlarm|null;state:SimulatedAlarm['state']|'pending'|'stale'|'unavailable';
  status:string;severity:string|undefined;second:number;
@@ -42,11 +42,12 @@ export async function readCockpitAlarms(api:Pick<WorkbenchApi,'request'>,signal:
  const catalogue=await api.request<SimulationCatalogue>(ROOT+'/catalogue',{includeDetail:true},signal);
  signal.throwIfAborted();
  return Promise.all(catalogue.items.map(async dataset=>{
+  const registration=registeredSimulationTarget(catalogue,dataset);
   try{
    const detail=initialReplay(catalogue,dataset)||await api.request<SimulationDetail>(ROOT+'/detail',{datasetId:dataset.datasetId,datasetRevision:dataset.datasetRevision},signal);
    signal.throwIfAborted();
    if(detail.dataset.datasetId!==dataset.datasetId||detail.dataset.datasetRevision!==dataset.datasetRevision||detail.dataset.sourceKind!=='simulated')throw new ApiError(409,'SIMULATION_DATASET_CHANGED');
-   return {dataset,detail};
-  }catch(error){if(signal.aborted||cancelled(error))throw error;return {dataset,detail:null,error};}
+   return {dataset,detail,registration};
+  }catch(error){if(signal.aborted||cancelled(error))throw error;return {dataset,detail:null,registration,error};}
  }));
 }

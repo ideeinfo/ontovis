@@ -56,7 +56,7 @@ export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,on
      {scene&&onViewScene&&<Btn disabled={locked} onClick={()=>onViewScene({sceneId:row.identifier,sceneRevision:version,title:row.title})}>{t('查看场景','View scene')}</Btn>}
      {model&&onViewModel&&<Btn aria-haspopup="dialog" disabled={locked} onClick={event=>onViewModel(model,event.currentTarget)}>{t('查看固定模型','View fixed model')}</Btn>}
      {configuration&&onViewConfiguration&&<Btn aria-haspopup="dialog" disabled={locked} onClick={()=>onViewConfiguration(configuration,row.kind==='adopted_model'?row.configuration??row.title:row.title)}>{t('查看设备配置','View device configuration')}</Btn>}
-     {device&&onViewDevice&&<Btn disabled={locked} onClick={()=>onViewDevice({entityUid:row.identifier,entityRevision:version,title:row.title})}>{t('查看设备资料','View materials')}</Btn>}
+     {device&&onViewDevice&&<Btn disabled={locked} onClick={()=>onViewDevice({entityUid:row.identifier,entityRevision:version,title:row.title,showDrawings:row.showDrawings})}>{t('查看设备资料','View materials')}</Btn>}
      {row.documentPreview&&onViewDocument&&<Btn disabled={locked} onClick={()=>onViewDocument(row.documentPreview!)}>{t('查看原文','View source')}</Btn>}
      {row.selector&&onExecute&&<Btn disabled={locked||!!task.receipts.length} onClick={()=>onExecute([row.key])}>{t('加入画布','Add to canvas')}</Btn>}
     </div></article>;

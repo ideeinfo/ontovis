@@ -25,6 +25,15 @@ PROFILES = {
               'preset': '模拟人工断开主断路器，过流信号保持未动作；不认定实际跳闸原因。',
               'primaryRds': '=WEC+CN1-1Q1', 'severity': 'critical',
               'channel': {'rds': '=WEC+CN1-105A3/IX.1', 'moduleRds': '=WEC+CN1-105A3', 'address': 'IX.1'}},
+    '13033': {'cabinet': 'CN1', 'title': '机舱柜24V空开状态演练',
+              'preset': '模拟24V空开状态变化，核对柜体供电和反馈记录。',
+              'primaryRds': '=WEC+CN1', 'severity': 'warning'},
+    '13035': {'cabinet': 'CN1', 'title': '机舱柜24V电源异常演练',
+              'preset': '模拟柜内24V电源异常和恢复，核对供电电压及设备反馈。',
+              'primaryRds': '=WEC+CN1', 'severity': 'warning', 'voltageDrop': True},
+    '13058': {'cabinet': 'CN2', 'title': '机舱低压柜供电开关状态演练',
+              'preset': '在演练机组的机舱信号柜模拟供电开关状态变化，保留现场术语和开关位号待核对。',
+              'primaryRds': '=WEC+CN2', 'severity': 'critical'},
 }
 
 
@@ -121,6 +130,8 @@ def trend(dataset_id, metric, time_from, time_to, revision=None):
         # A fixed quality gap exercises missing data rather than interpolating it.
         quality = 'bad' if second == 90 else 'good'
         number = (24 + (second % 5-2)*.03) if metric == 'supply_voltage' else int(30 <= second < 150) if metric == 'device_feedback' else 0
+        if metric == 'supply_voltage' and PROFILES[value['faultCode']].get('voltageDrop') and 30 <= second < 150:
+            number = 18 + (second % 5-2)*.03
         if metric == 'reference_temperature': number = 24 + (second % 5-2)*.05
         if metric == 'sensor_temperature': number = (72 if value['faultCode'] == '13001' else -18) if 30 <= second < 150 else 24
         samples.append({'sourceTime': at(second), 'receivedAt': at(second+1), 'sequence': second,

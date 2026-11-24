@@ -14,7 +14,7 @@ export function equipmentSimulationTarget(record:EquipmentRecord,context:SceneOb
       ||context.objectRef.projectCode!==record.context.projectCode
       ||context.context.projectCode!==record.context.projectCode
       ||bundle.application.projectCode!==record.context.projectCode)return null;
-  const boundary=dataset.primaryRds.indexOf('-'),cabinetRds=boundary>0?dataset.primaryRds.slice(0,boundary):'';
+  const boundary=dataset.primaryRds.indexOf('-'),cabinetRds=boundary>0?dataset.primaryRds.slice(0,boundary):dataset.primaryRds;
   if(!cabinetRds||!dataset.cabinet||!cabinetRds.endsWith('+'+dataset.cabinet))return null;
   const definitions=bundle.objects.filter(item=>item.objectKind==='cabinet'&&item.objectScope==='definition'
     &&item.identifiers?.some(id=>id.role==='primary'&&id.value===cabinetRds)

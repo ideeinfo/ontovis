@@ -32,7 +32,7 @@ import {PageDeck,DisplaySwitch,CockpitWeatherSummary} from './CockpitPanels';
 import {CockpitAlarmSummary,CockpitAlarmCard,CockpitAlarmStatus,useCockpitAlarms} from './CockpitAlarmSummary';
 import {cockpitAlarmPresentation,replayKey,type ReplayPosition,type ReplayPositions,type ReplaySelection} from './cockpitAlarms';
 import {useCockpitAlarmTargets} from './useCockpitAlarmTargets';
-import {cockpitAlarmInstance,cockpitAlarmTargetCurrent,type CockpitAlarmTarget} from './cockpitAlarmTarget';
+import {cockpitAlarmInstance,cockpitAlarmTarget,cockpitAlarmTargetCurrent,type CockpitAlarmTarget} from './cockpitAlarmTarget';
 import {useCockpitEquipment,useCockpitLocation} from './useCockpitLocation';
 import {cockpitInspectionScene,cockpitPickedObject} from './cockpitLocation';
 import {cockpitQuickFocus} from './cockpitQuickFocus';
@@ -75,7 +75,7 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
  },[]);
  useEffect(()=>setAlarmPositions({}),[api.epoch,api.revision,active]);
  const replay=useCockpitAlarms(api,active);
- const alarmTargets=useCockpitAlarmTargets(api,catalog,project.projectRef,replay.rows,active);
+ const alarmTargets=useCockpitAlarmTargets(catalog,project.projectRef,replay.rows);
  const [alarmFocus,setAlarmFocus]=useState<AlarmFocus|null>(null);
  const pendingAlarm=useRef<{token:number;target:CockpitAlarmTarget}|null>(null);
  const [spaceNavigation,setSpaceNavigation]=useState<SpaceNavigation|null>(null),[spaceKey,setSpaceKey]=useState(''),[globeFlight,setGlobeFlight]=useState<GlobeFlight|null>(null),[focusedScene,setFocusedScene]=useState<{sceneId:string;token:number}|null>(null);
@@ -362,7 +362,11 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
     {imagery&&<section aria-label={t('场景影像来源','Scene imagery sources')}><h3>{t('场景影像','Scene imagery')}</h3><p>{imagery.displayName}</p><dl className="cw-kv"><dt>{t('采集时间','Acquired')}</dt><dd>{imagery.metadata.acquiredAt}</dd><dt>{t('署名','Attribution')}</dt><dd>{imagery.metadata.attribution}</dd><dt>{t('许可','License')}</dt><dd>{imagery.metadata.licenseNote}</dd></dl><details><summary>{t('来源与质量说明','Source and quality details')}</summary><p>{imagery.metadata.sourceNote}</p><p>{imagery.metadata.qualityNote}</p></details></section>}
    </div>}
   </Modal>}
-  {alarms&&<Modal className="pc-alarm-dialog" title={t('模拟报警回放','Simulated alarm replay')} description={t('固定模拟回放，不代表项目现场报警。','Fixed simulated replay, not live project alarms.')} onClose={()=>setAlarms(false)}><Suspense fallback={<p role="status">{pending}</p>}><p className="pc-dialog-note">{t('模拟回放 · 非现场报警','Simulated replay · not field alarms')}</p><DataAlarms key={alarmSelection?`${alarmSelection.datasetId}:${alarmSelection.datasetRevision}`:'all'} initialDataset={alarmSelection} positions={alarmPositions} onPosition={updateAlarmPosition} api={api} locale={locale} onAnalyze={analyze} onOpenWorkOrders={orders}/></Suspense></Modal>}
+  {alarms&&<Modal className="pc-alarm-dialog" title={t('模拟报警回放','Simulated alarm replay')} description={t('固定模拟回放，不代表项目现场报警。','Fixed simulated replay, not live project alarms.')} onClose={()=>setAlarms(false)}><Suspense fallback={<p role="status">{pending}</p>}><p className="pc-dialog-note">{t('模拟回放 · 非现场报警','Simulated replay · not field alarms')}</p><DataAlarms key={alarmSelection?`${alarmSelection.datasetId}:${alarmSelection.datasetRevision}`:'all'} initialDataset={alarmSelection} positions={alarmPositions} onPosition={updateAlarmPosition} api={api} locale={locale} onAnalyze={analyze} onOpenWorkOrders={orders} onLocate={(selection,registration)=>{
+   const target=cockpitAlarmTarget(catalog,project.projectRef,registration);
+   if(!target||navigationBusy)return false;
+   setAlarms(false);locateAlarm(selection,target);return true;
+  }}/></Suspense></Modal>}
   {leave&&<ConfirmationDialog title={t('修改尚未保存','Unsaved changes')}
     description={t('离开会丢失当前修改。','Leaving discards the current edits.')}
     cancelLabel={t('继续编辑','Keep editing')} onClose={()=>setLeave(null)}>

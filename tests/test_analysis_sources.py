@@ -47,7 +47,7 @@ class SourceContractTests(unittest.TestCase):
             body={'includeDetail':True, 'datasetId':'SIM-PDS-'+code}
             value=sim.browser_catalogue('Demo-PDS',body);item=sim.identity(code)
             self.assertEqual(value['initialDetail'],sim.detail('Demo-PDS',{key:item[key] for key in ('datasetId','datasetRevision')}))
-            self.assertEqual(len(value['items']),5)
+            self.assertEqual(len(value['items']),8)
         self.assertEqual(sim.browser_catalogue('Demo-PDS',{'includeDetail':True})['initialDetail']['dataset']['faultCode'],'13001')
         for body in ({'includeDetail':False},{'includeDetail':1},{'datasetId':'SIM-PDS-13001'},
                      {'includeDetail':True,'datasetId':'unknown'},{'includeDetail':True,'url':'https://outside.invalid'}):
@@ -55,7 +55,7 @@ class SourceContractTests(unittest.TestCase):
         with self.assertRaises(PreviewError):sim.browser_catalogue('B',{'includeDetail':True})
 
     def test_browser_detail_is_versioned_project_scoped_and_contains_all_replay_signals(self):
-        for code, count in (('13001', 5), ('13004', 3)):
+        for code, count in (('13001', 5), ('13004', 3), ('13033', 3), ('13035', 3), ('13058', 3)):
             item=sim.identity(code);body={key:item[key] for key in ('datasetId','datasetRevision')}
             value=sim.detail('Demo-PDS',body)
             self.assertEqual(value,sim.detail('Demo-PDS',body));self.assertEqual(len(value['alarms']),2)
@@ -67,7 +67,7 @@ class SourceContractTests(unittest.TestCase):
                 with self.assertRaises(PreviewError):sim.detail(project,change)
 
     def test_simulated_fault_lifecycle_and_deterministic_history_have_separate_identity(self):
-        result=sim.catalogue('Demo-PDS');self.assertEqual(len(result['items']),5)
+        result=sim.catalogue('Demo-PDS');self.assertEqual(len(result['items']),8)
         self.assertEqual(result['sourceKind'],'simulated');self.assertEqual(result['mode'],'replay')
         for item in result['items']:
             first=sim.alarms(item['datasetId']);self.assertEqual(first,sim.alarms(item['datasetId']))

@@ -6,10 +6,7 @@ from .assistant_summaries import redact
 from .equipment_reader import EquipmentReader
 
 
-def query(tools, needle):
-    allowed = tools.allowed & {'document','photo'}
-    require('object' in tools.allowed and allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
-    equipment = EquipmentReader(tools.reader.reader)
+def _catalogue_selection(tools, equipment, needle):
     directory = tools.read(lambda:equipment.catalogue(dict(q=needle,rootsOnly=False,limit=6)))
     items = directory['items']
     exact = [item for item in items if item['displayName'].casefold()==needle.strip().casefold()]
@@ -37,8 +34,32 @@ def query(tools, needle):
     require(fixed['item']['entityRevision']==item['entityRevision']
             and fixed['item']['equipmentState']=='active','ENGINEERING_CHANGED',409)
     context = fixed['context']
-    selection = dict(entityUid=uid,expectedEntityRevision=item['entityRevision'],
+    return dict(entityUid=uid,expectedEntityRevision=item['entityRevision'],
         installationContextId=context['installationContextId'],expectedHierarchyRevision=context['hierarchyRevision'])
+
+
+def query(tools, needle, *, replay=None, drawings=False):
+    allowed = tools.allowed & {'document','photo'}
+    require('object' in tools.allowed and allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
+    equipment = EquipmentReader(tools.reader.reader)
+    lookup = getattr(tools.reader,'simulation_target_lookup',None)
+    target = None
+    if replay and callable(lookup) and needle.strip().casefold() in {
+            '',replay['primaryRds'].casefold(),'这台设备','this equipment'}:
+        target = tools.read(lambda:lookup(replay))
+    if target:
+        selection = dict(entityUid=target['entityUid'],expectedEntityRevision=target['entityRevision'],
+            installationContextId=target['installationContextId'],expectedHierarchyRevision=target['hierarchyRevision'])
+        tools.results.append(dict(key='R'+str(len(tools.results)+1),kind='equipment_material_scope',
+            title=target['displayName'],identifier=target['entityUid'],version=target['entityRevision'],
+            reason='模拟报警登记的安装设备',simulated=True,showDrawings=drawings and 'drawing' in tools.allowed))
+        tools.trace.append(dict(tool='equipment_materials',state='complete',count=1,scope='使用本次模拟报警已登记的安装柜体'))
+        title = redact(target['displayName'],tools.private)
+        tools.catalogue_source('object',title[:120],f'本次模拟报警关联到「{title}」。以下资料按该安装柜体查询。')
+    else:
+        selection = _catalogue_selection(tools,equipment,needle)
+        if selection is None:
+            return
     materials = tools.read(lambda:equipment.material_devices({**selection,'limit':6}))
     records = []
     for entry in materials['items']:
@@ -67,4 +88,21 @@ def query(tools, needle):
     previewable = sum(row[3]=='available' for row in records)
     observation = (f'本次列出该设备的 {len(records)} 份适用资料，其中 {previewable} 份可查看固定原文。'
                    if records else '该设备在本次读取范围内没有适用资料记录。')
+    if target and 'model' in tools.allowed and materials.get('currentModel'):
+        model=materials['currentModel']
+        observation += f'所属风机型号为「{redact(model["name"],tools.private)}」r{model["revision"]}。'
+    if target and 'document' in allowed and not truncated and all(row[2]!='document' for row in records):
+        observation += '这台设备的适用资料目录暂无 PDF 文档。'
     tools.catalogue_source('document' if 'document' in allowed else 'photo',summary,observation)
+    if target and drawings and 'drawing' in tools.allowed:
+        from .related_drawings import RelatedDrawingsReader
+        related=tools.read(lambda:RelatedDrawingsReader(tools.reader.reader).resolve({**selection,'includeDescendants':True,'limit':4}))
+        total=related['total']
+        scope='已登记柜体及其下级对象的关联图纸'
+        tools.trace.append(dict(tool='equipment_drawings',state='complete',count=len(related['items']),total=total,scope=scope))
+        titles=[redact(row['title'],tools.private)[:50] for row in related['items']]
+        summary=json.dumps(dict(scope=scope,total=total,examples=titles),ensure_ascii=False,separators=(',',':'))
+        observation=f'查到 {total} 张关联图纸。'
+        if titles:
+            observation += '例如「'+'」、「'.join(titles)+'」。可打开「查看设备资料」继续浏览。'
+        tools.catalogue_source('drawing',summary,observation)

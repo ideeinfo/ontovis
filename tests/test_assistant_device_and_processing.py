@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from apps.api.assistant_tasks import ProjectTools, validate_plan
+from apps.api.assistant_tasks import ProjectTools, replay_equipment_context, validate_plan
 from apps.api.authority import PreviewError
 
 
@@ -59,6 +59,31 @@ class AssistantDeviceAndProcessingTests(unittest.TestCase):
                 self.ask('equipment_materials','Machine 1')
             self.assertEqual('ENGINEERING_CHANGED',changed.exception.code)
             service.material_devices.assert_not_called()
+
+    def test_replay_equipment_search_reads_the_registered_cabinet_and_drawings(self):
+        from apps.api import simulated_faults
+        replay=simulated_faults.identity('13002')
+        event=dict(datasetId=replay['datasetId'],datasetRevision=replay['datasetRevision'],eventId=replay['datasetId']+'-event-1')
+        context=dict(event,sourceConnectionId=simulated_faults.SOURCE_ID)
+        fixed=[({'sourceKind':'alarm'},event)]
+        question='这台设备有哪些图纸和说明书'
+        self.assertEqual(replay_equipment_context(context,fixed,question),replay)
+        self.assertIsNone(replay_equipment_context(context,[],question))
+        self.assertIsNone(replay_equipment_context(context,fixed,'Machine 2有哪些图纸'))
+        target=dict(displayName='Unit 1 CN1',entityUid='registered-cabinet',entityRevision='cabinet:r1',**self.context)
+        self.tools.reader.simulation_target_lookup=Mock(return_value=target)
+        self.tools.allowed.add('drawing')
+        with (patch('apps.api.assistant_device_materials.EquipmentReader') as reader,
+              patch('apps.api.related_drawings.RelatedDrawingsReader') as drawings):
+            reader.return_value.material_devices.return_value=dict(items=[],revision=1,nextCursor=None)
+            drawings.return_value.resolve.return_value=dict(items=[{'title':'Cabinet drawings'}],total=50)
+            self.tools.query(dict(tool='equipment_materials',query=replay['primaryRds'],faultCode=''),replay=replay,drawings=True)
+        reader.return_value.catalogue.assert_not_called()
+        self.tools.reader.simulation_target_lookup.assert_called_once_with(replay)
+        self.assertEqual(drawings.return_value.resolve.call_args[0][0]['entityUid'],'registered-cabinet')
+        self.assertEqual(self.tools.results[0]['identifier'],'registered-cabinet')
+        self.assertTrue(self.tools.results[0]['showDrawings'])
+        self.assertTrue(any('50 张关联图纸' in line['text'] for line in self.tools.catalogue_answer()['observations']))
 
     def test_processing_progress_keeps_result_state_separate_and_omits_unavailable_titles_and_traces(self):
         doc=identifier()

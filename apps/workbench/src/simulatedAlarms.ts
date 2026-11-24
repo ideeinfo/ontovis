@@ -10,7 +10,16 @@ export interface SimulatedAlarm {
 export interface TrendSample {sourceTime:string;value:number|null;quality:string}
 export interface SimulatedTrend {metricId:string;unit:string;timeFrom:string;timeTo:string;samples:TrendSample[];dataset?:SimulatedDataset}
 export interface SimulationDetail {dataset:SimulatedDataset;alarms:SimulatedAlarm[];trends:SimulatedTrend[]}
-export interface SimulationCatalogue {items:SimulatedDataset[];sourceKind:'simulated';initialDetail?:SimulationDetail}
+export interface SimulationTarget {
+  datasetRevision:string;sceneId:string;instanceId:string;rootUid:string;rootName:string;
+  entityUid:string;entityRevision:string;displayName:string;
+}
+export interface SimulationCatalogue {items:SimulatedDataset[];sourceKind:'simulated';initialDetail?:SimulationDetail;targets?:Record<string,SimulationTarget>}
+
+export function registeredSimulationTarget(catalogue:SimulationCatalogue|null|undefined,dataset:SimulatedDataset){
+  const target=catalogue?.targets?.[dataset.datasetId];
+  return target?.datasetRevision===dataset.datasetRevision?target:undefined;
+}
 
 export function initialReplay(catalogue:SimulationCatalogue|null,dataset?:SimulatedDataset){
   const detail=catalogue?.initialDetail;

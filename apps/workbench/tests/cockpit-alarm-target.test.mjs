@@ -1,44 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {cockpitAlarmInstance,cockpitAlarmPlacements,cockpitAlarmTarget,cockpitAlarmTargetCurrent} from '../src/cockpitAlarmTarget.ts';
-const ref={entityUid:'unit-1',projectCode:'project',ontobaseConnectionId:'connection'};
-const root={entityUid:'unit-1',entityRevision:'unit-r1',objectScope:'installation',displayName:'Unit 1',installationContextId:'installed-1'};
-const cabinet={entityUid:'cn1-unit-1',entityRevision:'cabinet-r1',displayName:'Unit 1 CN1',objectScope:'installation',objectKind:'cabinet',installationContextId:'installed-1',sourceTemplateEntityUid:'cn1-definition'};
-const instance={sceneModelInstanceId:'placed-1',modelVersionId:'model-fixed',displayName:'Unit 1',visible:true,rootBinding:{objectRef:ref},componentBindings:[]};
-const scene={summary:{sceneId:'scene-1',displayName:'Scene 1'},opened:{sceneId:'scene-1',sceneRevision:'s-r1',snapshot:{coordinateFrame:{mode:'projected_site'},instances:[instance]}}};
-const catalog={scenes:[scene],equipment:[root]},placement=cockpitAlarmPlacements(catalog,ref)[0];
-const installation={rootEntityUid:'unit-1',projectCode:'project',installationContextId:'installed-1',hierarchyRevision:'h1'};
-const record={item:root,context:installation,children:[cabinet],adoption:{applicationRevisionId:'application-fixed'}};
-const context={item:root,root,context:installation,objectRef:ref};
-const bundle={application:{revisionId:'application-fixed',projectCode:'project',snapshot:{mappings:[{entityUid:'cn1-definition',expectedEntityRevision:'definition-r1',roleKey:'cabinet-role'}]}},objects:[{entityUid:'cn1-definition',entityRevision:'definition-r1',objectKind:'cabinet',objectScope:'definition',identifiers:[{role:'primary',value:'=WEC+CN1'}]}]};
-const dataset={sourceKind:'simulated',cabinet:'CN1',primaryRds:'=WEC+CN1-1B4'};
-test('alarm exercise placements require visible, unique installed units in the authorized project',()=>{
- assert.equal(placement.instance,instance);
- for(const changed of [{visible:false},{rootBinding:null},{rootBinding:{objectRef:{...ref,projectCode:'elsewhere'}}}])assert.equal(cockpitAlarmPlacements({...catalog,scenes:[{...scene,opened:{...scene.opened,snapshot:{...scene.opened.snapshot,instances:[{...instance,...changed}]}}}]},ref).length,0);
- assert.equal(cockpitAlarmPlacements({...catalog,equipment:[]},ref).length,0);
- assert.equal(cockpitAlarmPlacements({...catalog,scenes:[{...scene,opened:{...scene.opened,snapshot:{...scene.opened.snapshot,instances:[instance,{...instance,sceneModelInstanceId:'duplicate'}]}}}]},ref).length,0);
-});
-test('a simulated alarm resolves to the installed cabinet, keeping its scene, model and engineering revision',()=>{
- const target=cockpitAlarmTarget(placement,record,context,bundle,dataset);
- assert.deepEqual(target,{sceneId:'scene-1',sceneRevision:'s-r1',instanceId:'placed-1',modelVersionId:'model-fixed',rootUid:'unit-1',rootName:'Unit 1',entityUid:'cn1-unit-1',entityRevision:'cabinet-r1',displayName:'Unit 1 CN1'});
+import {cockpitAlarmInstance,cockpitAlarmTarget,cockpitAlarmTargetCurrent} from '../src/cockpitAlarmTarget.ts';
+import {registeredSimulationTarget} from '../src/simulatedAlarms.ts';
+
+const project={projectCode:'project',ontobaseConnectionId:'connection'};
+const root={entityUid:'unit-1',...project};
+const instance={sceneModelInstanceId:'placed-1',modelVersionId:'model-fixed',displayName:'同名设备',visible:true,
+ rootBinding:{objectRef:root},componentBindings:[]};
+const second={...instance,sceneModelInstanceId:'placed-2',rootBinding:{objectRef:{...root,entityUid:'unit-2'}}};
+const scene={summary:{sceneId:'scene-1'},opened:{sceneId:'scene-1',sceneRevision:'s-r1',snapshot:{instances:[second,instance]}}};
+const catalog={scenes:[scene],equipment:[]};
+const registration={datasetRevision:'fixed:1',sceneId:'scene-1',instanceId:'placed-1',rootUid:'unit-1',rootName:'Unit 1',
+ entityUid:'cn1-unit-1',entityRevision:'cabinet-r1',displayName:'Unit 1 CN1'};
+
+test('a registered simulated alarm resolves the exact saved instance and installed cabinet',()=>{
+ const target=cockpitAlarmTarget(catalog,project,registration);
+ assert.deepEqual(target,{sceneId:'scene-1',sceneRevision:'s-r1',instanceId:'placed-1',modelVersionId:'model-fixed',
+   rootUid:'unit-1',rootName:'Unit 1',entityUid:'cn1-unit-1',entityRevision:'cabinet-r1',displayName:'Unit 1 CN1'});
  assert.equal(cockpitAlarmTargetCurrent(target,catalog),true);
- for(const change of [{sceneRevision:'changed'},{instanceId:'other'},{modelVersionId:'other'},{rootUid:'other'}])assert.equal(cockpitAlarmTargetCurrent({...target,...change},catalog),false);
-});
-test('parallel alarm location uses only the selected visible instance of the fixed scene',()=>{
- const target=cockpitAlarmTarget(placement,record,context,bundle,dataset);
- const sameName={...instance,sceneModelInstanceId:'placed-2',rootBinding:{objectRef:{...ref,entityUid:'unit-2'}}};
- const opened={...scene.opened,snapshot:{...scene.opened.snapshot,instances:[sameName,instance]}};
- assert.equal(cockpitAlarmInstance(target,opened),instance);
- assert.equal(cockpitAlarmInstance(target,{...opened,sceneId:'other'}),undefined);
- assert.equal(cockpitAlarmInstance(target,{...opened,sceneRevision:'next'}),undefined);
- for(const replacement of [{modelVersionId:'new'},{visible:false},{rootBinding:sameName.rootBinding}]){
-  assert.equal(cockpitAlarmInstance(target,{...opened,snapshot:{...opened.snapshot,instances:[sameName,{...instance,...replacement}]}}),undefined);
+ assert.equal(cockpitAlarmInstance(target,scene.opened),instance);
+ for(const change of [{sceneRevision:'changed'},{instanceId:'other'},{modelVersionId:'other'},{rootUid:'other'}]){
+  assert.equal(cockpitAlarmTargetCurrent({...target,...change},catalog),false);
  }
 });
-test('names and shared model identity cannot move an alarm to another installation or source',()=>{
- assert.equal(cockpitAlarmTarget(placement,record,{...context,objectRef:{...ref,ontobaseConnectionId:'other'}},bundle,dataset),null);
- assert.equal(cockpitAlarmTarget(placement,{...record,children:[{...cabinet,installationContextId:'installed-2',displayName:'Unit 1 CN1'}]},context,bundle,dataset),null);
- assert.equal(cockpitAlarmTarget(placement,{...record,children:[cabinet,cabinet]},context,bundle,dataset),null);
- assert.equal(cockpitAlarmTarget(placement,record,context,bundle,{...dataset,sourceKind:'live'}),null);
- assert.equal(cockpitAlarmTarget(placement,record,context,bundle,{...dataset,cabinet:'CT'}),null);
+
+test('alarm location refuses an unregistered, hidden or reassigned instance',()=>{
+ assert.equal(cockpitAlarmTarget(catalog,project,undefined),null);
+ assert.equal(cockpitAlarmTarget(catalog,project,{...registration,instanceId:'placed-2'}),null);
+ assert.equal(cockpitAlarmTarget(catalog,{...project,projectCode:'other'},registration),null);
+ const hidden={...instance,visible:false};
+ const modified={scenes:[{...scene,opened:{...scene.opened,snapshot:{instances:[second,hidden]}}}]};
+ assert.equal(cockpitAlarmTarget(modified,project,registration),null);
+});
+
+test('separate alarm registrations do not follow the selected or same-name turbine',()=>{
+ const other={...registration,instanceId:'placed-2',rootUid:'unit-2',entityUid:'cn2-unit-2'};
+ const dataset={datasetId:'sim:1',datasetRevision:'fixed:1'};
+ const catalogue={targets:{'sim:1':registration,'sim:2':other}};
+ assert.equal(cockpitAlarmTarget(catalog,project,registeredSimulationTarget(catalogue,dataset)).instanceId,'placed-1');
+ assert.equal(cockpitAlarmTarget(catalog,project,registeredSimulationTarget(catalogue,{...dataset,datasetId:'sim:2'})).instanceId,'placed-2');
+ assert.equal(registeredSimulationTarget(catalogue,{...dataset,datasetRevision:'new'}),undefined);
 });

@@ -297,9 +297,12 @@ def request(sessions,sid,path,payload):
             def equipment_configurations(query):
                 from .assistant_project_models import device_catalogue
                 return device_catalogue(engineering,local.equipment_store(),guard,query)
+        def simulation_target(dataset):
+            from .simulation_targets import resolve_targets
+            return resolve_targets(sessions.simulation_targets_path,engineering,[dataset]).get(dataset['datasetId'])
         return AnalysisSourceReader(engineering,sessions.shared.project_models,orders,guard,actor,
             scene_library=local.library,scene_listing=scene_listing,adopted_model_listing=adopted_models,
-            equipment_configuration_listing=equipment_configurations)
+            equipment_configuration_listing=equipment_configurations,simulation_target_lookup=simulation_target)
     if action in ('task-start','task-prepare','task-ack','task-page','task-source','task-source-preview','task-source-content'):
         from .assistant_task_api import handle
         return reply(handle(action,body,sessions,row,sid,project,actor,access,runtime,service,prepare,project_reader,authorize,prefix))

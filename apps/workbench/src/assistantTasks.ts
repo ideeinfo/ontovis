@@ -8,6 +8,7 @@ export type TaskCandidate={key:string;kind:string;title:string;identifier:string
  selector?:Record<string,unknown>;configuration?:string|null;configurationRevision?:string|null;representation?:string|null;
  scenes?:{title:string;instanceCount:number;sceneId?:string;sceneRevision?:string|null}[];moreScenes?:boolean;
  configurationId?:string|null;deviceCode?:string|null;installation?:string;modelCount?:number;
+ showDrawings?:boolean;
  documentPreview?:FixedDocumentTarget;processingKind?:string;resultState?:string;completedUnits?:number;totalUnits?:number};
 export type AssistantModelTarget={modelAssetId:string;modelVersionId:string;title:string};
 export function adoptedModelTarget(row:TaskCandidate):AssistantModelTarget|null {

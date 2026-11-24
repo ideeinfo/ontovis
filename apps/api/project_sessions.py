@@ -23,6 +23,7 @@ from .scene_engineering import SceneEngineeringReader
 from .scene_photos import ScenePhotoReader
 from .simulation_stream import SimulationStreams
 from .analysis_media import FULL_PHOTO_REPRESENTATIONS
+from .simulation_targets import FILENAME as SIMULATION_TARGETS_FILE
 
 
 METHODS = ('scene_request', 'scene_thumbnail_upload', 'scene_object_request', 'equipment_request', 'resource_request', 'resource_upload',
@@ -42,6 +43,7 @@ class ProjectSessions(UserSessions):
         self.options = kwargs
         self.model_root = model_root
         self.regional_catalog_root = Path(library_root).parent/'regional-catalog'
+        self.simulation_targets_path = Path(library_root)/SIMULATION_TARGETS_FILE
         registry_type = ProjectWorkspaces
         registry_options = {}
         if registry_backend == 'postgres':
@@ -507,10 +509,18 @@ class ProjectSessions(UserSessions):
         if action in ('simulation/catalogue', 'simulation/detail'):
             # These fixed, project-scoped reads have no analysis owner or storage.
             # /access checks the current active user and membership on every read.
-            self._access(sid, row, code)
+            access = self._access(sid, row, code)
             from . import simulated_faults
             value = (simulated_faults.browser_catalogue(code, body) if action == 'simulation/catalogue'
                      else simulated_faults.detail(code, body))
+            self.guard(sid, row)
+            if action == 'simulation/catalogue':
+                from .simulation_targets import resolve_targets
+                engineering = SceneEngineeringReader(row.authority,self.connection_id,code,lambda:self.guard(sid,row))
+                targets = resolve_targets(self.simulation_targets_path,engineering,value['items'])
+                if targets:
+                    require(self._access(sid,row,code)['accessRevision']==access['accessRevision'],'ACCESS_CHANGED',409)
+                    value['targets'] = targets
             self.guard(sid, row)
             return {**value, 'projectRef': payload['projectRef'], 'sessionRevision': row.revision,
                     'capabilities': {'canWrite': False, 'canConfirmConclusion': False}}
