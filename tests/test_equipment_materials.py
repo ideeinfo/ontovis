@@ -29,6 +29,12 @@ MATERIAL = dict(documentId=DOC,contentVersionId=VERSION,title='Synthetic PDF',ki
     versionNumber=2,pageCount=3,availability='available',scopes=['role:cabinet'],origins=['model'])
 
 
+def specification_revision(model, values=()):
+    snapshot_keys=('name','manufacturer','objectKind','nature','classificationRef','templateRevisionId')
+    snapshot={key:model.get(key) for key in snapshot_keys}|{'values':list(values)}
+    return {key:value for key,value in model.items() if key not in snapshot_keys}|{'snapshot':snapshot}
+
+
 class DocumentReader:
     prefix='/api/v1/projects/P'
     project_code='P'
@@ -213,6 +219,7 @@ class FixedMaterialTests(unittest.TestCase):
 class MaterialAuthority(base.EquipmentAuthority):
     def __init__(self,url):
         super().__init__(url);self.material_role='role:cabinet';self.material_revision=7;self.after_material=None
+        self.adopted_model=copy.deepcopy(MODEL);self.current_model=copy.deepcopy(MODEL)
         self.document_reader=DocumentReader()
     def request(self,method,path,body=None):
         plain=urlsplit(path).path
@@ -221,11 +228,14 @@ class MaterialAuthority(base.EquipmentAuthority):
             if self.after_material:self.after_material()
             if plain.endswith('/devices/resolve'):
                 if body['expectedEntityRevision']!='fixed:1':raise PreviewError(409,'ENTITY_CHANGED')
-                return dict(model=MODEL,role=self.material_role,roles=ROLES,revision=self.material_revision,
+                return dict(model=self.adopted_model,role=self.material_role,roles=ROLES,revision=self.material_revision,
                     items=[] if self.material_role=='root' else [MATERIAL],nextCursor=None,canManage=True)
             if plain.endswith('/candidates'):
                 return dict(items=[{k:v for k,v in MATERIAL.items() if k not in ('scopes','origins')}|{'selected':True}],nextCursor='opaque:next')
-            return dict(model=MODEL,roles=ROLES,revision=self.material_revision,total=13,items=[MATERIAL],nextCursor='opaque:next',canManage=True)
+            return dict(model=self.current_model,roles=ROLES,revision=self.material_revision,total=13,items=[MATERIAL],nextCursor='opaque:next',canManage=True)
+        if plain.endswith('/specification-revisions/'+self.current_model['revisionId']):
+            self.source_calls.append((method,path,body))
+            return specification_revision(self.current_model)
         if plain.endswith('/attribute-form'):
             self.source_calls.append((method,path,body))
             return dict(device={'entityUid':engineering.ROOT},model=None,available=True,fields=[],values=[],scope={'source':'common'})
@@ -233,7 +243,7 @@ class MaterialAuthority(base.EquipmentAuthority):
             self.source_calls.append((method,path,body));return self.document_reader._request(method,path,body)
         result=super().request(method,path,body)
         if plain.endswith('/equipment/resolve'):
-            for row in result['items']:row['model']=copy.deepcopy(MODEL) if row['item']['entityUid']==engineering.ROOT else None
+            for row in result['items']:row['model']=copy.deepcopy(self.adopted_model) if row['item']['entityUid']==engineering.ROOT else None
         return result
     def document_page(self,path,*,photo=False):
         self.source_calls.append(('GET',path,None))
@@ -292,6 +302,27 @@ class MaterialHttpTests(unittest.TestCase):
         self.assertIsNone(value['items'][1]['model'])
         status,value,_=self.request(base.ROOT+'/attribute-form',{'entityUid':engineering.ROOT})
         self.assertEqual(status,200,value);self.assertEqual(value['scope']['source'],'common');self.assertIsNone(value['model'])
+
+    def test_current_device_view_follows_the_same_model_without_changing_adoption_or_document_version(self):
+        source=self.authority();head=str(uuid4())
+        source.adopted_model['headRevisionId']=head
+        source.current_model.update(headRevisionId=head,revisionId=head,revision=2,name='Renamed model')
+        path=base.ROOT+'/resolve';selection={'entityUids':[engineering.ROOT]}
+        status,original,_=self.request(path,selection)
+        self.assertEqual(status,200,original)
+        status,value,_=self.request(path,selection|{'includeCurrentModel':True})
+        self.assertEqual(status,200,value)
+        item=value['items'][0];latest=item.pop('currentModel')
+        self.assertEqual(item,original['items'][0]);self.assertEqual(latest['name'],'Renamed model')
+        self.assertEqual(latest['revision'],2)
+        status,materials,_=self.request(base.ROOT+'/materials/resolve',self.selection)
+        self.assertEqual(status,200,materials)
+        self.assertEqual(materials['currentModel'],latest);self.assertEqual(materials['model'],item['model'])
+        self.assertEqual(materials['items'],[MATERIAL]);self.assertEqual(materials['revision'],7)
+        self.assertEqual(self.request(path,{'entityUids':[engineering.ROOT,engineering.CABINET],'includeCurrentModel':True})[0],422)
+        self.assertEqual(self.request(path,selection|{'includeCurrentModel':True,'specificationId':SPEC})[0],422)
+        source.allowed=False
+        self.assertEqual(self.request(path,selection|{'includeCurrentModel':True})[0],403)
 
     def test_fixed_page_bytes_are_private_and_cannot_switch_version_or_late_access(self):
         body=dict(documentId=DOC,contentVersionId=VERSION,pageNumber=2,sourceSha256='a'*64)

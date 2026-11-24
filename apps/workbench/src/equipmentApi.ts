@@ -37,6 +37,7 @@ export interface EquipmentAdoption {equipment_uid:string;configuration_id:string
 export interface SourceAdoption extends ProjectApplicationRef {adoptionId:string;roleKey:string|null;name:string;previousAdoptionId:string|null}
 export interface EquipmentModel {specificationId:string;revisionId:string;headRevisionId:string;templateRevisionId:string;name:string;code:string;manufacturer:string|null;objectKind:string;revision:number;classificationRef:{revisionId:string;code:string}}
 export interface EquipmentRecord {item:EngineeringObject&{equipmentState?:'active'|'inactive'};context:Installation;children:EngineeringObject[];adoption:SourceAdoption|null;attributes:{values:PropertyValue[]}|null;model:EquipmentModel|null}
+export interface CurrentEquipmentRecord extends EquipmentRecord {currentModel:EquipmentModel|null}
 export interface EquipmentConfigurations {items:EquipmentConfiguration[];assignments:EquipmentAdoption[];objects:EngineeringObject[];models:ProjectModelVersion[];capabilities:{canWrite:boolean}}
 export type EquipmentCatalogItem=EngineeringObject&{sceneUseCount:number};
 export interface EquipmentCatalogue {items:EquipmentCatalogItem[];nextCursor:string|null;snapshotRevision:string}
@@ -58,9 +59,9 @@ export interface SharedPhoto {documentId:string;contentVersionId:string;renditio
 export interface SharedPhotoRegion {object:EngineeringObject;photo:ObjectPhoto}
 export type MaterialSelection=Omit<PhotoSelection,'photoPurpose'>;
 export interface EquipmentMaterial {documentId:string;contentVersionId:string;title:string;kind:'pdf'|'photo';documentKind:string;versionNumber:number;pageCount:number|null;availability:'available'|'unavailable'|'field_record';scopes:string[];origins:string[]}
-export interface EquipmentMaterialPage {model:EquipmentModel|null;role?:string|null;roles:{value:string;kind:'model'|'root'|'role';name:string|null}[];revision:number;total?:number;items:EquipmentMaterial[];nextCursor:string|null;canManage:boolean}
+export interface EquipmentMaterialPage {model:EquipmentModel|null;currentModel?:EquipmentModel|null;role?:string|null;roles:{value:string;kind:'model'|'root'|'role';name:string|null}[];revision:number;total?:number;items:EquipmentMaterial[];nextCursor:string|null;canManage:boolean}
 export interface FixedDocument {documentId:string;contentVersionId:string;sourceSha256:string;title:string;kind:'pdf'|'photo';pageNumber:number;pageCount:number;versionNumber:number;newerVersionAvailable:boolean}
-export interface EquipmentModelAttributes {available:boolean;reason:string|null;model:EquipmentModel|null;relation:'equipment'|'assembly'|null;equipmentName?:string;fields:ApplicationBundle['template']['fields'];values:PropertyValue[]}
+export interface EquipmentModelAttributes {available:boolean;reason:string|null;model:EquipmentModel|null;relation:'equipment'|'assembly'|null;equipmentName?:string;adoptedRevision?:number;fields:ApplicationBundle['template']['fields'];values:PropertyValue[]}
 export interface EquipmentAttributeForm {available:boolean;reason:string|null;model:EquipmentModel|null;scope?:{source:string;name:string;classificationCode:string};fields:ApplicationBundle['template']['fields'];values:PropertyValue[];modelAttributes?:EquipmentModelAttributes}
 export class EquipmentApi {
   private readonly api:Pick<WorkbenchApi,'request'>;
@@ -72,6 +73,9 @@ export class EquipmentApi {
       {...target,includeImpact:true,requireCurrent,...(instanceQuery?{instanceQuery}:{})},signal);
   }
   resolve(entityUids:string[],signal?:AbortSignal){return this.api.request<{items:EquipmentRecord[]}>(ROOT+'/resolve',{entityUids},signal);}
+  resolveCurrent(entityUid:string,signal?:AbortSignal){
+    return this.api.request<{items:CurrentEquipmentRecord[]}>(ROOT+'/resolve',{entityUids:[entityUid],includeCurrentModel:true},signal);
+  }
   modelMaterials(specificationId:string,scope='',kind='',cursor:string|null=null,signal?:AbortSignal){return this.api.request<EquipmentMaterialPage>(ROOT+'/materials/models',{specificationId,scope,kind,cursor,limit:20},signal);}
   materialCandidates(specificationId:string,revision:number,scope='model',q='',kind='',cursor:string|null=null,signal?:AbortSignal){return this.api.request<{items:(EquipmentMaterial&{selected:boolean})[];nextCursor:string|null}>(ROOT+'/materials/candidates',{specificationId,revision,scope,q,kind,cursor,limit:20},signal);}
   deviceMaterials(selection:MaterialSelection,cursor:string|null=null,signal?:AbortSignal){return this.api.request<EquipmentMaterialPage>(ROOT+'/materials/resolve',{...selection,cursor,limit:20},signal);}

@@ -128,8 +128,9 @@ class WorkbenchSessions(UserSessions):
                     counts=dict(rows)
             value['items']=[dict(item,sceneUseCount=counts.get(item['entityUid'],0)) for item in value['items']]
         elif path=='/api/workbench/equipment/resolve':
-            if set(body)!={'entityUids'}:raise PreviewError(422,'INVALID_REQUEST')
-            value={'items':list(equipment.resolve(body['entityUids']).values())}
+            current=set(body)=={'entityUids','includeCurrentModel'} and body['includeCurrentModel'] is True
+            if not current and set(body)!={'entityUids'}:raise PreviewError(422,'INVALID_REQUEST')
+            value={'items':list(equipment.resolve(body['entityUids'],include_current_model=current).values())}
         elif path=='/api/workbench/equipment/materials/models':
             value=equipment.material_catalogue(body)
         elif path=='/api/workbench/equipment/materials/candidates':

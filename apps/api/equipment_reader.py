@@ -25,8 +25,9 @@ class EquipmentReader:
         _require(all(item['objectScope']=='installation' and item['equipmentState']=='active' for item in items))
         return {key:value.get(key) for key in ('projectCode','nextCursor','snapshotRevision')}|{'items':items}
 
-    def resolve(self, uids):
+    def resolve(self, uids, *, include_current_model=False):
         _require(type(uids) is list and 0<len(uids)<=50 and len(set(uids))==len(uids),'INVALID_REQUEST',422)
+        _require(not include_current_model or len(uids)==1,'INVALID_REQUEST',422)
         for uid in uids:_text(uid)
         value=self.reader._request('POST',self.reader.prefix+'/equipment/resolve',{'entityUids':uids})
         _require(value.get('projectCode')==self.reader.project_code and type(value.get('items')) is list)
@@ -51,7 +52,18 @@ class EquipmentReader:
             result[uid]={'item':item,'context':context,'children':children,
                          'adoption':adoption,'attributes':row.get('attributes'),'model':self.model(row.get('model'))}
         _require(set(result)==set(uids))
+        if include_current_model:
+            selected=result[uids[0]]
+            adopted=selected['model']
+            selected['currentModel']=self._current_model(adopted)
+            if adopted and adopted['revisionId']!=adopted['headRevisionId']:
+                self._recheck_devices(result)
         return result
+
+    def _recheck_devices(self, records):
+        current=self.resolve(list(records))
+        for identity,previous in records.items():
+            _require(all(previous[key]==current[identity][key] for key in ('item','context','model','adoption')),'ENGINEERING_CHANGED',409)
 
     @staticmethod
     def identifier(value):
@@ -121,6 +133,31 @@ class EquipmentReader:
         _require(type(value.get('classificationRef')) is dict)
         return {key:value.get(key) for key in ('specificationId','revisionId','headRevisionId','templateRevisionId',
             'name','code','objectKind','nature','status','manufacturer','classificationRef','revision','rowVersion','roleCount','knownValueCount')}
+
+    def _current_specification(self, adopted):
+        revision=adopted['headRevisionId']
+        value=self.reader._request('GET','/api/v1/equipment-catalog/specification-revisions/'+revision)
+        _require(value.get('specificationId')==adopted['specificationId']
+                 and value.get('revisionId')==value.get('headRevisionId')==revision,'ENGINEERING_CHANGED',409)
+        snapshot=value.get('snapshot');_require(type(snapshot) is dict)
+        current=self.model({**value,**{key:snapshot.get(key) for key in ('name','manufacturer','objectKind','nature',
+            'templateRevisionId','classificationRef')}})
+        _require(current['code']==adopted['code'],'ENGINEERING_CHANGED',409)
+        if revision==adopted['revisionId']:
+            _require(all(current[key]==adopted[key] for key in ('revision','templateRevisionId','classificationRef')),
+                     'ENGINEERING_CHANGED',409)
+            return adopted,snapshot
+        _require(current['revision']>adopted['revision'],'ENGINEERING_CHANGED',409)
+        return current,snapshot
+
+    def _current_model(self, adopted):
+        if adopted is None or adopted['revisionId']==adopted['headRevisionId']:
+            return adopted
+        try:
+            return self._current_specification(adopted)[0]
+        except PreviewError as error:
+            if error.status in (401,403,409):raise
+            return None
 
     @staticmethod
     def material_roles(value):
@@ -193,7 +230,9 @@ class EquipmentReader:
         if body.get('cursor') is not None:_argument(body['cursor'],8192)
         value=self.reader._request('POST',self.reader.prefix+'/equipment-materials/devices/resolve',{**body,'limit':limit})
         result=self.material_items(value,limit)
-        result.update(model=self.model(value.get('model')),role=value.get('role'),roles=self.material_roles(value.get('roles',[])),revision=value.get('revision',0),canManage=value.get('canManage',False))
+        model=self.model(value.get('model'))
+        result.update(model=model,currentModel=self._current_model(model),role=value.get('role'),
+            roles=self.material_roles(value.get('roles',[])),revision=value.get('revision',0),canManage=value.get('canManage',False))
         _require(result['role'] is None or result['role'] in {r['value'] for r in result['roles'] if r['kind'] in ('root','role')})
         _require(type(result['revision']) is int and result['revision']>=0 and type(result['canManage']) is bool)
         return result
@@ -218,9 +257,7 @@ class EquipmentReader:
             except PreviewError as error:
                 if error.status in (401,403,409):raise
                 result['modelAttributes']={'available':False,'reason':error.code,'model':None,'relation':None,'fields':[],'values':[]}
-            current=self.resolve(list(records))
-            for identity,previous in records.items():
-                _require(all(previous[key]==current[identity][key] for key in ('item','context','model','adoption')),'ENGINEERING_CHANGED',409)
+            self._recheck_devices(records)
         return result
 
     def _model_attributes(self, uid, records):
@@ -235,11 +272,8 @@ class EquipmentReader:
             if model is not None:_require(model['revisionId']==a['specificationRevisionId'],'ENGINEERING_CHANGED',409)
         if model is None:
             return {'available':False,'reason':'MODEL_NOT_REGISTERED','model':None,'relation':None,'fields':[],'values':[]}
-        specification=self.reader._request('GET','/api/v1/equipment-catalog/specification-revisions/'+model['revisionId'])
-        _require(specification.get('revisionId')==model['revisionId'] and specification.get('specificationId')==model['specificationId'],'ENGINEERING_CHANGED',409)
-        snapshot=specification.get('snapshot');_require(type(snapshot) is dict)
-        _require(snapshot.get('templateRevisionId')==model['templateRevisionId']
-            and snapshot.get('classificationRef',{}).get('code')==model['classificationRef']['code'],'ENGINEERING_CHANGED',409)
+        adopted_revision=model['revision']
+        model,snapshot=self._current_specification(model)
         template=self.reader._request('GET','/api/v1/equipment-catalog/template-revisions/'+model['templateRevisionId']+
             '/effective?'+urlencode({'code':model['classificationRef']['code']}))
         fields,values=template.get('fields'),snapshot.get('values')
@@ -248,5 +282,5 @@ class EquipmentReader:
         keys={row['propertyRevisionId'] for row in values}
         _require(all(type(field) is dict and type(field.get('definition')) is dict and type(field.get('propertyRevisionId')) is str for field in fields))
         fields=[field for field in fields if field['propertyRevisionId'] in keys]
-        return {'available':True,'reason':None,'model':model,'relation':relation,'equipmentName':owner['item']['displayName'],
+        return {'available':True,'reason':None,'model':model,'adoptedRevision':adopted_revision,'relation':relation,'equipmentName':owner['item']['displayName'],
             'fields':fields,'values':values}

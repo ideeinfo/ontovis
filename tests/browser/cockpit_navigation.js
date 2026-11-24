@@ -25,11 +25,11 @@ async (page, facts, mode) => {
   }
   await page.setViewportSize({width:1440,height:900});
   if(mode==='resources'){
-    const {equipmentModel:model,equipmentUid:resolved}=facts;
+    const {equipmentModel:model,equipmentUid:resolved,adoptedModel}=facts;
     const version=crypto.randomUUID(),documentId=crypto.randomUUID();
     const manual={documentId,contentVersionId:version,title:'合成型号维护手册',kind:'pdf',documentKind:'manual',
       versionNumber:2,pageCount:4,availability:'available',scopes:['role:CN1'],origins:['model']};
-    const materials={model,roles:[{value:'role:CN1',kind:'role',name:'机舱动力柜'}],revision:2,total:1,nextCursor:null,canManage:false};
+    const materials={model,roles:[{value:'role:CN1',kind:'role',name:'机舱动力柜'}],revision:1,total:1,nextCursor:null,canManage:false};
     const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
     const prefix='/api/workbench';
     const read=(suffix,reply)=>page.route(url=>url.pathname===prefix+suffix,route=>{
@@ -43,7 +43,7 @@ async (page, facts, mode) => {
     });
     await read('/equipment/materials/resolve',body=>{
       verify(body.entityUid===resolved&&body.expectedHierarchyRevision,'Device materials lost the selected installation');
-      return {...materials,role:'root',items:[]};
+      return {...materials,model:adoptedModel,currentModel:model,role:'root',items:[]};
     });
     await read('/equipment/materials/metadata',body=>{
       verify(body.documentId===documentId&&body.contentVersionId===version,'The preview lost the linked fixed document version');
@@ -80,9 +80,18 @@ async (page, facts, mode) => {
     await stage('设备').waitFor({timeout:30000});
     await label('文档资料',root).waitFor();
     const deviceName=await root.locator('.pc-device-card h2').innerText();
-    await label('文档资料',root).click();
+    await root.locator('.pc-device-emblem').getByText(model.name,{exact:true}).waitFor();
+    await label('设备参数',root).click();
     let modal=page.getByRole('dialog',{name:deviceName,exact:true});
+    await modal.getByText(model.name,{exact:true}).waitFor();
+    await modal.getByText('型号 r2',{exact:true}).waitFor();
+    await modal.getByText('采用时的型号 r1',{exact:true}).waitFor();
+    await modal.getByText('690',{exact:true}).waitFor();
+    await label('关闭',modal).click();
+    await label('文档资料',root).click();
     await modal.getByRole('tab',{name:'型号关联资料',exact:true,selected:true}).waitFor();
+    const materialLabel=`${model.name} · 型号 r2 · 资料目录 r1`;
+    await modal.getByText(materialLabel,{exact:true}).waitFor();
     const manualRow=modal.locator('.pc-resource-row').filter({hasText:manual.title});
     await manualRow.getByText('机舱动力柜',{exact:true}).waitFor();
     await manualRow.getByRole('button',{name:'预览',exact:true}).click();
@@ -91,6 +100,7 @@ async (page, facts, mode) => {
     await documentPreview.locator('img').waitFor();
     await label('关闭',documentPreview).click();
     await modal.getByRole('tab',{name:'本设备适用',exact:true}).click();
+    await modal.getByText(materialLabel+' · 整机',{exact:true}).waitFor();
     await modal.getByText('当前设备暂无适用文档资料。',{exact:true}).waitFor();
     await label('关闭',modal).click();
 
@@ -113,7 +123,7 @@ async (page, facts, mode) => {
     await query.fill('');
     await modal.getByText('已载入 1 / 1 张图纸',{exact:true}).waitFor();
     verify(JSON.stringify(drawingPages)===JSON.stringify([[true,null],[true,'page-two'],[false,null]]),'Drawing search skipped a batch or mixed scopes');
-    return {modelDocument:true,applicabilitySeparate:true,compactRows:true,searchBeyondFirstBatch:true,previewRetainsQuery:true,scope:true};
+    return {currentModelAndParameters:true,modelDocument:true,applicabilitySeparate:true,compactRows:true,searchBeyondFirstBatch:true,previewRetainsQuery:true,scope:true};
   }
   if(mode==='history'){
     const initial=address(facts.sceneRevision,facts.instanceId);

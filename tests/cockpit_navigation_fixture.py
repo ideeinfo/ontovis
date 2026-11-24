@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from tests import test_scene_engineering as engineering
 from tests.assistant_model_usage_fixture import CONNECTION, PROJECT, ModelUsageFixture
+from tests.test_equipment_materials import specification_revision
+from tests.test_equipment_parameters import FIELD, VALUE
 from tests.test_model_upload import glb
 from tests.test_regional_catalog import RegionalCatalogTests
 from tests.test_scene_bindings_http import SCENES, BindingAuthority, SceneBindingsHttpTests
@@ -27,17 +29,25 @@ def browser_site(public, *, with_equipment=False):
             source.projects[PROJECT]='导航测试项目'
             source_request=source.request
             equipment=BindingAuthority('http://127.0.0.1:1') if with_equipment else None
-            equipment_model=dict(specificationId=str(uuid4()),revisionId=str(uuid4()),headRevisionId=str(uuid4()),
+            head=str(uuid4())
+            equipment_model=dict(specificationId=str(uuid4()),revisionId=head,headRevisionId=head,
                                  templateRevisionId=str(uuid4()),name='合成设备型号',code='SYNTHETIC',objectKind='equipment',
-                                 nature='manufacturer',status='active',revision=2,classificationRef={}) if equipment else None
+                                 nature='manufacturer',status='active',revision=2,classificationRef={'code':'E'}) if equipment else None
+            adopted_model=dict(equipment_model,revisionId=str(uuid4()),name='合成旧型号',revision=1) if equipment else None
 
             def request(account,method,path,body=None):
                 route=urlsplit(path).path
+                if equipment and route.endswith('/specification-revisions/'+head):
+                    return specification_revision(equipment_model,[VALUE])
+                if equipment and route.endswith('/template-revisions/'+equipment_model['templateRevisionId']+'/effective'):
+                    return {'fields':[FIELD]}
+                if equipment and route.endswith('/equipment/'+engineering.ROOT+'/attribute-form'):
+                    return dict(device={'entityUid':engineering.ROOT},available=True,fields=[],values=[],model=adopted_model)
                 if equipment and (route.endswith(('/objects/resolve','/equipment/resolve')) or '/installations/' in route):
                     result=equipment.request(method,path,body)
                     if route.endswith('/equipment/resolve'):
                         for row in result['items']:
-                            row['model']=equipment_model
+                            row['model']=adopted_model
                     return result
                 if method=='GET' and route==f'/api/v1/projects/{PROJECT}/equipment':
                     items=[equipment.engineering.objects[engineering.ROOT]] if equipment else []
@@ -81,7 +91,7 @@ def browser_site(public, *, with_equipment=False):
                            currentRevision=current['sceneRevision'],instanceId=first['sceneModelInstanceId'],
                            currentName=snapshot['displayName'],historicalName=saved['snapshot']['displayName'],
                            historicalInstance=first['displayName'],currentInstance='当前设备 A01',catalogRevision=publication,
-                           equipmentUid=engineering.ROOT if with_equipment else None,equipmentModel=equipment_model)
+                           equipmentUid=engineering.ROOT if with_equipment else None,equipmentModel=equipment_model,adoptedModel=adopted_model)
                 source.permissions['writer'][PROJECT]=grant
                 assert fixture.open_ok(current)['sceneRevision']==current['sceneRevision']
                 assert fixture.open_ok(saved,saved['sceneRevision'])['snapshot']==saved['snapshot']
