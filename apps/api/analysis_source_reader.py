@@ -27,18 +27,31 @@ def matches_project_identifier(item, identifier, project_code):
 
 class AnalysisSourceReader:
     def __init__(self, reader, models, orders, authorize, actor, *, scene_library=None, scene_listing=None,
-                 adopted_model_listing=None, equipment_configuration_listing=None):
+                 adopted_model_listing=None, equipment_configuration_listing=None, allow_retained_photo_image=False):
         self.reader, self.models, self.orders, self.authorize, self.actor = reader, models, orders, authorize, actor
         self.photos = ScenePhotoReader(reader)
         self.scene_library = scene_library
         self.scene_listing = scene_listing
         self.adopted_model_listing = adopted_model_listing
         self.equipment_configuration_listing = equipment_configuration_listing
+        self.allow_retained_photo_image = allow_retained_photo_image
 
     def _selection(self, selector, extra=()):
         draft.require(type(selector) is dict and set(selector) == {'entityUid', 'expectedEntityRevision', *extra})
         draft.text(selector['entityUid'], 512); draft.text(selector['expectedEntityRevision'], 200)
         return selected(self.reader.context_for_object(selector['entityUid'], selector['expectedEntityRevision']))
+
+    def _fixed_photo(self, descriptor):
+        body = {key: descriptor[key] for key in SELECTION}
+        if 'photoPurpose' in descriptor:
+            body['photoPurpose'] = descriptor['photoPurpose']
+        rows = self.photos.resolve(body)['items']
+        photo = next((row for row in rows if row['evidenceRef'] == descriptor['evidenceRef']), None)
+        draft.require(photo is not None, 'ANALYSIS_SOURCE_UNAVAILABLE', 404)
+        draft.require(photo['contentVersionId'] == descriptor['expectedContentVersionId']
+            and photo['sourceSha256'] == descriptor['expectedSourceSha256'] and photo['selector'] is not None
+            and photo['selector']['displayRevision'] == descriptor['expectedDisplayRevision'], 'SOURCE_CHANGED', 409)
+        return photo
 
     def resolve(self, kind, selector):
         self.authorize()
@@ -126,22 +139,22 @@ class AnalysisSourceReader:
             drawing, _ = drawing_identity(self, descriptor)
             value = {'title': drawing.get('drawing_name') or drawing['drawing_uid'], 'drawingUid': drawing['drawing_uid'],
                      'pageNumber': drawing.get('source_page_number'), 'contentSha256': descriptor['expectedContentSha256']}
-        elif kind in ('drawing', 'photo'):
+        elif kind == 'drawing':
             body = {key: descriptor[key] for key in SELECTION}
-            if kind == 'photo' and 'photoPurpose' in descriptor: body['photoPurpose'] = descriptor['photoPurpose']
-            rows = (self.photos if kind == 'photo' else SceneEvidenceReader(self.reader)).resolve(body)['items']
+            rows = SceneEvidenceReader(self.reader).resolve(body)['items']
             value = next((row for row in rows if row['evidenceRef'] == descriptor['evidenceRef']), None)
             draft.require(value is not None, 'ANALYSIS_SOURCE_UNAVAILABLE', 404)
-            if kind == 'drawing':
-                draft.require(value['sourceRevision'] == descriptor['expectedSourceRevision'] and value['contentSha256'] == descriptor['expectedContentSha256'], 'SOURCE_CHANGED', 409)
-            else:
-                draft.require(value['sourceRevision'] == descriptor['expectedSourceRevision'] and value['contentVersionId'] == descriptor['expectedContentVersionId']
-                    and value['sourceSha256'] == descriptor['expectedSourceSha256'] and value['selector'] is not None
-                    and value['selector']['displayRevision'] == descriptor['expectedDisplayRevision'], 'SOURCE_CHANGED', 409)
-                obj = self.reader.detail(descriptor['installationContextId'], descriptor['entityUid'],
-                    descriptor['expectedHierarchyRevision'], expected_entity_revision=descriptor['expectedEntityRevision'])
-                value = {**value, 'item': {key: obj['item'][key] for key in
-                    ('entityUid', 'entityRevision', 'displayName', 'objectKind', 'classification', 'identifiers') if key in obj['item']}}
+            draft.require(value['sourceRevision'] == descriptor['expectedSourceRevision'] and value['contentSha256'] == descriptor['expectedContentSha256'], 'SOURCE_CHANGED', 409)
+        elif kind == 'photo':
+            photo = self._fixed_photo(descriptor)
+            location_changed = photo['sourceRevision'] != descriptor['expectedSourceRevision']
+            draft.require(not location_changed or self.allow_retained_photo_image, 'SOURCE_CHANGED', 409)
+            obj = self.reader.detail(descriptor['installationContextId'], descriptor['entityUid'],
+                descriptor['expectedHierarchyRevision'], expected_entity_revision=descriptor['expectedEntityRevision'])
+            value = {**photo, 'item': {key: obj['item'][key] for key in
+                ('entityUid', 'entityRevision', 'displayName', 'objectKind', 'classification', 'identifiers') if key in obj['item']}}
+            if location_changed:
+                value.update(selector=None, anchorUnavailableReason='PHOTO_LOCATION_CHANGED')
         elif kind == 'model':
             value = self.models.model(descriptor['modelAssetId'], descriptor['modelVersionId'], self.authorize)
             draft.require(value['contentRevision'] == descriptor['contentRevision'] and value['sha256'] == descriptor['sha256'], 'RESOURCE_CHANGED', 409)
@@ -196,8 +209,17 @@ class AnalysisSourceReader:
                     body['representation'] = photo_representation
                 value = FixedDocuments(self.reader).content(body)
                 self.authorize();return value
-            return self.photos.content({**descriptor, 'representation': photo_representation}
-                                       if photo_representation is not None else descriptor)
+            payload = {**descriptor, 'representation': photo_representation} if photo_representation is not None else descriptor
+            try:
+                return self.photos.content(payload)
+            except PreviewError as error:
+                if not self.allow_retained_photo_image or (error.status, error.code) != (409, 'SOURCE_CHANGED'):
+                    raise
+                # Recheck the current association with the saved content version and both hashes.
+                revision = self._fixed_photo(descriptor)['sourceRevision']
+                if revision == descriptor['expectedSourceRevision']:
+                    raise
+                return self.photos.content({**payload, 'expectedSourceRevision': revision})
         if kind == 'drawing':
             if 'drawingUid' in descriptor:
                 from .analysis_preview import drawing_bytes

@@ -597,7 +597,8 @@ class ProjectSessions(UserSessions):
                 else:self.guard(sid,row)
                 guard = lambda: self.guard(sid, row)
                 reader = AnalysisSourceReader(SceneEngineeringReader(row.authority, self.connection_id, code, guard),
-                    self.shared.project_models, service.work_orders, guard, actor, scene_library=service.library)
+                    self.shared.project_models, service.work_orders, guard, actor, scene_library=service.library,
+                    allow_retained_photo_image=True)
                 if action == 'evidence/register':
                     value = sources.register(actor, body, authorize, reader.resolve)
                 elif action == 'start':

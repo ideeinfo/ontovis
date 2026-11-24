@@ -98,11 +98,14 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     else setRetry(value=>value+1);
   }
   const value=detail?.source;
-  if(error||detail&&detail.availability!=='available')return <div className="ac-source-state" role="status"><strong>{detail?.availability==='restricted'?(en?'Access removed':'资料访问已撤销'):(en?'Source temporarily unavailable':'资料暂时不可用')}</strong><small>{detail?.reason}</small><Btn onClick={()=>setRetry(v=>v+1)}><RefreshCw size={13}/>{en?'Retry':'重试'}</Btn></div>;
+  const unavailableReason=card.kind==='photo'&&detail?.reason==='SOURCE_CHANGED'
+    ?(en?'The saved photo source has changed.':'照片来源已变化，无法读取保存时的照片。'):detail?.reason;
+  if(error||detail&&detail.availability!=='available')return <div className="ac-source-state" role="status"><strong>{detail?.availability==='restricted'?(en?'Access removed':'资料访问已撤销'):(en?'Source temporarily unavailable':'资料暂时不可用')}</strong><small>{unavailableReason}</small><Btn onClick={()=>setRetry(v=>v+1)}><RefreshCw size={13}/>{en?'Retry':'重试'}</Btn></div>;
   if(!value)return <div className="ac-source-state" role="status">{slow?(en?'The source is slow. You can continue with other cards.':'来源读取较慢，可继续操作其他卡片。'):(en?'Loading source…':'正在读取资料…')}<Btn onClick={()=>setRetry(v=>v+1)}>{en?'Retry':'重新读取'}</Btn></div>;
   if(full&&['drawing','document'].includes(card.kind))return <Suspense fallback={<p role="status">{en?'Loading viewer…':'正在载入查看器…'}</p>}><EvidenceViewer key={refKey(card)} card={card} source={value} sources={sources} en={en}
     anchor={anchor} onAdd={onAddMaterial} onAdoptVersion={viewOnly?undefined:onAdoptDocumentVersion}/></Suspense>;
   const asset=['photo','drawing','document'].includes(card.kind);
+  const photoLocationChanged=card.kind==='photo'&&value.anchorUnavailableReason==='PHOTO_LOCATION_CHANGED';
   const imageStatus=cancelled?(en?'Loading cancelled':'已取消加载'):imageError?(en?'Image could not load':'图片读取失败'):
     slow?(en?'Image transfer is slow.':'图片传输较慢。'):
     original?(en?'Loading full resolution…':'正在加载原尺寸图片…'):(en?'Loading image…':'正在载入图片…');
@@ -110,7 +113,8 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     {(!viewOnly||fullPhoto)&&<div className="ac-source-toolbar"><small>{card.historical?(en?'Historical reference':'历史参考'):en?'Fixed source':'固定来源'}{value.versionNumber?' · v'+value.versionNumber:''}</small>
       {fullPhoto&&<Btn onClick={()=>{setCancelled(false);setImageError(false);setOriginal(v=>!v);}}>{original?(en?'Fast preview':'快速预览'):(en?'Full resolution':'查看原尺寸')}</Btn>}
       {!full&&<div className="ac-preview-controls">{active&&<IconBtn label={(en?'Collapse preview: ':'收起预览：')+card.title} onClick={onDeactivate}><ChevronUp size={14}/></IconBtn>}<Btn onClick={onOpen}><ExternalLink size={13}/>{en?'Expand':'展开查看'}</Btn></div>}</div>}
-    {card.kind==='photo'&&<small>{value.sourceType==='project_document'?(en?'Project photo · no object location claimed':'项目照片 · 未声明对象定位'):value.photoPurpose==='field_record'?(en?'Device field photo':'本机现场照片'):(en?'Shared object location photo':'共享对象定位照片')}</small>}
+    {card.kind==='photo'&&<small>{photoLocationChanged?(en?'Saved photo · Location needs review':'保存时的照片 · 位置标注待核对'):
+      value.sourceType==='project_document'?(en?'Project photo · no object location claimed':'项目照片 · 未声明对象定位'):value.photoPurpose==='field_record'?(en?'Device field photo':'本机现场照片'):(en?'Shared object location photo':'共享对象定位照片')}</small>}
     {fullPhoto&&image&&(imagePending||cancelled||imageError)&&<div className="ac-source-toolbar">
       <small role="status">{imageStatus}</small>
       {imagePending?<Btn onClick={cancelImage}>{en?'Cancel':'取消加载'}</Btn>:<Btn onClick={retryImage}>{en?'Retry image':'重试图片'}</Btn>}
@@ -143,8 +147,15 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     {viewOnly&&card.kind==='document'&&<small>{en?'Page ':'第'}{value.pageNumber||1}{en?'':'页'} / {value.pageCount||1}</small>}
     {!viewOnly&&card.kind==='document'&&<label className="ac-page">{en?'Page':'页码'}<input type="number" min={1} max={value.pageCount||1} aria-label={en?'Document page':'文档页码'} value={value.pageNumber||1} onChange={event=>{const page=Number(event.target.value);if(page>=1&&page<=(value.pageCount||1))onPage?.(page,value);}}/><span>/ {value.pageCount}</span>{value.newerVersionAvailable&&<small>{en?'Newer version available; this card retains its selected version.':'已有新版，此卡保持所选版本。'}</small>}</label>}
     {!viewOnly&&card.kind==='document'&&!!value.outline?.length&&<select aria-label={en?'Document section':'文档章节'} value={value.outline.find(row=>row.page===value.pageNumber)?.page||''} onChange={event=>onPage?.(Number(event.target.value),value)}><option value="" disabled>{en?'Go to section':'定位章节'}</option>{value.outline.map((row,i)=><option key={i} value={row.page}>{row.title}</option>)}</select>}
-    {!active&&card.kind==='drawing'&&<small>{en?'Objects, ports and drawing references':'展开查看对象、端口与图纸引用'}</small>}{!active&&card.kind==='document'&&<small>{value.knowledgeNodeId?(en?'Published knowledge graph and source evidence':'已发布知识图谱与对应原文'):(en?'Document pages and knowledge graph':'展开查看全文、目录与知识图谱')}</small>}{asset&&active&&!value.selector&&card.kind==='photo'&&<small>{en?'Whole image; no object region provided':'显示整图；来源未提供对象区域'}</small>}
-    {asset&&(active?(image?<div className="ac-photo-view"><WorkOrderPhotoViewport embedded key={ref.id+':'+image.original} focusZoom={card.kind==='photo'?undefined:null} focusFraction={full ? .35 : .2} initialView={anchor||viewOnly&&!full?undefined:card.view as ImageView|undefined} onViewChange={viewOnly?undefined:onView} image={image.url} decodedImage={sources.decodedImage(image.url)} selector={anchor?.selector||value.selector||null} label={card.title} regionLabel={card.kind==='photo'?objectLocationLabel(value.item,en?'en':'zh'):undefined} en={en} onError={()=>setError(true)}/></div>:<div className="ac-source-state" role="status">{imageStatus}<Btn onClick={retryImage}>{en?'Retry':'重试'}</Btn>{!cancelled&&!imageError&&<Btn onClick={cancelImage}>{en?'Cancel':'取消加载'}</Btn>}</div>):<Btn className="ac-open-media" onClick={onActivate}>{en?'Open '+materialNames[card.kind]:'打开'+materialNames[card.kind]}</Btn>)}
+    {!active&&card.kind==='drawing'&&<small>{en?'Objects, ports and drawing references':'展开查看对象、端口与图纸引用'}</small>}{!active&&card.kind==='document'&&<small>{value.knowledgeNodeId?(en?'Published knowledge graph and source evidence':'已发布知识图谱与对应原文'):(en?'Document pages and knowledge graph':'展开查看全文、目录与知识图谱')}</small>}{asset&&active&&!value.selector&&card.kind==='photo'&&!photoLocationChanged&&<small>{en?'Whole image; no object region provided':'显示整图；来源未提供对象区域'}</small>}
+    {asset&&(active?(image?<div className="ac-photo-view"><WorkOrderPhotoViewport embedded key={ref.id+':'+image.original}
+      focusZoom={card.kind==='photo'?undefined:null} focusFraction={full ? .35 : .2}
+      initialView={anchor||viewOnly&&!full?undefined:card.view as ImageView|undefined} onViewChange={viewOnly?undefined:onView}
+      image={image.url} decodedImage={sources.decodedImage(image.url)}
+      selector={photoLocationChanged?null:anchor?.selector||value.selector||null} label={card.title}
+      regionLabel={card.kind==='photo'?objectLocationLabel(value.item,en?'en':'zh'):undefined} en={en} onError={()=>setError(true)}/></div>
+      :<div className="ac-source-state" role="status">{imageStatus}<Btn onClick={retryImage}>{en?'Retry':'重试'}</Btn>{!cancelled&&!imageError&&<Btn onClick={cancelImage}>{en?'Cancel':'取消加载'}</Btn>}</div>)
+      :<Btn className="ac-open-media" onClick={onActivate}>{en?'Open '+materialNames[card.kind]:'打开'+materialNames[card.kind]}</Btn>)}
     {card.kind==='model3d'&&(active?<Suspense fallback={<p role="status">{en?'Loading viewer…':'正在载入查看器…'}</p>}><ModelCard full={full} componentKeys={anchor?.componentKeys} minimal={viewOnly&&!full} api={sources.api as WorkbenchApi} version={value as ProjectModelVersion} en={en} initialView={anchor?undefined:card.view as ModelView|undefined} onView={onView}/></Suspense>:<><p>{value.displayName||card.title}</p><Btn onClick={onActivate}>{en?'Activate 3D':'启用三维查看'}</Btn></>)}
   </div>;
 },(a,b)=>a.card.id===b.card.id&&a.card.kind===b.card.kind&&a.card.title===b.card.title&&a.card.historical===b.card.historical&&a.viewOnly===b.viewOnly

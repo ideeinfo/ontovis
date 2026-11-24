@@ -436,6 +436,9 @@ def relationships(reader, fixed, scene_library):
                 '固定模拟报警配置按项目主位号 '+dataset['primaryRds']+' 显式映射；不表示已确认故障原因或现场安装身份')
     drawings = {}
     for identity, (kind, descriptor, value) in values.items():
+        if kind == 'photo' and value.get('anchorUnavailableReason') == 'PHOTO_LOCATION_CHANGED':
+            gap(identity, 'PHOTO_LOCATION_CHANGED')
+            continue
         if kind == 'drawing':
             try: drawings[identity] = drawing_preview(reader, descriptor, {'section': 'references'})
             except PreviewError as error:

@@ -158,6 +158,63 @@ class SourceContractTests(unittest.TestCase):
         with self.assertRaises(PreviewError):source.read('photo',descriptor)
         reader.detail.assert_not_called()
 
+    def test_saved_photo_can_be_read_without_the_changed_location(self):
+        from apps.api.analysis_preview import relationships
+        version = str(uuid4())
+        selection = {'entityUid':'cabinet','expectedEntityRevision':'object:1',
+                     'installationContextId':None,'expectedHierarchyRevision':None}
+        descriptor = {**selection, 'evidenceRef':'photo:cabinet','expectedContentVersionId':version,
+                      'expectedSourceRevision':'a'*64,'expectedSourceSha256':'b'*64,'expectedDisplayRevision':'c'*64}
+        photo = {'evidenceRef':'photo:cabinet','sourceRevision':'d'*64,'contentVersionId':version,
+                 'sourceSha256':'b'*64,'selector':{'displayRevision':'c'*64}}
+        item = {'entityUid':'cabinet','entityRevision':'object:1'}
+        reader = SimpleNamespace(detail=Mock(return_value={'item':item}))
+        source = AnalysisSourceReader(reader, None, None, lambda:None, 'owner', allow_retained_photo_image=True)
+        source.photos.resolve = Mock(return_value={'items':[photo]})
+        image = {'content':b'fixed bytes','sha256':'c'*64}
+        def read_image(body):
+            if body['expectedSourceRevision'] != photo['sourceRevision']:
+                raise PreviewError(409, 'SOURCE_CHANGED')
+            return image
+        source.photos.content = Mock(side_effect=read_image)
+
+        result = source.read('photo', descriptor)
+        self.assertIsNone(result['selector'])
+        self.assertEqual(result['anchorUnavailableReason'], 'PHOTO_LOCATION_CHANGED')
+        self.assertEqual(photo['selector'], {'displayRevision':'c'*64})
+        expected = descriptor | {'expectedSourceRevision':'d'*64}
+        for representation in (None, 'full_resolution_avif'):
+            with self.subTest(representation=representation):
+                request = expected if representation is None else expected | {'representation': representation}
+                self.assertEqual(source.content('photo', descriptor, photo_representation=representation), image)
+                source.photos.content.assert_called_with(request)
+        self.assertEqual(descriptor['expectedSourceRevision'], 'a'*64)
+        fixed = [({'evidenceRefId':'device', 'sourceKind':'object'}, selection),
+                 ({'evidenceRefId':'photo', 'sourceKind':'photo'}, descriptor)]
+        value = relationships(source, fixed, None)
+        self.assertEqual(value['items'], [])
+        self.assertEqual(value['gaps'], [{'evidenceRefId':'photo', 'reason':'PHOTO_LOCATION_CHANGED'}])
+
+        for changed in ({'evidenceRef':'photo:another'}, {'contentVersionId':str(uuid4())},
+                        {'sourceSha256':'e'*64}, {'selector':None}, {'selector':{'displayRevision':'f'*64}}):
+            with self.subTest(changed=changed):
+                source.photos.resolve.return_value = {'items':[photo | changed]}
+                source.photos.content.reset_mock()
+                with self.assertRaises(PreviewError):
+                    source.read('photo', descriptor)
+                with self.assertRaises(PreviewError):
+                    source.content('photo', descriptor)
+                source.photos.content.assert_called_once_with(descriptor)
+
+        for error in (PreviewError(403,'FORBIDDEN'), PreviewError(409,'CONTENT_CHANGED')):
+            with self.subTest(code=error.code):
+                source.photos.resolve.reset_mock()
+                source.photos.content.side_effect = error
+                with self.assertRaises(PreviewError) as raised:
+                    source.content('photo', descriptor)
+                self.assertEqual(raised.exception.code, error.code)
+                source.photos.resolve.assert_not_called()
+
     def test_recommended_photo_and_drawing_cannot_register_a_changed_source_revision(self):
         context={'item':{'entityUid':'sensor','entityRevision':'r1'},'context':None}
         reader=SimpleNamespace(context_for_object=Mock(return_value=context))
