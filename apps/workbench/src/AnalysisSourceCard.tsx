@@ -106,6 +106,10 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     anchor={anchor} onAdd={onAddMaterial} onAdoptVersion={viewOnly?undefined:onAdoptDocumentVersion}/></Suspense>;
   const asset=['photo','drawing','document'].includes(card.kind);
   const photoLocationChanged=card.kind==='photo'&&value.anchorUnavailableReason==='PHOTO_LOCATION_CHANGED';
+  const selector=photoLocationChanged?(value.currentPhotoSelector??null):(anchor?.selector??value.selector??null);
+  const locationNote=selector
+    ?(en?'Current annotation · Location needs review':'当前标注 · 位置待核对')
+    :(en?'Saved photo · Location needs review':'保存时的照片 · 位置标注待核对');
   const imageStatus=cancelled?(en?'Loading cancelled':'已取消加载'):imageError?(en?'Image could not load':'图片读取失败'):
     slow?(en?'Image transfer is slow.':'图片传输较慢。'):
     original?(en?'Loading full resolution…':'正在加载原尺寸图片…'):(en?'Loading image…':'正在载入图片…');
@@ -113,7 +117,7 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     {(!viewOnly||fullPhoto)&&<div className="ac-source-toolbar"><small>{card.historical?(en?'Historical reference':'历史参考'):en?'Fixed source':'固定来源'}{value.versionNumber?' · v'+value.versionNumber:''}</small>
       {fullPhoto&&<Btn onClick={()=>{setCancelled(false);setImageError(false);setOriginal(v=>!v);}}>{original?(en?'Fast preview':'快速预览'):(en?'Full resolution':'查看原尺寸')}</Btn>}
       {!full&&<div className="ac-preview-controls">{active&&<IconBtn label={(en?'Collapse preview: ':'收起预览：')+card.title} onClick={onDeactivate}><ChevronUp size={14}/></IconBtn>}<Btn onClick={onOpen}><ExternalLink size={13}/>{en?'Expand':'展开查看'}</Btn></div>}</div>}
-    {card.kind==='photo'&&<small>{photoLocationChanged?(en?'Saved photo · Location needs review':'保存时的照片 · 位置标注待核对'):
+    {card.kind==='photo'&&<small>{photoLocationChanged?locationNote:
       value.sourceType==='project_document'?(en?'Project photo · no object location claimed':'项目照片 · 未声明对象定位'):value.photoPurpose==='field_record'?(en?'Device field photo':'本机现场照片'):(en?'Shared object location photo':'共享对象定位照片')}</small>}
     {fullPhoto&&image&&(imagePending||cancelled||imageError)&&<div className="ac-source-toolbar">
       <small role="status">{imageStatus}</small>
@@ -152,7 +156,7 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
       focusZoom={card.kind==='photo'?undefined:null} focusFraction={full ? .35 : .2}
       initialView={anchor||viewOnly&&!full?undefined:card.view as ImageView|undefined} onViewChange={viewOnly?undefined:onView}
       image={image.url} decodedImage={sources.decodedImage(image.url)}
-      selector={photoLocationChanged?null:anchor?.selector||value.selector||null} label={card.title}
+      selector={selector} label={card.title}
       regionLabel={card.kind==='photo'?objectLocationLabel(value.item,en?'en':'zh'):undefined} en={en} onError={()=>setError(true)}/></div>
       :<div className="ac-source-state" role="status">{imageStatus}<Btn onClick={retryImage}>{en?'Retry':'重试'}</Btn>{!cancelled&&!imageError&&<Btn onClick={cancelImage}>{en?'Cancel':'取消加载'}</Btn>}</div>)
       :<Btn className="ac-open-media" onClick={onActivate}>{en?'Open '+materialNames[card.kind]:'打开'+materialNames[card.kind]}</Btn>)}

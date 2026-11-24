@@ -32,6 +32,7 @@ export type EvidenceSource=Partial<Omit<ProjectModelVersion,'state'> & Simulated
   title?:string;pageNumber?:number;pageCount?:number;versionNumber?:number;newerVersionAvailable?:boolean;
   documentId?:string;contentVersionId?:string;currentContentVersionId?:string;sourceSha256?:string;selector?:PhotoSelector|null;
   anchorUnavailableReason?:string|null;
+  currentPhotoSelector?:PhotoSelector;
   photoPurpose?:'object_location'|'field_record';sourceType?:'project_document';equipmentEntityUid?:string|null;
   outline?:{title:string;page:number}[];
   knowledgeReleaseId?:string;knowledgeNodeId?:string;

@@ -158,15 +158,18 @@ class SourceContractTests(unittest.TestCase):
         with self.assertRaises(PreviewError):source.read('photo',descriptor)
         reader.detail.assert_not_called()
 
-    def test_saved_photo_can_be_read_without_the_changed_location(self):
+    def test_saved_photo_can_show_the_current_location_without_replacing_the_reference(self):
         from apps.api.analysis_preview import relationships
         version = str(uuid4())
         selection = {'entityUid':'cabinet','expectedEntityRevision':'object:1',
                      'installationContextId':None,'expectedHierarchyRevision':None}
         descriptor = {**selection, 'evidenceRef':'photo:cabinet','expectedContentVersionId':version,
                       'expectedSourceRevision':'a'*64,'expectedSourceSha256':'b'*64,'expectedDisplayRevision':'c'*64}
+        location = {'kind':'image_bbox','coordinateSpace':'oriented_display_normalized','regionKind':'label_region',
+                    'renditionId':'saved-display','displayRevision':'c'*64,
+                    'bbox':{'x':.72,'y':.18,'width':.05,'height':.01}}
         photo = {'evidenceRef':'photo:cabinet','sourceRevision':'d'*64,'contentVersionId':version,
-                 'sourceSha256':'b'*64,'selector':{'displayRevision':'c'*64}}
+                 'sourceSha256':'b'*64,'selector':location}
         item = {'entityUid':'cabinet','entityRevision':'object:1'}
         reader = SimpleNamespace(detail=Mock(return_value={'item':item}))
         source = AnalysisSourceReader(reader, None, None, lambda:None, 'owner', allow_retained_photo_image=True)
@@ -180,8 +183,8 @@ class SourceContractTests(unittest.TestCase):
 
         result = source.read('photo', descriptor)
         self.assertIsNone(result['selector'])
+        self.assertEqual(result['currentPhotoSelector'], location)
         self.assertEqual(result['anchorUnavailableReason'], 'PHOTO_LOCATION_CHANGED')
-        self.assertEqual(photo['selector'], {'displayRevision':'c'*64})
         expected = descriptor | {'expectedSourceRevision':'d'*64}
         for representation in (None, 'full_resolution_avif'):
             with self.subTest(representation=representation):

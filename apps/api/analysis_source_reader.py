@@ -154,7 +154,10 @@ class AnalysisSourceReader:
             value = {**photo, 'item': {key: obj['item'][key] for key in
                 ('entityUid', 'entityRevision', 'displayName', 'objectKind', 'classification', 'identifiers') if key in obj['item']}}
             if location_changed:
-                value.update(selector=None, anchorUnavailableReason='PHOTO_LOCATION_CHANGED')
+                # Viewing can use the current annotation on the same fixed image.
+                # It remains separate from the saved relationship.
+                value.update(selector=None, currentPhotoSelector=photo['selector'],
+                             anchorUnavailableReason='PHOTO_LOCATION_CHANGED')
         elif kind == 'model':
             value = self.models.model(descriptor['modelAssetId'], descriptor['modelVersionId'], self.authorize)
             draft.require(value['contentRevision'] == descriptor['contentRevision'] and value['sha256'] == descriptor['sha256'], 'RESOURCE_CHANGED', 409)
