@@ -24,6 +24,97 @@ async (page, facts, mode) => {
     await label('登录',login).click();
   }
   await page.setViewportSize({width:1440,height:900});
+  if(mode==='resources'){
+    const {equipmentModel:model,equipmentUid:resolved}=facts;
+    const version=crypto.randomUUID(),documentId=crypto.randomUUID();
+    const manual={documentId,contentVersionId:version,title:'合成型号维护手册',kind:'pdf',documentKind:'manual',
+      versionNumber:2,pageCount:4,availability:'available',scopes:['role:CN1'],origins:['model']};
+    const materials={model,roles:[{value:'role:CN1',kind:'role',name:'机舱动力柜'}],revision:2,total:1,nextCursor:null,canManage:false};
+    const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+    const prefix='/api/workbench';
+    const read=(suffix,reply)=>page.route(url=>url.pathname===prefix+suffix,route=>{
+      const body=route.request().postDataJSON();
+      return route.fulfill({headers:{'Cache-Control':'no-store'},json:reply(body)});
+    });
+    const image=(route,body)=>route.fulfill({body:png,contentType:'image/png',headers:{'X-Session-Revision':body.expectedSessionRevision}});
+    await read('/equipment/materials/models',body=>{
+      verify(body.specificationId===model.specificationId,'The model catalogue used a different model');
+      return {...materials,items:[manual]};
+    });
+    await read('/equipment/materials/resolve',body=>{
+      verify(body.entityUid===resolved&&body.expectedHierarchyRevision,'Device materials lost the selected installation');
+      return {...materials,role:'root',items:[]};
+    });
+    await read('/equipment/materials/metadata',body=>{
+      verify(body.documentId===documentId&&body.contentVersionId===version,'The preview lost the linked fixed document version');
+      return {...manual,sourceSha256:'a'.repeat(64),pageNumber:1,newerVersionAvailable:false};
+    });
+    await page.route(url=>url.pathname===prefix+'/equipment/materials/content',route=>{
+      const body=route.request().postDataJSON();
+      verify(body.documentId===documentId&&body.contentVersionId===version&&body.sourceSha256==='a'.repeat(64),
+        'The preview requested different document bytes');
+      return image(route,body);
+    });
+    const drawingPages=[];
+    await read('/objects/evidence/related',body=>{
+      verify(body.entityUid===resolved&&body.expectedHierarchyRevision&&body.limit===20,'Drawing catalogue lost its selected scope or batch limit');
+      drawingPages.push([body.includeDescendants,body.cursor??null]);
+      const drawing=number=>({drawingUid:'synthetic-'+number,title:number===42?'合成液压接线图':`合成配电图 ${number}`,
+        drawingNumber:'SYNTHETIC',pageNumber:number,sourceRevision:'b'.repeat(64),contentSha256:'c'.repeat(64),availability:'available',
+        matchedObjects:[{entityUid:resolved,displayName:'合成设备',entityRevision:body.expectedEntityRevision,
+          viaEntityUid:resolved,viaName:'合成设备',relation:'self'}]});
+      const numbers=body.includeDescendants?(body.cursor?[21,22,42]:Array.from({length:20},(_,i)=>i+1)):[1];
+      return {items:numbers.map(drawing),total:body.includeDescendants?23:1,scopeComplete:true,includeDescendants:body.includeDescendants,
+        nextCursor:body.includeDescendants&&!body.cursor?'page-two':null,snapshotRevision:'d'.repeat(64)};
+    });
+    let previewed=false;
+    await page.route(url=>url.pathname===prefix+'/objects/evidence/related/content',route=>{
+      const body=route.request().postDataJSON();
+      verify(body.entityUid===resolved&&body.drawingUid==='synthetic-42'&&body.expectedContentSha256==='c'.repeat(64)&&body.includeDescendants,
+        'The searched drawing lost its identity or scope in preview');
+      previewed=true;
+      return image(route,body);
+    });
+    await page.goto(address(facts.sceneRevision,facts.instanceId));
+    await signIn();
+    await stage('设备').waitFor({timeout:30000});
+    await label('文档资料',root).waitFor();
+    const deviceName=await root.locator('.pc-device-card h2').innerText();
+    await label('文档资料',root).click();
+    let modal=page.getByRole('dialog',{name:deviceName,exact:true});
+    await modal.getByRole('tab',{name:'型号关联资料',exact:true,selected:true}).waitFor();
+    const manualRow=modal.locator('.pc-resource-row').filter({hasText:manual.title});
+    await manualRow.getByText('机舱动力柜',{exact:true}).waitFor();
+    await manualRow.getByRole('button',{name:'预览',exact:true}).click();
+    const documentPreview=page.getByRole('dialog',{name:manual.title,exact:true});
+    await documentPreview.getByText('固定版本 v2',{exact:true}).waitFor();
+    await documentPreview.locator('img').waitFor();
+    await label('关闭',documentPreview).click();
+    await modal.getByRole('tab',{name:'本设备适用',exact:true}).click();
+    await modal.getByText('当前设备暂无适用文档资料。',{exact:true}).waitFor();
+    await label('关闭',modal).click();
+
+    await label('图纸',root).click();
+    modal=page.getByRole('dialog',{name:deviceName,exact:true});
+    const drawingList=modal.getByRole('region',{name:'图纸清单'}),query=modal.getByRole('searchbox',{name:'搜索图纸'});
+    await modal.getByText('已载入 20 / 23 张图纸',{exact:true}).waitFor();
+    verify(await drawingList.evaluate(list=>[...list.children].filter(row=>row.getBoundingClientRect().bottom<=list.getBoundingClientRect().bottom+1).length>3),
+      'The drawing list still exposes only three rows');
+    await query.fill('液压 第42页');
+    await modal.getByText('找到 1 张图纸',{exact:true}).waitFor();
+    const found=drawingList.locator('.pc-resource-row').filter({hasText:'合成液压接线图'});
+    await label('预览',found).click();
+    const drawingPreview=page.getByRole('dialog',{name:'合成液压接线图',exact:true});
+    await drawingPreview.locator('img').waitFor();
+    await label('关闭',drawingPreview).click();
+    verify(previewed&&await query.inputValue()==='液压 第42页','Returning from the drawing lost the current search');
+    await modal.getByRole('tab',{name:'仅本对象',exact:true}).click();
+    await modal.getByText('未找到匹配的图纸。',{exact:true}).waitFor();
+    await query.fill('');
+    await modal.getByText('已载入 1 / 1 张图纸',{exact:true}).waitFor();
+    verify(JSON.stringify(drawingPages)===JSON.stringify([[true,null],[true,'page-two'],[false,null]]),'Drawing search skipped a batch or mixed scopes');
+    return {modelDocument:true,applicabilitySeparate:true,compactRows:true,searchBeyondFirstBatch:true,previewRetainsQuery:true,scope:true};
+  }
   if(mode==='history'){
     const initial=address(facts.sceneRevision,facts.instanceId);
     await page.goto(initial);

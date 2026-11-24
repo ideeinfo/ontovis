@@ -158,14 +158,14 @@ def cockpit_navigation(browser, dist):
     from tests.cockpit_navigation_fixture import browser_site
 
     script=(SCRIPTS/'cockpit_navigation.js').read_text()
-    with browser_site(dist) as facts:
-        results={}
-        for mode in ('directory','history'):
+    results={}
+    for mode in ('directory','history','resources'):
+        with browser_site(dist,with_equipment=mode=='resources') as facts:
             role='cockpit-'+mode
             browser.open(role)
             results[mode]=browser.run(role,script,facts,mode)
             verify(type(results[mode]) is dict,'Missing cockpit '+mode+' receipt')
-        return results
+    return results
 
 
 def candidate(browser, release, dist, output):

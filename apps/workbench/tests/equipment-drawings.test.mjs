@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {equipmentDrawingSelection,equipmentDrawings,equipmentDrawingContent} from '../src/equipmentDrawingState.ts';
+import {appendDrawingPage,equipmentDrawingSelection,equipmentDrawings,equipmentDrawingContent,filterEquipmentDrawings} from '../src/equipmentDrawingState.ts';
 import {EquipmentApi} from '../src/equipmentApi.ts';
 
 const object={entityUid:'selected-cabinet',entityRevision:'selected:r2',installationContextId:'installed-1',displayName:'Cabinet'},context={installationContextId:'installed-1',hierarchyRevision:'installed-1:r3'};
@@ -40,4 +40,29 @@ test('drawing scope and server cursor stay explicit across pages and previews',a
  assert.deepEqual(calls[0][1],{...selection,includeDescendants:true,limit:2,cursor:'source-cursor'});
  assert.deepEqual(calls[1][1],{...selection,includeDescendants:false,limit:2});
  assert.equal(calls[2][1].includeDescendants,false);assert.equal(calls[2][1].entityUid,object.entityUid);
+});
+
+test('drawing search matches title, drawing number, exact page and associated object across loaded pages',()=>{
+ const initial={...drawing,title:'塔基690VAC供电',drawingNumber:'M0600004111',pageNumber:189,matchedObjects:[]};
+ const later={...drawing,drawingUid:'later',title:'机舱动力柜供电',drawingNumber:'M0600004111',pageNumber:89,
+  matchedObjects:[{displayName:'机舱动力柜',viaName:'CN1 柜内元件'}]};
+ const first={items:[initial],total:2,nextCursor:'page2',snapshotRevision:'snapshot',scopeComplete:true,includeDescendants:true};
+ const second={...first,items:[later],nextCursor:null};
+ assert.deepEqual(filterEquipmentDrawings(first.items,'ＣＮ１ 供电'),[]);
+ const all=appendDrawingPage(first,second,'page2');
+ assert.deepEqual(filterEquipmentDrawings(all.items,'ＣＮ１ 供电'),[later]);
+ assert.deepEqual(filterEquipmentDrawings(all.items,'第８９页'),[later]);
+ assert.deepEqual(filterEquipmentDrawings(all.items,'89页'),[later]);
+ assert.deepEqual(filterEquipmentDrawings(all.items,'m0600004111'),[initial,later]);
+ assert.deepEqual(filterEquipmentDrawings(all.items,'  '),[initial,later]);
+});
+
+test('drawing pages cannot combine changed selection snapshots, duplicate rows or missing results',()=>{
+ const page={items:[drawing],total:2,nextCursor:'page2',snapshotRevision:'snapshot',scopeComplete:true,includeDescendants:true};
+ const second={...page,items:[{...drawing,drawingUid:'later'}],nextCursor:null};
+ assert.deepEqual(appendDrawingPage(null,page,null),page);
+ for(const invalid of [{...second,snapshotRevision:'changed'},{...second,total:3},{...second,includeDescendants:false},
+  {...second,items:[drawing]},{...second,nextCursor:'page2'},{...second,items:[]}]){
+  assert.throws(()=>appendDrawingPage(page,invalid,'page2'),error=>error.code==='SNAPSHOT_EXPIRED');
+ }
 });

@@ -7,7 +7,7 @@ import {cockpitParentPath,retryCockpitRead} from './cockpitLocation';
 import type {SceneLocation,SceneObjectContext} from './sceneEngineeringTypes';
 import type {AnalysisEntry} from './analysisSources';
 import {EquipmentAttributeDetails} from './EquipmentAttributeDetails';
-import {EquipmentMaterials} from './EquipmentMaterials';
+import {CockpitEquipmentMaterials} from './EquipmentMaterials';
 import {EquipmentDrawings} from './EquipmentDrawings';
 import {Btn,Modal} from './Primitives';
 import {PageDeck,CockpitModelPreview} from './CockpitPanels';
@@ -51,8 +51,8 @@ export function CockpitDevice({api,uid,en,alarm,representationUid,onBack,onSelec
  <button className="pc-material-action" onClick={()=>setDetail('attributes')}><SlidersHorizontal size={20}/><span>{t('设备参数','Equipment parameters')}</span><ArrowRight size={15}/></button>
  <button className="pc-material-action" onClick={()=>setDetail('drawings')}><FileText size={20}/><span>{t('图纸','Drawings')}</span><ArrowRight size={15}/></button>
  <button className="pc-primary-action" onClick={()=>onAnalyze({entityUid:uid,expectedEntityRevision:record.item.entityRevision,timeTo:new Date().toISOString()})}><Network size={18}/>{t('进入设备分析','Analyze equipment')}<ArrowRight size={16}/></button></section>
- {detail&&<Modal className={'pc-detail-dialog'+(detail!=='info'?' pc-device-resource-dialog':'')} title={record.item.displayName} description={t('所选设备详情','Selected equipment details')} onClose={()=>setDetail('')}>
+ {detail&&<Modal className={'pc-detail-dialog'+(detail==='attributes'?' pc-device-resource-dialog':'')} title={record.item.displayName} description={t('所选设备详情','Selected equipment details')} onClose={()=>setDetail('')}>
  {detail==='info'&&<div className="pc-detail-copy"><dl><dt>{t('型号','Model')}</dt><dd>{record.model?.name||'—'}</dd><dt>{t('身份','Identity')}</dt><dd>{uid}</dd><dt>{t('几何','Geometry')}</dt><dd>{t('源候选 / 示意表示；精度未核实','Source candidate / schematic; accuracy unverified')}</dd></dl>{uid!==representationUid&&!precise&&<p>{t('空间视图显示所属设备；此部件尚无经核验的独立几何绑定。','The view shows the containing equipment; this child has no verified geometry binding.')}</p>}<p>{t('真实运行数据尚未接入，显示姿态不代表现场运行状态。','Live telemetry is not connected; displayed poses are not field operating states.')}</p></div>}
- {detail==='attributes'&&<EquipmentAttributeDetails api={api} uid={uid} en={en} modelContext={{expectedEntityRevision:record.item.entityRevision}} onReload={()=>setAttempt(v=>v+1)}/>}{detail==='materials'&&<EquipmentMaterials api={api} en={en} selection={selection!} presentation/>}{detail==='drawings'&&<EquipmentDrawings api={api} object={context.item} context={context.context} en={en} onReload={()=>setAttempt(v=>v+1)}/>}
+ {detail==='attributes'&&<EquipmentAttributeDetails api={api} uid={uid} en={en} modelContext={{expectedEntityRevision:record.item.entityRevision}} onReload={()=>setAttempt(v=>v+1)}/>}{detail==='materials'&&<CockpitEquipmentMaterials key={record.item.entityUid} api={api} en={en} record={record} selection={selection!}/>}{detail==='drawings'&&<EquipmentDrawings api={api} object={context.item} context={context.context} en={en} onReload={()=>setAttempt(v=>v+1)}/>}
  </Modal>}</>}</>;
 }
