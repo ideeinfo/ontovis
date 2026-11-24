@@ -366,7 +366,7 @@ export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysis
    const target=cockpitAlarmTarget(catalog,project.projectRef,registration);
    if(!target||navigationBusy)return false;
    setAlarms(false);locateAlarm(selection,target);return true;
-  }}/></Suspense></Modal>}
+  }} locatePending={registration=>navigationBusy||!error&&(!catalog||!!catalog.loading)&&!cockpitAlarmTarget(catalog,project.projectRef,registration)}/></Suspense></Modal>}
   {leave&&<ConfirmationDialog title={t('修改尚未保存','Unsaved changes')}
     description={t('离开会丢失当前修改。','Leaving discards the current edits.')}
     cancelLabel={t('继续编辑','Keep editing')} onClose={()=>setLeave(null)}>
