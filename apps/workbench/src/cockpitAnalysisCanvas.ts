@@ -1,4 +1,4 @@
-import type {CanvasCard,CanvasSnapshot,Viewport} from './analysisCanvas';
+import {fitFrameToCards,type CanvasCard,type CanvasSnapshot,type Viewport} from './analysisCanvas.ts';
 
 export type CockpitCardPosition={x:number;y:number};
 export type CockpitCardPositions=Record<string,CockpitCardPosition>;
@@ -8,11 +8,15 @@ export const COCKPIT_CANVAS_MIN_ZOOM=.1,COCKPIT_CANVAS_MAX_ZOOM=2;
 const finite=(...values:number[])=>values.every(Number.isFinite);
 
 export function cockpitAnalysisLayout(snapshot?:Pick<CanvasSnapshot,'cards'|'frames'>,positions:CockpitCardPositions={}){
- const frames=snapshot?.frames??[];
+ const movedGroups=new Set<string>();
  const cards=(snapshot?.cards??[]).map(card=>{
   const position=positions[card.id];
-  return position&&finite(position.x,position.y)?{...card,x:position.x,y:position.y}:card;
+  if(!position||!finite(position.x,position.y)||(position.x===card.x&&position.y===card.y))return card;
+  if(card.frameId)movedGroups.add(card.frameId);
+  return {...card,x:position.x,y:position.y};
  });
+ const frames=(snapshot?.frames??[]).map(frame=>movedGroups.has(frame.id)
+  ?fitFrameToCards(frame,cards.filter(card=>card.frameId===frame.id)):frame);
  const items=[...frames,...cards];
  if(!items.length)return {frames,cards,bounds:null};
  const x=Math.min(...items.map(item=>item.x)),y=Math.min(...items.map(item=>item.y));

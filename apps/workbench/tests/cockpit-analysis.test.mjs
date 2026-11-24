@@ -71,19 +71,27 @@ test('drag can leave the saved bounds on either side and invalid movement keeps 
  assert.deepEqual(cockpitCardMove(value,{x:NaN,y:60},value),{x:40,y:60});
  assert.deepEqual(cockpitAnalysisLayout({cards:[value]},{drawing:{x:Infinity,y:NaN}}).cards,[value]);
 });
-test('saved groups and card sizes are exact, and a card outside its frame keeps its membership',()=>{
+test('only the frame whose members move expands or shrinks around their temporary positions',()=>{
  const frames=[{id:'current',title:'本次调查',x:-520,y:-160,width:680,height:510},
-  {id:'history',title:'历史参考',x:-310,y:720,width:470,height:340}];
+  {id:'history',title:'历史参考',x:-310,y:722,width:740,height:390}];
  const cards=[{...card('alarm','alarm'),frameId:'current',x:-500,y:-80},
-  {...card('drawing','drawing'),frameId:'history',x:-290,y:760,width:405,view:{zoom:.7,centerX:.3,centerY:.4}}];
+  {...card('drawing','drawing'),frameId:'history',x:-290,y:760,width:405,view:{zoom:.7,centerX:.3,centerY:.4}},
+  {...card('photo','photo'),frameId:'history',x:140,y:760,width:260}];
  const snapshot={cards,frames},saved=JSON.stringify(snapshot),initial=cockpitAnalysisLayout(snapshot);
  assert.deepEqual(initial.frames,frames);assert.deepEqual(initial.cards,cards);
- assert.deepEqual(initial.bounds,{x:-520,y:-160,width:680,height:1220});
+ assert.deepEqual(initial.bounds,{x:-520,y:-160,width:950,height:1272});
  const moved=cockpitAnalysisLayout(snapshot,{drawing:{x:-930,y:1400}});
- assert.deepEqual(moved.frames,frames);assert.deepEqual(moved.cards,[cards[0],{...cards[1],x:-930,y:1400}]);
- assert.equal(cockpitCardOutsideFrame(initial.cards[1],frames[1]),false);
+ assert.deepEqual(moved.frames,[frames[0],{...frames[1],x:-950,width:1370,height:938}]);
+ assert.deepEqual(moved.cards,[cards[0],{...cards[1],x:-930,y:1400},cards[2]]);
  assert.equal(cockpitCardOutsideFrame(moved.cards[1],frames[1]),true);
- assert.deepEqual(moved.bounds,{x:-930,y:-160,width:1090,height:1800});
+ assert.equal(cockpitCardOutsideFrame(moved.cards[1],moved.frames[1]),false);
+ assert.equal(cockpitCardOutsideFrame(moved.cards[2],moved.frames[1]),false);
+ assert.deepEqual(moved.bounds,{x:-950,y:-160,width:1370,height:1820});
+ const narrowed=cockpitAnalysisLayout(snapshot,{drawing:{x:-120,y:1050}});
+ assert.deepEqual(narrowed.frames[1],{...frames[1],x:-140,width:560,height:588});
+ assert.deepEqual(cockpitAnalysisLayout(snapshot,{drawing:{x:-290,y:760}}),initial);
+ const far=cockpitAnalysisLayout(snapshot,{drawing:{x:-24000,y:20100}});
+ assert.equal(cockpitCardOutsideFrame(far.cards[1],far.frames[1]),false);
  assert.equal(JSON.stringify(snapshot),saved);assert.deepEqual(cockpitAnalysisLayout(snapshot),initial);
 });
 test('relationship geometry follows the moved current alarm and evidence while retaining registered edges',()=>{

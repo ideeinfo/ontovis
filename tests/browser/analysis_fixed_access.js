@@ -67,6 +67,8 @@ async (page, facts, phase) => {
       width:parseFloat(node.style.width),height:parseFloat(node.style.height)}));
     const savedRect=({x,y,width,height})=>({x,y,width,height});
     const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+    const contains=(frame,card)=>card.x>=frame.x&&card.y>=frame.y&&
+      card.x+card.width<=frame.x+frame.width&&card.y+card.height<=frame.y+frame.height;
     const cardNode=id=>plot.locator(`.pa-card[data-card-id="${id}"]`);
     const frameNode=id=>plot.locator(`.pa-frame[data-frame-id="${id}"]`);
     for(const frame of facts.frames){
@@ -78,6 +80,7 @@ async (page, facts, phase) => {
         'The cockpit changed a saved card position, size or group');
     }
     const card=facts.cards.document,moving=cardNode(card.id),header=moving.locator('header[data-draggable]');
+    const owner=facts.frames.find(frame=>frame.id===card.frameId),ownerNode=frameNode(owner.id);
     const path=plot.locator('.pa-links path[data-origin="manual"]');
     await path.waitFor({state:'attached'});
     const startPath=await path.getAttribute('d');
@@ -87,19 +90,33 @@ async (page, facts, phase) => {
     await page.mouse.move(startX,startY);
     await page.mouse.down();
     await page.mouse.move(targetX,startY,{steps:14});
-    await page.mouse.up();
     const moved=await rect(moving),dragged=await header.boundingBox();
-    check(moved.x<facts.frames[0].x-40&&Math.abs(dragged.x-start.x-(targetX-startX))<2,
+    check(moved.x<owner.x-40&&Math.abs(dragged.x-start.x-(targetX-startX))<2,
       'The card stopped at the saved bounds or moved faster than the pointer');
-    await moving.locator('.pa-card-frame').getByText(facts.frames[0].title,{exact:true}).waitFor();
+    const expanded=await rect(ownerNode);
+    check(expanded.x<owner.x&&expanded.width>owner.width&&contains(expanded,moved),
+      'The group frame did not expand around the card while dragging');
+    for(const member of Object.values(facts.cards).filter(item=>item.frameId===owner.id&&item.id!==card.id)){
+      check(contains(expanded,await rect(cardNode(member.id))),'The expanding frame left a member outside');
+    }
+    for(const other of facts.frames.filter(frame=>frame.id!==owner.id)){
+      check(same(await rect(frameNode(other.id)),savedRect(other)),'Dragging also resized another group');
+    }
+    await moving.locator('.pa-card-frame').getByText(owner.title,{exact:true}).waitFor();
     check(await path.getAttribute('d')!==startPath,'The saved link did not follow the card');
-    check(same(await rect(frameNode(facts.frames[0].id)),savedRect(facts.frames[0])),'Dragging moved a saved frame');
+    await page.mouse.move((targetX+startX)/2,startY,{steps:8});
+    const narrowed=await rect(ownerNode);
+    check(narrowed.x>expanded.x&&narrowed.width<expanded.width&&contains(narrowed,await rect(moving)),
+      'Moving the card inward did not shrink the frame');
+    await page.mouse.up();
+    check(same(await rect(ownerNode),narrowed),'The frame moved again when the card was released');
     await button('适应全部资料',canvas).click();
-    const fit=await moving.boundingBox(),visible=await plot.boundingBox();
-    check(fit.x>=visible.x&&fit.x+fit.width<=visible.x+visible.width,'Fit all left the dragged card outside the viewport');
+    check(contains(await plot.boundingBox(),await ownerNode.boundingBox()),'Fit all clipped the expanded frame');
     await button('恢复布局',canvas).click();
-    check(same(await rect(moving),savedRect(card)),'Reset did not return the card to its saved position');
-    return {groups:facts.frames.length,cards:await plot.locator('.pa-card').count(),dragPastBounds:true,linkFollows:true,fit:true,reset:true};
+    check(same(await rect(moving),savedRect(card))&&same(await rect(ownerNode),savedRect(owner)),
+      'Reset did not restore the saved card and frame');
+    return {groups:facts.frames.length,cards:await plot.locator('.pa-card').count(),dragPastBounds:true,
+      expands:true,shrinks:true,linkFollows:true,fit:true,reset:true};
   }
   const kind = photoPhase?'photo':phase==='withdraw-document'?'document':phase==='expire-session'?'work_order':'drawing';
   const target=facts.cards[kind];

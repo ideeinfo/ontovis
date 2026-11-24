@@ -99,13 +99,17 @@ export function moveCard(snapshot:CanvasSnapshot,id:string,x:number,y:number):Ca
   if(!card||card.pinned||(card.x===x&&card.y===y))return snapshot;
   return {...snapshot,cards:snapshot.cards.map(c=>c.id===id?{...c,x,y}:c)};
 }
+export function fitFrameToCards(frame:CanvasFrame,members:CanvasCard[],limit=Infinity):CanvasFrame{
+  if(!members.length)return frame;
+  const x=Math.max(-limit,Math.min(...members.map(card=>card.x))-20);
+  const y=Math.max(-limit,Math.min(...members.map(card=>card.y))-38);
+  const width=Math.max(280,Math.min(limit,Math.max(...members.map(card=>card.x+card.width))-x+20));
+  const height=Math.max(220,Math.min(limit,Math.max(...members.map(card=>card.y+card.height))-y+20));
+  return {...frame,x,y,width,height};
+}
 export function frameBounds(snapshot:CanvasSnapshot):CanvasSnapshot{
   if(!snapshot.frames)return snapshot;
-  return {...snapshot,frames:snapshot.frames.map(frame=>{
-    const members=snapshot.cards.filter(card=>card.frameId===frame.id);if(!members.length)return frame;
-    const x=Math.max(-20000,Math.min(...members.map(c=>c.x))-20),y=Math.max(-20000,Math.min(...members.map(c=>c.y))-38);
-    return {...frame,x,y,width:Math.max(280,Math.min(20000,Math.max(...members.map(c=>c.x+c.width))-x+20)),height:Math.max(220,Math.min(20000,Math.max(...members.map(c=>c.y+c.height))-y+20))};
-  })};
+  return {...snapshot,frames:snapshot.frames.map(frame=>fitFrameToCards(frame,snapshot.cards.filter(card=>card.frameId===frame.id),20000))};
 }
 export function selectedInBox(snapshot:CanvasSnapshot,box:{x:number;y:number;width:number;height:number}){
   return snapshot.cards.filter(c=>c.x<box.x+box.width&&c.x+c.width>box.x&&c.y<box.y+box.height&&c.y+c.height>box.y).map(c=>c.id);
