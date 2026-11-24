@@ -1,4 +1,4 @@
-import {lazy,Suspense,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,type CSSProperties,type KeyboardEvent as ReactKeyboardEvent,type PointerEvent as ReactPointerEvent} from 'react';
+import {lazy,Suspense,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,type KeyboardEvent as ReactKeyboardEvent,type PointerEvent as ReactPointerEvent} from 'react';
 import {ArrowUpRight,BookOpen,Box,CheckCheck,ChevronLeft,ChevronRight,FileText,GitBranch,GripHorizontal,GripVertical,Hand,Image,LayoutDashboard,Maximize2,PanelRightClose,PanelRightOpen,Plus,RefreshCw,RotateCcw,Sparkles,StickyNote,TriangleAlert,TrendingUp,ZoomIn,ZoomOut} from 'lucide-react';
 import {cancelled,failureMessage,type WorkbenchApi} from './api';
 import {Btn,IconBtn,Modal} from './Primitives';
@@ -7,7 +7,7 @@ import {AnalysisSources,type AnalysisEntry,type SourceAnchor} from './analysisSo
 import {useSourceRelations} from './AnalysisSourceRelations';
 import {cockpitRelationGraph,cockpitRelationLabels,cockpitRelationRoute,type CockpitRelation} from './cockpitRelationGraph';
 import type {CanvasCard,Viewport} from './analysisCanvas';
-import {COCKPIT_CANVAS_MIN_ZOOM,COCKPIT_CANVAS_MAX_ZOOM,cockpitAnalysisLayout,cockpitCardMove,cockpitCanvasFit,cockpitCanvasZoom,cockpitCanvasPan,cockpitCanvasFocus,cockpitCanvasReveal,cockpitCanvasWheel,type CockpitCardPositions} from './cockpitAnalysisCanvas';
+import {COCKPIT_CANVAS_MIN_ZOOM,COCKPIT_CANVAS_MAX_ZOOM,cockpitAnalysisLayout,cockpitCardMove,cockpitCardOutsideFrame,cockpitCanvasFit,cockpitCanvasZoom,cockpitCanvasPan,cockpitCanvasFocus,cockpitCanvasReveal,cockpitCanvasWheel,type CockpitCardPositions} from './cockpitAnalysisCanvas';
 import {assistantSourceAnchor,type AssistantRun} from './assistantApi';
 import {CockpitAnalysisRecord,type CockpitRecordReference} from './CockpitAnalysisRecord';
 import {PageDeck} from './CockpitPanels';
@@ -21,7 +21,7 @@ const AssistantPanel=lazy(()=>import('./AssistantPanel').then(module=>({default:
 type Index=Awaited<ReturnType<typeof cockpitAnalysisIndex>>;
 type Props={api:WorkbenchApi;active:boolean;en:boolean;entry:AnalysisEntry|null;faults:CockpitFault[];onChooseFault:(entry:AnalysisEntry)=>void;onBackend:(entry:AnalysisEntry)=>void};
 export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBackend}:Props){
- const t=(zh:string,eng:string)=>en?eng:zh,board=useRef<HTMLDivElement>(null),world=useRef<HTMLDivElement>(null),workspace=useRef<HTMLElement>(null),contentRef=useRef<HTMLDivElement>(null),assistantRef=useRef<HTMLElement>(null);
+ const t=(zh:string,eng:string)=>en?eng:zh,board=useRef<HTMLDivElement>(null),workspace=useRef<HTMLElement>(null),contentRef=useRef<HTMLDivElement>(null),assistantRef=useRef<HTMLElement>(null);
  const [assistantTab,setAssistantTab]=useState<'chat'|'record'>('chat'),[recordAttempt,setRecordAttempt]=useState(0);
  const returnToRecord=useRef(false);
  const [assistantCollapsed,setAssistantCollapsed]=useState<boolean>(()=>{try{return localStorage.getItem('ontovis.cockpit.assistant_collapsed')==='true';}catch{return false;}});
@@ -68,15 +68,17 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
   void cockpitAnalysisTurns(api,detail,abort.signal).then(value=>{if(!abort.signal.aborted){setTurns(value);setTurnIndex(Math.max(0,value.length-1));}}).catch(value=>{if(!abort.signal.aborted&&!cancelled(value)){setTurns([]);setTurnError(true);}});
   return()=>abort.abort();
  },[api,active,detail,recordAttempt]);
- const layout=useMemo(()=>cockpitAnalysisLayout(detail?.snapshot.cards||[],cardPositions),[detail,cardPositions]);
+ const layout=useMemo(()=>cockpitAnalysisLayout(detail?.snapshot,cardPositions),[detail,cardPositions]);
+ const {bounds}=layout;
+ const minZoom=Math.min(COCKPIT_CANVAS_MIN_ZOOM,cockpitCanvasFit(bounds,boardSize).zoom);
  const layoutRef=useRef(layout);layoutRef.current=layout;
  useEffect(()=>{
   const node=board.current;if(!node)return;
   const resize=()=>{endCardDrag(true);endPan(true);const size={width:node.clientWidth,height:node.clientHeight},previous=lastBoardSize.current;lastBoardSize.current=size;
-   setBoardSize(size);setViewport(current=>autoFit.current?cockpitCanvasFit(layoutRef.current.cards,size):cockpitCanvasPan(current,{x:(size.width-previous.width)/2,y:(size.height-previous.height)/2}));};
+   setBoardSize(size);setViewport(current=>autoFit.current?cockpitCanvasFit(layoutRef.current.bounds,size):cockpitCanvasPan(current,{x:(size.width-previous.width)/2,y:(size.height-previous.height)/2}));};
   const observer=new ResizeObserver(resize);observer.observe(node);return()=>observer.disconnect();
  },[!!detail]);
- useLayoutEffect(()=>{if(detail&&board.current){autoFit.current=true;setViewport(cockpitCanvasFit(layoutRef.current.cards,{width:board.current.clientWidth,height:board.current.clientHeight}));}},[detail?.analysisSessionId,detail?.analysisRevision]);
+ useLayoutEffect(()=>{if(detail&&board.current){autoFit.current=true;setViewport(cockpitCanvasFit(layoutRef.current.bounds,{width:board.current.clientWidth,height:board.current.clientHeight}));}},[detail?.analysisSessionId,detail?.analysisRevision]);
  useEffect(()=>{const cancel=(event:KeyboardEvent)=>{if(event.key==='Escape'){if(cardDrag.current){event.preventDefault();endCardDrag(true);}if(panDrag.current){event.preventDefault();endPan(true);}space.current=false;}};const blur=()=>{space.current=false;endCardDrag(true);endPan(true);};window.addEventListener('keydown',cancel);window.addEventListener('blur',blur);return()=>{window.removeEventListener('keydown',cancel);window.removeEventListener('blur',blur);};},[]);
  useEffect(()=>{
   const node=board.current;if(!node)return;
@@ -86,18 +88,18 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
    const rect=node.getBoundingClientRect();if(!rect.width||!rect.height)return;event.preventDefault();event.stopPropagation();autoFit.current=false;
    const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?node.clientHeight:1);
    const point={x:(event.clientX-rect.left)*node.clientWidth/rect.width,y:(event.clientY-rect.top)*node.clientHeight/rect.height};
-   setViewport(current=>cockpitCanvasZoom(current,current.zoom*Math.exp(-Math.max(-400,Math.min(400,delta))*.0015),point));
+   setViewport(current=>cockpitCanvasZoom(current,current.zoom*Math.exp(-Math.max(-400,Math.min(400,delta))*.0015),point,minZoom));
   };
   node.addEventListener('wheel',wheel,{passive:false,capture:true});return()=>node.removeEventListener('wheel',wheel,true);
- },[!!detail,hand]);
+ },[!!detail,hand,minZoom]);
  const sourceRelations=useSourceRelations(sources,detail?.snapshot.cards||[]);
  const links=cockpitRelationGraph(detail?.snapshot.cards||[],layout.cards,sourceRelations.relations,detail?.snapshot.relations||[],availability,sourceRelations.gaps,en).map(link=>({...link,route:cockpitRelationRoute(link.from,link.to)}));
  const linkSignature=JSON.stringify(links.map(link=>[link.id,link.label,link.route]));
  useLayoutEffect(()=>{
   const sizes:Record<string,{width:number;height:number}>={};board.current?.querySelectorAll<HTMLButtonElement>('.pa-relation-label').forEach(node=>{sizes[node.dataset.relationId!]={width:node.offsetWidth,height:node.offsetHeight};});
-  const positions=cockpitRelationLabels(links,layout.cards,sizes,layout.width,layout.height,layout);
+  const positions=cockpitRelationLabels(links,layout.cards,sizes,bounds);
   setLabelPositions(current=>JSON.stringify(current)===JSON.stringify(positions)?current:positions);
- },[linkSignature,boardSize.width,boardSize.height,layout.width,layout.height]);
+ },[linkSignature,boardSize.width,boardSize.height,layout]);
  const onAvailability=useCallback((id:string,value:string)=>setAvailability(current=>current[id]===value?current:{...current,[id]:value}),[]);
  function focusCard(card:CanvasCard,nextAnchor?:SourceAnchor|null){const placed=layout.cards.find(item=>item.id===card.id);if(placed){autoFit.current=false;setViewport(current=>cockpitCanvasFocus(current,placed,boardSize));}setFocused(card.id);setFrontCard(card.id);if(nextAnchor){setExpanded(card);setAnchor(nextAnchor);}}
  function openCard(card:CanvasCard){setExpanded(card);setAnchor(null);}
@@ -171,14 +173,14 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
  function closeExpanded(){setExpanded(null);setAnchor(null);if(returnToRecord.current){returnToRecord.current=false;setRecordOpen(true);}}
  function dragCard(event:ReactPointerEvent<HTMLElement>,card:CanvasCard){
   if(event.button!==0||!event.isPrimary||(event.target as Element).closest('button:not(.pa-card-grip)'))return;
-  const rect=world.current?.getBoundingClientRect();if(!rect?.width||!rect.height)return;
+  const rect=event.currentTarget.closest('.pa-card')?.getBoundingClientRect();if(!rect?.width||!rect.height)return;
   event.preventDefault();event.stopPropagation();autoFit.current=false;event.currentTarget.setPointerCapture(event.pointerId);setFrontCard(card.id);
   cardDrag.current={card,pointerId:event.pointerId,x:event.clientX,y:event.clientY,width:rect.width,height:rect.height,previous:cardPositions[card.id],header:event.currentTarget,moved:false};
  }
  function moveCard(event:ReactPointerEvent<HTMLElement>){
   const drag=cardDrag.current;if(!drag||event.pointerId!==drag.pointerId)return;
   const delta={x:event.clientX-drag.x,y:event.clientY-drag.y};if(!drag.moved&&Math.hypot(delta.x,delta.y)<3)return;
-  drag.moved=true;setDraggingCard(drag.card.id);setCardPositions(current=>({...current,[drag.card.id]:cockpitCardMove(drag.card,delta,drag,layout)}));
+  drag.moved=true;setDraggingCard(drag.card.id);setCardPositions(current=>({...current,[drag.card.id]:cockpitCardMove(drag.card,delta,drag)}));
  }
  function endCardDrag(cancel=false){
   const drag=cardDrag.current;if(!drag)return;cardDrag.current=null;setDraggingCard('');
@@ -188,11 +190,11 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
  function nudgeCard(event:ReactKeyboardEvent<HTMLButtonElement>,card:CanvasCard){
   if(cardDrag.current)return;
   const step=event.shiftKey?24:8,delta=({ArrowLeft:{x:-step,y:0},ArrowRight:{x:step,y:0},ArrowUp:{x:0,y:-step},ArrowDown:{x:0,y:step}} as Record<string,{x:number;y:number}>)[event.key];
-  if(!delta)return;const rect=world.current?.getBoundingClientRect();if(!rect)return;event.preventDefault();event.stopPropagation();autoFit.current=false;setFrontCard(card.id);setFocused(card.id);const moved={...card,...cockpitCardMove(card,delta,rect,layout)};setCardPositions(current=>({...current,[card.id]:{x:moved.x,y:moved.y}}));setViewport(current=>cockpitCanvasReveal(current,moved,boardSize));
+  if(!delta)return;const rect=event.currentTarget.closest('.pa-card')?.getBoundingClientRect();if(!rect)return;event.preventDefault();event.stopPropagation();autoFit.current=false;setFrontCard(card.id);setFocused(card.id);const moved={...card,...cockpitCardMove(card,delta,rect)};setCardPositions(current=>({...current,[card.id]:{x:moved.x,y:moved.y}}));setViewport(current=>cockpitCanvasReveal(current,moved,boardSize));
  }
- function resetLayout(){endCardDrag();endPan();setCardPositions({});setFrontCard('');autoFit.current=true;setViewport(cockpitCanvasFit(cockpitAnalysisLayout(detail?.snapshot.cards||[]).cards,boardSize));}
- function fitCanvas(){endCardDrag();endPan();autoFit.current=true;setViewport(cockpitCanvasFit(layout.cards,boardSize));}
- function zoomCanvas(value:number){autoFit.current=false;setViewport(current=>cockpitCanvasZoom(current,value,{x:boardSize.width/2,y:boardSize.height/2}));}
+ function resetLayout(){endCardDrag();endPan();setCardPositions({});setFrontCard('');autoFit.current=true;setViewport(cockpitCanvasFit(cockpitAnalysisLayout(detail?.snapshot).bounds,boardSize));}
+ function fitCanvas(){endCardDrag();endPan();autoFit.current=true;setViewport(cockpitCanvasFit(bounds,boardSize));}
+ function zoomCanvas(value:number){autoFit.current=false;setViewport(current=>cockpitCanvasZoom(current,value,{x:boardSize.width/2,y:boardSize.height/2},minZoom));}
  function beginPan(event:ReactPointerEvent<HTMLDivElement>,capture=false){
   if(!event.isPrimary||![0,1].includes(event.button)||cardDrag.current||panDrag.current)return;
   const forced=event.button===1||hand||space.current;
@@ -234,13 +236,21 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
     <div className="pa-board" ref={board} tabIndex={0} role="region" aria-label={t('可视化分析画布','Visual analysis canvas')} aria-describedby="pa-canvas-help" data-pan-tool={hand||undefined} data-panning={panning||undefined}
      onPointerDownCapture={event=>beginPan(event,true)} onPointerDown={event=>beginPan(event)} onPointerMove={movePan} onPointerUp={()=>endPan()} onPointerCancel={()=>endPan(true)} onLostPointerCapture={()=>endPan(true)} onAuxClick={event=>{if(event.button===1)event.preventDefault();}} onKeyDown={canvasKey} onKeyUp={event=>{if(event.code==='Space')space.current=false;}} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node)){space.current=false;endPan();}}}>
      <span id="pa-canvas-help" className="pa-canvas-help">{t('滚轮缩放，拖动空白平移；空格或中键拖动也可平移。资料卡标题栏可拖动。','Wheel to zoom, drag the background to pan; Space or middle-drag also pans. Drag card headers to move cards.')}</span>
-     <div className="pa-world" ref={world} style={{width:layout.width,height:layout.height,transform:`translate(${viewport.x}px,${viewport.y}px) scale(${viewport.zoom})`}}>
-     <svg className="pa-links" viewBox={`0 0 ${layout.width} ${layout.height}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true"><defs><marker id="pa-source-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor"/></marker></defs>{links.map(link=><path key={link.id} data-origin={link.origin} d={cockpitRelationRoute(link.from,link.to,labelPositions[link.id]).d} markerEnd="url(#pa-source-arrow)"/>)}</svg>
+     <div className="pa-world" style={{transform:`translate(${viewport.x}px,${viewport.y}px) scale(${viewport.zoom})`}}>
+     {layout.frames.map(frame=><section className="pa-frame" key={frame.id} data-frame-id={frame.id} aria-label={frame.title} style={{left:frame.x,top:frame.y,width:frame.width,height:frame.height}}>
+      <h3 title={frame.title} style={{maxWidth:frame.width*viewport.zoom,transform:`scale(${1/viewport.zoom})`}}>{frame.title}</h3>
+     </section>)}
+     {bounds&&<svg className="pa-links" style={{left:bounds.x,top:bounds.y,width:bounds.width,height:bounds.height}} viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`} aria-hidden="true"><defs><marker id="pa-source-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor"/></marker></defs>{links.map(link=><path key={link.id} data-origin={link.origin} data-from-card={link.from.id} data-to-card={link.to.id} d={cockpitRelationRoute(link.from,link.to,labelPositions[link.id]).d} markerEnd="url(#pa-source-arrow)"/>)}</svg>}
      <div className="pa-relation-labels" role="group" aria-label={t('已有资料关系','Recorded evidence relationships')}>{links.map(link=>{const point=labelPositions[link.id]||link.route;return <button key={link.id} className="pa-relation-label" data-relation-id={link.id} data-origin={link.origin} data-via={link.via.length||undefined} style={{left:point.x,top:point.y}} title={link.reason} aria-label={link.label+'：'+[link.from,...link.via,link.to].map(card=>card.title).join(' ↔ ')} onFocus={event=>revealRelation(point,event.currentTarget)} onClick={()=>setRelation(link)}>{link.label}{link.origin==='candidate'&&!/候选|candidate/i.test(link.label)&&<span>{t('候选','Candidate')}</span>}</button>;})}</div>
-     {layout.cards.map(card=>{const Icon=icons[card.kind];return <article className="pa-card" key={detail.analysisSessionId+':'+detail.analysisRevision+':'+card.id} data-card-id={card.id} data-kind={card.kind} onFocus={event=>revealCard(card,event.target,event.currentTarget)} data-focused={card.id===focused||undefined} data-historical={card.historical||undefined} data-front={card.id===frontCard||undefined} data-dragging={card.id===draggingCard||undefined} style={{left:card.x,top:card.y,width:card.width,height:card.height} as CSSProperties}>
-      <header data-draggable onPointerDown={event=>dragCard(event,card)} onPointerMove={moveCard} onPointerUp={event=>{if(event.pointerId===cardDrag.current?.pointerId)endCardDrag();}} onPointerCancel={event=>{if(event.pointerId===cardDrag.current?.pointerId)endCardDrag(true);}} onLostPointerCapture={event=>{if(event.pointerId===cardDrag.current?.pointerId)endCardDrag(true);}}><button className="pa-card-grip" aria-label={t('移动资料卡：','Move card: ')+card.title} title={t('拖动标题栏，或用方向键调整位置','Drag the header or use arrow keys to move')} onKeyDown={event=>nudgeCard(event,card)}><GripVertical size={14}/></button><Icon size={18}/><h3 title={card.title}>{card.title}</h3><IconBtn label={t('放大查看：','Expand: ')+card.title} onClick={()=>openCard(card)}><Maximize2 size={14}/></IconBtn></header><div className="pa-card-body">{content(card)}</div><footer><span>{en?card.kind:materialNames[card.kind]}</span>{card.historical&&<small>{t('历史参考','Historical reference')}</small>}</footer>
+     {layout.cards.map(card=>{
+      const Icon=icons[card.kind],frame=layout.frames.find(group=>group.id===card.frameId);
+      return <article className="pa-card" key={detail.analysisSessionId+':'+detail.analysisRevision+':'+card.id} data-card-id={card.id} data-frame-id={card.frameId} data-kind={card.kind} onFocus={event=>revealCard(card,event.target,event.currentTarget)} data-focused={card.id===focused||undefined} data-historical={card.historical||undefined} data-front={card.id===frontCard||undefined} data-dragging={card.id===draggingCard||undefined} style={{left:card.x,top:card.y,width:card.width,height:card.height}}>
+      <header data-draggable onPointerDown={event=>dragCard(event,card)} onPointerMove={moveCard} onPointerUp={event=>{if(event.pointerId===cardDrag.current?.pointerId)endCardDrag();}} onPointerCancel={event=>{if(event.pointerId===cardDrag.current?.pointerId)endCardDrag(true);}} onLostPointerCapture={event=>{if(event.pointerId===cardDrag.current?.pointerId)endCardDrag(true);}}><button className="pa-card-grip" aria-label={t('移动资料卡：','Move card: ')+card.title} title={t('拖动标题栏，或用方向键调整位置','Drag the header or use arrow keys to move')} onKeyDown={event=>nudgeCard(event,card)}><GripVertical size={14}/></button><Icon size={18}/><h3 title={card.title}>{card.title}</h3><IconBtn label={t('放大查看：','Expand: ')+card.title} onClick={()=>openCard(card)}><Maximize2 size={14}/></IconBtn></header><div className="pa-card-body">{content(card)}</div><footer><span>{en?card.kind:materialNames[card.kind]}</span>
+       {frame&&cockpitCardOutsideFrame(card,frame)&&<small className="pa-card-frame" title={frame.title}>{frame.title}</small>}
+       {card.historical&&<small>{t('历史参考','Historical reference')}</small>}
+      </footer>
      </article>;})}
-    </div></div><footer className="pa-board-footer"><small title={t('实线：登记关系 · 虚线：候选或人工关联 · 经对象：关联链','Solid: recorded · Dashed: candidate or manual · Via object: relationship path')}>{sourceRelations.error?<button onClick={sourceRelations.retry}>{t('关系读取失败，重试','Retry relationships')}</button>:sourceRelations.loading?t('正在读取关系…','Loading relationships…'):t('实线：登记关系 · 虚线：候选/人工 · 经对象：关联链','Solid: recorded · Dashed: candidate/manual · Via object: path')}</small><button className="pa-layout-reset" disabled={!Object.keys(cardPositions).length} onClick={resetLayout}><RotateCcw size={13}/>{t('恢复布局','Reset layout')}</button><span>{layout.total} {t('张卡片','cards')}</span><div className="pa-canvas-tools" role="group" aria-label={t('画布视图','Canvas view')}><IconBtn label={t('平移画布','Pan canvas')} aria-pressed={hand} onClick={()=>setHand(value=>!value)}><Hand size={15}/></IconBtn><IconBtn label={t('缩小画布','Zoom out canvas')} disabled={viewport.zoom<=COCKPIT_CANVAS_MIN_ZOOM} onClick={()=>zoomCanvas(viewport.zoom*.8)}><ZoomOut size={15}/></IconBtn><button className="pa-zoom-value" aria-label={t('画布原尺寸100%','Canvas actual size 100%')} title={t('恢复100%','Reset to 100%')} onClick={()=>zoomCanvas(1)}>{Math.round(viewport.zoom*100)}%</button><IconBtn label={t('放大画布','Zoom in canvas')} disabled={viewport.zoom>=COCKPIT_CANVAS_MAX_ZOOM} onClick={()=>zoomCanvas(viewport.zoom*1.25)}><ZoomIn size={15}/></IconBtn><IconBtn label={t('适应全部资料','Fit all evidence')} onClick={fitCanvas}><Maximize2 size={15}/></IconBtn></div></footer>
+    </div></div><footer className="pa-board-footer"><small title={t('实线：登记关系 · 虚线：候选或人工关联 · 经对象：关联链','Solid: recorded · Dashed: candidate or manual · Via object: relationship path')}>{sourceRelations.error?<button onClick={sourceRelations.retry}>{t('关系读取失败，重试','Retry relationships')}</button>:sourceRelations.loading?t('正在读取关系…','Loading relationships…'):t('实线：登记关系 · 虚线：候选/人工 · 经对象：关联链','Solid: recorded · Dashed: candidate/manual · Via object: path')}</small><button className="pa-layout-reset" disabled={!Object.keys(cardPositions).length} onClick={resetLayout}><RotateCcw size={13}/>{t('恢复布局','Reset layout')}</button><span>{layout.cards.length} {t('张卡片','cards')}</span><div className="pa-canvas-tools" role="group" aria-label={t('画布视图','Canvas view')}><IconBtn label={t('平移画布','Pan canvas')} aria-pressed={hand} onClick={()=>setHand(value=>!value)}><Hand size={15}/></IconBtn><IconBtn label={t('缩小画布','Zoom out canvas')} disabled={viewport.zoom<=minZoom} onClick={()=>zoomCanvas(viewport.zoom*.8)}><ZoomOut size={15}/></IconBtn><button className="pa-zoom-value" aria-label={t('画布原尺寸100%','Canvas actual size 100%')} title={t('恢复100%','Reset to 100%')} onClick={()=>zoomCanvas(1)}>{Math.round(viewport.zoom*100)}%</button><IconBtn label={t('放大画布','Zoom in canvas')} disabled={viewport.zoom>=COCKPIT_CANVAS_MAX_ZOOM} onClick={()=>zoomCanvas(viewport.zoom*1.25)}><ZoomIn size={15}/></IconBtn><IconBtn label={t('适应全部资料','Fit all evidence')} onClick={fitCanvas}><Maximize2 size={15}/></IconBtn></div></footer>
    </main>
    {assistantCollapsed&&<button type="button" className="pa-assistant-launcher" onClick={openAssistant} title={t('展开工程助手','Expand engineering assistant')} aria-label={t('展开工程助手','Expand engineering assistant')}><Sparkles size={16}/><span>{t('工程助手','Engineering assistant')}</span><PanelRightOpen size={15}/></button>}
    <aside ref={assistantRef} className="pa-record pa-assistant pc-panel" aria-label={t('工程助手','Engineering assistant')} data-floating={!!assistantFloating||undefined} data-dragging={assistantDragging||undefined} style={{...(assistantFloating?{left:assistantFloating.x,top:assistantFloating.y}:undefined),...(assistantCollapsed?{display:'none'}:undefined)}}>

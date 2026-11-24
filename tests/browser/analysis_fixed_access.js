@@ -44,7 +44,7 @@ async (page, facts, phase) => {
   await page.getByRole('button',{name:/^Q-26 固定资料试验 Demo-PDS/}).click();
   await button('进入项目').click();
   const photoPhase=phase==='withdraw-photo'||phase==='switch-photo-project';
-  const cockpit = phase==='expire-session'||phase==='withdraw-project'||phase==='withdraw-photo';
+  const cockpit = phase==='grouped-layout'||phase==='expire-session'||phase==='withdraw-project'||phase==='withdraw-photo';
   let canvas;
   if(cockpit){
     await button('驾驶舱').click();
@@ -60,6 +60,46 @@ async (page, facts, phase) => {
     canvas = page.getByRole('region',{name:'分析工作空间'});
     await canvas.locator('.ad-list-items .ov-list-main').filter({hasText:title}).click();
     await button('适应全部',canvas).click();
+  }
+  if(phase==='grouped-layout'){
+    const plot=canvas.getByRole('region',{name:'可视化分析画布'});
+    const rect=locator=>locator.evaluate(node=>({x:parseFloat(node.style.left),y:parseFloat(node.style.top),
+      width:parseFloat(node.style.width),height:parseFloat(node.style.height)}));
+    const savedRect=({x,y,width,height})=>({x,y,width,height});
+    const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+    const cardNode=id=>plot.locator(`.pa-card[data-card-id="${id}"]`);
+    const frameNode=id=>plot.locator(`.pa-frame[data-frame-id="${id}"]`);
+    for(const frame of facts.frames){
+      await frameNode(frame.id).getByRole('heading',{name:frame.title,exact:true}).waitFor();
+      check(same(await rect(frameNode(frame.id)),savedRect(frame)),'The cockpit moved or resized a saved frame');
+    }
+    for(const card of Object.values(facts.cards)){
+      check(same(await rect(cardNode(card.id)),savedRect(card))&&await cardNode(card.id).getAttribute('data-frame-id')===card.frameId,
+        'The cockpit changed a saved card position, size or group');
+    }
+    const card=facts.cards.document,moving=cardNode(card.id),header=moving.locator('header[data-draggable]');
+    const path=plot.locator('.pa-links path[data-origin="manual"]');
+    await path.waitFor({state:'attached'});
+    const startPath=await path.getAttribute('d');
+    const start=await header.boundingBox(),board=await plot.boundingBox();
+    const startX=start.x+start.width/5,startY=start.y+start.height/2,targetX=board.x+15;
+    check(startX-targetX>60,'The fixture has no clear space for dragging left');
+    await page.mouse.move(startX,startY);
+    await page.mouse.down();
+    await page.mouse.move(targetX,startY,{steps:14});
+    await page.mouse.up();
+    const moved=await rect(moving),dragged=await header.boundingBox();
+    check(moved.x<facts.frames[0].x-40&&Math.abs(dragged.x-start.x-(targetX-startX))<2,
+      'The card stopped at the saved bounds or moved faster than the pointer');
+    await moving.locator('.pa-card-frame').getByText(facts.frames[0].title,{exact:true}).waitFor();
+    check(await path.getAttribute('d')!==startPath,'The saved link did not follow the card');
+    check(same(await rect(frameNode(facts.frames[0].id)),savedRect(facts.frames[0])),'Dragging moved a saved frame');
+    await button('适应全部资料',canvas).click();
+    const fit=await moving.boundingBox(),visible=await plot.boundingBox();
+    check(fit.x>=visible.x&&fit.x+fit.width<=visible.x+visible.width,'Fit all left the dragged card outside the viewport');
+    await button('恢复布局',canvas).click();
+    check(same(await rect(moving),savedRect(card)),'Reset did not return the card to its saved position');
+    return {groups:facts.frames.length,cards:await plot.locator('.pa-card').count(),dragPastBounds:true,linkFollows:true,fit:true,reset:true};
   }
   const kind = photoPhase?'photo':phase==='withdraw-document'?'document':phase==='expire-session'?'work_order':'drawing';
   const target=facts.cards[kind];

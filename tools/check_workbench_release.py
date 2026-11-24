@@ -119,7 +119,7 @@ def fixed_evidence_access(browser, dist):
     script = (SCRIPTS/'analysis_fixed_access.js').read_text()
     results = {}
     with browser_site(dist) as (facts,restore,verify_snapshot):
-        for mode in ('withdraw-document','switch-project','expire-session','withdraw-project','withdraw-photo','switch-photo-project'):
+        for mode in ('grouped-layout','withdraw-document','switch-project','expire-session','withdraw-project','withdraw-photo','switch-photo-project'):
             browser.open(mode)
             try:
                 result = browser.run(mode,script,facts,mode)

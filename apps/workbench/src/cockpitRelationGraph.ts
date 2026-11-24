@@ -1,5 +1,6 @@
 import type {CanvasCard,CanvasRelation} from './analysisCanvas.ts';
 import type {SourceAnchor,SourceRelationship} from './analysisSources.ts';
+import type {CockpitCanvasBounds} from './cockpitAnalysisCanvas.ts';
 
 type SourceLink=SourceRelationship&{from:CanvasCard;to:CanvasCard};
 export type CockpitRelation={id:string;from:CanvasCard;to:CanvasCard;label:string;reason:string;origin:'source'|'candidate'|'manual';anchor:SourceAnchor|null;via:CanvasCard[];steps:SourceLink[]};
@@ -10,7 +11,8 @@ export function cockpitRelationGraph(cards:CanvasCard[],visible:CanvasCard[],rel
  const blocked=new Set(gaps.filter(gap=>!informational.has(gap.reason)).map(gap=>gap.evidenceRefId)),known=new Set(cards.map(card=>card.id));
  const readable=(card:CanvasCard)=>!card.source||!blocked.has(card.source.id)&&(!availability[card.source.id]||availability[card.source.id]==='available');
  const placed=new Map(visible.filter(card=>readable(card)&&(!card.source||availability[card.source.id]==='available')).map(card=>[card.id,card]));
- const edges=relations.filter(link=>known.has(link.from.id)&&known.has(link.to.id)&&readable(link.from)&&readable(link.to)&&!!link.from.historical===!!link.to.historical);
+ const edges=relations.filter(link=>known.has(link.from.id)&&known.has(link.to.id)&&readable(link.from)&&readable(link.to)
+  &&link.from.frameId===link.to.frameId&&!!link.from.historical===!!link.to.historical);
  const direct:CockpitRelation[]=edges.flatMap(link=>placed.has(link.from.id)&&placed.has(link.to.id)?[{...link,from:placed.get(link.from.id)!,to:placed.get(link.to.id)!,via:[],steps:[link]}]:[]);
  const names={engineering:['工程关系','Engineering relation'],reference:['资料关联','Reference'],hypothesis:['人工假设','Manual hypothesis'],supports:['支持依据','Supporting evidence'],contradicts:['反证','Contradicting evidence']};
  for(const link of saved){const from=placed.get(link.from),to=placed.get(link.to);if(from&&to&&!!from.historical===!!to.historical)direct.push({...link,from,to,label:names[link.kind][en?1:0],anchor:null,via:[],steps:[]});}
@@ -54,7 +56,7 @@ export function cockpitRelationRoute(from:CanvasCard,to:CanvasCard,position?:{x:
  }
  const left=ax<bx?from:to,right=ax<bx?to:from,gap=right.x-left.x-left.width;
  if(gap<85){
-  const lane=position?.y??Math.max(12,Math.min(from.y,to.y)-12),mid=position?.x??(ax+bx)/2;
+  const lane=position?.y??(Math.min(from.y,to.y)-12),mid=position?.x??(ax+bx)/2;
   return {d:`M${ax},${from.y} C${ax},${lane} ${ax},${lane} ${mid},${lane} S${bx},${lane} ${bx},${to.y}`,x:mid,y:lane};
  }
  const x1=ax<bx?from.x+from.width:from.x,x2=ax<bx?to.x:to.x+to.width,x=position?.x??(x1+x2)/2,y=position?.y??(ay+by)/2;
@@ -62,20 +64,21 @@ export function cockpitRelationRoute(from:CanvasCard,to:CanvasCard,position?:{x:
 }
 
 /** Place natural-sized labels in free diagram space, including compact layouts. */
-export function cockpitRelationLabels(links:{id:string;route:{x:number;y:number}}[],cards:CanvasCard[],sizes:Record<string,{width:number;height:number}>,width:number,height:number,space={width:1000,height:700}){
- if(!width||!height)return {};
- const sx=space.width/width,sy=space.height/height,placed:{x:number;y:number;width:number;height:number}[]=[],result:Record<string,{x:number;y:number}>={};
+export function cockpitRelationLabels(links:{id:string;route:{x:number;y:number}}[],cards:CanvasCard[],sizes:Record<string,{width:number;height:number}>,bounds:CockpitCanvasBounds|null){
+ if(!bounds)return {};
+ const left=bounds.x-24,top=bounds.y-24,right=bounds.x+bounds.width+24,bottom=bounds.y+bounds.height+24;
+ const placed:CockpitCanvasBounds[]=[],result:Record<string,{x:number;y:number}>={};
  const intersects=(a:typeof placed[number],b:typeof placed[number],px:number,py:number)=>a.x<b.x+b.width+px&&a.x+a.width+px>b.x&&a.y<b.y+b.height+py&&a.y+a.height+py>b.y;
  for(const link of links){
-  const size=sizes[link.id];if(!size)continue;const w=size.width*sx,h=size.height*sy;
-  const xs=[link.route.x,6*sx+w/2,space.width-6*sx-w/2,...[...cards,...placed].flatMap(card=>[card.x-w/2-4*sx,card.x+card.width+w/2+4*sx])];
-  const ys=[link.route.y,6*sy+h/2,space.height-6*sy-h/2,...[...cards,...placed].flatMap(card=>[card.y-h/2-4*sy,card.y+card.height+h/2+4*sy])];
+  const size=sizes[link.id];if(!size)continue;const {width:w,height:h}=size;
+  const xs=[link.route.x,left+6+w/2,right-6-w/2,...[...cards,...placed].flatMap(card=>[card.x-w/2-4,card.x+card.width+w/2+4])];
+  const ys=[link.route.y,top+6+h/2,bottom-6-h/2,...[...cards,...placed].flatMap(card=>[card.y-h/2-4,card.y+card.height+h/2+4])];
   const nearX=[...new Set(xs)].sort((a,b)=>Math.abs(a-link.route.x)-Math.abs(b-link.route.x)),nearY=[...new Set(ys)].sort((a,b)=>Math.abs(a-link.route.y)-Math.abs(b-link.route.y));
   const find=(limit:number)=>{let best:{x:number;y:number}|null=null,distance=Infinity;
    for(const x of nearX.slice(0,limit))for(const y of nearY.slice(0,limit)){
-    const score=((x-link.route.x)/sx)**2+((y-link.route.y)/sy)**2;if(score>=distance)continue;
+    const score=(x-link.route.x)**2+(y-link.route.y)**2;if(score>=distance)continue;
     const box={x:x-w/2,y:y-h/2,width:w,height:h};
-    if(box.x>=3*sx&&box.y>=3*sy&&box.x+w<=space.width-3*sx&&box.y+h<=space.height-3*sy&&!cards.some(card=>intersects(box,card,2*sx,2*sy))&&!placed.some(other=>intersects(box,other,4*sx,4*sy))){best={x,y};distance=score;}
+    if(box.x>=left+3&&box.y>=top+3&&box.x+w<=right-3&&box.y+h<=bottom-3&&!cards.some(card=>intersects(box,card,2,2))&&!placed.some(other=>intersects(box,other,4,4))){best={x,y};distance=score;}
    }return best;
   };
   const chosen=find(8)||find(20)||find(Infinity)||link.route;

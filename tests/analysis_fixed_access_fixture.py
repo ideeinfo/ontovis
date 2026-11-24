@@ -108,14 +108,22 @@ def browser_site(public: Path):
                 ('work_order','Q-26 合成固定工单',dict(orderId=order['orderId'],expectedOrderRevision=order['orderRevision'])),
                 ('alarm','13001 合成报警',{key:board['context'][key] for key in ('eventId','datasetId','datasetRevision')}),
             ]
+            frames = [dict(id='current',title='本次调查',x=-560,y=-500,width=1040,height=275),
+                      dict(id='history',title='历史参考 · 合成处置',x=-560,y=60,width=700,height=275)]
+            board['frames'] = frames
+            board['cards'][0].update(x=180,y=103)
+            positions = [(-540,-457,'current'),(-200,-457,'current'),(-540,103,'history'),
+                         (-200,103,'history'),(140,-457,'current')]
             cards = {}
-            for index,(kind,name,selector) in enumerate(entries):
+            for (kind,name,selector),(x,y,frame_id) in zip(entries,positions,strict=True):
                 ref = fixture.ok(ANALYSIS+'/evidence/register',dict(analysisSessionId=analysis_id,
                     expectedAnalysisRevision=1,requestId=str(uuid4()),sourceKind=kind,selector=selector))
-                cards[kind] = dict(title=name,id='fixed-'+kind,ref=ref['evidenceRefId'])
-                board['cards'].append(dict(kind=kind,title=name,id=cards[kind]['id'],x=340*index,y=260,
-                    width=320,height=205,pinned=False,source=dict(id=ref['evidenceRefId'],revision=ref['sourceRevision'],
+                cards[kind] = dict(title=name,id='fixed-'+kind,ref=ref['evidenceRefId'],x=x,y=y,width=320,height=205,frameId=frame_id)
+                board['cards'].append(dict(kind=kind,title=name,id=cards[kind]['id'],x=x,y=y,
+                    width=320,height=205,frameId=frame_id,pinned=False,source=dict(id=ref['evidenceRefId'],revision=ref['sourceRevision'],
                     system='ontovis' if kind in ('work_order','alarm') else 'ontobase',projectCode=PROJECT,ontobaseConnectionId='ontobase-primary')))
+            board['relations'].append({'id':'grouped-reference','from':cards['document']['id'],'to':cards['photo']['id'],
+                                       'kind':'reference','origin':'manual','reason':'合成分组连线'})
             saved = fixture.ok(ANALYSIS+'/save',dict(analysisSessionId=analysis_id,expectedAnalysisRevision=1,
                 snapshot=board,requestId=str(uuid4())))
 
@@ -130,7 +138,7 @@ def browser_site(public: Path):
                 assert [(item['analysisSessionId'],item['relevance']) for item in available['items']]==[(analysis_id,'same_event')]
 
             with serve_workbench(public.resolve(strict=True),fixture.sessions,commands) as origin:
-                yield dict(origin=origin,analysisId=analysis_id,title=title,cards=cards,record=record,
+                yield dict(origin=origin,analysisId=analysis_id,title=title,cards=cards,frames=frames,record=record,
                            datasetId=sample['datasetId'],datasetRevision=sample['datasetRevision']),restore,verify
     finally:
         fixture.doCleanups()
