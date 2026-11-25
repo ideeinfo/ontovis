@@ -71,6 +71,16 @@ async (page, facts, phase) => {
       check(await image(kind).evaluate(async node=>{await node.decode();return node.naturalWidth>0;}),
         'The '+kind+' preview did not render automatically');
     }));
+    for(const colorScheme of ['light','dark']){
+      await page.emulateMedia({colorScheme});
+      await page.locator(`html[data-theme="${colorScheme}"]`).waitFor({state:'attached'});
+      for(const kind of previews){
+        check(await card(kind).locator('.wo-photo-scroll').evaluate(node=>
+          getComputedStyle(node).backgroundColor===getComputedStyle(node.closest('.ad-canvas')).backgroundColor),
+          `The ${kind} preview ignored the ${colorScheme} canvas background`);
+      }
+    }
+    await page.emulateMedia({colorScheme:null});
     await button('收起预览：'+facts.cards.photo.title,card('photo')).click();
     await image('photo').waitFor({state:'hidden'});
     await button('打开照片', card('photo')).waitFor();
@@ -107,7 +117,7 @@ async (page, facts, phase) => {
     const detail=await reopened.json();
     check(reopened.ok()&&detail.analysisRevision===3&&
       detail.snapshot.cards.find(row=>row.id===original.id).frameId===targetGroup.id,'Reopening lost the saved group');
-    return {inlinePreviews:previews,independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3};
+    return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});
