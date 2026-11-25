@@ -45,6 +45,7 @@ async (page, facts, phase) => {
   await button('进入项目').click();
   const photoPhase=phase==='withdraw-photo'||phase==='switch-photo-project';
   const cockpit = phase==='grouped-layout'||phase==='expire-session'||phase==='withdraw-project'||phase==='withdraw-photo';
+  const heldDrawing=phase==='switch-project'?await hold('content',facts.cards.drawing.ref):null;
   let canvas;
   if(cockpit){
     await button('驾驶舱').click();
@@ -60,6 +61,53 @@ async (page, facts, phase) => {
     canvas = page.getByRole('region',{name:'分析工作空间'});
     await canvas.locator('.ad-list-items .ov-list-main').filter({hasText:title}).click();
     await button('适应全部',canvas).click();
+  }
+  if(phase==='workbench-defaults-and-group'){
+    const card=kind=>canvas.locator('.ad-card[data-card-id="'+facts.cards[kind].id+'"]');
+    const previews=['document','photo','drawing'];
+    const image=kind=>card(kind).locator('.ac-photo-view img');
+    await Promise.all(previews.map(async kind=>{
+      await image(kind).waitFor();
+      check(await image(kind).evaluate(async node=>{await node.decode();return node.naturalWidth>0;}),
+        'The '+kind+' preview did not render automatically');
+    }));
+    await button('收起预览：'+facts.cards.photo.title,card('photo')).click();
+    await image('photo').waitFor({state:'hidden'});
+    await button('打开照片', card('photo')).waitFor();
+    check(await image('document').isVisible()&&await image('drawing').isVisible(),'Collapsing a photo closed another preview');
+    await button('打开照片',card('photo')).click();
+    await image('photo').waitFor();
+
+    const target=card('drawing'),original=facts.cards.drawing;
+    const targetGroup=facts.frames.find(group=>group.id!==original.frameId);
+    await target.getByRole('button',{name:'更多操作： '+original.title,exact:true}).click();
+    await page.getByRole('menuitem',{name:'设置分组',exact:true}).click();
+    const group=canvas.getByLabel('所属分组',{exact:true});
+    check(await group.inputValue()===original.frameId,'The inspector reported the wrong starting group');
+    await group.selectOption({label:targetGroup.title});
+    check(await target.getAttribute('data-frame-id')===targetGroup.id,'The card did not join the chosen group');
+    await button('撤销修改',canvas).click();
+    check(await target.getAttribute('data-frame-id')===original.frameId,'Undo did not restore group membership');
+    await button('重做修改',canvas).click();
+    check(await target.getAttribute('data-frame-id')===targetGroup.id,'Redo did not restore the new group');
+    const [saved]=await Promise.all([
+      page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/analysis-sessions/save'),
+      button('保存',canvas).click()
+    ]);
+    check(saved.ok(),'Saving the group change failed');
+    const revision=await saved.json();
+    check(revision.analysisRevision===3,'The group change did not create a new revision');
+    const written=saved.request().postDataJSON().snapshot.cards.find(row=>row.id===original.id);
+    check(written.frameId===targetGroup.id&&written.source.id===original.ref&&
+      ['x','y','width','height'].every(key=>written[key]===original[key]),'Saving the group changed the fixed source or card placement');
+    const [reopened]=await Promise.all([
+      page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/analysis-sessions/detail'),
+      canvas.locator('.ad-list-items .ov-list-main').filter({hasText:title}).click()
+    ]);
+    const detail=await reopened.json();
+    check(reopened.ok()&&detail.analysisRevision===3&&
+      detail.snapshot.cards.find(row=>row.id===original.id).frameId===targetGroup.id,'Reopening lost the saved group');
+    return {inlinePreviews:previews,independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});
@@ -187,7 +235,7 @@ async (page, facts, phase) => {
     return {photoClearedOnProjectSwitch:true,cachedPreviewRevoked:true,cockpit:false};
   }
   if(phase==='switch-project'){
-    const held=await hold('content',target.ref);
+    const held=heldDrawing;
     try{
       await open.click();
       await dialog.waitFor();

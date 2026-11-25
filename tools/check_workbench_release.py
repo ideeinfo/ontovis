@@ -128,7 +128,13 @@ def fixed_evidence_access(browser, dist):
             finally:
                 restore()
         verify_snapshot()
-        return results
+    with browser_site(dist) as (facts, _, _):
+        mode = 'workbench-defaults-and-group'
+        browser.open(mode)
+        result = browser.run(mode, script, facts, mode)
+        verify(type(result) is dict and result.get('savedRevision') == 3, 'Missing saved card group receipt')
+        results[mode] = result
+    return results
 
 
 def imagery_recovery(browser, dist):

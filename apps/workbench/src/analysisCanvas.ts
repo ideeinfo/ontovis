@@ -111,6 +111,15 @@ export function frameBounds(snapshot:CanvasSnapshot):CanvasSnapshot{
   if(!snapshot.frames)return snapshot;
   return {...snapshot,frames:snapshot.frames.map(frame=>fitFrameToCards(frame,snapshot.cards.filter(card=>card.frameId===frame.id),20000))};
 }
+export function setCardFrame(snapshot:CanvasSnapshot,cardId:string,frameId?:string):CanvasSnapshot{
+  const card=snapshot.cards.find(item=>item.id===cardId),frames=snapshot.frames;
+  if(!card||!frames||card.frameId===frameId||frameId!==undefined&&!frames.some(frame=>frame.id===frameId))return snapshot;
+  const {frameId:previous,...ungrouped}=card;
+  const updated=frameId===undefined?ungrouped:{...ungrouped,frameId};
+  const cards:CanvasCard[]=snapshot.cards.map(item=>item===card?updated:item);
+  return {...snapshot,cards,frames:frames.map(frame=>
+    frame.id===frameId||frame.id===previous?fitFrameToCards(frame,cards.filter(item=>item.frameId===frame.id),20000):frame)};
+}
 export function selectedInBox(snapshot:CanvasSnapshot,box:{x:number;y:number;width:number;height:number}){
   return snapshot.cards.filter(c=>c.x<box.x+box.width&&c.x+c.width>box.x&&c.y<box.y+box.height&&c.y+c.height>box.y).map(c=>c.id);
 }

@@ -65,9 +65,12 @@ export function keepFixedDocumentCard(card:CanvasCard,source:EvidenceSource):boo
   return !!(card.historical||source.knowledgeReleaseId||source.knowledgeNodeId);
 }
 
-export function setCardPreviewOpen(current:ReadonlySet<string>,id:string,open:boolean):ReadonlySet<string>{
-  if(current.has(id)===open)return current;
-  const next=new Set(current);if(open)next.add(id);else next.delete(id);return next;
+export function inlinePreviewActive(card:CanvasCard,collapsed:ReadonlySet<string>):boolean{
+  return ['drawing','photo','document','model3d'].includes(card.kind)&&!collapsed.has(card.id);
+}
+export function setCardPreviewCollapsed(current:ReadonlySet<string>,id:string,collapsed:boolean):ReadonlySet<string>{
+  if(current.has(id)===collapsed)return current;
+  const next=new Set(current);if(collapsed)next.add(id);else next.delete(id);return next;
 }
 
 

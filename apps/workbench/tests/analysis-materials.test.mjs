@@ -1,18 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {CARD_KINDS,RESIZE_HANDLES,resizeCard,validateSnapshot} from '../src/analysisCanvas.ts';
+import {CARD_KINDS,RESIZE_HANDLES,resizeCard,setCardFrame,validateSnapshot} from '../src/analysisCanvas.ts';
 import {applyCanvasAction,conversationContext} from '../src/analysisActions.ts';
 import {readNote,writeNote} from '../src/analysisNotes.ts';
-import {AnalysisSources,setCardPreviewOpen} from '../src/analysisSources.ts';
+import {AnalysisSources,inlinePreviewActive,setCardPreviewCollapsed} from '../src/analysisSources.ts';
 const scope={projectCode:'P',ontobaseConnectionId:'source'};
 const fixture=()=>({schemaVersion:2,...scope,title:'Test',status:'analyzing',context:{objectIds:[],timeFrom:'2026-10-25T00:00:00Z',timeTo:'2026-10-25T00:03:00Z',timezone:'UTC'},viewport:{x:0,y:0,zoom:1},cards:[{id:'one',kind:'analysis',title:'检查',note:'',x:100,y:100,width:340,height:260,pinned:false}],relations:[]});
-test('opening and closing a card preserves all other media and model previews',()=>{
- const empty=new Set();let open=empty;
- for(const kind of ['drawing','photo','document','model3d'])for(let i=0;i<2;i++)open=setCardPreviewOpen(open,kind+i,true);
- assert.equal(empty.size,0);assert.equal(open.size,8);
- const before=open;open=setCardPreviewOpen(open,'model3d0',false);
- assert.equal(before.size,8);assert.equal(open.size,7);assert.equal(open.has('model3d1'),true);
- assert.equal(setCardPreviewOpen(open,'photo0',true),open);assert.equal(setCardPreviewOpen(open,'absent',false),open);
+test('media and model cards preview by default and collapse independently',()=>{
+ const cards=['drawing','photo','document','model3d'].map(kind=>({id:kind,kind}));
+ const initial=new Set();
+ assert.ok(cards.every(card=>inlinePreviewActive(card,initial)));
+ assert.equal(inlinePreviewActive({id:'work',kind:'work_order'},initial),false);
+ const collapsed=setCardPreviewCollapsed(initial,'model3d',true);
+ assert.equal(initial.size,0);
+ assert.deepEqual(cards.map(card=>inlinePreviewActive(card,collapsed)),[true,true,true,false]);
+ assert.equal(setCardPreviewCollapsed(collapsed,'model3d',true),collapsed);
+ assert.equal(setCardPreviewCollapsed(collapsed,'absent',false),collapsed);
+ assert.ok(cards.every(card=>inlinePreviewActive(card,setCardPreviewCollapsed(collapsed,'model3d',false))));
+});
+test('an existing group can take an ungrouped card without changing its position or references',()=>{
+ const value=fixture(),[card]=value.cards;
+ const source={...scope,system:'ontobase',id:'photo-source',revision:'fixed'};
+ const target={...card,id:'photo',kind:'photo',title:'柜内照片',x:1200,source,note:undefined};
+ const current={id:'current',title:'本次调查',x:80,y:62,width:380,height:318};
+ const history={id:'history',title:'历史参考',x:3000,y:900,width:310,height:240};
+ value.frames=[current,history];
+ value.cards=[{...card,frameId:'current'},target];
+ const assigned=setCardFrame(value,target.id,'current');
+ assert.deepEqual(assigned.cards[1],{...target,frameId:'current'});
+ assert.equal(assigned.cards[1].source,source);
+ assert.equal(assigned.frames[0].width,1480);
+ assert.equal(assigned.frames[1],history);
+ assert.equal(assigned.relations,value.relations);
+ assert.equal(setCardFrame(assigned,target.id,'current'),assigned);
+ assert.equal(setCardFrame(assigned,target.id,'missing'),assigned);
+ assert.equal(setCardFrame(assigned,'missing','current'),assigned);
+ assert.deepEqual(setCardFrame(assigned,target.id),value);
 });
 test('all nine card kinds resize from every edge and corner without changing sources',()=>{
  for(const kind of CARD_KINDS)for(const edge of RESIZE_HANDLES){const value=fixture();Object.assign(value.cards[0],{kind,...(kind==='analysis'?{}:{source:{...scope,system:'ontobase',id:'fixed',revision:'fixed'}})});

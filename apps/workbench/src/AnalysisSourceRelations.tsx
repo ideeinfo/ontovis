@@ -35,6 +35,7 @@ export function SourceRelationLines({relations,onOpen}:{relations:CardSourceRela
 }
 
 const gapMessages:Record<string,[string,string]>={
+  PHOTO_LOCATION_CHANGED:['照片可查看。原来的位置标注需要核对，定位连线暂未显示。','The photo is viewable. The saved annotation needs review before its location link can be shown.'],
   MODEL_NAME_CANDIDATE_ONLY:['当前对象没有有效模型绑定，同名构件只作候选参考。','This object has no active model binding. Matching names are candidates only.'],
   MODEL_BOUND_TO_DIFFERENT_OBJECT:['同名构件绑定的是另一个工程对象，不能据此认定对象相同。','The matching component is bound to a different engineering object.'],
   MODEL_BINDING_IN_RECYCLE_BIN:['绑定保存在回收站场景中，当前只作历史参考。','The binding belongs to a recycled scene and is historical reference only.'],
