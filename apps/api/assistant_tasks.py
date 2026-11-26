@@ -157,7 +157,8 @@ def related_object_add_request(question):
 
 def contextual_addition(question):
     def scope(text):
-        return drawing_add_scope(text), related_object_add_request(text), assistant_alarm_materials.linked_add_scope(text)
+        drawing, objects = drawing_add_scope(text), related_object_add_request(text)
+        return drawing, objects, None if drawing or objects else assistant_alarm_materials.linked_add_scope(text)
     text = question.strip().removeprefix('先').strip()
     scopes = scope(text)
     if any(scopes):
@@ -550,12 +551,12 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         question=body['question']
         edit_question,disposition=turn_requests(question)
         switches=set(service.get('settings',{}).get('tools',('selected_sources','engineering_neighborhood','manual_fault_lookup')))
-        drawing_scope,related_scope,linked_scope,compound_add=contextual_addition(edit_question)
+        drawing_scope,related_scope,linked,compound_add=contextual_addition(edit_question)
         alarm_materials=assistant_alarm_materials.alarm_material_add(edit_question)
-        contextual_add=linked_scope or related_scope or drawing_scope or alarm_materials
+        contextual_add=linked or related_scope or drawing_scope or alarm_materials
         if compound_add:
-            kind='object_and_drawing' if linked_scope else 'drawing' if drawing_scope else 'object'
-            context['relatedAddition']=dict(kind=kind,scope=contextual_add)
+            context['relatedAddition']=(dict(kinds=sorted(linked.kinds),scope=linked.scope) if linked
+                                        else dict(kind='drawing' if drawing_scope else 'object',scope=contextual_add))
         replay=replay_equipment_context(draft['context'],fixed,question) if equipment_materials and 'alarm' in kinds else None
         replay_materials=replay is not None and re.fullmatch(r'(?:请问\s*)?(?:这台设备|这个(?:设备|柜体|柜))\s*有(?:哪些)?\s*(?:图纸|说明书|资料)(?:和(?:图纸|说明书|资料))?[？?。]?',question.strip())
         if disposition and not edit_question:
@@ -583,8 +584,8 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         if compound_add:
             plan['queries']=[]
         anchor=None
-        if linked_scope:
-            anchor=assistant_alarm_materials.linked_anchor(fixed,draft,body,linked_scope)
+        if linked:
+            anchor=assistant_alarm_materials.linked_anchor(fixed,draft,body,linked.scope)
         elif alarm_materials:
             anchor=assistant_alarm_materials.alarm_anchor(fixed,draft,body)
         chosen=[item for item in fixed if item[0]['evidenceRefId'] in body['evidenceRefIds']]
@@ -595,7 +596,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         prefer_selected=needs_evidence and (disposition or body.get('preferSelectedEvidence',False))
         selected_reads=read_selected_evidence(tools,chosen) if prefer_selected else []
         for q in plan['queries']:
-            if (plan['intent']=='edit' and q['tool'] in ('objects','graph') and not q['query'].strip()
+            if (plan['intent']=='edit' and q['tool'] in ('objects','graph','materials') and not q['query'].strip()
                     and any(action['kind']=='add_results' for action in plan['actions'])):
                 continue
             try:tools.query(q,replay=replay,drawings=bool(re.search(r'图纸|drawings?',question,re.I)))
@@ -606,11 +607,12 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             selected_reads=read_selected_evidence(tools,chosen)
         addition_plan=dict(intent=plan['intent'],actions=[]) if compound_add else plan
         review=None
-        if linked_scope:
+        if linked:
             if anchor:
-                related_answer=assistant_alarm_materials.plan_addition(tools,fixed,draft,anchor,addition_plan,switches,linked=True)
+                related_answer=assistant_alarm_materials.plan_addition(tools,fixed,draft,anchor,addition_plan,switches,
+                                                                      linked=linked,analyze=disposition)
             else:
-                relation='故障报警' if linked_scope=='alarm' else '故障报警或工程对象'
+                relation='故障报警' if linked.scope=='alarm' else '故障报警或工程对象'
                 has_source=any(card['kind'] in ('alarm','object') and not card.get('historical') for card in draft['cards'])
                 if plan['intent']=='edit':
                     review=dict(target='card' if has_source else 'instruction',message=(
@@ -696,7 +698,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 reads=tools.reads,selectedReads=selected_reads,receipts=[],
                 execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query',
                 **({'editReview':review} if review else {}),
-                **({'linkedAnchorRef':anchor[0]['evidenceRefId'] if anchor else None} if linked_scope else {}),
+                **({'linkedAnchorRef':anchor[0]['evidenceRefId'] if anchor else None} if linked else {}),
                 **({'disposition':True} if disposition else {})))
         require(runtime.store.finish(run_id,'partial' if result['partial'] else 'complete',result,trace,tools.sources),
                 'ASSISTANT_CANCELLED',409)

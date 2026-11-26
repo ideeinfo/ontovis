@@ -17,16 +17,26 @@ export function AnalysisMaterialPanel({section,query,en,loading,value,chosen,add
     const kind=item.kind==='model'?'model3d':item.kind,Icon=icons[kind],alreadyAdded=added.has(item.key);
     const selectable=canAdd&&!alreadyAdded&&(!item.availability||item.availability==='available');
     const basis=recommendationRelevanceLabel(item,en);
-    const otherCards=item.relatedSourceRefs?.filter(ref=>ref!==groupRef).map(ref=>sourceTitles.get(ref)).filter(Boolean)||[];
+    const otherCards=item.relatedSourceRefs?.filter(ref=>ref!==groupRef).map(ref=>sourceTitles.get(ref)).filter(Boolean).join(' · ');
+    const reason=displayText(en?item.reasonEn||item.reason:item.reason);
+    const date=item.preview?.dataset?.timeFrom;
+    const metadata=[item.identifier!==item.title?item.identifier:undefined,
+      date?new Date(date).toLocaleString(en?'en-GB':'zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'short'}):undefined,
+      kind!=='alarm'&&reason!==basis?reason:undefined,
+      otherCards?displayText(t('也关联','Also related to')+' '+otherCards):undefined,
+      item.availability&&item.availability!=='available'?(item.availability==='field_record'
+        ?t('单台现场资料','Device field record'):t('来源暂不可用','Source unavailable')):undefined].filter(Boolean).join(' · ');
     return <div className="ac-material-result" key={item.key} data-material-kind={kind} draggable={selectable}
       onDragStart={selectable?event=>{event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-recommendation',item.key);}:undefined}>
       <label><input type="checkbox" aria-label={displayText(t('选择资料 ','Select material ')+item.title)} checked={chosen.includes(item.key)} disabled={!selectable} onChange={()=>onToggle(item.key)}/><Icon size={18}/></label>
-      <div><strong>{displayText(item.title)}</strong>{alreadyAdded&&<small>{t('已加入','Already added')}</small>}
-        {basis&&<small className="ac-match-type" data-match={item.matchType||item.relevance}>{basis}</small>}
-        {item.identifier&&<small>{item.identifier}</small>}<small>{displayText(en?item.reasonEn||item.reason:item.reason)}</small>
-        {!!otherCards.length&&<small>{t('也关联','Also related to')} {displayText(otherCards.join(' · '))}</small>}
-        {item.availability&&item.availability!=='available'&&<small>{item.availability==='field_record'?t('单台现场资料，不作为共享资料','Device field record; not shared material'):t('来源暂不可用','Source unavailable')}</small>}
-        {item.preview?.dataset&&<small>{new Date(item.preview.dataset.timeFrom).toLocaleString(en?'en-GB':'zh-CN',{timeZone:'Asia/Shanghai'})} · UTC+8 · {t('测试数据','Test data')}</small>}</div>
+      <div className="ac-material-copy">
+        <div className="ac-material-title"><strong>{displayText(item.title)}</strong>
+          {alreadyAdded&&<span>{t('已加入','Already added')}</span>}</div>
+        {(basis||metadata)&&<small className="ac-material-meta">
+          {basis&&<span className="ac-match-type" data-match={item.matchType||item.relevance}>{basis}</span>}
+          {metadata&&<span title={metadata}>{metadata}</span>}
+        </small>}
+      </div>
       <IconBtn label={displayText(t('加入画布：','Add to canvas: ')+item.title)} disabled={!selectable} onClick={()=>onAdd(item)}><Plus size={17}/></IconBtn>
     </div>;
   }

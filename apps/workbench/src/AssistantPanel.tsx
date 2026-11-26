@@ -20,7 +20,7 @@ import type {CanvasCard,CanvasSnapshot} from './analysisCanvas';
 import type {DraftReceipt} from './analysisDraftState';
 import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantConversationMatches,assistantEvidenceKey,assistantMessage,assistantSendBlocker,assistantRunActivity,assistantActivityLabel,running,sourceLabels,materialRoles,watchAssistantRun,type AssistantConversation,type AssistantMode,type AssistantPolicyView,type AssistantPollState,type AssistantRun,type AssistantSource} from './assistantApi';
 import {AssistantGraph} from './AssistantGraph';
-import {AssistantSourceViewer} from './AssistantSourceViewer';
+import {AssistantSourceViewer,type AssistantPreviewTarget} from './AssistantSourceViewer';
 import {AssistantTurn} from './AssistantTurn';
 import {AssistantCardPicker} from './AssistantCardPicker';
 import {AssistantWorkOrderDialog} from './AssistantWorkOrderDialog';
@@ -46,7 +46,8 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const [question,setQuestion]=useState(''),[showPrompts,setShowPrompts]=useState(true),[run,setRun]=useState<AssistantRun|null>(null),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[reload,setReload]=useState(0),[summaries,setSummaries]=useState<AssistantSource[]|null>(null),[pending,setPending]=useState<string|null>(null);
  const [pollState,setPollState]=useState<AssistantPollState>('reading'),[pollReload,setPollReload]=useState(0);
  const [conversations,setConversations]=useState<AssistantConversation[]>([]),[conversation,setConversation]=useState<AssistantConversation|null>(null),[turns,setTurns]=useState<AssistantRun[]>([]),[hasEarlier,setHasEarlier]=useState(false);
- const continuation=conversation&&assistantConversationMatches(conversation,mode)?conversation:null;
+ const continuation=conversation&&(!receipt||conversation.analysisSessionId===receipt.analysisSessionId)
+  &&assistantConversationMatches(conversation,mode)?conversation:null;
  const [loadingHistory,setLoadingHistory]=useState(false);
  const [contextOpen,setContextOpen]=useState(false),[historyOpen,setHistoryOpen]=useState(false);
  const [cardPickerOpen,setCardPickerOpen]=useState(false);
@@ -54,7 +55,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const composing=useRef(false),submitting=useRef<string|null>(null);
  const autoScroll=useRef(true);
  const [transferRun,setTransferRun]=useState<AssistantRun|null>(null);
- const [sourceView,setSourceView]=useState<{runId:string;reference:AssistantSource}|null>(null);
+ const [sourceView,setSourceView]=useState<AssistantPreviewTarget|null>(null);
  const [sceneView,setSceneView]=useState<{target:AssistantSceneTarget;workbench:boolean;trigger?:HTMLButtonElement}|null>(null);
  const [deviceView,setDeviceView]=useState<DeviceMaterialsTarget|null>(null);
  const [documentView,setDocumentView]=useState<FixedDocumentTarget|null>(null);
@@ -70,12 +71,12 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const current=useRef(context);current.current=context;
  const alive=useRef(true),scope=useRef<AssistantApi|null>(null);
  useEffect(()=>{alive.current=true;automatic.current=null;setRun(null);setError(null);setPending(null);setSummaries(null);setConversation(null);setConversations([]);setTurns([]);setHasEarlier(false);setLoadingHistory(false);setTransferRun(null);setSourceView(null);setSceneView(null);setDeviceView(null);setDocumentView(null);setModelView(null);setConfigurationView(null);historyGeneration.current++;setQuestion(initialQuestion??'');if(initialQuestion)onInitialQuestionUsed?.();
-  setPollState('reading');setShowPrompts(true);setCardPickerOpen(false);composing.current=false;
+  setPollState('reading');setShowPrompts(true);setCardPickerOpen(false);setHistoryOpen(false);setContextOpen(false);composing.current=false;
   const fixed=new AssistantApi(api.assistantScope());scope.current=fixed;
   return()=>{alive.current=false;const previous=latest.current;if(running(previous))void fixed.cancel(previous!).catch(()=>{});};
  },[context]);
  useEffect(()=>{setSelected(previous=>previous.filter(id=>available.some(card=>card.source!.id===id)));setSummaries(null);},[inventory]);
- useEffect(()=>{if(!visible)return;setShowPrompts(true);const abort=new AbortController();setView(null);setPolicyError(null);service.policy(abort.signal,mode??undefined).then(value=>{if(!abort.signal.aborted)setView(value);}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setPolicyError(e);});return()=>abort.abort();},[service,context,reload,visible]);
+ useEffect(()=>{if(!visible)return;setShowPrompts(true);const abort=new AbortController();setView(null);setPolicyError(null);service.policy(abort.signal,mode??undefined,receipt?.analysisSessionId??draftId.current).then(value=>{if(!abort.signal.aborted)setView(value);}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setPolicyError(e);});return()=>abort.abort();},[service,context,reload,visible]);
  useEffect(()=>{if(busy||!run||!running(run))return;const abort=new AbortController(),key=context;
   const stop=watchAssistantRun(service,run,abort.signal,value=>{if(current.current===key){setRun(value);setError(null);setPollState('reading');}},
    (e,retrying)=>{if(current.current===key){setError(e);setPollState(retrying?'retrying':'paused');}});
@@ -91,23 +92,28 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
     if(!queryOnly)setTaskId(chosen.taskId??'analysis');setConversation(head??null);setTurns([chosen]);setRun(chosen);setHasEarlier(false);return;
    }
    if(initialQuestion)return;
-   const recent=value.items.find(item=>assistantConversationMatches(item,mode));
-   if(!recent)return;const detail=await service.conversation(recent.conversationId,undefined,abort.signal);
+   const recent=value.items.find(item=>item.analysisSessionId===receipt.analysisSessionId&&assistantConversationMatches(item,mode));
+   if(!recent)return;const detail=await service.conversation(recent.conversationId,undefined,abort.signal,receipt.analysisSessionId);
    if(abort.signal.aborted||current.current!==key||historyGeneration.current!==generation)return;
-   if(!assistantConversationMatches(detail,mode)||queryOnly&&detail.items.at(-1)?.taskId!=='query')return;
+   if(detail.analysisSessionId!==receipt.analysisSessionId||!assistantConversationMatches(detail,mode)
+      ||queryOnly&&detail.items.at(-1)?.taskId!=='query')return;
    if(!queryOnly)setTaskId(detail.items.at(-1)?.taskId??'analysis');setConversation(detail);setTurns(detail.items);setRun(detail.items.at(-1)??null);setHasEarlier(detail.hasEarlier);
   }).catch(e=>{if(!abort.signal.aborted&&!cancelled(e)&&historyGeneration.current===generation)setError(e);}).finally(()=>{if(!abort.signal.aborted&&current.current===key&&historyGeneration.current===generation)setLoadingHistory(false);});
   return()=>abort.abort();
  },[service,context,initialRunId]);
  async function openConversation(id:string,earlier=false){if(!receipt)return;const key=context,generation=++historyGeneration.current;setLoadingHistory(true);setError(null);
-  try{const detail=await service.conversation(id,earlier?Math.min(...turns.map(r=>r.conversationVersion||1)):undefined);
+  try{const detail=await service.conversation(id,earlier?Math.min(...turns.map(r=>r.conversationVersion||1)):undefined,
+   undefined,receipt.analysisSessionId);
    if(!alive.current||current.current!==key||historyGeneration.current!==generation)return;
+   if(detail.analysisSessionId!==receipt.analysisSessionId||!assistantConversationMatches(detail,mode))return;
    setConversation(detail);setTurns(previous=>earlier?mergeConversationTurns([...detail.items,...previous],null):detail.items);setHasEarlier(detail.hasEarlier);
    if(!earlier){if(!queryOnly)setTaskId(detail.items.at(-1)?.taskId??'analysis');setRun(detail.items.at(-1)??null);setPending(null);setSummaries(null);setQuestion('');}
   }catch(e){if(alive.current&&current.current===key&&historyGeneration.current===generation)setError(e);}finally{if(alive.current&&current.current===key&&historyGeneration.current===generation)setLoadingHistory(false);}
  }
  function newConversation(){autoScroll.current=true;setContextOpen(false);setHistoryOpen(false);setCardPickerOpen(false);historyGeneration.current++;setConversation(null);setTurns([]);setRun(null);setPending(null);setError(null);setQuestion('');setShowPrompts(true);setHasEarlier(false);setLoadingHistory(false);}
  const transcript=mergeConversationTurns(turns,run);
+ const latestTurn=transcript.at(-1);
+ const earlierTurns=snapshot&&!queryOnly?transcript.slice(0,-1):[];
  useEffect(()=>{if(autoScroll.current&&scrollArea.current)scrollArea.current.scrollTop=scrollArea.current.scrollHeight;},[run?.runId,run?.state,run?.version,loadingHistory]);
  useEffect(()=>{if(cardPickerOpen&&scrollArea.current){autoScroll.current=false;scrollArea.current.scrollTop=0;}},[cardPickerOpen]);
  const selection=()=>({analysisSessionId:receipt!.analysisSessionId,expectedAnalysisRevision:receipt!.analysisRevision,evidenceRefIds:selected});
@@ -209,6 +215,15 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {!activity&&sendBlocker&&sendBlocker!=='ASSISTANT_QUESTION_REQUIRED'&&<p className="ap-caption" role="status" id={sendStatusId}>{assistantMessage(sendBlocker,en)}{canRefreshService&&<button type="button" disabled={locked} onClick={refreshService}>{t('刷新服务','Refresh service')}</button>}</p>}
   {!activity&&sendBlocker==='ASSISTANT_QUESTION_REQUIRED'&&<span className="as-visually-hidden" id={sendStatusId}>{assistantMessage(sendBlocker,en)}</span>}
   <small>{t('回车发送 · Shift + 回车换行','Enter to send · Shift + Enter for a new line')}{snapshot&&!queryOnly&&t(' · 画布修改可撤销',' · Canvas edits can be undone')}</small></div>;
+ const renderTurn=(item:AssistantRun)=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} run={item} cards={cards}
+    cardPicker={item.runId===run?.runId&&inlineCardPicker?cardPicker:undefined}
+    onContinueEdit={canSelectCards&&!locked&&(item.runId===run?.runId||item.result?.task?.editReview?.target==='refresh')?()=>retryQuestion(item):undefined} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/>
+   <AssistantTaskResult hasUnsaved={hasUnsaved} run={item} cards={cards} onLocateCard={onFocus} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending}
+    operationFailure={operationFailure?.runId===item.runId&&operationFailure.context===context?assistantMessage(operationFailure.error,en):undefined}
+    onRetryAddition={()=>retryQuestion(item)} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined}
+    onViewCandidate={(candidate,trigger)=>setSourceView({runId:item.runId,candidate,trigger})}
+    onPage={index=>void taskPage(item,index)} loadModelUsage={(query,signal)=>api.assistantScope().request<ModelUsagePage>(ASSISTANT_ROOT+'/task-page',{runId:item.runId,modelUsage:query},signal)} onViewScene={(target,trigger)=>setSceneView({target,trigger,workbench:item.result?.task?.mode==='workbench'})} onViewDevice={setDeviceView} onViewDocument={setDocumentView} onViewModel={(target,trigger)=>setModelView({target,trigger,context,workbench:item.result?.task?.mode==='workbench'})} onViewConfiguration={(target,title)=>setConfigurationView({target,title,context,workbench:item.result?.task?.mode==='workbench'})}/></div>;
+ const loadEarlier=hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>;
  return <div className="as-panel">{snapshot&&<div className="as-scope-heading">
   <span>{t('本项目 · 按需检索','This project · search on demand')}</span>
   {canSelectCards?(inlineCardPicker?
@@ -216,10 +231,10 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
    <button type="button" className="as-target-toggle" aria-expanded={cardPickerOpen} disabled={locked}
     onClick={()=>setCardPickerOpen(open=>!open)}>{t('选择操作卡片','Select cards to edit')}{targetCount>0?' · '+targetCount:''}<ChevronDown size={13}/></button>):
    <span>{queryOnly?t('查询模式','Query only'):t('只读画布','Read-only canvas')}</span>}
- </div>}<div className="as-toolbar"><button type="button" className="as-context-toggle" aria-expanded={contextOpen} onClick={()=>setContextOpen(v=>!v)}>{t('分析用资料','Materials for analysis')} <b>{selected.length}</b>{!!metadataCount&&<small>{t(`${metadataCount}份仅元数据`,`${metadataCount} metadata only`)}</small>}<ChevronDown size={13}/></button><button type="button" aria-label={t('对话与服务','Conversations and service')} title={t('对话与服务','Conversations and service')} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(v=>!v)}><History size={15}/></button><button type="button" disabled={locked} onClick={newConversation}><Plus size={14}/>{t('新对话','New')}</button></div>
+ </div>}<div className="as-toolbar"><button type="button" className="as-context-toggle" aria-expanded={contextOpen} onClick={()=>setContextOpen(v=>!v)}>{t('分析用资料','Materials for analysis')} <b>{selected.length}</b>{!!metadataCount&&<small>{t(`${metadataCount}份仅元数据`,`${metadataCount} metadata only`)}</small>}<ChevronDown size={13}/></button><button type="button" aria-label={t('本画布对话','Conversations for this canvas')} title={t('本画布对话','Conversations for this canvas')} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(v=>!v)}><History size={15}/></button><button type="button" disabled={locked} onClick={newConversation}><Plus size={14}/>{t('新对话','New')}</button></div>
+  {historyOpen&&<div className="as-history-tools"><div className="as-conversation"><label>{t('本画布对话','Conversations for this canvas')}<select aria-label={t('当前对话','Current conversation')} disabled={locked} value={conversation?.conversationId??''} onChange={e=>e.target.value?void openConversation(e.target.value):newConversation()}><option value="">{t('新对话','New conversation')}</option>{conversations.map(item=><option key={item.conversationId} value={item.conversationId}>{displayText(item.title)}</option>)}{conversation&&!conversations.some(c=>c.conversationId===conversation.conversationId)&&<option value={conversation.conversationId}>{displayText(conversation.title)}</option>}</select></label></div><div className="as-service"><span>{effectiveService?.provider??'—'} · {effectiveService?.modelId||'—'}</span><Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn></div></div>}
   <div className="as-scroll" ref={scrollArea} onScroll={e=>{const el=e.currentTarget;autoScroll.current=el.scrollHeight-el.scrollTop-el.clientHeight<60;}}>
   {cardPickerOpen&&!inlineCardPicker&&cardPicker&&<section className="as-edit-review as-picker-section">{cardPicker}</section>}
-  {historyOpen&&<div className="as-history-tools"><div className="as-conversation"><label>{t('当前对话','Current conversation')}<select aria-label={t('当前对话','Current conversation')} disabled={locked} value={conversation?.conversationId??''} onChange={e=>e.target.value?void openConversation(e.target.value):newConversation()}><option value="">{t('新对话','New conversation')}</option>{conversations.map(item=><option key={item.conversationId} value={item.conversationId}>{displayText(item.title)}</option>)}{conversation&&!conversations.some(c=>c.conversationId===conversation.conversationId)&&<option value={conversation.conversationId}>{displayText(conversation.title)}</option>}</select></label></div><div className="as-service"><span>{effectiveService?.provider??'—'} · {effectiveService?.modelId||'—'}</span><Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn></div></div>}
   {loadingHistory&&<p role="status">{t('读取已保存对话…','Loading saved conversation…')}</p>}
   {contextOpen&&<section className="as-sources">
   <div className="as-section-heading"><h4 id="as-materials-title">{t('提供给助手阅读','Materials the assistant can read')}</h4><span>{t('已勾选','Checked')} {selected.length}</span></div>
@@ -235,13 +250,12 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {summaries&&<details open className="as-summaries"><summary>{t('摘要预览 · 未调用模型','Summary preview · no model call')}</summary>{summaries.map(row=><p key={row.key}><strong>{row.key} · {sourceLabels[row.kind]?.[en?1:0]}</strong><span>{displayText(row.summary)}</span></p>)}<AssistantRetrieval sources={summaries} cards={cards} en={en} onFocus={onFocus}/></details>}
   <AssistantGraph service={service} cards={available} receipt={receipt} en={en} onFocus={onFocus}/>
   </section>}
-  <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} run={item} cards={cards}
-    cardPicker={item.runId===run?.runId&&inlineCardPicker?cardPicker:undefined}
-    onContinueEdit={canSelectCards&&!locked&&(item.runId===run?.runId||item.result?.task?.editReview?.target==='refresh')?()=>retryQuestion(item):undefined} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/>
-   <AssistantTaskResult hasUnsaved={hasUnsaved} run={item} cards={cards} onLocateCard={onFocus} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending}
-    operationFailure={operationFailure?.runId===item.runId&&operationFailure.context===context?assistantMessage(operationFailure.error,en):undefined}
-    onRetryAddition={()=>retryQuestion(item)} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined}
-    onPage={index=>void taskPage(item,index)} loadModelUsage={(query,signal)=>api.assistantScope().request<ModelUsagePage>(ASSISTANT_ROOT+'/task-page',{runId:item.runId,modelUsage:query},signal)} onViewScene={(target,trigger)=>setSceneView({target,trigger,workbench:item.result?.task?.mode==='workbench'})} onViewDevice={setDeviceView} onViewDocument={setDocumentView} onViewModel={(target,trigger)=>setModelView({target,trigger,context,workbench:item.result?.task?.mode==='workbench'})} onViewConfiguration={(target,title)=>setConfigurationView({target,title,context,workbench:item.result?.task?.mode==='workbench'})}/></div>)}</div>
+  <div className="as-transcript">{snapshot&&!queryOnly?<>
+   {(earlierTurns.length>0||hasEarlier)&&<details className="as-previous-turns" key={conversation?.conversationId}>
+    <summary>{t('之前的对话','Earlier turns')}</summary>{loadEarlier}{earlierTurns.map(renderTurn)}
+   </details>}
+   {latestTurn&&renderTurn(latestTurn)}
+  </>:<>{loadEarlier}{transcript.map(renderTurn)}</>}</div>
   {deviceView&&<AssistantDeviceMaterials api={api} target={deviceView} en={en} onClose={()=>setDeviceView(null)}/>}
   {!modelInfoEditing&&modelView?.context===context&&<AssistantModelViewer key={context+':'+modelView.target.modelVersionId}
     api={api} target={modelView.target} en={en} infoReceipt={modelInfoReceipt} onClose={()=>setModelView(null)}

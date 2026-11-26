@@ -191,7 +191,9 @@ export function assistantMessage(error:unknown,en=false){
 export class AssistantApi {
  readonly api:DraftApi;
  constructor(api:DraftApi){this.api=api;}
- policy(signal?:AbortSignal,mode?:AssistantMode){return this.api.request<AssistantPolicyView>(ASSISTANT_ROOT+'/policy',mode?{mode}:{},signal);}
+ policy(signal?:AbortSignal,mode?:AssistantMode,analysisSessionId?:string){
+  return this.api.request<AssistantPolicyView>(ASSISTANT_ROOT+'/policy',mode?{mode,...(analysisSessionId?{analysisSessionId}:{})}:{},signal);
+ }
  preview(policy:AssistantPolicy,signal?:AbortSignal){return this.api.request<AssistantPolicyView>(ASSISTANT_ROOT+'/preview',{policy},signal);}
  history(signal?:AbortSignal){return this.api.request<AssistantPolicyView&{items:{revision:number;savedAt:string;operation:string;policy:AssistantPolicy}[]}>(ASSISTANT_ROOT+'/history',{},signal);}
  publish(view:AssistantPolicyView,policy:AssistantPolicy,restoreRevision?:number){return this.api.request<AssistantPolicyView>(ASSISTANT_ROOT+(restoreRevision===undefined?'/publish':'/rollback'),{
@@ -201,7 +203,10 @@ export class AssistantApi {
  conversations(analysisSessionId:string,expectedAnalysisRevision:number,signal?:AbortSignal,mode?:AssistantMode){
   return this.api.request<{items:AssistantConversation[]}>(ASSISTANT_ROOT+'/conversations',{analysisSessionId,expectedAnalysisRevision,...(mode?{mode}:{})},signal);
  }
- conversation(conversationId:string,beforeTurn?:number,signal?:AbortSignal){return this.api.request<AssistantConversationDetail>(ASSISTANT_ROOT+'/conversation',{conversationId,...(beforeTurn===undefined?{}:{beforeTurn})},signal);}
+ conversation(conversationId:string,beforeTurn?:number,signal?:AbortSignal,analysisSessionId?:string){
+  return this.api.request<AssistantConversationDetail>(ASSISTANT_ROOT+'/conversation',{
+   conversationId,...(beforeTurn===undefined?{}:{beforeTurn}),...(analysisSessionId?{analysisSessionId}:{})},signal);
+ }
  graph(analysisSessionId:string,expectedAnalysisRevision:number,evidenceRefId:string,signal?:AbortSignal){return this.api.request<{graph:EngineeringGraph}>(ASSISTANT_ROOT+'/graph',{analysisSessionId,expectedAnalysisRevision,evidenceRefIds:[evidenceRefId]},signal);}
  async cancel(run:AssistantRun){try{return await this.api.request<AssistantRun>(ASSISTANT_ROOT+'/cancel',{runId:run.runId,expectedVersion:run.version});}
   catch(error){if(error instanceof ApiError&&error.code==='ASSISTANT_RUN_CHANGED'){const latest=await this.status(run);return this.api.request<AssistantRun>(ASSISTANT_ROOT+'/cancel',{runId:latest.runId,expectedVersion:latest.version});}throw error;}}

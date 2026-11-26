@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from apps.api.authority import PreviewError
 from apps.api.assistant_store import DEFAULT
+from apps.api.assistant_tasks import ProjectTools
+from apps.api.analysis_recommendations import _source_page,recommendation
 from apps.api.simulated_faults import identity
 from apps.api.user_sessions import MAX_SECONDS
 from tests.test_analysis_drafts import snapshot
@@ -203,6 +205,11 @@ def browser_site(public: Path):
                 assert [(item['analysisSessionId'],item['relevance']) for item in available['items']]==[(analysis_id,'same_event')]
 
             def plan(_authority, _path, body, _cancelled, _deadline):
+                if body['question']=='查找四类资料候选':
+                    output=dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,engineeringConfirmation=False,usage={})
+                    if body['workflow']['phase']=='plan':
+                        return {**output,'plan':dict(intent='query',queries=[dict(tool='materials',query='fixture-candidates',faultCode='')],actions=[])}
+                    return {**output,'answer':dict(observations=[],hypotheses=[],gaps=[],nextSteps=[])}
                 if body['question']=='查找名称含合成的工程对象':
                     output=dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,
                                 engineeringConfirmation=False,usage={})
@@ -230,11 +237,40 @@ def browser_site(public: Path):
                         queries=[dict(tool='materials',query='',faultCode='')],
                         actions=[dict(kind=kind,targets=[],text='',x=None,y=None) for kind in ('add_results','arrange')]))
 
-            with patch('apps.api.assistant_task_api.call_source',side_effect=plan), \
-                    patch('apps.api.analysis_preview.fault_documents',return_value=[]), \
-                    serve_workbench(public.resolve(strict=True),fixture.sessions,commands) as origin:
+            photo_selector=dict(sourceType='project_document',documentId=photo_id,contentVersionId=photo_version)
+            photo_title=photo.document['name']
+            manual_title='Q-26 故障码手册'
+            manual_selector=dict(documentId=DOC,contentVersionId=VERSION,pageNumber=2,sourceSha256=fixed.version['source_sha256'])
+            photo_row=recommendation('photo',photo_title,photo_selector,'登记对象照片')
+            manual_row=dict(title=manual_title,reason='故障码手册 · 第 2 页',selector=manual_selector)
+            def related_sources(reader,chosen,dataset,section,name,*options):
+                if name=='photos' and chosen and chosen['item']['entityUid']==primary['entityUid']:
+                    return [photo_row],None
+                return _source_page(reader,chosen,dataset,section,name,*options)
+
+            candidate_rows=[
+                ('object',primary['displayName'],dict(entityUid=primary['entityUid'],expectedEntityRevision=primary['entityRevision']),'位号匹配'),
+                ('drawing',power_title,dict(entityUid=primary['entityUid'],expectedEntityRevision=primary['entityRevision'],
+                    evidenceRef='location:supply-1',expectedSourceRevision='1'*64),'登记图纸 · 第 88 页'),
+                ('document',manual_title,manual_selector,'故障码手册 · 第 2 页'),
+                ('photo',photo_title,photo_selector,'登记对象照片'),
+            ]
+            existing_query=ProjectTools.query
+            def query(tools,params,**options):
+                if params['query']!='fixture-candidates':
+                    return existing_query(tools,params,**options)
+                for i,(kind,title,selector,reason) in enumerate(candidate_rows,1):
+                    tools.results.append(dict(key=f'R{i}',kind=kind,title=title,selector=selector,reason=reason,
+                                              identifier=f'fixture-candidate-{i}',version='fixed',simulated=False))
+
+            with (patch('apps.api.assistant_task_api.call_source',side_effect=plan),
+                    patch('apps.api.assistant_tasks.ProjectTools.query',new=query),
+                    patch('apps.api.analysis_preview.fault_documents',return_value=[manual_row]),
+                    patch('apps.api.assistant_alarm_materials._source_page',side_effect=related_sources),
+                    serve_workbench(public.resolve(strict=True),fixture.sessions,commands) as origin):
                 yield dict(origin=origin,analysisId=analysis_id,title=title,cards=cards,frames=frames,record=record,
                            memberDrawingTitle=member_title,powerDrawingTitle=power_title,
+                           candidateTitles={kind:title for kind,title,_,_ in candidate_rows},
                            drawingObjectTitle=terminal['displayName'],
                            additionalObjectTitles=[cabinet['displayName'],module['displayName']],
                            datasetId=sample['datasetId'],datasetRevision=sample['datasetRevision']),restore,verify

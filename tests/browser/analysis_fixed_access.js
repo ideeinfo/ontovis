@@ -148,6 +148,8 @@ async (page, facts, phase) => {
     check(await materials.getByRole('button',{name:/^当前设备适用资料/}).count()===0,'Equipment material applicability had a second entry');
     await firstCategory.click();
     await materials.locator('.ac-material-result').filter({hasText:'已加入'}).waitFor();
+    check(await materials.getByText('测试数据',{exact:false}).count()===0,'The compact alarm list displayed the test-data label');
+    check((await materials.locator('.ac-material-result').first().boundingBox()).height<90,'An alarm result occupied too many rows');
     await materials.locator('.ac-material-back').click();
     const drawingCategory=()=>materials.getByRole('button',{name:/^图纸/});
     const drawingResult=materials.locator('.ac-material-result').filter({has:page.getByText(facts.powerDrawingTitle,{exact:true})});
@@ -387,6 +389,15 @@ async (page, facts, phase) => {
     await button('撤销修改',canvas).click();
     check(await canvas.locator('.ad-card').count()===1,'The two linked additions were not undone together');
 
+    const [typedResponse]=await Promise.all([
+      assistantResponse('task-ack'),sendLinked('添加工程对象、图纸、文档、照片'),
+    ]);
+    const typedResult=await typedResponse.json();
+    check(typedResponse.ok()&&typedResult.run.result.modelCalls===0&&
+      typedResult.receipt.items.map(item=>item.sourceKind).join(',')==='object,drawing,document,photo',
+      'The four requested types fell back to unrelated catalogue rows');
+    await button('撤销修改',canvas).click();
+
     await sendLinked('查找名称含合成的工程对象');
     const directory=assistant.locator('.as-project-results').last();
     const choice=name=>directory.getByRole('button',{name:'加入画布 · 工程对象 · '+name,exact:true});
@@ -408,8 +419,60 @@ async (page, facts, phase) => {
     await button('适应全部',canvas).click();
     check(await objectCards.count()===2,'Manual add lost an earlier result');
 
+    await sendLinked('查找四类资料候选');
+    const floating=canvas.locator('.ad-assistant-window');
+    const drag=async (target,dx,dy)=>{
+      const box=await target.boundingBox();
+      await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
+      await page.mouse.down();
+      await page.mouse.move(box.x+box.width/2+dx,box.y+box.height/2+dy,{steps:8});
+      await page.mouse.up();
+    };
+    const canvasBefore=await canvas.locator('.ad-canvas').boundingBox();
+    const before=(await floating.boundingBox());
+    await drag(button('移动助手窗口',floating),-90,40);
+    const moved=await floating.boundingBox();
+    check(moved.x<before.x-65&&moved.y>before.y+20,'The floating assistant did not move with its header');
+    await drag(button('向右缩放助手窗口',floating),65,-40);
+    const resized=await floating.boundingBox();
+    check(resized.width>moved.width+40&&resized.height<moved.height-20,'The floating assistant did not resize from its corner');
+    const canvasAfter=await canvas.locator('.ad-canvas').boundingBox();
+    check(canvasBefore.width===canvasAfter.width&&canvasBefore.height===canvasAfter.height,'Resizing the assistant changed the canvas layout');
+    for(const [kind,name] of Object.entries(facts.candidateTitles)){
+      const candidate=floating.locator('.as-material-candidate[data-card-kind="'+kind+'"]').last();
+      await candidate.getByText(name,{exact:true}).waitFor();
+      check(await candidate.evaluate((node,kind)=>{
+        const style=getComputedStyle(node),tint=style.getPropertyValue('--card-tint').trim();
+        return !!tint&&tint===style.getPropertyValue('--card-'+kind).trim();
+      },kind),'The candidate did not use the matching canvas card colour');
+      const previewRequest=assistantResponse('task-source');
+      await button('查看详情 · '+name,candidate).click();
+      const preview=await previewRequest;
+      check(preview.ok()&&(await preview.json()).kind===kind,'Candidate detail did not read the fixed source type');
+      const dialog=page.locator('.ac-source-modal');
+      await dialog.getByText(/匹配依据/).waitFor();
+      if(kind==='document'){
+        check(await dialog.getByRole('spinbutton',{name:'文档页码'}).inputValue()==='2','The manual did not open at the matched page');
+      }
+      if(kind==='drawing'||kind==='photo')await dialog.locator('.ac-photo-view img').waitFor();
+      if(kind==='object')await dialog.getByText(/工程分类/).waitFor();
+      await page.keyboard.press('Escape');
+      await dialog.waitFor({state:'hidden'});
+    }
+    check(await floating.locator('.as-turn:visible').count()===1,'Previous candidate lists remained expanded');
+    await button('本画布对话',floating).click();
+    const currentConversation=floating.getByRole('combobox',{name:'当前对话',exact:true});
+    check(!(await currentConversation.locator('option').allTextContents()).some(title=>title.includes('加入相关的工程对象')),
+      'The scratch canvas showed a conversation from another canvas');
+
+    await canvas.locator('.ad-list-items .ov-list-main').filter({hasText:title}).click();
+    await button('放弃并离开',page.getByRole('dialog',{name:'画布有未保存的修改'})).click();
+    await button('本画布对话',floating).click();
+    await currentConversation.locator('option').filter({hasText:'加入相关的工程对象'}).waitFor({state:'attached'});
+    check(!(await currentConversation.locator('option').allTextContents()).some(title=>title.includes('查找四类资料候选')),
+      'The assistant showed a scratch-canvas conversation after switching');
+
     await button('驾驶舱').click();
-    await button('放弃并离开',page.getByRole('dialog',{name:'分析修改尚未保存'})).click();
     const cockpit=page.getByRole('region',{name:'项目驾驶舱'});
     await button('分析工作台',cockpit).click();
     const view=cockpit.getByRole('region',{name:'故障分析展示'});
@@ -425,7 +488,8 @@ async (page, facts, phase) => {
       drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,
       alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true,assistantCompoundEdit:true,
       recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true,assistantCardSelection:true,
-      assistantLinkedObjectAndDrawing:true,assistantLinkedDedupAndUndo:true,assistantManualAddAfterZoom:true};
+      assistantLinkedObjectAndDrawing:true,assistantLinkedDedupAndUndo:true,assistantManualAddAfterZoom:true,
+      assistantFourTypes:true,assistantCandidatePreview:true,assistantFloatingWindow:true,assistantCanvasConversationScope:true,compactMaterialRows:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

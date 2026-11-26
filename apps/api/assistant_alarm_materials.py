@@ -1,6 +1,7 @@
 """Use the existing alarm and material associations for an explicit canvas addition."""
 import json
 import re
+from typing import NamedTuple
 
 from .analysis_object_recommendations import object_recommendation
 from .analysis_recommendations import _source_page, registered_recommendation_revisions
@@ -21,30 +22,47 @@ def alarm_material_add(question):
                              question.strip().removeprefix('先').strip().rstrip('。！？!?')))
 
 
+class LinkedMaterials(NamedTuple):
+    scope: str
+    kinds: frozenset[str]
+
+
 def linked_add_scope(question):
-    """Resolve requests for both source types without turning them into a project search."""
+    """Identify a list of requested material types independently of its order."""
     text = ' '.join(question.strip().rstrip('。.!！?？').split())
     alarm = r'(?P<alarm>(?:当前|本次|这次|这条|该|选中(?:的)?)?(?:故障)?报警)'
     scope = rf'(?:(?:与)?{alarm}的?|(?:当前|本次)?画布(?:中|上)?的?|(?:选中|所选)(?:的)?卡片的?)?'
     related = r'(?:直接)?(?:(?:相关|关联|涉及|对应)的?)?'
-    objects, drawings = r'工程对象', r'(?:工程|电气)?图纸'
-    join = r'(?:和|以及|及|与|跟|、|，|,)(?:其)?'
-    pair = rf'{scope}{related}(?:{objects}{join}{related}{drawings}|{drawings}{join}{related}{objects})(?:卡片)?'
+    kinds = {'object':r'工程对象', 'drawing':r'(?:工程|电气)?图纸', 'document':r'(?:文档|手册|说明书)',
+             'photo':r'(?:现场)?(?:照片|图片)'}
+    material = '(?:'+'|'.join(kinds.values())+')'
+    join = r'(?:[,，、]|以及|和|及|与|跟)(?:其)?'
+    material_list = rf'(?P<materials>{material}(?:{join}{related}{material})*)'
+    targets = rf'{scope}{related}{material_list}(?:卡片)?'
     verb = r'(?:加入|添加|加上|补上|放入|加|放)'
-    together = r'(?:一起|同时|一并)?'
+    together = r'(?:一起|同时|一并|都)?'
     place = r'(?:(?:到|至)?(?:当前)?画布[上中]?)?'
     prefix = rf'(?:请帮我|帮我|请|能否|能不能|可以)?(?:自动)?{together}'
     compact = text.replace(' ', '')
-    request = (re.fullmatch(rf'{prefix}{verb}{pair}{place}', compact) or
-               re.fullmatch(rf'{prefix}(?:把|将){pair}{together}{verb}{place}', compact))
+    request = (re.fullmatch(rf'{prefix}{verb}{targets}{place}', compact) or
+               re.fullmatch(rf'{prefix}(?:把|将){targets}{together}{verb}{place}', compact) or
+               re.fullmatch(rf'{prefix}(?:为|给){alarm}{together}{verb}{related}{material_list}{place}',compact))
     if request:
-        return 'alarm' if request['alarm'] else 'canvas'
+        return LinkedMaterials('alarm' if request['alarm'] else 'canvas',
+                               frozenset(kind for kind, pattern in kinds.items() if re.search(pattern,request['materials'])))
+    kinds = {'object':r'engineering objects?', 'drawing':r'(?:engineering |electrical )?drawings?',
+             'document':r'(?:documents?|manuals?)', 'photo':r'(?:photos?|pictures?)'}
+    material = '(?:'+'|'.join(kinds.values())+')'
     request = re.fullmatch(
         r'(?:please )?add (?:the )?(?:directly )?(?:related |associated )?'
-        r'(?:engineering objects and (?:their )?drawings|drawings and (?:their )?engineering objects)'
+        rf'(?P<materials>{material}(?:(?:, (?:and )?| and )(?:their |related )?{material})*)'
         r'(?: for (?P<alarm>(?:the current|this|the selected) alarm))?(?: to (?:the )?canvas)?',
         text, re.I)
-    return ('alarm' if request['alarm'] else 'canvas') if request else None
+    if request:
+        return LinkedMaterials('alarm' if request['alarm'] else 'canvas',
+                               frozenset(kind for kind, pattern in kinds.items()
+                                         if re.search(r'\b'+pattern+r'\b',request['materials'],re.I)))
+    return None
 
 
 def alarm_anchor(fixed, draft, body):
@@ -98,7 +116,7 @@ def candidates(reader, dataset, kinds, read, *, trace=None, object_source=None):
     rows = []
     primary = (dataset or {}).get('primaryRds')
     target = None
-    if kinds.intersection(('object','drawing')):
+    if kinds.intersection(('object','drawing','photo')):
         if object_source is not None:
             target = lookup('objects',lambda:reader.read('object',object_source))
         elif primary:
@@ -116,6 +134,10 @@ def candidates(reader, dataset, kinds, read, *, trace=None, object_source=None):
         rows.extend(drawings)
     if 'document' in kinds:
         rows.extend(lookup('alarm_manuals',lambda:_source_page(reader,None,dataset,'documents','fault',None,'',{})[0]) or [])
+    if target and 'photo' in kinds:
+        memo={}
+        for source in ('field','photos'):
+            rows.extend(lookup('related_photos',lambda:_source_page(reader,target,dataset,'photos',source,None,'',memo)[0]) or [])
     return [row for row in rows if row.get('availability','available')=='available']
 
 
@@ -123,7 +145,31 @@ def allowed_kinds(kinds, switches):
     return kinds.intersection(('object','drawing','document') if 'manual_fault_lookup' in switches else ('object','drawing'))
 
 
-def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False, linked=False):
+def requested_kinds(kinds, switches, linked):
+    allowed=allowed_kinds(kinds,switches)
+    if linked:
+        return (allowed | (kinds & {'photo'})) & linked.kinds
+    return allowed
+
+
+def material_location(kind, value):
+    if kind=='document' and value.get('documentId') and value.get('contentVersionId'):
+        return value['documentId'],value['contentVersionId'],value.get('pageNumber')
+    if kind=='photo':
+        version=value.get('expectedContentVersionId') or value.get('contentVersionId')
+        if version:return (version,)
+    return None
+
+
+def equivalent_material(kind, selector, current_fixed, *, preview=None):
+    location=material_location(kind,{**(preview or {}),**selector})
+    if location:
+        return next((ref for ref,value in current_fixed
+                     if ref['sourceKind']==kind and material_location(kind,value)==location),None)
+    return None
+
+
+def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False, linked=None):
     if anchor is None:
         answer=tools.catalogue_answer()
         answer['gaps'].append(dict(text='请选中要分析的报警卡片，再查找它的关联资料。',refs=[]))
@@ -134,7 +180,7 @@ def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False,
         answer=tools.catalogue_answer()
         answer['gaps'].append(dict(text='当前项目策略未允许读取所选卡片的来源。',refs=[]))
         return answer
-    wanted=tools.allowed & {'object','drawing'} if linked else allowed_kinds(tools.allowed,switches)
+    wanted=requested_kinds(tools.allowed,switches,linked)
     try:
         dataset=tools.alarm(descriptor)['dataset'] if anchor_kind=='alarm' else None
     except PreviewError as error:
@@ -151,7 +197,8 @@ def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False,
     for row in rows:
         identity = row.get('assetKey',row['key'])
         unique.setdefault(identity,row)
-        if registered_recommendation_revisions(row,registered):
+        if registered_recommendation_revisions(row,registered) or linked and equivalent_material(
+                row['kind'],row['selector'],current_fixed,preview=row.get('preview')):
             existing.add(identity)
     unverified=set()
     if linked:
@@ -168,7 +215,7 @@ def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False,
         kind=row['kind']
         version=selector.get('expectedEntityRevision') or selector.get('expectedSourceRevision') or selector.get('contentVersionId')
         summary=redact(json.dumps(dict(title=row['title'],reason=row['reason'],
-            scope='已核对的关联登记与固定出处。图纸和手册仅含此处列出的元数据。'),
+            scope='已核对的资料登记关系。'),
             ensure_ascii=False),tools.private)[:1000]
         detail={'descriptor':selector} if kind=='document' else {}
         if kind=='document' and analyze:
@@ -194,9 +241,11 @@ def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False,
     if plan['intent']=='edit' and 0<len(tools.results)<=room:
         plan['actions']=[dict(kind='add_results',targets=[r['key'] for r in tools.results],text='',x=None,y=None)]
     if linked:
-        labels={'object':'工程对象','drawing':'图纸'}
+        labels={'object':'工程对象','drawing':'图纸','document':'文档','photo':'照片'}
         found={row['kind'] for row in rows}
         for kind,label in labels.items():
+            if kind not in linked.kinds:
+                continue
             if kind not in wanted:
                 answer['gaps'].append(dict(text=f'当前项目策略未启用{label}读取。',refs=[]))
             elif kind not in found:
@@ -210,16 +259,16 @@ def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False,
     return answer
 
 
-def checked_additions(reader, fixed, draft, body, allowed, switches, plan, results, *, scope=None, anchor_ref=None):
-    anchor=linked_anchor(fixed,draft,body,scope) if scope else alarm_anchor(fixed,draft,body)
-    if scope:
+def checked_additions(reader, fixed, draft, body, allowed, switches, plan, results, *, linked=None, anchor_ref=None):
+    anchor=linked_anchor(fixed,draft,body,linked.scope) if linked else alarm_anchor(fixed,draft,body)
+    if linked:
         require(anchor and anchor[0]['evidenceRefId']==anchor_ref,'ASSISTANT_LINKED_MATERIALS_CHANGED',409)
     require(anchor and anchor[0]['sourceKind'] in allowed,'ASSISTANT_TARGET_AMBIGUOUS',409)
     chosen=[row for action in plan['actions'] if action['kind']=='add_results'
             for row in result_targets(results,action['targets'])]
     require(chosen,'ASSISTANT_TARGET_AMBIGUOUS',409)
     kinds={row['kind'] for row in chosen}
-    permitted=allowed & {'object','drawing'} if scope else allowed_kinds(allowed,switches)
+    permitted=requested_kinds(allowed,switches,linked)
     require(kinds<=permitted,'ASSISTANT_TOOL_NOT_ALLOWED',403)
     ref,descriptor=anchor
     dataset=reader.read('alarm',descriptor)['dataset'] if ref['sourceKind']=='alarm' else None
@@ -229,14 +278,18 @@ def checked_additions(reader, fixed, draft, body, allowed, switches, plan, resul
                     object_source=descriptor if ref['sourceKind']=='object' else None)
     matches=[next((row for row in live if row['kind']==item['kind'] and row['selector']==item['selector']),None)
              for item in chosen]
-    require(all(matches),'ASSISTANT_LINKED_MATERIALS_CHANGED' if scope else 'SOURCE_CHANGED',409)
-    if not scope:
+    require(all(matches),'ASSISTANT_LINKED_MATERIALS_CHANGED' if linked else 'SOURCE_CHANGED',409)
+    if not linked:
         return {}
     drawing_pages={row['assetKey']:(None,row['preview']) for row in matches if row['kind']=='drawing'}
     current={card['source']['id'] for card in draft['cards'] if card.get('source') and not card.get('historical')}
     gaps=[]
-    present=drawings_on_canvas(reader,[(ref,value) for ref,value in fixed if ref['evidenceRefId'] in current],
-                               drawing_pages,read,gaps)
+    current_fixed=[(ref,value) for ref,value in fixed if ref['evidenceRefId'] in current]
+    present=drawings_on_canvas(reader,current_fixed,drawing_pages,read,gaps)
     require(not gaps,'ASSISTANT_LINKED_MATERIALS_CHANGED',409)
-    return {item['key']:present[row['assetKey']] for item,row in zip(chosen,matches)
-            if row['kind']=='drawing' and row['assetKey'] in present}
+    registered={}
+    for item,row in zip(chosen,matches):
+        ref=(present.get(row.get('assetKey')) if row['kind']=='drawing' else
+             equivalent_material(row['kind'],row['selector'],current_fixed,preview=row.get('preview')))
+        if ref:registered[item['key']]=ref
+    return registered

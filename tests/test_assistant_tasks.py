@@ -14,7 +14,7 @@ from apps.api.assistant_tasks import (PROTOCOL,ProjectTools,read_selected_eviden
     related_object_answer,contextual_addition,canonical_additions,disposition_request,turn_requests,validate_plan,snapshot)
 from apps.api.assistant_canvas_tasks import build,load,retain,acknowledge,validate_draft_plan
 from apps.api.assistant_drawings import drawing_add_scope, drawing_answer, drawing_context, checked_drawing_results
-from apps.api.assistant_alarm_materials import linked_add_scope, linked_anchor
+from apps.api.assistant_alarm_materials import LinkedMaterials, linked_add_scope, linked_anchor
 from apps.api.authority import PreviewError
 
 
@@ -27,7 +27,9 @@ def action(kind,targets=None,text=''):return dict(kind=kind,targets=targets or [
 
 
 class LinkedMaterialIntentTests(unittest.TestCase):
-    def test_combined_requests_keep_both_material_types_and_the_canvas_scope(self):
+    def test_material_lists_keep_the_requested_types_and_canvas_scope(self):
+        pair=frozenset(('object','drawing'))
+        all_types=pair|{'photo','document'}
         for question,scope in (
             ('添加工程对象和图纸','canvas'),
             ('请将与这条报警直接相关的工程对象及对应电气图纸一起加到当前画布','alarm'),
@@ -36,15 +38,20 @@ class LinkedMaterialIntentTests(unittest.TestCase):
             ('Add the related engineering objects and their drawings for this alarm to the canvas.','alarm'),
             ('列出工程对象和图纸',None),
             ('不要添加工程对象和图纸',None),
-            ('添加工程对象、图纸和照片',None),
             ('添加工程对象 +CN1-1U2 和图纸',None),
         ):
             with self.subTest(question=question):
-                self.assertEqual(scope,linked_add_scope(question))
-        self.assertEqual((None,None,'canvas',True),contextual_addition('先加上工程对象和图纸，然后整理布局'))
+                self.assertEqual(LinkedMaterials(scope,pair) if scope else None,linked_add_scope(question))
+        for question in ('添加工程对象、图纸、文档、照片','请把照片和手册、工程对象以及电气图纸一起加入画布',
+                         'Add photos, engineering objects, manuals, and drawings to the canvas.'):
+            self.assertEqual(LinkedMaterials('canvas',all_types),linked_add_scope(question),question)
+        self.assertEqual(LinkedMaterials('alarm',frozenset(('photo','document'))),
+                         linked_add_scope('加入这次报警的照片和手册'))
+        self.assertEqual(LinkedMaterials('alarm',all_types),linked_add_scope('请给当前报警一并添加工程对象、图纸、文档和照片'))
+        self.assertEqual((None,None,LinkedMaterials('canvas',pair),True),contextual_addition('先加上工程对象和图纸，然后整理布局'))
         edit,advice=turn_requests('加入工程对象和图纸，再给出处置方案')
         self.assertTrue(advice)
-        self.assertEqual((None,None,'canvas',False),contextual_addition(edit))
+        self.assertEqual((None,None,LinkedMaterials('canvas',pair),False),contextual_addition(edit))
 
     def test_operation_card_takes_priority_and_ambiguous_alarms_need_a_selection(self):
         draft=board()

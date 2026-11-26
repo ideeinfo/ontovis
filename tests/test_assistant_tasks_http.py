@@ -104,12 +104,13 @@ class TaskHttpTests(unittest.TestCase):
 
     def test_an_old_drawing_turn_cannot_apply_unrelated_catalogue_results(self):
         body = {**self.body, 'mode': 'workbench', 'question': '添加相关图纸'}
-        model_result = dict(plan=dict(intent='edit', queries=[dict(tool='materials', query='', faultCode='')],
+        model_result = dict(plan=dict(intent='edit', queries=[dict(tool='materials', query='fixture', faultCode='')],
                                       actions=[action('add_results')]), usage={}, modelCalls=1,
                             engineeringConfirmation=False, purpose='ontovis_analysis', serviceRevision='a'*64)
         def directory(tools, *_args, **_options):
             tools.results.append(dict(key='R1', kind='document', title='Project PDF', identifier='pdf', selector={'documentId': 'pdf'}))
         with (patch('apps.api.assistant_tasks.drawing_add_scope', return_value=None),
+              patch('apps.api.assistant_alarm_materials.linked_add_scope', return_value=None),
               patch('apps.api.assistant_tasks.ProjectTools.query', new=directory),
               patch('apps.api.assistant_task_api.call_source', return_value=model_result)):
             status, started = self.request('task-start', body)
@@ -196,6 +197,66 @@ class TaskHttpTests(unittest.TestCase):
         model.assert_not_called()
         self.assertIn('「加入资料」',turn['result']['task']['editReview']['message'])
         self.assertEqual([],turn['result']['task']['results'])
+
+    def test_four_material_types_auto_add_and_candidate_details_stay_read_only(self):
+        from apps.api.analysis_recommendations import _source_page,recommendation
+        base=json.loads(self.body['snapshotJson'])
+        base['cards']=[dict(id='alarm',kind='alarm',title='13001 柜温高报警',x=0,y=0,width=300,height=200,pinned=False,
+            source=dict(system='ontovis',ontobaseConnectionId=base['ontobaseConnectionId'],
+                        projectCode=base['projectCode'],id=self.fixture.evidence,revision='a'*64))]
+        body={**self.body,**self.fixture.start_body(),'protocol':PROTOCOL,'mode':'workbench','taskId':'analysis',
+              'question':'添加工程对象、图纸、文档、照片','focusCardIds':['alarm'],'snapshotJson':json.dumps(base)}
+        body['expectedServiceRevision']=self.request('policy')[1]['services']['analysis']['serviceRevision']
+        obj=dict(item=dict(entityUid='sensor',entityRevision='rev-1',displayName='温度传感器'),context=None)
+        drawing=dict(availability='available',evidenceRef='location:sensor',sourceRevision='f'*64,
+                     pageNumber=89,title='传感器图纸',contentSha256='c'*64,sourceRelation='direct')
+        doc=dict(title='报警手册',reason='13001 · 第 53 页',selector=dict(documentId=str(uuid4()),contentVersionId=str(uuid4()),
+                 pageNumber=53,knowledgeNodeId='13001',sourceSha256='d'*64))
+        photo=dict(sourceType='project_document',documentId=str(uuid4()),contentVersionId=str(uuid4()))
+        def sources(reader,chosen,dataset,section,name,*rest):
+            if name=='photos':
+                return [recommendation('photo','温度传感器定位照片',photo,'登记定位照片')],None
+            return _source_page(reader,chosen,dataset,section,name,*rest)
+        with (patch('apps.api.assistant_task_api.call_source') as model,
+              patch('apps.api.assistant_task_api.analysis_store') as open_store,
+              patch('apps.api.analysis_canvas.validate_handles'),
+              patch('apps.api.analysis_source_reader.AnalysisSourceReader._rds',return_value=obj),
+              patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing_reader,
+              patch('apps.api.analysis_preview.fault_documents',return_value=[doc]),
+              patch('apps.api.assistant_alarm_materials._source_page',side_effect=sources),
+              patch('apps.api.analysis_evidence.AnalysisEvidence.register') as register):
+            open_store.return_value.__enter__.return_value.detail.return_value=dict(
+                analysisSessionId=self.fixture.analysis,analysisRevision=1,lifecycle='active')
+            drawing_reader.return_value.resolve.return_value={'items':[drawing]}
+            status,started=self.request('task-start',body)
+            self.assertEqual(200,status,started)
+            for _ in range(100):
+                _,turn=self.request('status',dict(runId=started['runId']))
+                if turn['state'] not in ('reading','model','validating'):break
+                time.sleep(.01)
+            self.assertEqual('complete',turn['state'],turn)
+            model.assert_not_called()
+            task=turn['result']['task']
+            self.assertEqual(['object','drawing','document','photo'],[row['kind'] for row in task['results']])
+            self.assertEqual([action('add_results',['R1','R2','R3','R4'])],task['plan']['actions'])
+            candidate=dict(runId=started['runId'],resultKey='R3')
+            with (patch('apps.api.analysis_source_reader.AnalysisSourceReader.resolve',return_value=doc['selector']) as resolve,
+                  patch('apps.api.analysis_source_reader.AnalysisSourceReader.read',return_value=dict(title=doc['title']))):
+                status,details=self.request('task-source',candidate)
+                self.assertEqual(200,status,details)
+                self.assertEqual(dict(pageNumber=53,nodeId='13001'),details['anchor'])
+                resolve.assert_called_once_with('document',doc['selector'])
+                self.assertEqual(404,self.request('task-source',{**candidate,'resultKey':'R9'})[0])
+                self.assertEqual(404,self.request('task-source',candidate,project='B')[0])
+                self.assertEqual(422,self.request('task-source',{**candidate,'selector':photo})[0])
+            register.assert_not_called()
+            revisions=dict(object='b'*64,drawing='c'*64,document='d'*64,photo='e'*64)
+            register.side_effect=lambda _actor,value,*_:dict(evidenceRefId=str(uuid4()),
+                                                              sourceRevision=revisions[value['sourceKind']])
+            status,updated=self.request('task-prepare',dict(runId=started['runId'],selectedKeys=[],snapshotJson=body['snapshotJson']))
+            self.assertEqual(200,status,updated)
+            self.assertEqual(['alarm','object','drawing','document','photo'],[card['kind'] for card in updated['snapshot']['cards']])
+            self.assertEqual(4,register.call_count)
 
     def test_add_alarm_materials_and_analyze_in_the_same_turn(self):
         base=json.loads(self.body['snapshotJson'])
@@ -286,6 +347,14 @@ class TaskHttpTests(unittest.TestCase):
         self.assertEqual({workbench['conversationId'], cockpit['conversationId']},
                          {item['conversationId'] for item in self.request('conversations', history)[1]['items']})
         self.assertEqual(422, self.request('conversations', {**history, 'mode': 'invalid'})[0])
+        self.assertEqual(200,self.request('conversation',dict(conversationId=workbench['conversationId'],
+                         analysisSessionId=self.fixture.analysis))[0])
+        another_canvas=str(uuid4())
+        status,blocked=self.request('conversation',dict(conversationId=workbench['conversationId'],analysisSessionId=another_canvas))
+        self.assertEqual((404,'NOT_FOUND_OR_FORBIDDEN'),(status,blocked['code']))
+        self.assertEqual([body['question']],self.request('policy',dict(mode='workbench',
+                         analysisSessionId=self.fixture.analysis))[1]['recentPrompts'])
+        self.assertEqual([],self.request('policy',dict(mode='workbench',analysisSessionId=another_canvas))[1]['recentPrompts'])
 
     def test_processing_catalogue_retains_source_state_and_skips_answer_generation(self):
         plan=dict(intent='query',queries=[dict(tool='processing_tasks',query='',faultCode='',orderId='')],actions=[])

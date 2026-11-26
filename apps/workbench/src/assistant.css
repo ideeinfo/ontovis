@@ -56,7 +56,8 @@
 .as-context-toggle b{font-size:11px;border-radius:4px;background:var(--selected);color:var(--primary);padding:0 5px}
 .as-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:0 16px 16px;scrollbar-width:thin}
 .as-toolbar button:focus-visible,.as-composer button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
-.as-history-tools{padding:0 0 12px;border-bottom:1px solid var(--borderSubtle)}
+.as-history-tools{padding:8px 12px;border-bottom:1px solid var(--borderSubtle);flex:none}
+.ad-assistant .as-panel>.as-history-tools .as-conversation{margin:0 0 6px}
 .as-panel .as-sources{padding:0 0 12px}.as-panel .as-sources .as-materials{max-height:none;overflow:visible;scrollbar-gutter:auto}
 .as-material-copy small{font-size:11px;color:var(--textSecondary);line-height:1.55}
 .as-panel .as-sources .as-material-row{padding:8px;border-radius:5px}
@@ -136,6 +137,24 @@
 .as-proposed-actions{border-top:1px solid var(--borderSubtle);padding-top:12px}.as-proposed-actions ul{font-size:12px;padding-left:18px;line-height:1.8;margin:6px 0 10px}.as-proposed-actions>small{display:block;margin-top:8px}
 .as-execution-receipt{padding:12px;background:var(--selected);border-left:3px solid var(--primary);border-radius:4px}.as-execution-receipt>strong{font-size:13px}
 .as-execution-receipt small{display:block}.as-receipt-card{border:0;padding:0;background:none;color:inherit;font:inherit;text-align:left;text-decoration:underline;text-underline-offset:2px;cursor:pointer}.as-receipt-card:disabled{cursor:default}
+.ad-workspace .ad-canvas-row{position:relative}
+.ad-workspace .ad-canvas-row>.ad-assistant-window{position:absolute;inset:auto;z-index:24;max-width:none;min-width:0;border:1px solid var(--borderControl);border-radius:10px;overflow:hidden;box-shadow:0 8px 28px #172d3033}
+.ad-assistant-window>header{gap:6px}
+.as-window-grip,.as-window-resize{border:0;background:none;color:var(--textSecondary);touch-action:none;user-select:none}
+.as-window-grip{flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:3px;text-align:left;cursor:move}
+.as-window-grip svg,.as-window-grip strong{flex:none}.as-window-grip strong{color:var(--text)}.as-window-grip span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px}
+.as-window-resize{position:absolute;bottom:0;z-index:2;display:grid;place-items:center;width:23px;height:23px;padding:0;border-radius:4px}
+.as-window-resize-left{left:0;cursor:nesw-resize}.as-window-resize-right{right:0;cursor:nwse-resize}
+.as-window-grip:hover,.as-window-resize:hover{background:var(--surfaceRaised)}
+.ad-assistant-window .as-composer{padding-bottom:18px}.ad-assistant-window .as-composer textarea{min-height:58px}
+.as-previous-turns{padding:8px 0;border-bottom:1px solid var(--borderSubtle);color:var(--textSecondary)}
+.as-previous-turns>summary{cursor:pointer;font-size:12px}
+.as-project-results>.as-material-candidate{display:block;padding:0;overflow:hidden}
+.as-material-candidate>header{display:flex;align-items:baseline;gap:8px;padding:6px 9px;background:color-mix(in srgb,var(--card-tint,var(--surfaceRaised)) var(--card-fill,36%),var(--surface))}
+.as-material-candidate>header>span{flex:none;font-size:11px;color:var(--textSecondary)}
+.as-material-candidate>header>strong{min-width:0;line-height:1.45}
+.as-candidate-body{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:3px 8px;padding:5px 8px}
+.as-candidate-body>span{flex:1 1 140px;line-height:1.4;font-size:11px;color:var(--textSecondary)}
 .as-task-trace,.as-task-graph{padding-top:10px;border-top:1px solid var(--borderSubtle);font-size:11px}.as-task-trace>summary,.as-task-graph>summary{cursor:pointer;color:var(--textSecondary)}
 .as-task-trace>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0}.as-task-graph article{padding:8px 0;border-bottom:1px solid var(--borderSubtle);overflow-wrap:anywhere}.as-task-graph article>strong{font-size:12px;line-height:1.6}
 .as-read-source{margin:8px 0;padding:8px;border:1px solid var(--borderSubtle);border-radius:5px}.as-read-source>summary{font-size:11px;color:var(--textSecondary);cursor:pointer}.as-read-source pre{white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;font-size:11px;line-height:1.7;max-height:240px;overflow:auto;padding:8px;background:var(--background)}

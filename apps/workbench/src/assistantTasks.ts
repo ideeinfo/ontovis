@@ -32,6 +32,7 @@ export type EngineeringTask={mode:'workbench'|'cockpit_query';baseDigest:string;
  reads:number;selectedReads?:SelectedEvidenceRead[];receipts:TaskReceipt[];execution:string;disposition?:boolean;editReview?:EditReview;linkedAnchorRef?:string|null};
 
 export function assistantEditReview(task:EngineeringTask|undefined,gaps:{text:string;refs:string[]}[]=[]):EditReview|undefined{
+ if(task?.editReview?.target==='refresh')return task.editReview;
  if(!task||task.plan.intent!=='edit'||task.plan.actions.length||task.receipts.length)return;
  if(task.editReview)return task.editReview;
  const legacyCardPrompts=[

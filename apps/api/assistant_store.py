@@ -159,7 +159,7 @@ class AssistantStore:
                 (self.connection_id,project,owner,analysis,revision,mode,mode,mode,mode)).fetchall()
         return [self.conversation_public(dict(r)) for r in rows]
 
-    def recent_prompts(self, project, owner, mode):
+    def recent_prompts(self, project, owner, mode, analysis=None):
         from .assistant_summaries import redact
 
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace('+00:00', 'Z')
@@ -167,7 +167,8 @@ class AssistantStore:
             rows = db.execute('''select json_extract(input_json,'$.question') as question
                 from assistant_runs where connection_id=? and project_code=? and owner=?
                 and json_extract(input_json,'$.mode')=? and state in ('complete','partial') and created_at>=?
-                order by created_at desc,id desc limit 60''', (self.connection_id,project,owner,mode,cutoff)).fetchall()
+                and (? is null or analysis_id=?)
+                order by created_at desc,id desc limit 60''', (self.connection_id,project,owner,mode,cutoff,analysis,analysis)).fetchall()
         counts, prompts = Counter(), {}
         for row in rows:
             question = (row['question'] or '').strip()
@@ -270,11 +271,19 @@ class AssistantStore:
         body=json.loads(row['input_json'])
         result=None if hide or row['result_json'] is None else json.loads(row['result_json'])
         task=result.get('task') if result else None
-        if (task and task['mode']=='workbench' and task['results'] and not task['receipts']
+        if (task and task['mode']=='workbench' and task['results']
                 and 'linkedAnchorRef' not in task):
             from .assistant_tasks import contextual_addition, turn_requests
             edit,disposition=turn_requests(body['question'])
             if contextual_addition(edit)[2]:
+                # Retain recorded receipts, but discard this old directory candidate list.
+                items={r['key']:r for r in task['results']}
+                for receipt in task['receipts']:
+                    for entry in receipt['items']:
+                        old=items.get(entry.get('resultKey'))
+                        if old and entry['kind']=='add_results':
+                            entry.setdefault('sourceKind',old['kind'])
+                            entry.setdefault('label',old['title'])
                 task['results']=[]
                 task['plan'].update(intent='edit',actions=[])
                 task['editReview']=dict(target='refresh',message='请重新发送原指令，按当前卡片的登记关系查找关联资料。')

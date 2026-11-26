@@ -15,7 +15,10 @@ def lookup_scope(body, board):
     related=alarm_material_add(edit)
     if not drawing and not related and not linked:
         return body,drawing,compound,related,linked
-    expanded=drawing_context(body,board,kinds=('alarm','object','drawing','document') if related else ('alarm','object','drawing'))
+    kinds={'alarm','object','drawing'}
+    if related:kinds.add('document')
+    if linked:kinds.update(linked.kinds)
+    expanded=drawing_context(body,board,kinds=kinds)
     return {**expanded,'evidenceRefIds':list(dict.fromkeys(body['evidenceRefIds']+expanded['evidenceRefIds']))},drawing,compound,related,linked
 
 
@@ -99,26 +102,38 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
         authorize(True)
         return result
     if action in ('task-source','task-source-preview','task-source-content'):
-        require({'runId','sourceKey'}<=set(body)<={'runId','sourceKey','options'})
-        sources=json.loads(record['sources_json'])
-        source=next((s for s in sources if s['key']==body['sourceKey']),None)
-        require(source and source.get('descriptor') and source['kind'] in ('document','drawing'),'NOT_FOUND_OR_FORBIDDEN',404)
-        require(source['kind'] in runtime.store.policy(project)['policy']['allowedKinds'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
+        candidate='resultKey' in body
+        key='resultKey' if candidate else 'sourceKey'
+        require({'runId',key}<=set(body)<={'runId',key,'options'} and type(body[key]) is str)
+        selector='selector' if candidate else 'descriptor'
+        rows=task['results'] if candidate else json.loads(record['sources_json'])
+        source=next((row for row in rows if row['key']==body[key]),None)
+        kinds=('object','drawing','document','photo') if candidate else ('document','drawing')
+        require(source and source.get(selector) and source['kind'] in kinds,'NOT_FOUND_OR_FORBIDDEN',404)
+        kind=source['kind']
+        require(kind in runtime.store.policy(project)['policy']['allowedKinds'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
+        if candidate:
+            edit,_=turn_requests(original['question'])
+            require(not contextual_addition(edit)[2] or task.get('linkedAnchorRef'),'ASSISTANT_LINKED_MATERIALS_CHANGED',409)
         _,reader=prepare(authorize,original)
-        descriptor=copy.deepcopy(source['descriptor']);options=body.get('options',{})
+        descriptor=reader.resolve(kind,source[selector]) if candidate else copy.deepcopy(source[selector])
+        options=body.get('options',{})
         require(type(options) is dict)
-        # Descriptors come exclusively from the owned run. Viewing does not register
-        # evidence or change a Canvas, including in the cockpit.
         if action=='task-source':
             require(not options)
-            value=dict(kind=source['kind'],source=reader.read(source['kind'],descriptor),
+            value=dict(kind=kind,source=reader.read(kind,descriptor),
                 revision=source.get('sourceRevision') or source.get('retrievalRevision') or digest(descriptor))
+            if candidate and kind=='document':
+                value['anchor']={'pageNumber':descriptor['pageNumber']}
+                if descriptor.get('knowledgeNodeId'):value['anchor']['nodeId']=descriptor['knowledgeNodeId']
         elif action=='task-source-preview':
             from .analysis_preview import preview
-            value=preview(reader,source['kind'],descriptor,options)
+            require(kind in ('document','drawing'))
+            value=preview(reader,kind,descriptor,options)
         else:
-            require(not options or source['kind']=='document' and set(options)=={'pageNumber'} and type(options['pageNumber']) is int)
-            value=reader.content(source['kind'],{**descriptor,**options})
+            require(kind in ('document','drawing','photo') and (
+                not options or kind=='document' and set(options)=={'pageNumber'} and type(options['pageNumber']) is int))
+            value=reader.content(kind,{**descriptor,**options})
         authorize(True)
         return value
     if action=='task-page':
@@ -206,7 +221,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
         choices=checked_drawing_results(reader,fixed,board,execution_body,drawing_scope,allowed,plan,choices,compound=compound_add)
     if related or linked:
         present=checked_additions(reader,fixed,board,execution_body,allowed,set(selected['settings'].get('tools',())),plan,choices,
-                                  scope=linked,anchor_ref=task.get('linkedAnchorRef'))
+                                  linked=linked,anchor_ref=task.get('linkedAnchorRef'))
     operations.validate_draft_plan(board,plan,choices,fixed,draft_history(original,sessions.connection_id,project),
                                    revision,record['id'],sessions.connection_id,project,present=present)
     from .analysis_canvas import validate_handles

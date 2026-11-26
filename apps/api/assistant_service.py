@@ -217,7 +217,9 @@ def request(sessions,sid,path,payload):
     if action in ('policy','history','preview'):
         mode=body.get('mode')
         require(set(body)==({'policy'} if action=='preview' else set()) or
-                action=='policy' and set(body)=={'mode'} and mode in ('workbench','cockpit_query'))
+                action=='policy' and {'mode'}<=set(body)<={'mode','analysisSessionId'} and mode in ('workbench','cockpit_query'))
+        if 'analysisSessionId' in body:
+            identifier(body['analysisSessionId'])
         current=runtime.store.policy(project)
         if action=='preview':current={**current,'policy':validate_policy(body['policy'])}
         try:available=service()
@@ -226,7 +228,7 @@ def request(sessions,sid,path,payload):
             available={'enabled':False,'canRun':False,'reason':error.code}
         return reply({**current,'service':available,'services':services(),'canManage':access.get('role')=='admin',
             **({'items':runtime.store.history(project)} if action=='history' else {}),
-            **({'recentPrompts':runtime.store.recent_prompts(project,actor,mode)} if mode else {})})
+            **({'recentPrompts':runtime.store.recent_prompts(project,actor,mode,body.get('analysisSessionId'))} if mode else {})})
     require(access.get('role')=='admin','ASSISTANT_RUN_FORBIDDEN',403)
     if action=='model-config-save':
         require(body.get('expectedAccessRevision')==access['accessRevision'],'ACCESS_CHANGED',409)
@@ -478,8 +480,10 @@ def request(sessions,sid,path,payload):
         return reply({**value, 'modelCalls': 0})
 
     if action=='conversation':
-        require(set(body) in ({'conversationId'},{'conversationId','beforeTurn'}))
+        require('conversationId' in body and set(body)<={'conversationId','beforeTurn','analysisSessionId'})
         head,records=runtime.store.conversation(project,actor,body['conversationId'],body.get('beforeTurn'))
+        require('analysisSessionId' not in body or body['analysisSessionId']==head['analysisSessionId'],
+                'NOT_FOUND_OR_FORBIDDEN',404)
         # Validate latest turns first and reuse shared source reads.
         items=list(reversed([visible(r) for r in reversed(records)]))
         authorize(True)

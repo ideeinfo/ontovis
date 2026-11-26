@@ -1,7 +1,7 @@
 import {displayText} from './displayText';
 import type {AssistantRun} from './assistantApi';
 import {Btn} from './Primitives';
-import {adoptedModelTarget,equipmentConfigurationTarget,taskActionNames,taskMaterialName,taskResultReceipt,type AssistantModelTarget} from './assistantTasks';
+import {adoptedModelTarget,equipmentConfigurationTarget,taskActionNames,taskMaterialName,taskResultReceipt,type AssistantModelTarget,type TaskCandidate} from './assistantTasks';
 import type {EquipmentConfigurationTarget} from './equipmentApi';
 import type {AssistantSceneTarget} from './assistantScene';
 import type {DeviceMaterialsTarget} from './AssistantDeviceMaterials';
@@ -26,12 +26,13 @@ const materialKinds:Record<string,[string,string]>={
  work_order:['工单','Work order'],alarm:['故障报警','Alarm'],trend:['趋势','Trend'],model:['三维模型','3D model'],
 };
 
-export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,onPage,onHandoff,onViewScene,onViewDevice,onViewDocument,onViewModel,onViewConfiguration,loadModelUsage,hasUnsaved=false,operationFailure,onRetryAddition}:{
+export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,onPage,onHandoff,onViewScene,onViewDevice,onViewDocument,onViewModel,onViewConfiguration,onViewCandidate,loadModelUsage,hasUnsaved=false,operationFailure,onRetryAddition}:{
  run:AssistantRun;en:boolean;locked:boolean;onExecute?:(keys:string[])=>void;onPage:(index:number)=>void;onHandoff?:()=>void;
  cards:CanvasCard[];onLocateCard:(card:CanvasCard)=>void;
  onViewScene?:(target:AssistantSceneTarget,trigger?:HTMLButtonElement)=>void;onViewDevice?:(target:DeviceMaterialsTarget)=>void;
  onViewDocument?:(target:FixedDocumentTarget)=>void;onViewModel?:(target:AssistantModelTarget,trigger:HTMLButtonElement)=>void;
  onViewConfiguration?:(target:EquipmentConfigurationTarget,title:string)=>void;
+ onViewCandidate?:(candidate:TaskCandidate,trigger:HTMLButtonElement)=>void;
  loadModelUsage?:(query:ModelUsageQuery,signal:AbortSignal)=>Promise<ModelUsagePage>;hasUnsaved?:boolean;
  operationFailure?:string;onRetryAddition?:()=>void}){
  const task=run.result?.task;if(!task)return null;
@@ -41,7 +42,7 @@ export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,
  const materialKind=(key?:string)=>materialKinds[key??'']?.[en?1:0]??t('资料','Material');
  const linked=task.linkedAnchorRef!==undefined;
  const results=linked?task.results.filter(row=>!taskResultReceipt(task.receipts,row)):task.results;
- const names:Record<string,string>={work_orders:t('项目工单','Project work orders'),objects:t('工程对象','Objects'),graph:t('工程关系','Engineering graph'),knowledge:t('文档知识图谱','Document knowledge'),materials:t('项目资料','Materials'),related_drawings:t('登记关联图纸','Linked drawings'),alarm_object:t('报警对象','Alarm object'),alarm_manuals:t('故障码手册','Fault-code manuals'),disposition:t('生成处置建议','Generate response plan'),scenes:t('项目场景','Project scenes'),adopted_models:t('项目采用模型','Project model adoption'),equipment_materials:t('安装设备目录','Installed equipment'),equipment_applicable_materials:t('设备适用资料','Applicable materials'),processing_tasks:t('资料处理任务','Processing tasks'),fixed_manual_neighborhood:t('固定发布版知识邻域','Fixed publication neighborhood'),selected_material:t('画布补充资料','Canvas context')};
+ const names:Record<string,string>={work_orders:t('项目工单','Project work orders'),objects:t('工程对象','Objects'),graph:t('工程关系','Engineering graph'),knowledge:t('文档知识图谱','Document knowledge'),materials:t('项目资料','Materials'),related_drawings:t('登记关联图纸','Linked drawings'),related_photos:t('登记关联照片','Linked photos'),alarm_object:t('报警对象','Alarm object'),alarm_manuals:t('故障码手册','Fault-code manuals'),disposition:t('生成处置建议','Generate response plan'),scenes:t('项目场景','Project scenes'),adopted_models:t('项目采用模型','Project model adoption'),equipment_materials:t('安装设备目录','Installed equipment'),equipment_applicable_materials:t('设备适用资料','Applicable materials'),processing_tasks:t('资料处理任务','Processing tasks'),fixed_manual_neighborhood:t('固定发布版知识邻域','Fixed publication neighborhood'),selected_material:t('画布补充资料','Canvas context')};
  const states:Record<string,string>={complete:t('已读取','Read'),unavailable:t('读取失败','Unavailable'),budget_limited:t('当时读取次数达上限 · 未读取','Previous read count reached · unread'),policy_excluded:t('项目策略未允许读取','Excluded by policy')};
  return <section className="as-task-result" aria-label={t('项目检索与操作','Project results and actions')}>
   {task.mode==='cockpit_query'&&onHandoff&&<Btn disabled={locked} onClick={onHandoff}>{t('转后台继续','Continue in workbench')}</Btn>}
@@ -51,6 +52,23 @@ export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,
    const model=adoptedModelTarget(row),configuration=equipmentConfigurationTarget(row);
    const name=displayText(taskMaterialName(row.title,en));
    const applied=taskResultReceipt(task.receipts,row);
+   const add=row.selector&&onExecute&&<Btn disabled={locked||!!applied}
+    aria-label={applied?undefined:t('加入画布','Add to canvas')+' · '+materialKind(row.kind)+' · '+name}
+    onClick={()=>onExecute([row.key])}>{applied?t('已处理','Applied'):t('加入画布','Add to canvas')}</Btn>;
+   if(row.selector&&onViewCandidate&&['object','drawing','document','photo'].includes(row.kind)){
+    const reason=displayText(row.reason);
+    return <article className="as-material-candidate" data-card-kind={row.kind} key={row.key}>
+     <header><span>{materialKind(row.kind)}</span><strong>{name}</strong></header>
+     <div className="as-candidate-body">
+      <span title={reason}>{reason}</span>
+      <div className="as-result-actions">
+       <Btn aria-haspopup="dialog" aria-label={t('查看详情','View details')+' · '+name} disabled={locked}
+        onClick={event=>onViewCandidate(row,event.currentTarget)}>{t('查看详情','View details')}</Btn>
+       {add}
+      </div>
+     </div>
+    </article>;
+   }
    return <article key={row.key}><div><strong>{name}</strong>
     {row.kind==='equipment_configuration'?<><small>{[row.installation,row.deviceCode,row.identifier].filter(Boolean).join(' · ')}</small>
      <p>{row.configurationId?row.configuration+' · '+row.modelCount+' '+t('个固定模型','fixed models'):t('当前无已保存的采用配置','No saved configuration for the current adoption')}</p></>:
@@ -75,7 +93,7 @@ export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,
      {configuration&&onViewConfiguration&&<Btn aria-haspopup="dialog" disabled={locked} onClick={()=>onViewConfiguration(configuration,row.kind==='adopted_model'?row.configuration??row.title:row.title)}>{t('查看设备配置','View device configuration')}</Btn>}
      {device&&onViewDevice&&<Btn disabled={locked} onClick={()=>onViewDevice({entityUid:row.identifier,entityRevision:version,title:row.title,showDrawings:row.showDrawings})}>{t('查看设备资料','View materials')}</Btn>}
      {row.documentPreview&&onViewDocument&&<Btn disabled={locked} onClick={()=>onViewDocument(row.documentPreview!)}>{t('查看原文','View source')}</Btn>}
-     {row.selector&&onExecute&&<Btn disabled={locked||!!applied} aria-label={applied?undefined:t('加入画布','Add to canvas')+' · '+materialKind(row.kind)+' · '+name} onClick={()=>onExecute([row.key])}>{applied?t('已处理','Applied'):t('加入画布','Add to canvas')}</Btn>}
+     {add}
     </div></article>;
   })}</div></>}
   {loadModelUsage&&task.trace.some(row=>row.tool==='adopted_models'&&row.state==='complete')&&
