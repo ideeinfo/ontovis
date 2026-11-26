@@ -36,7 +36,7 @@ class ModelLifecycleTests(unittest.TestCase):
         with self.library.connect() as db:
             return {name:[tuple(r) for r in db.execute('select * from '+name)] for name in
                 ('library','versions','project_model_assets','project_model_versions','project_model_lifecycle',
-                 'project_model_requests','project_model_audit','project_model_info_revisions')}
+                 'project_model_requests','project_model_audit')}
 
     def test_delete_restore_retains_all_fixed_versions_bytes_and_read_access(self):
         before = self.rows(); files={p.name:p.read_bytes() for p in (self.library.root/'files').iterdir()}
@@ -50,7 +50,7 @@ class ModelLifecycleTests(unittest.TestCase):
         self.assertEqual(len(self.fixture.listing()['items']), 1)
         self.assertEqual(self.fixture.listing(state='deleted')['items'], [])
         after = self.rows()
-        for name in ('versions','project_model_versions','project_model_info_revisions'):self.assertEqual(before[name],after[name])
+        for name in ('versions','project_model_versions'):self.assertEqual(before[name],after[name])
         self.assertEqual(files,{p.name:p.read_bytes() for p in (self.library.root/'files').iterdir()})
 
     def test_replay_is_fixed_and_rechecks_current_authorization(self):

@@ -45,6 +45,25 @@ class ModelConfigurationTests(unittest.TestCase):
         profile=self.models.profile('A','query',source)
         self.assertEqual(profile['provider'],'future-provider');self.assertEqual(profiles,[source_configuration('query',settings)])
         self.assertNotIn('apiKey',json.dumps(public));self.assertFalse((self.library.root/'llm-credentials.key').exists())
+
+    def test_capability_saves_keep_current_settings_and_compact_receipts(self):
+        original = self.body({**defaults('query'), 'goal': '初次任务指令'}, 'query')
+        first = self.save(original)
+        latest = {**defaults('query'), 'goal': '当前任务指令'}
+        second = self.save(self.body(latest, 'query'))
+        self.assertEqual(self.save(self.body(latest, 'query')), second)
+        self.assertEqual(self.save(original, source=lambda *_: self.fail('replay called the source')), second)
+        self.assertNotEqual(first['revision'], second['revision'])
+
+        with self.library.connect() as db:
+            rows = db.execute('select config_json from assistant_model_configs').fetchall()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(json.loads(rows[0][0])['capabilities']['query'], latest)
+            self.assertEqual([row[0] for row in db.execute('select result_json from assistant_model_config_requests')],
+                             ['{}', '{}', '{}'])
+            self.assertEqual([json.loads(row[0]) for row in db.execute('select change_json from assistant_model_config_events')],
+                             [{'kind': 'capability', 'taskId': 'query'}] * 2)
+
     def test_only_explicit_capability_fields_and_supported_tools_are_accepted(self):
         for change in ({'apiKey':KEY},{'provider':'openai'},{'endpoint':'http://private'},{'execution':'ontovis'},
                        {'tools':['selected_sources','write']},{'tools':[]},{'timeoutSeconds':51},{'concurrency':3},{'readLimit':9},{'readParallel':True},{'goal':' '}):

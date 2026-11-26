@@ -164,10 +164,12 @@ def configured_site(public, fixture):
 
     def revise_info():
         current = read_model(info)
+        description = '另一会话更新 ' + current['assetRevision'].rsplit(':', 1)[-1]
         status, value, _ = fixture.request(MODEL+'/info/save',dict(modelAssetId=info['modelAssetId'],
             modelVersionId=info['modelVersionId'],expectedAssetRevision=current['assetRevision'],
-            displayName=current['displayName'],purpose=current['purpose'],description='另一会话更新',clientRequestId=str(uuid4())))
-        assert status==200, value
+            displayName=current['displayName'],purpose=current['purpose'],description=description,clientRequestId=str(uuid4())))
+        assert status==200 and value['assetRevision']!=current['assetRevision'], value
+        return {'description': value['description']}
 
     def verify_info(revision):
         value = read_model(info)
@@ -194,7 +196,7 @@ def configured_site(public, fixture):
             def do_POST(self):
                 path = urlsplit(self.path).path
                 if path=='/test-model-info/revise':
-                    revise_info()
+                    return self.reply(200,revise_info())
                 elif path=='/test-model-info/viewer':
                     source.permissions['writer'] = {key:'viewer' for key in writer_grants}
                 elif path=='/test-model-info/project-denied':

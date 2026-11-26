@@ -19,7 +19,7 @@ ONTOVis 继续使用同源POST `assistant/model-config`、`model-config-save`、
 
 保存只接受 `change={kind:'capability',taskId,settings,expectedConnectionVersion}`，连同requestId、expectedRevision、expectedAccessRevision、原会话和项目范围。settings含enabled、connectionId、modelId、timeoutSeconds、concurrency、reasoningEffort、goal、focus、readLimit、readParallel、tools。后端验证参数、项目管理员、所见配置及连接版本，授权前后复核；事务失败回滚，幂等重放不再次保存。停用能力可以在模型服务离线时保存。
 
-复用现有 `assistant_model_configs.config_json` 中的capabilities字段及原请求/事件表，无数据库迁移。旧配置、加密密钥与审计原样保留于配对备份；旧自有模型不再执行，也不会自动映射为另一个供应商连接，需用户重新选择源端连接并保存。旧源端默认analysis在没有新能力设置时保留原服务修订；已有历史和引用不自动重发。
+通过 `assistant_model_configs.config_json` 的 `capabilities` 字段保存当前能力设置。保存请求记录摘要，实际变更的审计记录操作人、时间和能力名称。重试返回当前设置，已有回执可继续重放。相同设置的重复提交沿用当前生效标记，页面只显示保存状态。旧自有模型使用源端连接前需重新选择并保存。未配置故障分析能力时，原默认服务继续沿用源端生效标记。配对备份保留既有配置、加密密钥和审计记录。
 
 源端新增已批准项目范围内 `ontovis-assistant/connections`（GET）、`profile`和`models`（POST）。analyze可带受限configuration，只包含能力、连接引用、模型、时限、推理强度与任务指令。源端解析已有连接与密钥，拒绝任意endpoint/provider/apiKey覆盖；连接版本、无密钥配置快照、模型、参数和固定协议参与修订。配置读取不依赖已移除的旧updated_at。源端原生能力配置不被Vis保存动作改写。
 

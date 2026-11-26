@@ -427,7 +427,7 @@ class ProjectModelHttpTests(unittest.TestCase):
         self.expect(self.request('/api/workbench/resources/model/upload', raw=b'',
             headers={'Content-Type': 'model/gltf-binary', 'X-Model-Metadata': header, 'Content-Length': str(MAX_BYTES + 1)}), 413, 'MODEL_LIMIT_EXCEEDED')
 
-    def test_model_basic_info_edit_is_versioned_and_persisted_without_a_new_file(self):
+    def test_model_basic_info_updates_the_current_asset_without_a_new_file(self):
         version = self.new_version(); before = list((self.root / 'private' / 'files').iterdir())
         body = {key: version[key] for key in ('modelAssetId', 'modelVersionId')}
         body.update(expectedAssetRevision=version['assetRevision'], clientRequestId=str(uuid4()),

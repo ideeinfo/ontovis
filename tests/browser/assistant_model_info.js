@@ -13,6 +13,7 @@ async (page, facts, mode) => {
   const control = async action => {
     const response = await page.request.post(facts.origin+'/test-model-info/'+action);
     check(response.ok(),'The isolation control failed');
+    return response.json();
   };
   const matches = body => body?.modelAssetId===target.modelAssetId&&body.modelVersionId===target.modelVersionId;
 
@@ -118,14 +119,14 @@ async (page, facts, mode) => {
   await button('查看固定模型',row).click();
   await edit.click();
   await name.fill(target.displayName+' · 尝试保存');
-  await control('revise');
+  const concurrent = await control('revise');
   const [conflict]=await Promise.all([watch(modelPath+'/info/save',matches),button('保存',form).click()]);
   check(conflict.status()===409,'Concurrent edit did not reject the old revision');
   await form.getByText('基本信息已更新，当前修改已保留。',{exact:true}).waitFor();
   check(await name.inputValue()===target.displayName+' · 尝试保存','Conflict discarded the attempted change');
   await button('重新读取',form).click();
   await form.getByRole('textbox',{name:'说明',exact:true}).waitFor();
-  await page.waitForFunction(()=>document.querySelector('.ov-resource-form textarea')?.value==='另一会话更新');
+  await page.waitForFunction(description=>document.querySelector('.ov-resource-form textarea')?.value===description,concurrent.description);
   await name.fill(target.displayName+' · 人工保存');
   await page.route('**'+accessPath,route=>route.fulfill({status:503,json:{code:'SOURCE_UNAVAILABLE'}}),{times:1});
   const [saved]=await Promise.all([watch(modelPath+'/info/save',matches),button('保存',form).click()]);

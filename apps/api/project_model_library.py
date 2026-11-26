@@ -117,7 +117,8 @@ class ProjectModelLibrary:
                 create table if not exists project_model_assets (
                     id text primary key, project_code text not null, name text not null,
                     purpose text not null, revision integer not null, created_at text not null,
-                    definition_entity_uid text, model_code text, representation_type text);
+                    definition_entity_uid text, model_code text, representation_type text,
+                    description text default '');
                 create table if not exists project_model_versions (
                     version_id text primary key references versions(id),
                     asset_id text not null references project_model_assets(id),
@@ -142,16 +143,6 @@ class ProjectModelLibrary:
                     begin select raise(abort, 'invalid model lifecycle transition'); end;
                 create trigger if not exists project_model_lifecycle_no_delete before delete on project_model_lifecycle
                     begin select raise(abort, 'retained model lifecycle'); end;
-                create table if not exists project_model_info_revisions (
-                    id text primary key, asset_id text not null references project_model_assets(id),
-                    asset_revision integer not null, name text not null, purpose text not null,
-                    description text not null, previous_info text not null,
-                    actor text not null, created_at text not null,
-                    unique(asset_id,asset_revision));
-                create trigger if not exists project_model_info_no_update before update on project_model_info_revisions
-                    begin select raise(abort, 'immutable model information'); end;
-                create trigger if not exists project_model_info_no_delete before delete on project_model_info_revisions
-                    begin select raise(abort, 'retained model information'); end;
                 create trigger if not exists project_model_version_no_update before update on project_model_versions
                     begin select raise(abort, 'immutable project model version'); end;
                 create trigger if not exists project_model_version_no_delete before delete on project_model_versions
@@ -169,6 +160,8 @@ class ProjectModelLibrary:
             if 'representation_type' not in cols:
                 db.execute('alter table project_model_assets add column representation_type text')
             db.execute('insert or ignore into project_model_catalog values (1,?)', (secrets.token_hex(32),))
+            self.has_legacy_info = db.execute('''select 1 from sqlite_master where type='table'
+                and name='project_model_info_revisions' ''').fetchone() is not None
 
     @staticmethod
     def capabilities():
@@ -198,13 +191,15 @@ class ProjectModelLibrary:
         return {**value, 'versionDisplayName': value['displayName'],
                 **self._info(db, self._asset(db, value['modelAssetId'], include_deleted=True))}
 
-    @staticmethod
-    def _info(db, asset):
-        latest = db.execute('''select description from project_model_info_revisions
-            where asset_id=? order by asset_revision desc limit 1''', (asset['id'],)).fetchone()
-        keys = asset.keys() if hasattr(asset, 'keys') else ()
+    def _info(self, db, asset):
+        keys = asset.keys()
+        description = asset['description'] if 'description' in keys else None
+        if description is None and self.has_legacy_info:
+            latest = db.execute('''select description from project_model_info_revisions
+                where asset_id=? order by asset_revision desc limit 1''', (asset['id'],)).fetchone()
+            description = latest['description'] if latest else None
         return {'displayName': asset['name'], 'purpose': asset['purpose'],
-                'description': latest['description'] if latest else '',
+                'description': description if description is not None else '',
                 'definitionEntityUid': asset['definition_entity_uid'] if 'definition_entity_uid' in keys else None,
                 'modelCode': asset['model_code'] if 'model_code' in keys else None,
                 'representationType': asset['representation_type'] if 'representation_type' in keys else None,
@@ -262,45 +257,41 @@ class ProjectModelLibrary:
         description = body['description']
         _require(isinstance(description, str) and len(description) <= 2000
                  and all(ord(char) >= 32 or char in '\n\r\t' for char in description))
-        
-        association = self._representation_metadata(body)
-        definition_entity_uid = association.get('definitionEntityUid')
-        model_code = association.get('modelCode')
-        representation_type = association.get('representationType')
 
+        association = self._representation_metadata(body)
         digest = hashlib.sha256(_canonical(body).encode()).hexdigest()
         with self.library.connect() as db:
             db.execute('begin immediate')
             prior = self._prior(db, actor, 'update_info', body['clientRequestId'], digest)
-            if prior is not None:
+            if prior:
                 authorize()
                 return prior
-            asset = self._asset(db, body['modelAssetId'])
+            asset = self._asset(db, body['modelAssetId'], include_deleted=prior is not None)
             version = self._version(db, body['modelVersionId'])
             _require(version['modelAssetId'] == asset['id'], 'NOT_FOUND_OR_FORBIDDEN', 404)
-            previous = self._info(db, asset)
-            _require(previous['assetRevision'] == body['expectedAssetRevision'], 'MODEL_ASSET_CHANGED', 409)
-            authorize()
-            now = _now()
-            db.execute('''insert into project_model_info_revisions values (?,?,?,?,?,?,?,?,?)''',
-                (str(uuid4()), asset['id'], asset['revision'] + 1, name, body['purpose'], description,
-                 _canonical(previous), actor, now))
-
-            def_uid = definition_entity_uid if 'definitionEntityUid' in body else asset['definition_entity_uid'] if 'definition_entity_uid' in asset.keys() else None
-            code = model_code if 'modelCode' in body else asset['model_code'] if 'model_code' in asset.keys() else None
-            rep_type = representation_type if 'representationType' in body else asset['representation_type'] if 'representation_type' in asset.keys() else None
-
-            db.execute('''update project_model_assets 
-                          set name=?, purpose=?, definition_entity_uid=?, model_code=?, representation_type=?, revision=revision+1 
-                          where id=?''',
-                       (name, body['purpose'], def_uid, code, rep_type, asset['id']))
-            db.execute('update library set revision=revision+1 where id=1')
-            value = {**self._version(db, body['modelVersionId']), 'libraryRevision': self.library.revision(db)}
-            db.execute('insert into project_model_requests values (?,?,?,?,?,?)',
-                (self.project_code, actor, 'update_info', body['clientRequestId'], digest, _canonical(value)))
-            db.execute('''insert into project_model_audit
-                (project_code,actor,action,request_id,version_id,payload_sha256,created_at) values (?,?,?,?,?,?,?)''',
-                (self.project_code, actor, 'update_info', body['clientRequestId'], body['modelVersionId'], digest, now))
+            if prior is None:
+                _require(version['assetRevision'] == body['expectedAssetRevision'], 'MODEL_ASSET_CHANGED', 409)
+                authorize()
+                info = {'displayName': name, 'purpose': body['purpose'], 'description': description,
+                        **{key: association.get(key, version[key])
+                           for key in ('definitionEntityUid', 'modelCode', 'representationType')}}
+                if any(version[key] != value for key, value in info.items()):
+                    if 'description' not in asset.keys():
+                        # Older stores read the former descriptions until each asset is edited.
+                        db.execute('alter table project_model_assets add column description text')
+                    db.execute('''update project_model_assets set name=:displayName, purpose=:purpose,
+                        description=:description, definition_entity_uid=:definitionEntityUid, model_code=:modelCode,
+                        representation_type=:representationType, revision=revision+1 where id=:id''',
+                        {**info, 'id': asset['id']})
+                    db.execute('update library set revision=revision+1 where id=1')
+                    db.execute('''insert into project_model_audit
+                        (project_code,actor,action,request_id,version_id,payload_sha256,created_at) values (?,?,?,?,?,?,?)''',
+                        (self.project_code, actor, 'update_info', body['clientRequestId'], body['modelVersionId'], digest, _now()))
+                    version = self._version(db, body['modelVersionId'])
+                # Keep the request fingerprint. A retry reads the current asset.
+                db.execute('insert into project_model_requests values (?,?,?,?,?,?)',
+                    (self.project_code, actor, 'update_info', body['clientRequestId'], digest, '{}'))
+            value = {**version, 'libraryRevision': self.library.revision(db)}
             authorize()
             db.commit()
             return value

@@ -227,7 +227,7 @@ def request(sessions,sid,path,payload):
         return reply(value)
     if action=='model-catalogue':
         require(set(body)=={'connectionId','expectedConnectionVersion','expectedRevision','expectedAccessRevision'})
-        require(type(body['expectedRevision']) is int and 0<=body['expectedRevision']<10000)
+        require(type(body['expectedRevision']) is int and 0<=body['expectedRevision']<2**53)
         require(body['expectedAccessRevision']==access['accessRevision'],'ACCESS_CHANGED',409)
         require(body['expectedRevision']==runtime.models.read(project)['revision'],'LLM_CONFIGURATION_CHANGED',409)
         identifier(body['connectionId']);require(type(body['expectedConnectionVersion']) is int and body['expectedConnectionVersion']>=1)

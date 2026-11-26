@@ -1,5 +1,4 @@
-"""Editable model labels retain fixed geometry, revisions and scene references."""
-import sqlite3
+"""Editable model labels retain fixed geometry and scene references."""
 from threading import Barrier, Thread
 import unittest
 from uuid import uuid4
@@ -31,7 +30,7 @@ class ModelInfoTests(unittest.TestCase):
     def state(self):
         with self.library.connect() as db:
             return {table: [tuple(row) for row in db.execute('select * from ' + table)] for table in
-                ('project_model_assets', 'project_model_info_revisions', 'project_model_requests', 'project_model_audit', 'library')}
+                ('project_model_assets', 'project_model_requests', 'project_model_audit', 'library')}
 
     def test_edit_is_visible_on_every_version_and_search_without_changing_fixed_content(self):
         with self.library.connect() as db:
@@ -61,15 +60,18 @@ class ModelInfoTests(unittest.TestCase):
                          {k: v for k, v in saved.items() if k != 'libraryRevision'})
 
     def test_stale_head_rejected_and_same_request_replay_never_overwrites_later_information(self):
-        body = self.body(); first = self.save(body); second = self.save(self.body(displayName='第二次修改'))
-        self.assertEqual(self.save(body), first)
+        body = self.body(); self.save(body); second = self.save(self.body(displayName='第二次修改'))
+        self.assertEqual(self.save(body), second)
         self.assertEqual(self.fixture.model(second)['displayName'], '第二次修改')
         self.expect('MODEL_ASSET_CHANGED', lambda: self.save({**body, 'clientRequestId': str(uuid4())}))
         self.expect('REQUEST_CONFLICT', lambda: self.save({**body, 'description': '改变正文'}))
         with self.library.connect() as db:
-            self.assertEqual(db.execute('select count(*) from project_model_info_revisions').fetchone()[0], 2)
+            self.assertIsNone(db.execute("select 1 from sqlite_master where name='project_model_info_revisions'").fetchone())
+            self.assertEqual([row[0] for row in db.execute(
+                "select result from project_model_requests where action='update_info'")], ['{}', '{}'])
+            self.assertEqual(db.execute("select count(*) from project_model_audit where action='update_info'").fetchone()[0], 2)
 
-    def test_final_authorization_failure_rolls_back_heads_history_audit_and_receipts(self):
+    def test_final_authorization_failure_rolls_back_current_info_audit_and_receipts(self):
         before = self.state(); calls = 0
         def guard():
             nonlocal calls
@@ -110,13 +112,37 @@ class ModelInfoTests(unittest.TestCase):
                 self.expect('INVALID_REQUEST', lambda: self.save({**body, **changes}))
                 self.assertEqual(self.state(), before)
 
-    def test_information_history_is_immutable_and_retains_previous_labels(self):
-        body = self.body(); self.save(body)
+    def test_saving_identical_information_keeps_the_current_revision(self):
+        saved = self.save()
+        before = self.state()
+        self.assertEqual(self.save(), saved)
+        after = self.state()
+        for table in ('project_model_assets', 'library', 'project_model_audit'):
+            self.assertEqual(before[table], after[table])
+
+    def test_latest_legacy_description_is_read_until_the_asset_is_edited(self):
+        other = self.fixture.upload()
         with self.library.connect() as db:
-            row = db.execute('select * from project_model_info_revisions').fetchone()
-            self.assertIn(self.version['displayName'], row['previous_info'])
-            for sql in ('delete from project_model_info_revisions', 'update project_model_info_revisions set name=name'):
-                with self.assertRaises(sqlite3.IntegrityError): db.execute(sql)
+            db.execute('alter table project_model_assets drop column description')
+            db.execute('''create table project_model_info_revisions (
+                asset_id text not null, asset_revision integer not null, description text not null,
+                primary key(asset_id,asset_revision))''')
+            db.executemany('insert into project_model_info_revisions values(?,?,?)', [
+                (self.version['modelAssetId'], 1, '初次说明'),
+                (self.version['modelAssetId'], 2, '最近的说明'),
+                (other['modelAssetId'], 1, '另一资源的说明'),
+            ])
+        self.models = self.fixture.models = ProjectModelLibrary(self.library)
+
+        self.assertEqual(self.fixture.model(self.version)['description'], '最近的说明')
+        saved = self.save(self.body(description=''))
+        self.assertEqual(saved['description'], '')
+        self.assertEqual(self.fixture.model(self.version)['description'], '')
+        self.assertEqual(self.fixture.model(other)['description'], '另一资源的说明')
+        with self.library.connect() as db:
+            self.assertEqual(db.execute('select count(*) from project_model_info_revisions').fetchone()[0], 3)
+            self.assertEqual(db.execute('select description from project_model_assets where id=?',
+                                       (self.version['modelAssetId'],)).fetchone()[0], '')
 
 
 if __name__ == '__main__': unittest.main()

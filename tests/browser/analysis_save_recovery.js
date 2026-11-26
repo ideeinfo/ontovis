@@ -29,6 +29,9 @@ async (page, facts, phase) => {
     await button('分析画布',page).click();
     await workspace.locator('.ad-list-items .ov-list-main').filter({hasText:facts.title}).click();
     check(await title.inputValue()===facts.title,'The isolated canvas was not opened');
+    check(await button('保存当前视图').isDisabled(),'An unchanged canvas could be saved again');
+    await button('放大画布').click();
+    check(await button('保存当前视图').isEnabled(),'A viewport-only edit could not be saved');
     await title.fill(busyTitle);
     return {opened:true};
   }

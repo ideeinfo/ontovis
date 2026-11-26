@@ -117,7 +117,7 @@ class AssistantModels:
 
     def save(self, project, actor, body, authorize, validate_source):
         require(type(body) is dict and set(body)=={'requestId','expectedRevision','expectedAccessRevision','change'})
-        identifier(body['requestId']);require(type(body['expectedRevision']) is int and 0<=body['expectedRevision']<10000)
+        identifier(body['requestId']);require(type(body['expectedRevision']) is int and 0<=body['expectedRevision']<2**53)
         change=body['change']
         require(type(change) is dict and set(change)=={'kind','taskId','settings','expectedConnectionVersion'} and change['kind']=='capability')
         require(type(change['taskId']) is str and change['taskId'] in TASKS,'LLM_TASK_INVALID')
@@ -129,20 +129,34 @@ class AssistantModels:
             db.execute('begin immediate')
             previous=db.execute('select fingerprint,result_json from assistant_model_config_requests where connection_id=? and project_code=? and actor=? and request_id=?',
                 (self.connection_id,project,actor,body['requestId'])).fetchone()
+            current = self.read(project, db)
             if previous:
-                require(previous['fingerprint']==fingerprint,'ASSISTANT_REQUEST_CONFLICT',409);authorize();return json.loads(previous['result_json'])
-            current=self.read(project,db);require(current['revision']==body['expectedRevision'],'LLM_CONFIGURATION_CHANGED',409)
+                require(previous['fingerprint'] == fingerprint, 'ASSISTANT_REQUEST_CONFLICT', 409)
+                authorize()
+                return json.loads(previous['result_json']) or self.public(current)
+            require(current['revision'] == body['expectedRevision'], 'LLM_CONFIGURATION_CHANGED', 409)
             # Source authorization and connection versions are checked before committing.
-            if task['enabled']:validate_source(source_configuration(change['taskId'],task),change['expectedConnectionVersion'])
-            config=current['config'];config.setdefault('capabilities',{})[change['taskId']]=task
-            stamp=now();revision=current['revision']+1
-            result=self.public({'revision':revision,'updatedAt':stamp,'config':config})
-            require(db.execute('select count(*) from assistant_model_config_events where connection_id=? and project_code=?',(self.connection_id,project)).fetchone()[0]<10000,'LLM_CONFIGURATION_LIMIT',413)
-            db.execute('insert into assistant_model_configs values(?,?,?,?,?,?) on conflict(connection_id,project_code) do update set revision=excluded.revision,config_json=excluded.config_json,actor=excluded.actor,updated_at=excluded.updated_at',
-                (self.connection_id,project,revision,encoded(config),actor,stamp))
-            db.execute('insert into assistant_model_config_events values(?,?,?,?,?,?)',(self.connection_id,project,revision,actor,stamp,encoded(change)))
-            db.execute('insert into assistant_model_config_requests values(?,?,?,?,?,?)',(self.connection_id,project,actor,body['requestId'],fingerprint,encoded(result)))
-            authorize();return result
+            task_id = change['taskId']
+            if task['enabled']:
+                validate_source(source_configuration(task_id, task), change['expectedConnectionVersion'])
+            config = current['config']
+            capabilities = config.setdefault('capabilities', {})
+            if capabilities.get(task_id) != task:
+                capabilities[task_id] = task
+                stamp, revision = now(), current['revision'] + 1
+                db.execute('''insert into assistant_model_configs values(?,?,?,?,?,?)
+                    on conflict(connection_id,project_code) do update set revision=excluded.revision,
+                    config_json=excluded.config_json,actor=excluded.actor,updated_at=excluded.updated_at''',
+                    (self.connection_id, project, revision, encoded(config), actor, stamp))
+                event = {'kind': 'capability', 'taskId': task_id}
+                db.execute('insert into assistant_model_config_events values(?,?,?,?,?,?)',
+                    (self.connection_id, project, revision, actor, stamp, encoded(event)))
+                current = {'revision': revision, 'updatedAt': stamp, 'config': config}
+            # Recognize retries without copying capability settings into receipts.
+            db.execute('insert into assistant_model_config_requests values(?,?,?,?,?,?)',
+                (self.connection_id, project, actor, body['requestId'], fingerprint, '{}'))
+            authorize()
+            return self.public(current)
 
     def profile(self, project, task_id, inherited):
         require(type(task_id) is str and task_id in TASKS,'LLM_TASK_INVALID')
