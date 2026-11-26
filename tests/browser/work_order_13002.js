@@ -4,6 +4,7 @@ async (page, facts, phase) => {
   const button = (name, within=page) => within.getByRole('button',{name,exact:true});
   const dialog = name => page.getByRole('dialog',{name,exact:true});
   const detail = page.locator('.wov-detail');
+  const displayedRecord = facts.text.replace('模拟','测试');
   const check = (value, message) => { if(!value) throw Error(message); };
   const ordered = value => {
     if (Array.isArray(value)) return value.map(ordered);
@@ -59,7 +60,7 @@ async (page, facts, phase) => {
     const modal=dialog('新建工单');
     const code=modal.getByLabel('故障码（选填）');
     check(await code.inputValue()==='13002'&&await code.isDisabled(),'Alarm fault code is not fixed');
-    check(await modal.getByRole('checkbox',{name:'模拟工单'}).isChecked(),'Simulation label is missing');
+    check(await modal.getByRole('checkbox',{name:'测试工单'}).isChecked(),'Test order label is missing');
     await modal.getByLabel('标题').fill('Q-26 隔离验收 · 13002 来自报警');
     await modal.getByLabel('问题说明').fill('来自现有 13002 模拟报警。用于隔离软件验收。');
     await page.screenshot({path:'isolated-13002-prefill.png'});
@@ -163,7 +164,7 @@ async (page, facts, phase) => {
       'Replayed submissions created duplicate records');
     const stale=await post('workflow',{...savedBody,requestId:crypto.randomUUID(),text:'stale request'});
     check(stale.status===409&&stale.body.code==='WORK_ORDER_CHANGED','Stale revision write was allowed');
-    await detail.getByText(facts.text,{exact:true}).waitFor();
+    await detail.getByText(displayedRecord,{exact:true}).waitFor();
     await button('完成处理',detail).click();
     const modal=dialog('完成处理');
     await modal.getByRole('combobox',{name:'使用已保存记录',exact:true}).selectOption(record.workflow.records[0].recordId);
@@ -234,7 +235,7 @@ async (page, facts, phase) => {
     await detail.getByRole('heading',{name:facts.reuseTitle,exact:true}).waitFor();
     await button('相关分析',detail).click();
     await button('查看分析',detail).click();
-    await dialog(copyName).getByText(advice,{exact:true}).waitFor();
+    await dialog(copyName).getByText(advice.replace('模拟','测试'),{exact:true}).waitFor();
     await dialog(copyName).screenshot({path:'isolated-13002-reuse-derived.png'});
 
     const [firstAfter,secondAfter,fixedAfter,newAfter]=await Promise.all([
@@ -255,7 +256,7 @@ async (page, facts, phase) => {
     check(denied.status===403&&denied.body.code==='FORBIDDEN','Revoked account replay was allowed');
     await button('重新读取工单',detail).click();
     await page.getByRole('heading',{name:'项目中心',exact:true}).waitFor();
-    check(!await detail.isVisible()&&!await page.getByText(facts.text,{exact:true}).isVisible(),
+    check(!await detail.isVisible()&&!await page.getByText(displayedRecord,{exact:true}).isVisible(),
       'Protected details remained visible after revocation');
     return {revokedReplayStatus:denied.status,protectedUIAbsent:true};
   }
@@ -287,7 +288,7 @@ async (page, facts, phase) => {
     await open('reader');
     await selected();
     await detail.locator('.wov-header').getByText('已归档',{exact:true}).waitFor();
-    check(await detail.getByText(facts.text,{exact:true}).count()>0,'The viewer lost the archived treatment');
+    check(await detail.getByText(displayedRecord,{exact:true}).count()>0,'The viewer lost the archived treatment');
     await noControls(['新建工单','保存记录','归档','重新处理','添加附件']);
     await button('相关分析',detail).click();
     await button('查看分析',detail).click();

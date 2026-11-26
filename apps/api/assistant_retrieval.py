@@ -54,7 +54,7 @@ def retrieve(reader, kind, descriptor, selected, private=()):
                                    matches=len(matched), truncated=value.get('next_cursor') is not None))
         if len(matched) != 1 or value.get('next_cursor') is not None:
             text = json.dumps(dict(kind='document', requestedFaultCode=code,
-                gaps=['所选固定手册未返回唯一且完整的故障码匹配，未用其他发布版或演示规则补充。'],
+                gaps=['所选固定手册的故障码匹配待核实。本次检索范围为所选版本。'],
                 scope='仅所选固定文档发布版；没有可引用的匹配摘录'), ensure_ascii=False, separators=(',', ':'))
             result = dict(summary=text, summaryHash=digest(text), retrievalRevision=digest(value))
         else:

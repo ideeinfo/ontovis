@@ -1,3 +1,4 @@
+import {displayText} from './displayText';
 import {useState} from 'react';
 import {FileText, Paperclip} from 'lucide-react';
 import {Btn} from './Primitives';
@@ -19,19 +20,19 @@ export function WorkOrderRecords({orderId, revision, state, simulated, workflow,
   const visible=compact?rows.slice(0,1):rows.slice(start,start+8);
   return <section className={'wov-records'+(compact?' compact':'')}>
     <div className="wov-record-identity"><span>{orderId} · r{revision}</span><span>{workflowLabel(state,en)}</span>
-      {simulated&&<span className="wov-tag">{t('模拟','Simulation')}</span>}</div>
+      {simulated&&<span className="wov-tag">{t('测试','Test')}</span>}</div>
     {result?<article className="wov-result"><strong>{result.voided?t('作废 · 未执行','Voided · No treatment'):t('处理结果','Treatment result')}</strong>
-      <p>{result.text}</p></article>:<small>{t('尚无最终处理结果','No final result recorded')}</small>}
+      <p>{displayText(result.text)}</p></article>:<small>{t('尚无最终处理结果','No final result recorded')}</small>}
     {visible.length>0&&<h3>{compact?t('最近处置记录','Latest treatment record'):t('处置过程','Treatment records')}</h3>}
     {visible.map(record=><article key={record.recordId} className="wov-record">
       <small>{record.actor} · {orderRecordTime(record.occurredAt||record.recordedAt,en)} · r{record.recordRevision}
         {!compact&&record.occurredAt&&<> · {t('录入','Entered')} {orderRecordTime(record.recordedAt,en)}</>}</small>
-      <p>{record.text}</p>
+      <p>{displayText(record.text)}</p>
       {!compact&&<>
         {!!record.basis&&<small>{t('当时采用分析','Analysis used at the time')} · r{record.basis.analysisRevision}</small>}
         <div className="wov-actions">
           {workflow.attachments.filter(item=>item.recordId===record.recordId).map(item=><Btn key={item.attachmentId}
-            onClick={()=>onOpenAttachment?.(item)} disabled={!onOpenAttachment}><FileText size={14}/>{item.title}</Btn>)}
+            onClick={()=>onOpenAttachment?.(item)} disabled={!onOpenAttachment}><FileText size={14}/>{displayText(item.title)}</Btn>)}
           {record.cycle===workflow.cycle&&onCorrect&&<Btn onClick={()=>onCorrect(record)}>{t('更正记录','Correct record')}</Btn>}
           {record.editedAt&&onHistory&&<Btn onClick={()=>onHistory(record)}>{t('更正历史','Correction history')}</Btn>}
           {onAttach&&<Btn onClick={()=>onAttach(record)}><Paperclip size={14}/>{t('关联附件','Attach file')}</Btn>}

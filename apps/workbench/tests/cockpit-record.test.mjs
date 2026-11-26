@@ -30,6 +30,7 @@ test('full records separate question, fixed scope and numbered sections without 
  const html=render();
  assert.match(html,/本轮问题/);assert.match(html,/核对 &lt;script&gt;private&lt;\/script&gt; 与依据/);assert.doesNotMatch(html,/<script>/);
  assert.match(html,/分析记录目录/);assert.match(html,/固定时间窗/);assert.match(html,/r8/);
+ assert.match(html,/测试事件/);assert.doesNotMatch(html,/模拟事件/);
  assert.match(html,/第二条依据。/);assert.equal((html.match(/data-record-section=/g)||[]).length,2);
  assert.match(html,/第2轮/);assert.match(html,/待人工核验/);
 });

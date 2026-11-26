@@ -83,7 +83,7 @@ async (page, origin, fixed, mode) => {
         const identity = dialog.locator('.ho-identity,.wov-record-identity').filter({hasText:target.orderId});
         await identity.waitFor();
         const text = await identity.innerText();
-        check(text.includes('r'+target.orderRevision)&&text.includes('模拟'),'The dialog did not show the fixed simulated work order');
+        check(text.includes('r'+target.orderRevision)&&text.includes('测试'),'The dialog did not show the fixed test work order');
       } else {
         if (target.kind==='document') {
           await dialog.getByRole('tab',{name:'正文',exact:true}).click();

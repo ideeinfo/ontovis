@@ -1,3 +1,4 @@
+import {displayText} from './displayText';
 import {useEffect,useMemo,useState} from 'react';
 import {Activity,ChevronDown,ChevronUp,Focus,Pause,Play,RefreshCw,X} from 'lucide-react';
 import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
@@ -47,19 +48,19 @@ export function SceneAlarmPanel({api,snapshot,en,onAlarm,onFocus,onClose}:{api:W
  const state=sceneAlarmState(view?.state.sequence,stream.stale,visible?alarmAt(visible,view!.state.sequence):'pending');
  const receiving=!!view&&['connecting','connected','catchup','reconnecting'].includes(view.status);
  useEffect(()=>{onAlarm(view&&target&&instance&&state?{instanceId:instance.sceneModelInstanceId,state,
-  label:`${en?'Simulation':'模拟'} · ${profile?.faultCode} · ${alarmLabel(state,en)}`,target:target.item.displayName}:null);
+  label:`${en?'Test data':'测试'} · ${profile?.faultCode} · ${alarmLabel(state,en)}`,target:target.item.displayName}:null);
  },[!!view,view?.status,target?.item.entityUid,instance?.sceneModelInstanceId,profile?.faultCode,state,en,onAlarm]);
  useEffect(()=>()=>onAlarm(null),[onAlarm]);
  const changeInstance=(id:string)=>{stream.reset();setInstance(id);};
- return <section className={`sw-alarm-panel${collapsed?' collapsed':''}`} aria-label={en?'Scene alarm exercise':'场景告警演练'}>
-  <header><Activity size={16}/><strong>{en?'Alarm exercise':'告警演练'}</strong><span className="ad-badge amber">{en?'Simulation':'模拟'}</span><IconBtn label={collapsed?(en?'Expand alarm panel':'展开告警面板'):(en?'Collapse alarm panel':'收起告警面板')} onClick={()=>setCollapsed(v=>!v)}>{collapsed?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</IconBtn><IconBtn label={en?'Close alarm exercise':'关闭告警演练'} onClick={onClose}><X size={14}/></IconBtn></header>
-  {!collapsed&&<><label>{en?'Placed device':'已布置设备'}<select aria-label={en?'Scene alarm device':'场景告警设备'} value={instanceId} onChange={e=>changeInstance(e.target.value)}>{instances.map(item=><option key={item.sceneModelInstanceId} value={item.sceneModelInstanceId}>{item.displayName}</option>)}</select></label>
-  <label>{en?'Simulated fault':'模拟故障'}<select aria-label={en?'Scene simulated fault':'场景模拟故障'} value={datasetId} onChange={e=>{stream.reset();setDataset(e.target.value);}}>{catalogue?.items.map(row=><option key={row.datasetId} value={row.datasetId}>{row.faultCode} · {row.title}</option>)}</select></label>
-  {loading?<p role="status">{en?'Resolving the installed target…':'正在核对安装目标…'}</p>:target?<p className="sw-alarm-target">{target.rootName} / {target.item.displayName}<small>{en?'Only this instance receives the simulated state.':'仅此实例显示模拟状态；定位采用柜级表示。'}</small></p>:<p>{en?'No unique installed target. No state was assigned.':'未找到唯一安装目标，未赋予告警状态。'}</p>}
+ return <section className={`sw-alarm-panel${collapsed?' collapsed':''}`} aria-label={en?'Scene alarm replay':'场景告警回放'}>
+  <header><Activity size={16}/><strong>{en?'Alarm replay':'告警回放'}</strong><span className="ad-badge amber">{en?'Test data':'测试'}</span><IconBtn label={collapsed?(en?'Expand alarm panel':'展开告警面板'):(en?'Collapse alarm panel':'收起告警面板')} onClick={()=>setCollapsed(v=>!v)}>{collapsed?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</IconBtn><IconBtn label={en?'Close alarm replay':'关闭告警回放'} onClick={onClose}><X size={14}/></IconBtn></header>
+  {!collapsed&&<><label>{en?'Placed device':'已布置设备'}<select aria-label={en?'Scene alarm device':'场景告警设备'} value={instanceId} onChange={e=>changeInstance(e.target.value)}>{instances.map(item=><option key={item.sceneModelInstanceId} value={item.sceneModelInstanceId}>{displayText(item.displayName)}</option>)}</select></label>
+  <label>{en?'Fault to replay':'回放故障'}<select aria-label={en?'Scene fault to replay':'场景回放故障'} value={datasetId} onChange={e=>{stream.reset();setDataset(e.target.value);}}>{catalogue?.items.map(row=><option key={row.datasetId} value={row.datasetId}>{row.faultCode} · {displayText(row.title)}</option>)}</select></label>
+  {loading?<p role="status">{en?'Resolving the installed target…':'正在核对安装目标…'}</p>:target?<p className="sw-alarm-target">{target.rootName} / {displayText(target.item.displayName)}<small>{en?'Replay state is shown on this instance only. Location is at cabinet level.':'回放状态只显示在此实例，定位到柜体。'}</small></p>:<p>{en?'No unique installed target. No state was assigned.':'未找到唯一安装目标，未赋予告警状态。'}</p>}
   {!!error&&<p role="alert">{failureMessage(error,en?'en':'zh')}<Btn onClick={()=>setReload(v=>v+1)}><RefreshCw size={13}/>{en?'Retry':'重试'}</Btn></p>}
-  <div className="sw-alarm-controls">{receiving?<Btn onClick={stream.stop}><Pause size={14}/>{en?'Stop':'停止订阅'}</Btn>:<Btn primary disabled={!target||!detail||loading||!!error} onClick={()=>stream.start(view?.status==='complete'?0:view?.fromSecond??60,!!view&&view.status!=='complete')}><Play size={14}/>{view?(en?'Continue':'继续演练'):(en?'Start exercise':'开始演练')}</Btn>}
-   <Btn disabled={!instance} onClick={()=>{if(instance){onFocus(instance.sceneModelInstanceId);setCollapsed(true);}}}><Focus size={14}/>{en?'Locate device':'定位设备'}</Btn>{view&&<Btn onClick={()=>{stream.reset();stream.start(0);}}><RefreshCw size={14}/>{en?'Restart':'重新演练'}</Btn>}</div>
+  <div className="sw-alarm-controls">{receiving?<Btn onClick={stream.stop}><Pause size={14}/>{en?'Stop':'停止订阅'}</Btn>:<Btn primary disabled={!target||!detail||loading||!!error} onClick={()=>stream.start(view?.status==='complete'?0:view?.fromSecond??60,!!view&&view.status!=='complete')}><Play size={14}/>{view?(en?'Continue':'继续回放'):(en?'Start replay':'开始回放')}</Btn>}
+   <Btn disabled={!instance} onClick={()=>{if(instance){onFocus(instance.sceneModelInstanceId);setCollapsed(true);}}}><Focus size={14}/>{en?'Locate device':'定位设备'}</Btn>{view&&<Btn onClick={()=>{stream.reset();stream.start(0);}}><RefreshCw size={14}/>{en?'Restart':'重新回放'}</Btn>}</div>
   </>}{view&&<p className={`sw-alarm-status ${state||'pending'}`} role="status">{state?`${alarmLabel(state,en)} · ${view.state.sequence} s`:(en?'Waiting for the first frame…':'等待首帧…')}{view.error?` · ${failureMessage(view.error,en?'en':'zh')}`:''}</p>}
-  {!collapsed&&<small>{en?'Source clock is simulated. No production point mapping or automatic scene save.':'使用模拟源时钟；尚未接真实测点，不自动保存场景。'} {en?'Hidden or unloaded models stay unchanged.':'隐藏或未加载的模型不会自动加载。'}</small>}
+  {!collapsed&&<small>{en?'The clock uses replay data. Scene changes require a manual save. Live monitoring points are unconnected.':'时钟来自回放数据。场景需手动保存，现场测点尚未接入。'} {en?'Hidden or unloaded models stay unchanged.':'隐藏或未加载的模型不会自动加载。'}</small>}
  </section>;
 }

@@ -1,3 +1,4 @@
+import {displayText} from './displayText';
 import {useEffect,useMemo,useState} from 'react';
 import {ExternalLink,GitBranch,RefreshCw} from 'lucide-react';
 import {Btn} from './Primitives';
@@ -26,10 +27,10 @@ export function SourceRelationLines({relations,onOpen}:{relations:CardSourceRela
     const a=link.from,b=link.to,right=b.x+b.width/2>=a.x+a.width/2;
     const x=right?a.x+a.width:a.x,x2=right?b.x:b.x+b.width,y=a.y+a.height/2,y2=b.y+b.height/2;
     const bend=Math.max(70,Math.min(240,Math.abs(x2-x)/2))*(right?1:-1),mx=(x+x2)/2,my=(y+y2)/2;
-    return <g key={link.id} data-relation-id={link.id} data-origin={link.origin} className={`ac-source-link${link.origin==='candidate'?' ac-candidate-link':''}`} role="button" tabIndex={0} aria-label={`${link.label}：${a.title} → ${b.title}`} onClick={event=>{event.stopPropagation();onOpen(link);}} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onOpen(link);}}}>
-      <title>{link.reason}</title><path className="ac-link-hit" d={`M${x},${y} C${x+bend},${y} ${x2-bend},${y2} ${x2},${y2}`}/>
+    return <g key={link.id} data-relation-id={link.id} data-origin={link.origin} className={`ac-source-link${link.origin==='candidate'?' ac-candidate-link':''}`} role="button" tabIndex={0} aria-label={displayText(`${link.label}：${a.title} → ${b.title}`)} onClick={event=>{event.stopPropagation();onOpen(link);}} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onOpen(link);}}}>
+      <title>{displayText(link.reason)}</title><path className="ac-link-hit" d={`M${x},${y} C${x+bend},${y} ${x2-bend},${y2} ${x2},${y2}`}/>
       <path d={`M${x},${y} C${x+bend},${y} ${x2-bend},${y2} ${x2},${y2}`} markerEnd="url(#ad-source-arrow)"/>
-      <rect x={mx-58} y={my-12} width="116" height="24" rx="6"/><text x={mx} y={my+4} textAnchor="middle">{link.label}</text>
+      <rect x={mx-58} y={my-12} width="116" height="24" rx="6"/><text x={mx} y={my+4} textAnchor="middle">{displayText(link.label)}</text>
     </g>;
   })}</>;
 }
@@ -40,7 +41,7 @@ const gapMessages:Record<string,[string,string]>={
   MODEL_BOUND_TO_DIFFERENT_OBJECT:['同名构件绑定的是另一个工程对象，不能据此认定对象相同。','The matching component is bound to a different engineering object.'],
   MODEL_BINDING_IN_RECYCLE_BIN:['绑定保存在回收站场景中，当前只作历史参考。','The binding belongs to a recycled scene and is historical reference only.'],
   MODEL_BINDINGS_TRUNCATED:['场景绑定超过首批范围，当前关系仅覆盖首批。','Only the first bounded set of scene bindings is shown.'],
-  ALARM_OBJECT_MAPPING_AMBIGUOUS:['模拟报警位号对应多个对象，未自动认定目标。','The simulation identifier matches multiple objects; no target was inferred.']};
+  ALARM_OBJECT_MAPPING_AMBIGUOUS:['报警位号对应多个对象，目标待确认。','The alarm tag matches multiple objects. The target needs confirmation.']};
 export function SourceRelationDetails({selected,relations,loading,error,gaps,retry,onOpen,en}:{selected:CanvasCard;relations:CardSourceRelation[];loading:boolean;error:boolean;gaps:SourceRelationshipGap[];retry:()=>void;onOpen:(relation:CardSourceRelation)=>void;en:boolean}){
   const rows=relations.filter(r=>r.from.id===selected.id||r.to.id===selected.id);
   const messages=[...new Set(gaps.filter(g=>g.evidenceRefId===selected.source?.id).map(g=>g.reason))];
@@ -48,7 +49,7 @@ export function SourceRelationDetails({selected,relations,loading,error,gaps,ret
     {loading&&<p role="status">{en?'Loading source relationships…':'正在读取来源关系…'}</p>}
     {error&&<p role="status">{en?'Relationships are temporarily unavailable. Retry.':'关系暂时未返回，可重新读取。'}</p>}
     {!loading&&!error&&!rows.length&&<p>{en?'No recorded relationships for this card.':'此卡暂无已登记的资料关系。'}</p>}
-    {rows.map(link=><div className={`ad-relation ac-source-relation${link.origin==='candidate'?' ac-candidate-relation':''}`} key={link.id}><GitBranch size={15}/><div><small>{link.label}</small><strong>{link.from.id===selected.id?link.to.title:link.from.title}</strong><p>{link.reason}</p><Btn onClick={()=>onOpen(link)}><ExternalLink size={13}/>{!link.anchor?(en?'Open material':'展开查看'):link.origin==='candidate'?(en?'View reference location':'查看参考位置'):(en?'Open at location':'展开并定位')}</Btn></div></div>)}
+    {rows.map(link=><div className={`ad-relation ac-source-relation${link.origin==='candidate'?' ac-candidate-relation':''}`} key={link.id}><GitBranch size={15}/><div><small>{displayText(link.label)}</small><strong>{displayText(link.from.id===selected.id?link.to.title:link.from.title)}</strong><p>{displayText(link.reason)}</p><Btn onClick={()=>onOpen(link)}><ExternalLink size={13}/>{!link.anchor?(en?'Open material':'展开查看'):link.origin==='candidate'?(en?'View reference location':'查看参考位置'):(en?'Open at location':'展开并定位')}</Btn></div></div>)}
     {messages.map(reason=><p className="ac-relation-gap" key={reason}>{gapMessages[reason]?.[en?1:0]||(en?'This source is temporarily unavailable. Existing readable relationships are retained.':'此来源暂时未返回，已保留可读取的关系。')}</p>)}
   </section>;
 }

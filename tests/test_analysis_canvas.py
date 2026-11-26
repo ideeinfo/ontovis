@@ -112,6 +112,18 @@ class CanvasStorageTests(unittest.TestCase):
         self.assertTrue(original_refs.isdisjoint({c['source']['id'] for c in historical if c.get('source')}))
         self.assertEqual(self.start(recurrence=True)['analysisSessionId'],b['analysisSessionId'])
 
+    def test_legacy_canvas_title_is_searchable_by_its_displayed_wording(self):
+        self.demo=self.consumer(project='Demo-PDS')
+        started=self.start()
+        snapshot=deepcopy(started['snapshot'])
+        snapshot['title']='13001 模拟报警排查'
+        saved=self.save(started,snapshot)
+        rows=self.demo.listing(OWNER,{'q':'13001 测试报警'},lambda:None,cursor_key=b'x'*32,session_revision='login')['items']
+        self.assertEqual([row['analysisSessionId'] for row in rows],[started['analysisSessionId']])
+        reopened=self.demo.detail(OWNER,started['analysisSessionId'],lambda:None)
+        self.assertEqual(reopened['snapshot']['title'],snapshot['title'])
+        self.assertEqual(reopened['contentSha256'],saved['contentSha256'])
+
     def test_foreign_handles_and_forged_fault_context_cannot_be_saved(self):
         self.demo=self.consumer(project='Demo-PDS');a=self.start();b=self.start(recurrence=True)
         altered=deepcopy(b['snapshot']);altered['cards'][0]['source']=a['snapshot']['cards'][0]['source']

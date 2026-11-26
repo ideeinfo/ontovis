@@ -11,6 +11,7 @@ from threading import RLock
 from uuid import UUID, uuid4
 
 from .authority import PreviewError
+from .display_labels import matches_display_text
 
 SCHEMA = 'ontovis_analysis_v1'
 FORMAT_V1 = 'ontovis-analysis-drafts-v1'
@@ -374,9 +375,10 @@ class AnalysisDrafts:
                 (self.connection_id, self.project_code, actor_id, lifecycle))
             rows = cursor.fetchall()
             require(len(rows) <= 1000, 'ANALYSIS_STORAGE_INVALID', 409)
+            needle = query.strip().casefold()
             items = [{'analysisSessionId': r[0], 'title': r[1], 'status': r[2], 'analysisRevision': r[3],
                       'createdAt': r[4], 'updatedAt': r[5], 'lifecycle': r[6], 'lifecycleRevision': r[7], 'lifecycleChangedAt': r[8]} for r in rows
-                     if (not status or r[2] == status) and query.strip().casefold() in r[1].casefold()]
+                     if (not status or r[2] == status) and matches_display_text(r[1], needle)]
             revision = digest([self.store_id, self.connection_id, self.project_code, actor_id,
                                session_revision, query, status, lifecycle, limit, items])
             start = 0

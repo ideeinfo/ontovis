@@ -432,7 +432,7 @@ def relationships(reader, fixed, scene_library):
             for ref, (target_kind, target, _) in values.items():
                 if target_kind == 'trend' and (target['datasetId'], target['datasetRevision']) == (dataset_id, revision):
                     add(identity, ref, 'alarm_trend', '同次报警趋势',
-                        reason='报警和趋势来自同一次模拟演练的数据版本')
+                        reason='报警和趋势来自同一次事件的数据版本')
         if not dataset.get('primaryRds'):
             continue
         matches = [(ref, target) for ref, (target_kind, target, obj) in values.items()
@@ -440,8 +440,8 @@ def relationships(reader, fixed, scene_library):
         if len({target['entityUid'] for _,target in matches}) > 1:
             gap(identity,'ALARM_OBJECT_MAPPING_AMBIGUOUS'); continue
         for ref, target in matches:
-            add(identity,ref,'alarm_object_mapping','模拟报警对象',{'entityUid':target['entityUid']},
-                '固定模拟报警配置按项目主位号 '+dataset['primaryRds']+' 显式映射；不表示已确认故障原因或现场安装身份')
+            add(identity,ref,'alarm_object_mapping','报警对象',{'entityUid':target['entityUid']},
+                '报警配置指定了项目位号 '+dataset['primaryRds']+'。故障原因和现场安装身份仍待核实。')
     drawings = {}
     for identity, (kind, descriptor, value) in values.items():
         photo_location_changed = kind == 'photo' and value.get('anchorUnavailableReason') == 'PHOTO_LOCATION_CHANGED'

@@ -51,7 +51,7 @@ class TaskTests(unittest.TestCase):
         tools=ProjectTools(self.reader,lambda:None,8,DEFAULT['allowedKinds'],())
         tools.query(dict(tool='work_orders',query='',faultCode='13001'))
         self.assertEqual(3,len(tools.results));self.assertEqual(3,tools.reads)
-        self.assertIn('orderId',tools.sources[1]['summary']);self.assertIn('模拟',tools.sources[1]['summary'])
+        self.assertIn('orderId',tools.sources[1]['summary']);self.assertIn('测试',tools.sources[1]['summary'])
         target=tools.results[0];calls=[]
         def register(row,index):calls.append(row);return dict(evidenceRefId=str(uuid4()),sourceRevision='a'*64)
         plan=dict(actions=[action('add_results',[target['key']])])

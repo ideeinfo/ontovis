@@ -304,6 +304,27 @@ class WorkOrderTests(unittest.TestCase):
         self.assertEqual(self.orders.listing({'q': '%'}, True)['total'], 0)
         self.assertEqual(self.orders.listing({'q': '13001'}, True)['total'], 3)
 
+    def test_legacy_work_order_title_matches_current_display_wording(self):
+        self.seed()
+        order=self.first()
+        title='13001 模拟报警排查'
+        with self.library.connect() as db:
+            db.execute('update work_orders set title=? where order_id=?',(title,order['orderId']))
+        for query in ('13001 模拟报警','13001 测试报警'):
+            items=self.orders.listing({'q':query},True)['items']
+            self.assertEqual([(row['orderId'],row['title']) for row in items],[(order['orderId'],title)])
+        self.assertEqual(self.orders.detail({'orderId':order['orderId']})['orderRevision'],order['orderRevision'])
+
+    def test_fixed_work_order_rule_text_feeds_the_original_snapshot_hash(self):
+        from apps.api.display_labels import display_text
+        self.seed()
+        original=self.first()
+        labels={item['id']:item['label'] for item in original['diagnosis']['checks']}
+        self.assertEqual(labels['alarm-context'],'核对演示报警代码、时间与所选对象')
+        self.assertEqual(display_text(labels['alarm-context']),'核对报警代码、时间与所选对象')
+        self.assertIn('演示排查目标',[item['label'] for item in original['diagnosis']['edges']])
+        self.assertEqual(labels['review'],'记录演示处理与复核依据；现场事实保持待核实')
+
     def test_budget_and_parameter_rejections_leave_records_unchanged(self):
         self.seed(); original = self.first()
         for change in ({'expectedOrderRevision': True}, {'requestId': 'bad'}, {'checks': ['unknown']},

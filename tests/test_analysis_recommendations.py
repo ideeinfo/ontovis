@@ -36,7 +36,7 @@ class MaterialRecommendationTests(TestCase):
         other=recommendations(self.reader('OTHER'),{'entry':{'projectOnly':True},'section':'alarms'})
         self.assertEqual(other['items'],[]);self.assertIn('SIMULATION_PROJECT_REQUIRED',other['gaps'])
 
-    def test_object_recommendations_explain_the_exercise_target_and_cable_check(self):
+    def test_object_recommendations_explain_the_alarm_target_and_cable_check(self):
         reader=self.reader()
         reader._rds=Mock(side_effect=lambda tag: {
             'item':{'entityUid':tag,'entityRevision':'r1'},'context':None})
@@ -44,12 +44,21 @@ class MaterialRecommendationTests(TestCase):
         rows={row['identifier']:row for row in value['items']}
         target=rows['=WEC+CN1']
         self.assertEqual(target['relevance'],'simulation_mapping')
-        self.assertEqual(target['reason'],'来自 13033 的演练设置')
-        self.assertEqual(target['reasonEn'],'Set as the alarm target in exercise 13033')
+        self.assertEqual(target['reason'],'由 13033 的报警配置指定')
+        self.assertEqual(target['reasonEn'],'Specified by the alarm configuration for 13033')
         cable=rows['=WEC+CN1-80W1']
         self.assertEqual(cable['relevance'],'simulation_rule')
-        self.assertEqual(cable['reason'],'24VDC供电线缆 · 13033 演练排查清单')
-        self.assertEqual(cable['reasonEn'],'Listed in the 13033 exercise checklist')
+        self.assertEqual(cable['reason'],'24VDC供电线缆 · 13033 排查清单')
+        self.assertEqual(cable['reasonEn'],'Listed in the 13033 troubleshooting checklist')
+
+    def test_alarm_search_accepts_displayed_title_with_the_same_fixed_revision(self):
+        reader=self.reader()
+        body={'entry':{'projectOnly':True},'section':'alarms'}
+        previous=recommendations(reader,body|{'q':'24V空开状态演练'})['items']
+        current=recommendations(reader,body|{'q':'24V空开状态测试'})['items']
+        self.assertEqual(len(current),1)
+        self.assertEqual(current,previous)
+        self.assertEqual(current[0]['selector']['datasetRevision'],sim.identity('13033')['datasetRevision'])
 
     def test_trends_offer_fixed_descriptors_only_and_preserve_current_event_window(self):
         for code,count in (('13001',5),('13004',3)):

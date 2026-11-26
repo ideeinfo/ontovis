@@ -1,3 +1,4 @@
+import {displayText} from './displayText';
 import {lazy, Suspense, useEffect, useMemo, useRef, useState} from 'react';
 import {ArrowRight, FileText, Paperclip, Plus, RefreshCw, Search} from 'lucide-react';
 import {ApiError, cancelled} from './api';
@@ -172,7 +173,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
     });
   }
   function startNew(alarm?:OrderAlarm) {
-    setFromAlarm(alarm||null);setTitle(alarm?.title||'');setIssue('');
+    setFromAlarm(alarm||null);setTitle(displayText(alarm?.title));setIssue('');
     setFaultCode(alarm?.faultCode||'');setFaultSystem('');setEquipment('');setSimulated(!!alarm);
     setError(null);setDialog('new');
   }
@@ -189,7 +190,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
     }
   }
   function prepareCopy(item:AnalysisCandidate|null) {
-    setChoice(item);setTitle((item?item.title+' · '+t('本次处理','This order'):detail?.title||'').slice(0,120));open('copy');
+    setChoice(item);setTitle(displayText(item?item.title+' · '+t('本次处理','This order'):detail?.title).slice(0,120));open('copy');
   }
   function submitRecord(){
     if(!recordText.trim())return;
@@ -237,7 +238,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
         {list?.items.map(item=><button type="button" key={item.orderId} aria-current={item.orderId===selected?'true':undefined}
           disabled={blockSelection&&item.orderId!==selected} onClick={()=>select(item.orderId)}>
           <span className="wov-line"><small>{item.orderId}</small><small>{workflowLabel(item.state,en)}</small></span>
-          <strong>{item.title}</strong><small>{[item.faultCode,item.handler?.name,orderRecordTime(item.updatedAt,en)].filter(Boolean).join(' · ')}</small>
+          <strong>{displayText(item.title)}</strong><small>{displayText([item.faultCode,item.handler?.name,orderRecordTime(item.updatedAt,en)].filter(Boolean).join(' · '))}</small>
         </button>)}
       </div>
       {loading&&<small role="status">{t('正在读取工单','Loading orders')}</small>}
@@ -247,11 +248,11 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
     <main className="wov-detail">
       {!dialog&&attachmentForm===null&&errorView}
       {detail&&state?<><header className="wov-header"><div><small>{detail.orderId} · r{detail.orderRevision}
-        {detail.sourceKind==='simulated'?' · '+t('模拟','Simulation'):''}</small><h2>{detail.title}</h2>
+        {detail.sourceKind==='simulated'?' · '+t('测试','Test'):''}</small><h2>{displayText(detail.title)}</h2>
         <div className="wov-actions"><span className="wov-tag">{workflowLabel(state,en)}</span>
           {detail.faultCode&&<span>{t('故障码','Fault code')} {detail.faultCode}</span>}
-          {workflow?.equipment&&<span>{workflow.equipment}</span>}
-          <span>{t('处理人','Handler')} {detail.handler?.name||'—'}</span></div>
+          {workflow?.equipment&&<span>{displayText(workflow.equipment)}</span>}
+          <span>{t('处理人','Handler')} {displayText(detail.handler?.name||'—')}</span></div>
       </div><div className="wov-actions end">
         {manage&&(state==='pending'||state==='processing'&&!detail.handler)&&<Btn primary disabled={disabled}
           onClick={()=>void update('accept')}>{state==='pending'?t('受理','Accept'):t('接手处理','Take over')}</Btn>}
@@ -263,15 +264,15 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
             <Btn disabled={disabled} onClick={()=>open('void')}>{t('作废并归档','Void and archive')}</Btn></div></details>}
         <Btn disabled={disabled} aria-label={t('重新读取工单','Reload order')} onClick={()=>setReload(n=>n+1)}><RefreshCw size={15}/></Btn>
       </div></header>
-      {workflow?.issue&&<p className="wov-issue">{workflow.issue}</p>}
+      {workflow?.issue&&<p className="wov-issue">{displayText(workflow.issue)}</p>}
       <nav className="wov-tabs" aria-label={t('工单详情','Order details')}>
         {([['record',t('处理记录','Records')],['analysis',t('相关分析','Related analyses')],['attachments',t('附件','Attachments')]] as const)
-          .map(([key,label])=><button type="button" key={key} aria-current={tab===key?'page':undefined} onClick={()=>setTab(key)}>{label}</button>)}
+          .map(([key,label])=><button type="button" key={key} aria-current={tab===key?'page':undefined} onClick={()=>setTab(key)}>{displayText(label)}</button>)}
       </nav>
       <div className="wov-content">
         {tab==='record'&&<>
           {(adopted||analyses.length>0)&&<button className="wov-related" type="button" onClick={()=>setTab('analysis')}>
-            <FileText size={18}/><span><strong>{candidateAdopted?.title|| (adopted?t('本单采用的分析','Adopted analysis'):t('相关分析可参考','Related analyses available'))}</strong>
+            <FileText size={18}/><span><strong>{displayText(candidateAdopted?.title|| (adopted?t('本单采用的分析','Adopted analysis'):t('相关分析可参考','Related analyses available')))}</strong>
             <small>{adopted?'r'+adopted.analysisRevision:t('按故障码检索','Matched by fault code')}</small></span><ArrowRight size={16}/>
           </button>}
           {workflow?<WorkOrderRecords key={detail.orderId} orderId={detail.orderId} revision={detail.orderRevision}
@@ -279,8 +280,8 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
             onOpenAttachment={setAttachment} onHistory={record=>void readHistory(record)}
             onAttach={attach?record=>setAttachmentForm(record.recordId):undefined}
             onCorrect={process?record=>{setCorrecting(record);setRecordText(record.text);setOccurredAt('');}:undefined}/>:
-            <p className="wov-muted">{detail.state==='closed'?(detail.note||detail.investigation.conclusion||t('旧版未登记处理结果','Legacy order has no recorded result')):
-              t('暂无新版处置记录','No treatment records in the new workflow')}</p>}
+            <p className="wov-muted">{displayText(detail.state==='closed'?(detail.note||detail.investigation.conclusion||t('旧版未登记处理结果','Legacy order has no recorded result')):
+              t('暂无新版处置记录','No treatment records in the new workflow'))}</p>}
           {process&&<form className="wov-panel wov-form" onSubmit={event=>{event.preventDefault();submitRecord();}}>
             <label>{correcting?t('更正处置记录','Correct treatment record'):t('新增处置记录','Add treatment record')}
               <textarea value={recordText} maxLength={4000} rows={3} disabled={disabled}
@@ -301,7 +302,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
           {!!detail.events.length&&<details className="wov-panel"><summary>{t('流转记录','Workflow history')}</summary>
             <ol className="wov-events">{detail.events.slice().reverse().map(event=><li key={event.revision}>
               <strong>{orderActionLabel(event.action,en)}</strong> <small>{event.actor} · {orderRecordTime(event.recordedAt,en)} · r{event.revision}</small>
-              {event.note&&<p>{event.note}</p>}</li>)}</ol></details>}
+              {event.note&&<p>{displayText(event.note)}</p>}</li>)}</ol></details>}
           {detail.batchId!=='work-order-workflow-v1'&&<details className="wov-panel" onToggle={event=>setLegacy(event.currentTarget.open)}>
             <summary>{t('旧版诊断与资料','Legacy diagnosis and evidence')}</summary>
             {legacy&&<Suspense fallback={<p role="status">{t('正在读取','Loading')}</p>}>
@@ -316,7 +317,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
             {!detail.workflow&&!readOnly&&onAnalyze&&<Btn onClick={()=>onAnalyze(detail.orderId)}>{t('进入原分析','Open original analysis')}</Btn>}
           </div>
           {adopted&&<section className="wov-panel"><small>{t('本单采用','Adopted for this order')} · r{adopted.analysisRevision} · {adopted.actor}</small>
-            <h3>{candidateAdopted?.title||t('已采纳分析','Adopted analysis')}</h3>
+            <h3>{displayText(candidateAdopted?.title||t('已采纳分析','Adopted analysis'))}</h3>
             <div className="wov-actions"><Btn onClick={()=>setAnalysis(adopted)}>{t('查看分析','View analysis')}</Btn>
               {process&&<Btn disabled={disabled} onClick={()=>open('clear')}>{t('取消采纳','Clear adoption')}</Btn>}</div>
           </section>}
@@ -334,10 +335,10 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
               item.sameSystem?t('同代码体系','Same code system'):'',
               item.sameEquipment?t('同设备标记','Same equipment label'):'',
               item.equipmentMismatch?t('设备标记不同','Different equipment labels'):'',
-              item.simulationMismatch?t('模拟与本单来源不同','Simulation differs from this order'):'',
+              item.simulationMismatch?t('资料来源与本单不同','The source differs from this order'):'',
               item.sameCode?t('适用性待核','Verify applicability'):''].filter(Boolean).join(' · ')}</small>
-            <h3>{item.title}</h3>
-            {item.applicability.summary&&<p>{item.applicability.summary}</p>}
+            <h3>{displayText(item.title)}</h3>
+            {item.applicability.summary&&<p>{displayText(item.applicability.summary)}</p>}
             <div className="wov-actions">
               <Btn onClick={()=>setAnalysis(item)}>{t('查看','View')}</Btn>
               {process&&<><Btn disabled={disabled} onClick={()=>prepareCopy(item)}>{t('基于此分析修改','Make a copy')}</Btn>
@@ -356,7 +357,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
             {attach&&<Btn primary disabled={disabled} onClick={()=>setAttachmentForm('')}><Plus size={15}/>{t('添加附件','Add attachment')}</Btn>}</div>
           {!workflow?.attachments.length&&<small>{t('暂无附件','No attachments yet')}</small>}
           {workflow?.attachments.map(item=><div className="wov-file" key={item.attachmentId}>
-            <FileText size={18}/><div><strong>{item.title}</strong>
+            <FileText size={18}/><div><strong>{displayText(item.title)}</strong>
               <small>v{item.versionNumber} · {item.actor} · {orderRecordTime(item.recordedAt,en)}</small></div>
             <Btn onClick={()=>setAttachment(item)}>{t('查看','View')}</Btn>
             {attach&&<Btn disabled={disabled} onClick={()=>{setAttachment(item);open('remove');}}>{t('移出','Remove')}</Btn>}
@@ -375,15 +376,15 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
       onShare={(item,share)=>run('/analysis-share',{...fixedAnalysis(item),share},()=>{})}/>}
     {recordHistory&&<Modal title={t('记录更正历史','Record corrections')} description={detail?.orderId||''} onClose={()=>setRecordHistory(null)}>
       <div className="wov-form">{recordHistory.map(row=><article className="wov-record" key={row.recordRevision}>
-        <small>r{row.recordRevision} · {row.editedBy||row.actor} · {orderRecordTime(row.editedAt||row.recordedAt,en)}</small><p>{row.text}</p>
+        <small>r{row.recordRevision} · {row.editedBy||row.actor} · {orderRecordTime(row.editedAt||row.recordedAt,en)}</small><p>{displayText(row.text)}</p>
       </article>)}</div></Modal>}
     {dialog==='archive'&&<ConfirmationDialog title={t('将工单归档？','Archive this work order?')}
-      subject={detail?`${detail.orderId} · ${detail.title}`:undefined} description={t('归档后可查看工单的处理记录和附件。','The order’s treatment records and attachments can be viewed after archiving.')}
+      subject={displayText(detail?`${detail.orderId} · ${detail.title}`:undefined)} description={t('归档后可查看工单的处理记录和附件。','The order’s treatment records and attachments can be viewed after archiving.')}
       status={errorView} closeDisabled={disabled} onClose={()=>setDialog(null)}>
       <Btn primary disabled={disabled} onClick={()=>void update('archive')}>{t('归档工单','Archive order')}</Btn>
     </ConfirmationDialog>}
     {dialog==='remove'&&attachment&&<ConfirmationDialog title={t('将附件移出工单？','Remove this attachment from the order?')}
-      subject={`${attachment.title} · v${attachment.versionNumber}`}
+      subject={displayText(`${attachment.title} · v${attachment.versionNumber}`)}
       description={t('需要时可从项目文档库重新添加。','Add it again from the project document library when needed.')}
       status={errorView} closeDisabled={disabled} onClose={()=>setDialog(null)}>
       <Btn data-danger disabled={disabled} onClick={()=>void update('detach',{attachmentId:attachment.attachmentId},()=>setAttachment(null))}>
@@ -391,7 +392,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
       </Btn>
     </ConfirmationDialog>}
     {dialog==='clear'&&<ConfirmationDialog title={t('取消采纳这份分析？','Clear the adopted analysis?')}
-      subject={candidateAdopted&&adopted?`${candidateAdopted.title} · r${adopted.analysisRevision}`:detail?.orderId}
+      subject={displayText(candidateAdopted&&adopted?`${candidateAdopted.title} · r${adopted.analysisRevision}`:detail?.orderId)}
       description={t('可为此工单重新选择要采纳的分析。','You can choose another analysis for this order.')}
       status={errorView} closeDisabled={disabled} onClose={()=>setDialog(null)}>
       <Btn data-danger disabled={disabled} onClick={()=>void update('clear_analysis')}>{t('取消采纳','Clear adoption')}</Btn>
@@ -408,7 +409,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
             {faultCode&&!fromAlarm&&<label>{t('代码体系（选填）','Code system (optional)')}
               <input value={faultSystem} maxLength={120} disabled={disabled} onChange={event=>setFaultSystem(event.target.value)}/></label>}</div>
           <label className="wov-inline"><input type="checkbox" checked={simulated} disabled={disabled||!!fromAlarm}
-            onChange={event=>setSimulated(event.target.checked)}/>{t('模拟工单','Simulated order')}</label>
+            onChange={event=>setSimulated(event.target.checked)}/>{t('测试工单','Test order')}</label>
           <Btn primary disabled={disabled||!title.trim()||!issue.trim()} onClick={()=>void run('/create',
             {title:title.trim(),issue:issue.trim(),faultCode:faultCode.trim(),faultSystem:faultCode?faultSystem.trim():'',
               equipment:equipment.trim(),simulated,...(fromAlarm?{alarm:{datasetId:fromAlarm.datasetId,datasetRevision:fromAlarm.datasetRevision}}:{})},
@@ -416,7 +417,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
         </>}
         {dialog==='assign'&&<>
           <label>{t('处理人','Handler')}<select value={handler} disabled={disabled} onChange={event=>setHandler(event.target.value)}>
-            {members.map(item=><option key={item.userId} value={item.userId}>{item.name}</option>)}</select></label>
+            {members.map(item=><option key={item.userId} value={item.userId}>{displayText(item.name)}</option>)}</select></label>
           <label>{t('转交说明（选填）','Transfer note (optional)')}<textarea value={reason} maxLength={1000} onChange={event=>setReason(event.target.value)}/></label>
           <Btn primary disabled={disabled||!handler} onClick={()=>void update('assign',{handlerId:handler,reason:reason.trim()})}>{t('确认分派','Assign handler')}</Btn>
         </>}
@@ -424,7 +425,7 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
           {!!records.filter(item=>item.cycle===workflow?.cycle).length&&<label>{t('使用已保存记录','Use a saved record')}
             <select value={completionRecord} disabled={disabled} onChange={event=>setCompletionRecord(event.target.value)}>
               <option value="">{t('填写处理结果','Enter result')}</option>
-              {records.filter(item=>item.cycle===workflow?.cycle).map(row=><option key={row.recordId} value={row.recordId}>{row.text.slice(0,80)}</option>)}
+              {records.filter(item=>item.cycle===workflow?.cycle).map(row=><option key={row.recordId} value={row.recordId}>{displayText(row.text.slice(0,80))}</option>)}
             </select></label>}
           {!completionRecord&&<label>{t('处理结果','Treatment result')}<textarea value={reason} maxLength={4000} disabled={disabled} onChange={event=>setReason(event.target.value)}/></label>}
           <Btn primary disabled={disabled||!completionRecord&&!reason.trim()} onClick={()=>void update('complete',
@@ -435,14 +436,14 @@ export function WorkOrderWorkflowPage({api:workbenchApi, locale='zh', initialQue
           <Btn primary disabled={disabled||!reason.trim()} onClick={()=>void update(dialog,{reason:reason.trim()})}>{dialogTitle[dialog]}</Btn>
         </>}
         {dialog==='copy'&&detail&&<>
-          {choice&&<small>{choice.title} · r{choice.analysisRevision}</small>}
+          {choice&&<small>{displayText(choice.title)} · r{choice.analysisRevision}</small>}
           <label>{t('分析名称','Analysis name')}<input value={title} maxLength={120} disabled={disabled} onChange={event=>setTitle(event.target.value)}/></label>
           <Btn primary disabled={disabled||!title.trim()} onClick={()=>void run('/analysis-draft',{orderId:detail.orderId,
             expectedOrderRevision:detail.orderRevision,title:title.trim(),...(choice?{base:fixedAnalysis(choice)}:{})},
             value=>{setDialog(null);onOpenEditor?.(value.analysisSessionId,value.analysisRevision,!recordText.trim());})}>
             {choice?t('另存并编辑','Save copy and edit'):t('创建并编辑','Create and edit')}</Btn>
         </>}
-        {dialog==='adopt'&&choice&&<><p>{choice.title} · r{choice.analysisRevision}</p>
+        {dialog==='adopt'&&choice&&<><p>{displayText(choice.title)} · r{choice.analysisRevision}</p>
           <label>{t('采纳说明（选填）','Adoption note (optional)')}<textarea value={reason} maxLength={1000} disabled={disabled}
             onChange={event=>setReason(event.target.value)}/></label>
           <Btn primary disabled={disabled} onClick={()=>void update('adopt_analysis',{...fixedAnalysis(choice),reason:reason.trim()})}>

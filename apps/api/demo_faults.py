@@ -34,6 +34,7 @@ def scenarios():
 
 
 def diagnosis(code):
+    # These labels are included in snapshots of orders that read the seed rules.
     definition = next(item for item in FAULTS if item[0] == code)
     _, name, page, parts, gap = definition
     nodes = [{'id': 'alarm', 'kind': 'alarm', 'label': code + ' · ' + name, 'state': 'simulated'},

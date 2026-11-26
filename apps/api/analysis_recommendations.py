@@ -11,6 +11,7 @@ import time
 from . import analysis_drafts as d
 from .analysis_source_reader import selected
 from .authority import PreviewError
+from .display_labels import matches_display_text
 
 PRIORITY = {'field_record':0, 'same_event':0, 'selected_object':0,
     'object_association':10, 'shared_definition':10, 'binding':10,
@@ -81,7 +82,7 @@ def decode_cursor(token, key, scope):
 
 
 def _matches(item, query):
-    return not query or query in ' '.join(str(item.get(k,'')) for k in ('title','identifier','reason','reasonEn')).casefold()
+    return matches_display_text(' '.join(str(item.get(k,'')) for k in ('title','identifier','reason','reasonEn')),query)
 
 
 def _document(item, reason, reason_en, relevance):

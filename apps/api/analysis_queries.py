@@ -11,6 +11,7 @@ from .analysis_evidence import AnalysisEvidence
 from .analysis_source_reader import selected
 from .authority import PreviewError
 from .analysis_recommendations import recommendation
+from .display_labels import matches_display_text
 
 
 def entry_dataset(reader, entry):
@@ -113,8 +114,8 @@ def recommendations(reader, body, scene_library=None, *, cursor_key=None, sessio
         if dataset:
             from .demo_faults import diagnosis
             fault_code=dataset['faultCode']
-            tags=[(dataset['primaryRds'],f'来自 {fault_code} 的演练设置',f'Set as the alarm target in exercise {fault_code}'),
-                ('=WEC+'+dataset['cabinet'],'本次演练涉及的柜体','Cabinet involved in this exercise')]
+            tags=[(dataset['primaryRds'],f'由 {fault_code} 的报警配置指定',f'Specified by the alarm configuration for {fault_code}'),
+                ('=WEC+'+dataset['cabinet'],'本次报警涉及的柜体','Cabinet involved in this alarm')]
             channel=sim.PROFILES[fault_code].get('channel')
             for node in diagnosis(fault_code)['nodes']:
                 if node['kind']!='component':continue
@@ -122,7 +123,7 @@ def recommendations(reader, body, scene_library=None, *, cursor_key=None, sessio
                     address=channel['address']
                     tags.append((channel['moduleRds'],f'检查该模块的 {address} 通道',f'Check channel {address} on this module'))
                 else:
-                    tags.append((node['rds'],f"{node['label']} · {fault_code} 演练排查清单",f'Listed in the {fault_code} exercise checklist'))
+                    tags.append((node['rds'],f"{node['label']} · {fault_code} 排查清单",f'Listed in the {fault_code} troubleshooting checklist'))
             seen_tags=set()
             for tag,reason,reason_en in tags:
                 if tag in seen_tags:continue
@@ -143,11 +144,11 @@ def recommendations(reader, body, scene_library=None, *, cursor_key=None, sessio
                 candidates.sort(key=lambda item:(item['datasetId']!=(dataset or {}).get('datasetId'),
                     item['faultCode']!=(dataset or {}).get('faultCode'),item['timeFrom'],item['datasetId']))
                 for item in candidates:
-                    if query.casefold() not in (item['faultCode']+' '+item['title']+' '+item['primaryRds']).casefold():continue
+                    if not matches_display_text(item['faultCode']+' '+item['title']+' '+item['primaryRds'],query.casefold()):continue
                     current=dataset and item['datasetId']==dataset['datasetId'];same=dataset and item['faultCode']==dataset['faultCode']
                     rows.append(recommendation('alarm',item['faultCode']+' · '+item['title'],
                         {key:item[key] for key in ('datasetId','datasetRevision')}|{'eventId':item['datasetId']+'-event-1'},
-                        '本次模拟报警' if current else '同码独立事件，仅作历史参照' if same else '本项目其他模拟报警',
+                        '本次报警回放' if current else '同码独立事件，仅作历史参照' if same else '本项目其他报警回放',
                         relevance='same_event' if current else 'same_fault' if same else 'catalogue_search',preview={'dataset':item},identifier=item['primaryRds']))
             attempt(add_alarms)
         elif not dataset:gaps.append('先加入故障报警，再选择该报警的趋势。')
@@ -158,7 +159,7 @@ def recommendations(reader, body, scene_library=None, *, cursor_key=None, sessio
                 if query.casefold() not in (names[metric]+' '+metric).casefold():continue
                 rows.append(recommendation('trend',names[metric],
                     {key:dataset[key] for key in ('datasetId','datasetRevision','timeFrom','timeTo')}|{'metricId':metric},
-                    '本次模拟报警的固定时间窗',relevance='same_event',reasonEn='Fixed time window of the current simulated alarm.'))
+                    '本次报警回放的固定时间窗',relevance='same_event',reasonEn='Fixed time window of the current alarm replay.'))
     elif section=='models':
         if body.get('entityUid'):chosen=reader.reader.context_for_object(body['entityUid'],body.get('expectedEntityRevision'))
         elif dataset and not query.strip():chosen=reader._rds('=WEC+'+dataset['cabinet'])

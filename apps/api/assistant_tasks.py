@@ -33,7 +33,7 @@ def replay_equipment_context(context, fixed, question):
     if not any(ref['sourceKind']=='alarm' and all(descriptor.get(key)==context.get(key)
                for key in ('eventId','datasetId','datasetRevision')) for ref,descriptor in fixed):
         return None
-    if not re.search(r'这台设备|这个(?:设备|柜体|柜)|(?:这条|本次|当前)(?:模拟)?报警|(?:this|current) (?:equipment|cabinet|alarm)',question,re.I):
+    if not re.search(r'这台设备|这个(?:设备|柜体|柜)|(?:这条|本次|当前)(?:测试|模拟)?报警|(?:this|current) (?:equipment|cabinet|(?:test )?alarm)',question,re.I):
         return None
     return simulated_faults.dataset(context['datasetId'],context['datasetRevision'])
 

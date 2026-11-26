@@ -192,7 +192,7 @@ class AlarmObjectMappingTests(TestCase):
 
     def test_explicit_project_identifier_links_a_simulated_alarm_without_extra_source_reads(self):
         row = self.value()['items'][0]
-        self.assertEqual((row['fromRef'], row['toRef'], row['kind'], row['label']), ('alarm', 'object', 'alarm_object_mapping', '模拟报警对象'))
+        self.assertEqual((row['fromRef'], row['toRef'], row['kind'], row['label']), ('alarm', 'object', 'alarm_object_mapping', '报警对象'))
         self.assertEqual(self.value(status='needs_review')['items'][0]['origin'], 'source')
 
     def test_alias_wrong_scope_status_and_ambiguous_identity_do_not_infer_an_alarm_target(self):

@@ -1,3 +1,4 @@
+import {displayText} from './displayText';
 import {useEffect,useMemo,useState} from 'react';
 import type {DraftApi} from './AnalysisWorkspace';
 import {AnalysisEvidenceViewer} from './AnalysisEvidenceViewer';
@@ -26,7 +27,7 @@ export function AssistantSourceViewer({api,runId,reference,en,onClose}:{api:Draf
  },[api,runId,reference.key,reload]);
  const card:CanvasCard|null=value&&api.project?{id:reference.key,kind:value.kind,title:value.source.title||reference.title||reference.key,
   x:0,y:0,width:400,height:300,pinned:false,source:{system:'ontobase',ontobaseConnectionId:api.project.ontobaseConnectionId,projectCode:api.project.projectCode,id:runId,revision:value.revision}}:null;
- return <Modal className="ac-source-modal" title={value?.source.title||reference.title||(en?'Cited source':'引用原文')} description={en?'Read the fixed source without changing the canvas':'查看固定版本原文，不改变画布'} onClose={onClose}>
+ return <Modal className="ac-source-modal" title={displayText(value?.source.title||reference.title||(en?'Cited source':'引用原文'))} description={en?'Read the fixed source without changing the canvas':'查看固定版本原文，不改变画布'} onClose={onClose}>
   <div className="ac-expanded">{value&&card?<AnalysisEvidenceViewer card={card} source={value.source} sources={sources} en={en} anchor={assistantSourceAnchor(reference)}/>:<div className="ac-source-state" role="status">{error?assistantMessage(error,en):en?'Loading source…':'正在读取固定来源…'}{!!error&&<Btn onClick={()=>setReload(n=>n+1)}>{en?'Retry':'重试'}</Btn>}</div>}</div>
  </Modal>;
 }

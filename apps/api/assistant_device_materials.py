@@ -52,10 +52,10 @@ def query(tools, needle, *, replay=None, drawings=False):
             installationContextId=target['installationContextId'],expectedHierarchyRevision=target['hierarchyRevision'])
         tools.results.append(dict(key='R'+str(len(tools.results)+1),kind='equipment_material_scope',
             title=target['displayName'],identifier=target['entityUid'],version=target['entityRevision'],
-            reason='模拟报警登记的安装设备',simulated=True,showDrawings=drawings and 'drawing' in tools.allowed))
-        tools.trace.append(dict(tool='equipment_materials',state='complete',count=1,scope='使用本次模拟报警已登记的安装柜体'))
+            reason='报警回放关联的安装设备',simulated=True,showDrawings=drawings and 'drawing' in tools.allowed))
+        tools.trace.append(dict(tool='equipment_materials',state='complete',count=1,scope='使用本次报警回放已登记的安装柜体'))
         title = redact(target['displayName'],tools.private)
-        tools.catalogue_source('object',title[:120],f'本次模拟报警关联到「{title}」。以下资料按该安装柜体查询。')
+        tools.catalogue_source('object',title[:120],f'本次报警回放关联到「{title}」。以下资料按该安装柜体查询。')
     else:
         selection = _catalogue_selection(tools,equipment,needle)
         if selection is None:

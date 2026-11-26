@@ -2,6 +2,7 @@ import { useId, useRef, type ReactNode, type ButtonHTMLAttributes } from 'react'
 import * as Dialog from '@radix-ui/react-dialog';
 import { TriangleAlert, X } from 'lucide-react';
 import { usePreferences } from './Preferences';
+import {displayText} from './displayText.ts';
 
 export function Badge({children, tone = 'neutral'}: {children: ReactNode; tone?: string}) {
   return <span className={`ov-badge ${tone}`}>{children}</span>;
@@ -10,7 +11,8 @@ export function Btn({children, primary, className='', ...props}: ButtonHTMLAttri
   return <button type="button" {...props} className={`ov-btn ${primary ? 'primary' : ''} ${className}`}>{children}</button>;
 }
 export function IconBtn({label, children, ...props}: ButtonHTMLAttributes<HTMLButtonElement> & {label: string}) {
-  return <button type="button" {...props} className="ov-icon-btn" aria-label={label} title={label}>{children}</button>;
+  const name=displayText(label);
+  return <button type="button" {...props} className="ov-icon-btn" aria-label={name} title={name}>{children}</button>;
 }
 export function Panel({title, children, className = ''}: {title?: ReactNode; children: ReactNode; className?: string}) {
   return <section className={`ov-panel ${className}`}>{title && <div className="ov-panel-head"><h2>{title}</h2></div>}{children}</section>;
@@ -25,8 +27,8 @@ export function Modal({title, description, onClose, children, closeDisabled, onO
   return <Dialog.Root open onOpenChange={open => {if (!open && !closeDisabled) onClose();}}><Dialog.Portal>
     <div className="ov-app ov-modal-root"><Dialog.Overlay className="ov-modal-overlay" />
       <Dialog.Content className={`ov-dialog${className?' '+className:''}`} aria-describedby={descriptionId} onOpenAutoFocus={onOpenAutoFocus} onCloseAutoFocus={onCloseAutoFocus}>
-        <header><Dialog.Title>{title}</Dialog.Title><Dialog.Close asChild><IconBtn label={t('close')} disabled={closeDisabled}><X size={18} /></IconBtn></Dialog.Close></header>
-        <Dialog.Description id={descriptionId} className="ov-sr-only">{description}</Dialog.Description>
+        <header><Dialog.Title>{displayText(title)}</Dialog.Title><Dialog.Close asChild><IconBtn label={t('close')} disabled={closeDisabled}><X size={18} /></IconBtn></Dialog.Close></header>
+        <Dialog.Description id={descriptionId} className="ov-sr-only">{displayText(description)}</Dialog.Description>
         <div className="ov-dialog-body">{children}</div>
       </Dialog.Content></div>
   </Dialog.Portal></Dialog.Root>;
@@ -49,9 +51,9 @@ export function ConfirmationDialog({title,subject,description,warning,status,onC
       cancel.current.focus({preventScroll:true});
     }}>
     <div className="ov-confirm-content">
-      {subject&&<p className="ov-confirm-subject">{subject}</p>}
-      <p>{description}</p>
-      {warning&&<div className="ov-confirm-warning"><TriangleAlert size={16} aria-hidden="true"/><p>{warning}</p></div>}
+      {subject&&<p className="ov-confirm-subject">{displayText(subject)}</p>}
+      <p>{displayText(description)}</p>
+      {warning&&<div className="ov-confirm-warning"><TriangleAlert size={16} aria-hidden="true"/><p>{displayText(warning)}</p></div>}
       {status&&<div className="ov-confirm-status">{status}</div>}
     </div>
     <footer className="ov-confirm-actions">

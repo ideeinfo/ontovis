@@ -5,9 +5,9 @@ import type {DraftApi} from './AnalysisWorkspace';
 import type {LlmService,LlmTask} from './llmSettings';
 import type {EngineeringTask} from './assistantTasks';
 export const ASSISTANT_ROOT='/api/workbench/assistant';
-export const sourceLabels:Record<string,[string,string]>={object:['工程对象摘要','Object summary'],alarm:['模拟报警','Simulated alarm'],trend:['趋势汇总','Trend summary'],drawing:['图纸元数据','Drawing metadata'],photo:['照片定位元数据','Photo location metadata'],model:['模型绑定摘要','Model binding metadata'],document:['文档知识摘录','Document knowledge excerpt'],work_order:['历史工单摘要','Historical work order']};
+export const sourceLabels:Record<string,[string,string]>={object:['工程对象摘要','Object summary'],alarm:['测试报警','Test alarm'],trend:['趋势汇总','Trend summary'],drawing:['图纸元数据','Drawing metadata'],photo:['照片定位元数据','Photo location metadata'],model:['模型绑定摘要','Model binding metadata'],document:['文档知识摘录','Document knowledge excerpt'],work_order:['历史工单摘要','Historical work order']};
 export const materialRoles:Record<string,[string,string]>={
- alarm:['事件、时间与状态 · 保留模拟标记','Events, timing and state · simulation labels retained'],
+ alarm:['事件、时间与状态 · 标明测试来源','Events, timing and state · Test source identified'],
  trend:['固定窗口统计与质量 · 不发送完整曲线','Fixed-window statistics and quality · no full curve'],
  object:['有限工程关联 · 候选接线须复核','Bounded associations · candidate wiring needs review'],
  document:['固定知识摘录与证据页 · 非全文','Fixed knowledge excerpts and evidence pages · not full text'],

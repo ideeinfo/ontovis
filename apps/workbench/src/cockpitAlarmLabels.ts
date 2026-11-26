@@ -1,4 +1,5 @@
 import {cockpitAlarmPresentation,replayKey,type CockpitAlarmRow,type ReplayPositions,type ReplaySelection} from './cockpitAlarms.ts';
+import {displayText} from './displayText.ts';
 import type {CockpitAlarmTarget} from './cockpitAlarmTarget';
 import type {SceneAlarmLabel} from './sceneAlarm';
 
@@ -30,7 +31,7 @@ export function cockpitAlarmLabels(rows:Row[],sceneId:string,instanceId:string|n
   const {row:representative,severity}=selected||group.rows.find(row=>row.severity==='critical')||group.rows[0],target=representative.target!;
   const count=group.rows.length;
   return {id,instanceId:target.instanceId,level:group.level,label:group.level==='asset'?target.rootName:target.displayName,
-   detail:group.level==='asset'?(en?`${count} alarm${count===1?'':'s'}`:`${count}条报警`):selected||count===1?`${representative.dataset.faultCode} · ${representative.dataset.title}`:(en?`${count} alarms`:`${count}条报警`),
+   detail:group.level==='asset'?(en?`${count} alarm${count===1?'':'s'}`:`${count}条报警`):selected||count===1?`${representative.dataset.faultCode} · ${displayText(representative.dataset.title)}`:(en?`${count} alarms`:`${count}条报警`),
    severity,selection:representative.dataset,target,...(group.componentKeys?{componentKeys:group.componentKeys}:{})};
  });
 }

@@ -350,18 +350,18 @@ export class WorkbenchApi {
 
 export function failureMessage(error: unknown, locale = 'zh'): string {
   const modelErrors:Record<string,[string,string]> = {
-    STREAM_LIMIT_EXCEEDED:['模拟订阅已达当前连接上限，请停止其他订阅后重试。','The simulation connection limit was reached. Stop another subscription and retry.'],
+    STREAM_LIMIT_EXCEEDED:['回放订阅已达连接上限，请停止其他订阅后重试。','The replay connection limit was reached. Stop another subscription and retry.'],
     STREAM_CURSOR_EXPIRED:['续读位置已过期，请返回回放并重新订阅。','The resume position expired. Return to replay and start a new subscription.'],
-    STREAM_SOURCE_CHANGED:['模拟来源版本已变化，请重新读取后订阅。','The simulated source changed. Reload before subscribing.'],
+    STREAM_SOURCE_CHANGED:['回放数据版本已变化，请刷新后再订阅。','The replay data version changed. Reload before subscribing.'],
     STREAM_PROTOCOL_INVALID:['订阅数据不完整，已保留最后读取位置。','The stream data is invalid. The last applied position is retained.'],
     STREAM_STALLED:['订阅暂未收到新数据，正在尝试续读。','No stream data arrived. Attempting to resume.'],
     WORK_ORDER_WRITE_FORBIDDEN:['当前项目仅管理员可修改工单。','Only project administrators can update work orders.'],
     WORK_ORDER_CHANGED:['工单已变化，请重新读取后再操作。','This work order changed. Reload before continuing.'],
     WORK_ORDER_STATE_CONFLICT:['当前工单状态不允许此操作，请重新读取。','This action is not available in the current state. Reload.'],
-    WORK_ORDER_CHECKS_REQUIRED:['请完成全部演示排查项，再提交或关闭。','Complete all exercise checks before submitting or closing.'],
+    WORK_ORDER_CHECKS_REQUIRED:['请完成全部排查项，再提交或关闭。','Complete all checks before submitting or closing.'],
     WORK_ORDER_DIAGNOSIS_REQUIRED:['请先保存逐项排查结果、结论和复核依据；支持或排除的原因也需要依据。','Save all step results, conclusion and review basis. Supported or rejected hypotheses also need a basis.'],
     WORK_ORDER_DIAGNOSIS_INVALID:['排查方案内容无效或超过上限，请检查后再保存。','The investigation plan is invalid or exceeds its limits.'],
-    DEMO_TARGETS_UNAVAILABLE:['演示柜体身份需要重新核对，尚未生成工单。','The demo cabinet identities require review. No orders were created.'],
+    DEMO_TARGETS_UNAVAILABLE:['请重新核对测试柜体身份后再生成工单。','Review the test cabinet identities before creating orders.'],
     WORK_ORDER_TARGET_CHANGED:['工单保留的柜体依据已变化，请重新核对。','The stored cabinet basis changed and requires review.'],
     DIAGNOSTIC_OBJECT_UNRESOLVED:['该完整主位号尚无唯一可读取对象，请核对项目定义和资料。','This full primary tag has no unique readable object. Review the project definition.'],
     CABINET_MEMBERSHIP_UNRESOLVED:['该对象尚未登记到所选柜体，请先在OntoBase核对归属。','This object has no recorded membership in the selected cabinet. Review it in OntoBase.'],

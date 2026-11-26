@@ -10,6 +10,7 @@ from uuid import UUID
 
 from .authority import PreviewError
 from .demo_faults import BATCH, DEMO_PROJECT, RULE_REVISION, diagnosis, scenarios
+from .display_labels import display_text
 from .work_order_diagnosis import initial_plan, validate_plan, complete, reset_results
 
 STATES = ('open', 'diagnosing', 'investigating', 'review', 'closed')
@@ -17,6 +18,7 @@ WORKFLOW_STATES = ('pending', 'processing', 'completed', 'archived')
 WORKFLOW_STATE_SQL = """case state when 'open' then 'pending' when 'closed' then 'completed'
     when 'diagnosing' then 'processing' when 'investigating' then 'processing'
     when 'review' then 'processing' else state end"""
+TITLE_SEARCH_SQL = "(title like ? escape '\\' or display_title(title) like ? escape '\\')"
 TRANSITIONS = {'accept': ('open', 'diagnosing'), 'investigate': ('diagnosing', 'investigating'),
                'submit': ('investigating', 'review'), 'return': ('review', 'investigating'),
                'close': ('review', 'closed'), 'reopen': ('closed', 'investigating')}
@@ -138,15 +140,16 @@ class WorkOrders:
         require(state in ('', *STATES, *WORKFLOW_STATES) and type(start) is int and 0 <= start <= 10000
                 and type(limit) is int and 1 <= limit <= 50)
         with self.library.connect() as db:
+            db.create_function('display_title', 1, display_text, deterministic=True)
             snapshot = self._snapshot(db)
             if start or 'expectedSnapshotRevision' in body:
                 require(body.get('expectedSnapshotRevision') == snapshot, 'WORK_ORDER_CHANGED', 409)
             # Escape LIKE metacharacters so a search is a literal phrase.
             phrase = '%' + q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
             state_field = WORKFLOW_STATE_SQL if state in WORKFLOW_STATES else 'state'
-            predicate = f"""(title like ? escape '\\' or fault_code like ? escape '\\' or w.order_id like ? escape '\\')
+            predicate = f"""({TITLE_SEARCH_SQL} or fault_code like ? escape '\\' or w.order_id like ? escape '\\')
                 and (?='' or ({state_field})=?) and (?='' or json_extract(f.data,'$.handler.userId')=?)"""
-            params = (phrase, phrase, phrase, state, state, handler, handler)
+            params = (phrase, phrase, phrase, phrase, state, state, handler, handler)
             joined = ' from work_orders w left join work_order_workflows f on f.order_id=w.order_id where '
             total = db.execute('select count(*)' + joined + predicate, params).fetchone()[0]
             rows = db.execute('select w.*,f.data as workflow_data' + joined + predicate +
@@ -164,16 +167,17 @@ class WorkOrders:
         start,limit=body['cursor'],body['limit']
         require(type(start) is int and 0<=start<=10000 and type(limit) is int and 1<=limit<=50)
         with self.library.connect() as db:
+            db.create_function('display_title', 1, display_text, deterministic=True)
             snapshot=self._snapshot(db)
             if start or body['expectedSnapshotRevision'] is not None:
                 require(body['expectedSnapshotRevision']==snapshot,'WORK_ORDER_CHANGED',409)
             phrase='%'+q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-            predicate="(title like ? escape '\\' or fault_code like ? escape '\\' or w.order_id like ? escape '\\')"
+            predicate=f"({TITLE_SEARCH_SQL} or fault_code like ? escape '\\' or w.order_id like ? escape '\\')"
             rows=db.execute('''select w.*,f.data as workflow_data from work_orders w
                 left join work_order_workflows f on f.order_id=w.order_id where '''+predicate+''' order by
                 case when w.order_id=? then 0 when fault_code=? and ?<>'' then 1 else 2 end,
                 updated_at desc,ordinal,w.order_id limit ? offset ?''',
-                (phrase,phrase,phrase,order,fault,fault,limit+1,start)).fetchall()
+                (phrase,phrase,phrase,phrase,order,fault,fault,limit+1,start)).fetchall()
             return {'items':[self._public(row) for row in rows[:limit]],'snapshotRevision':snapshot,
                 'nextCursor':start+limit if len(rows)>limit else None}
 
@@ -186,12 +190,13 @@ class WorkOrders:
         start,limit=body['cursor'],body['limit']
         require(type(start) is int and 0<=start<=10000 and type(limit) is int and 1<=limit<=12)
         with self.library.connect() as db:
+            db.create_function('display_title', 1, display_text, deterministic=True)
             snapshot=self._snapshot(db)
             if start or body['snapshotRevision'] is not None:
                 require(body['snapshotRevision']==snapshot,'WORK_ORDER_CHANGED',409)
             phrase='%'+q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'
-            where="(?='' or fault_code=?) and (?='' or w.order_id=?) and (title like ? escape '\\' or w.order_id like ? escape '\\')"
-            args=(fault,fault,order_id,order_id,phrase,phrase)
+            where=f"(?='' or fault_code=?) and (?='' or w.order_id=?) and ({TITLE_SEARCH_SQL} or w.order_id like ? escape '\\')"
+            args=(fault,fault,order_id,order_id,phrase,phrase,phrase)
             total=db.execute('select count(*) from work_orders w where '+where,args).fetchone()[0]
             rows=db.execute('''select w.*,f.data as workflow_data from work_orders w
                 left join work_order_workflows f on f.order_id=w.order_id where '''+where+
@@ -401,7 +406,7 @@ class WorkOrders:
                     (identifier, BATCH, scenario['ordinal'], scenario['code'], scenario['title'], scenario['cabinet'],
                      'open', 1, alarm_at, stamp, '[]', ''))
                 db.execute('insert into work_order_events values(?,?,?,?,?,?,?,?)',
-                    (identifier, 1, 'seed_demo', actor, stamp, None, 'open', '模拟报警生成演示工单；无真实监测源'))
+                    (identifier, 1, 'seed_demo', actor, stamp, None, 'open', '根据报警回放生成测试工单。现场监测来源未接入。'))
             return {'batchId': BATCH, 'created': 20, 'total': 20, 'snapshotRevision': self._snapshot(db)}
         return self._mutate(body, actor, guard, operation)
 

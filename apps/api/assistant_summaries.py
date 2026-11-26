@@ -27,7 +27,7 @@ def work_order_summary(value, private):
         return [build(number, row) for number, row in ranked[:maximum]]
     result = {'kind': 'work_order', 'orderId': value.get('orderId'), 'faultCode': value.get('faultCode'), 'state': value.get('state'),
               'revision': value.get('orderRevision'), 'engineeringConfirmation': False,
-              'meaning': '固定模拟工单及人工记录，不是现场事实，不确认根因；pending仅指待登记，不能据此断言现场未执行。',
+              'meaning': '固定测试工单及人工记录。现场事实和根因待核实。pending 表示待登记，现场是否执行须查现场记录。',
               'totalHypotheses': len(hypotheses), 'totalSteps': len(steps),
               'pendingStepNumbers': [n for n, row in enumerate(steps, 1) if row.get('outcome') == 'pending'],
               'hypotheses': chosen(hypotheses, 'basis', lambda n, row: {
@@ -119,13 +119,13 @@ def summarize(reader, kind, descriptor, private=()):
                 'events':[{k:row.get(k) for k in ('state','severity','sourceTime')} for row in events],
                 'activeToClearSeconds':intervals,
                 'timingMeaning':'发生至恢复间隔由事件时间计算，与手册触发延时不同；不得用手册延时替代事件持续时间。',
-                'confirmation':'预设模拟事件，不代表设备确诊故障'}
+                'confirmation':'回放使用预设测试事件。设备故障须经现场核实。'}
         elif kind=='trend':
             samples=value.get('samples',[]);valid=[p['value'] for p in samples if p.get('quality')=='good' and type(p.get('value')) in (int,float) and math.isfinite(p['value'])]
             result={'kind':kind,'simulated':True,'metricId':value.get('metricId'),'unit':value.get('unit'),
                 'timeFrom':value.get('timeFrom'),'timeTo':value.get('timeTo'),'sampleCount':len(samples),
                 'badQualityCount':sum(p.get('quality')!='good' for p in samples),'min':min(valid) if valid else None,'max':max(valid) if valid else None,
-                'lastGood':valid[-1] if valid else None,'coverage':'固定历史演练窗口；坏质量不填补'}
+                'lastGood':valid[-1] if valid else None,'coverage':'固定历史回放窗口，保留低质量样本状态'}
         elif kind=='document':
             result={'kind':kind,'page':value.get('pageNumber'),'version':value.get('versionNumber'),
                 'gaps':['所选卡片没有固定知识节点；本次仅文档元数据，没有读取原文。']}

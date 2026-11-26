@@ -9,13 +9,13 @@ export function ProjectData({api,locale,active,onAnalyze,onOpenWorkOrders,onDirt
  const changed=useCallback((value:boolean)=>{setDirty(value);onDirtyChange(value);},[onDirtyChange]);
  return <div className="wx-data">
   <div className="wx-tabs" role="group" aria-label={en?'Data views':'数据视图'}>
-   <Btn onClick={()=>{if(dirty)setLeave(true);else setTab('alarms');}} aria-pressed={tab==='alarms'}>{en?'Simulated alarms':'模拟报警'}</Btn>
+   <Btn onClick={()=>{if(dirty)setLeave(true);else setTab('alarms');}} aria-pressed={tab==='alarms'}>{en?'Alarm replay':'报警回放'}</Btn>
    <Btn onClick={()=>setTab('weather')} aria-pressed={tab==='weather'}>{en?'Weather API':'天气接口'}</Btn>
   </div>
   {tab==='alarms'?<DataAlarms active={active} api={api} locale={locale} onAnalyze={onAnalyze} onOpenWorkOrders={onOpenWorkOrders}/>:
    <WeatherSettings api={api} en={en} active={active} onDirtyChange={changed}/>}
   {leave&&<ConfirmationDialog title={en?'Unsaved weather settings':'天气配置尚未保存'}
-   description={en?'Switching to simulated alarms discards these edits.':'切换到模拟报警会丢失当前修改。'}
+   description={en?'Switching to alarm replay discards these edits.':'切换到报警回放会丢失当前修改。'}
    cancelLabel={en?'Keep editing':'继续编辑'} onClose={()=>setLeave(false)}>
    <Btn data-danger onClick={()=>{setLeave(false);setTab('alarms');setDirty(false);onDirtyChange(false);}}>
     {en?'Discard and switch':'放弃并切换'}

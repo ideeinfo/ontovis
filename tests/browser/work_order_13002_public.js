@@ -51,7 +51,7 @@ async (page, {origin, release, indexSha256}) => {
   await button('驾驶舱').click();
   const root = page.getByRole('region',{name:'项目驾驶舱'});
   const nav = root.getByRole('navigation',{name:'驾驶舱页面'});
-  const alarms = root.getByRole('complementary',{name:'模拟报警概览'});
+  const alarms = root.getByRole('complementary',{name:'报警回放概览'});
   const alarm = alarms.getByRole('button',{name:/^13002 · 柜温低报警/});
   const selector = alarms.getByLabel('报警目标设备');
   await selector.waitFor({timeout:30000});
@@ -75,7 +75,7 @@ async (page, {origin, release, indexSha256}) => {
   await page.screenshot({path:'public-13002-device.png'});
   const openReplay=()=>button('报警详情',spatial.locator('.pc-space-status')).click();
   await openReplay();
-  const replay = page.getByRole('dialog',{name:'模拟报警回放',exact:true});
+  const replay = page.getByRole('dialog',{name:'报警回放',exact:true});
   await replay.getByRole('heading',{name:/柜温低报警/}).waitFor({timeout:20000});
   const cursor=replay.getByRole('slider',{name:'回放位置',exact:true});
   await cursor.press('End');
@@ -92,7 +92,7 @@ async (page, {origin, release, indexSha256}) => {
   await deviceCard.locator('.pc-alarm-status[data-state="active"]').waitFor();
   await openReplay();
   await replay.getByRole('heading',{name:/柜温高报警/}).waitFor();
-  await button('订阅模拟流',replay).click();
+  await button('订阅回放数据流',replay).click();
   await replay.locator('.da-stream-status').getByText(/接收中.*源水位/).waitFor({timeout:25000});
   await button('停止订阅',replay).click();
   await replay.locator('.da-heading').getByText('数据过期',{exact:true}).waitFor();

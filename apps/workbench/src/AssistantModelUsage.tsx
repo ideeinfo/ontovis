@@ -1,3 +1,4 @@
+import {displayText} from './displayText';
 import {useEffect,useId,useRef,useState} from 'react';
 import {ApiError} from './api';
 import {Btn} from './Primitives';
@@ -24,9 +25,9 @@ export function AssistantModelSceneList({scenes,modelVersionId,en,locked,onViewS
   const revision=scene.sceneRevision,short=revision?.replace(/^scene:/,'').slice(0,8);
   const target=modelVersionId&&scene.sceneId&&revision?{sceneId:scene.sceneId,sceneRevision:revision,
    title:scene.title,modelVersionId}:null;
-  return <li key={scene.sceneId??index}><span><strong>{scene.title}</strong>
+  return <li key={scene.sceneId??index}><span><strong>{displayText(scene.title)}</strong>
    <small title={revision??undefined}>{short&&t('保存版','Saved revision')+' '+short+' · '}{scene.instanceCount} {t('个实例','instances')}</small></span>
-   {target&&onViewScene&&<Btn aria-haspopup="dialog" aria-label={t('查看场景','View scene')+' '+scene.title+' '+short}
+   {target&&onViewScene&&<Btn aria-haspopup="dialog" aria-label={displayText(t('查看场景','View scene')+' '+scene.title+' '+short)}
     disabled={locked} onClick={event=>onViewScene(target,event.currentTarget)}>{t('查看场景','View scene')}</Btn>}
   </li>;
  })}</ul>;
@@ -107,7 +108,7 @@ export function AssistantModelUsage({loadPage,en,locked,onViewScene}:{
      const key=initial.configurationId+':'+initial.version;
      const {row,history}=scenes[key]??{row:initial,history:[null]};
      return <article className="as-usage-card" key={key}>
-      <strong>{row.title}</strong><small title={row.version}>{row.configuration} · {row.version.slice(0,8)} · {row.totalScenes} {t('个场景','scenes')}</small>
+      <strong>{displayText(row.title)}</strong><small title={row.version}>{row.configuration} · {row.version.slice(0,8)} · {row.totalScenes} {t('个场景','scenes')}</small>
       <AssistantModelSceneList scenes={row.scenes} modelVersionId={row.version} en={en} locked={disabled} onViewScene={onViewScene}/>
       {(history.length>1||row.nextSceneCursor)&&<div className="as-usage-pager" role="group" aria-label={t('场景翻页','Scene pages')}>
        <Btn disabled={disabled||history.length===1} onClick={()=>showScenes(row,key,history.slice(0,-1))}>{t('上一页场景','Previous scenes')}</Btn>

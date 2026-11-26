@@ -87,7 +87,7 @@ class AssistantHttpTests(unittest.TestCase):
         with patch('apps.api.assistant_service.call_source') as model:
             status,value=self.request('summary',{k:v for k,v in self.start_body().items() if k in ('analysisSessionId','expectedAnalysisRevision','evidenceRefIds')})
             self.assertEqual(status,200,value);self.assertEqual(value['modelCalls'],0);model.assert_not_called()
-            self.assertIn('模拟',value['items'][0]['summary'])
+            self.assertIn('测试',value['items'][0]['summary'])
 
     def test_start_result_receipt_and_cross_project_refusal(self):
         self.assertEqual(self.enable()[0],200)
