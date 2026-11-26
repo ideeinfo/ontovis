@@ -67,6 +67,17 @@
 .as-answer-heading{display:flex;align-items:center;justify-content:space-between;padding:5px 0;gap:8px}
 .as-answer-heading>b{font-size:11px;color:var(--textSecondary)}.as-answer-heading>small{font-size:11px;color:var(--textSecondary)}
 .as-panel .as-answer-group h4{font-size:13px;color:var(--text);margin:12px 0 6px}
+.as-edit-review{margin:6px 0 12px;padding:11px 12px;border:1px solid var(--borderSubtle);border-radius:8px;background:var(--surface)}
+.as-panel .as-edit-review h4{margin:0 0 6px}
+.as-panel .as-edit-review p{margin:0 0 7px;color:var(--textSecondary);font-size:12px}
+.as-edit-review>.ov-btn{margin-top:9px}
+.as-picker-section{margin-bottom:12px}
+.as-operation-card-count{margin-bottom:5px;color:var(--textSecondary);font-size:11px}
+.as-operation-cards .as-materials{max-height:188px;overflow:auto}
+.as-operation-cards .as-material-copy strong,.as-operation-cards .as-material-copy small{white-space:normal;overflow-wrap:anywhere}
+.as-target-toggle{display:inline-flex;align-items:center;gap:4px;border:0;background:none;color:var(--primary);font:inherit;cursor:pointer;padding:2px 0}
+.as-target-toggle:disabled{opacity:.55;cursor:default}
+.as-target-toggle:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .ad-inspector .as-panel .as-answer-group p{font-size:13px;color:var(--text);line-height:1.8}
 .as-turn-details,.as-turn-actions{padding:8px 0;border-top:1px solid var(--borderSubtle);margin-top:12px}
 .as-panel .as-turn-details>summary,.as-panel .as-turn-actions>summary{font-size:11px;color:var(--textSecondary)}

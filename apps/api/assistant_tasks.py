@@ -8,7 +8,7 @@ from uuid import uuid4
 from .assistant_store import require, digest
 from .assistant_summaries import redact, summarize, work_order_summary, answer_batches
 from .authority import PreviewError
-from .assistant_canvas_tasks import ACTIONS, result_targets, validate_draft_plan
+from .assistant_canvas_tasks import ACTIONS, require_target, result_targets, validate_draft_plan
 from .assistant_drawings import drawing_add_scope, drawing_answer
 from . import assistant_alarm_materials
 
@@ -100,28 +100,36 @@ def canonical_additions(plan, results, question):
         if action['targets']:
             selected = result_targets(candidates, action['targets'])
             # The first planning call has no R keys. An invented alias cannot select a directory item.
-            require(all(row in exact or row['identifier'] in action['targets'] for row in selected),
-                    'ASSISTANT_TARGET_AMBIGUOUS',409)
+            require_target(all(row in exact or row['identifier'] in action['targets'] for row in selected), 'result')
         else:
-            require(len(exact)==1, 'ASSISTANT_TARGET_AMBIGUOUS',409)
+            require_target(len(exact)==1, 'result')
             selected = exact
         action['targets'] = [row['key'] for row in selected]
 
 
-def edit_review_message(error, has_choices):
+def edit_review(error, has_choices):
     if error.code == 'ASSISTANT_TARGET_AMBIGUOUS':
-        return ('请核对下方候选并选择要加入的资料，或在指令中写明名称或位号。'
-                if has_choices else '请选中目标卡片，或补充卡片、分组或连线的准确名称。')
+        target = getattr(error, 'target', 'instruction')
+        messages = {
+            'card': '',
+            'group': '请在指令中写明要修改的分组名称。',
+            'relation': '请在指令中写明连线两端的卡片名称。',
+            'result': ('可从下方结果选择要加入的资料，也可在指令中写明名称或位号。'
+                       if has_choices else '请在指令中写明要加入的资料名称或位号。'),
+            'instruction': '请补充要修改的内容。',
+        }
+        return dict(target=target, message=messages[target])
     messages = {
-        'ANALYSIS_HISTORY_READ_ONLY': '历史参考卡片为只读。请选择当前卡片。',
-        'ASSISTANT_SOURCE_RELATION_READ_ONLY': '这条连线来自已登记的工程关系。可编辑画布上的手工连线。',
-        'ASSISTANT_HISTORY_EMPTY': '当前没有对应的撤销或重做记录。',
-        'ASSISTANT_HISTORY_EXCLUSIVE': '请先单独提交撤销、重做或恢复历史的指令。',
-        'ASSISTANT_SOURCE_MISMATCH': '请指定原卡片与同一来源的新版本。',
-        'ANALYSIS_CHANGED': '请指定当前画布中可恢复的一版历史。',
-        'ANALYSIS_SIZE_LIMIT': '这批操作超过画布的卡片、分组或关系数量限制。',
+        'ANALYSIS_HISTORY_READ_ONLY': ('card', '历史参考卡片为只读。请从当前画布选择卡片。'),
+        'ASSISTANT_SOURCE_RELATION_READ_ONLY': ('relation', '可修改画布上的手工连线。请写明连线两端的卡片名称。'),
+        'ASSISTANT_HISTORY_EMPTY': ('instruction', '当前没有对应的撤销或重做记录。'),
+        'ASSISTANT_HISTORY_EXCLUSIVE': ('instruction', '请单独发送撤销、重做或恢复历史的指令。'),
+        'ASSISTANT_SOURCE_MISMATCH': ('instruction', '请指定原卡片与同一来源的新版本。'),
+        'ANALYSIS_CHANGED': ('instruction', '请指定当前画布中可恢复的一版历史。'),
+        'ANALYSIS_SIZE_LIMIT': ('instruction', '这批操作超过画布容量，请缩小操作范围。'),
     }
-    return messages.get(error.code, '请核对操作参数，补充要修改的内容后重试。')
+    target, message = messages.get(error.code, ('instruction', '请补充具体的修改内容后再发送。'))
+    return dict(target=target, message=message)
 
 
 def equipment_configuration_question(value):
@@ -598,7 +606,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             else:
                 plan['actions']=[]
                 related_answer['nextSteps'].append(dict(text='请先选定要加入的资料，再提交其余画布操作。',refs=[]))
-        review_message = None
+        review = None
         if plan['actions']:
             try:
                 if not contextual_add:
@@ -606,8 +614,10 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 validate_draft_plan(draft,plan,tools.results,fixed,history_state,body['expectedAnalysisRevision'],
                                     run_id,runtime.store.connection_id,job.project)
             except PreviewError as error:
-                review_message=edit_review_message(error,any(row.get('selector') for row in tools.results))
+                review=edit_review(error,any(row.get('selector') for row in tools.results))
                 plan['actions']=[]
+        if not review and plan['intent']=='edit' and not plan['actions'] and related_answer is None:
+            review=dict(target='instruction',message='请补充具体的修改内容。')
         trace=[dict(key=t['tool'],state=t['state']) for t in tools.trace]
         runtime.store.update(run_id,'reading',progress=trace,sources=tools.sources)
         catalogue_query=explicit_equipment or body['taskId']=='query' and plan['queries'] and all(q['tool'] in CATALOGUE_TOOLS for q in plan['queries'])
@@ -642,18 +652,13 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             if related_answer:
                 for group in ('gaps','nextSteps'):
                     answer[group]=[*related_answer[group],*answer[group]][:5]
-            if review_message:
-                answer['gaps']=[dict(text=review_message,refs=[]),*answer['gaps'][:4]]
-        elif review_message:
-            answer=dict(observations=[],hypotheses=[],gaps=[dict(text=review_message,refs=[])],nextSteps=[])
+        elif review:
+            answer=dict(observations=[],hypotheses=[],gaps=[],nextSteps=[])
         elif related_answer is not None or catalogue_query:
             answer=related_answer if related_answer is not None else tools.catalogue_answer()
         elif plan['intent']=='edit' and plan['actions']:
             message='已列出画布操作计划，尚未执行。' if body['mode']=='workbench' else '已列出画布操作建议，可转后台执行；驾驶舱未修改画布。'
             answer=dict(observations=[dict(text=message,refs=[])],hypotheses=[],gaps=[],nextSteps=[])
-        elif plan['intent']=='edit':
-            answer=dict(observations=[],hypotheses=[],gaps=[
-                dict(text='请选中要编辑的卡片，或补充目标名称和具体修改。',refs=[])],nextSteps=[])
         elif tools.sources:
             answer=answer_batches(tools.sources,lambda evidence,_aliases:model(
                 'answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'])
@@ -666,6 +671,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             task=dict(mode=body['mode'],baseDigest=base,plan=plan,results=tools.results,graphs=tools.graphs,trace=tools.trace,
                 reads=tools.reads,selectedReads=selected_reads,receipts=[],
                 execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query',
+                **({'editReview':review} if review else {}),
                 **({'disposition':True} if disposition else {})))
         require(runtime.store.finish(run_id,'partial' if result['partial'] else 'complete',result,trace,tools.sources),
                 'ASSISTANT_CANCELLED',409)

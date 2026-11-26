@@ -27,6 +27,7 @@ export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,on
  onViewConfiguration?:(target:EquipmentConfigurationTarget,title:string)=>void;
  loadModelUsage?:(query:ModelUsageQuery,signal:AbortSignal)=>Promise<ModelUsagePage>;hasUnsaved?:boolean}){
  const task=run.result?.task;if(!task)return null;
+ if(!onHandoff&&!task.results.length&&!task.plan.actions.length&&!task.receipts.length&&!task.trace.length&&!task.graphs.length)return null;
  const t=(zh:string,english:string)=>en?english:zh;
  const processingLabel=(key?:string)=>processingLabels[key??'']?.[en?1:0];
  const names:Record<string,string>={work_orders:t('项目工单','Project work orders'),objects:t('工程对象','Objects'),graph:t('工程关系','Engineering graph'),knowledge:t('文档知识图谱','Document knowledge'),materials:t('项目资料','Materials'),related_drawings:t('登记关联图纸','Linked drawings'),alarm_object:t('报警对象','Alarm object'),alarm_manuals:t('故障码手册','Fault-code manuals'),disposition:t('生成处置建议','Generate response plan'),scenes:t('项目场景','Project scenes'),adopted_models:t('项目采用模型','Project model adoption'),equipment_materials:t('安装设备目录','Installed equipment'),equipment_applicable_materials:t('设备适用资料','Applicable materials'),processing_tasks:t('资料处理任务','Processing tasks'),fixed_manual_neighborhood:t('固定发布版知识邻域','Fixed publication neighborhood'),selected_material:t('画布补充资料','Canvas context')};

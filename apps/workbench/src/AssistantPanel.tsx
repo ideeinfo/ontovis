@@ -11,7 +11,7 @@ import {AssistantDeviceMaterials,type DeviceMaterialsTarget} from './AssistantDe
 import {FixedDocumentPreview,type FixedDocumentTarget} from './FixedDocumentPreview';
 import type {AssistantSceneEditTarget,AssistantSceneTarget} from './assistantScene';
 import type {ModelInfoReceipt,ModelInfoTarget} from './resourceTypes';
-import {snapshotDigest,canApplyFreshTask,TASK_PROTOCOL,type AssistantModelTarget,type PreparedTask} from './assistantTasks';
+import {snapshotDigest,canApplyFreshTask,assistantEditReview,TASK_PROTOCOL,type AssistantModelTarget,type PreparedTask} from './assistantTasks';
 import {AssistantRetrieval} from './AssistantRetrieval';
 import type {SourceAnchor} from './analysisSources';
 import {Btn} from './Primitives';
@@ -22,11 +22,20 @@ import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTu
 import {AssistantGraph} from './AssistantGraph';
 import {AssistantSourceViewer} from './AssistantSourceViewer';
 import {AssistantTurn} from './AssistantTurn';
+import {AssistantCardPicker} from './AssistantCardPicker';
 import {AssistantWorkOrderDialog} from './AssistantWorkOrderDialog';
 import './assistant.css';
 import {llmTaskNames,type LlmTask} from './llmSettings';
 
-export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,onEditScene,onEditEquipment,onEditModelInfo,modelInfoEditing,modelInfoReceipt,initialRunId,queryOnly=false,snapshot,onApplyTask,onHandoff,initialQuestion,onInitialQuestionUsed,hasUnsaved=false,historyJson,focusCardIds=[],visible=true}:{api:WorkbenchApi;cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string,record?:string)=>void;onEditScene?:(target:AssistantSceneEditTarget)=>void;onEditEquipment?:(target:EquipmentConfigurationEdit)=>void;onEditModelInfo?:(target:ModelInfoTarget)=>void;modelInfoEditing?:boolean;modelInfoReceipt?:ModelInfoReceipt;initialRunId?:string;queryOnly?:boolean;snapshot?:CanvasSnapshot;hasUnsaved?:boolean;historyJson?:string;focusCardIds?:string[];visible?:boolean;initialQuestion?:string;onInitialQuestionUsed?:()=>void;onHandoff?:(run:AssistantRun)=>void;onApplyTask?:(prepared:PreparedTask,baseJson:string)=>Promise<number|null>}){
+export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,onEditScene,onEditEquipment,onEditModelInfo,modelInfoEditing,modelInfoReceipt,initialRunId,queryOnly=false,snapshot,onApplyTask,onHandoff,initialQuestion,onInitialQuestionUsed,hasUnsaved=false,historyJson,focusCardIds=[],onSelectCardTargets,cardTargetLabel,visible=true}:{
+ api:WorkbenchApi;cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;
+ onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string,record?:string)=>void;
+ onEditScene?:(target:AssistantSceneEditTarget)=>void;onEditEquipment?:(target:EquipmentConfigurationEdit)=>void;onEditModelInfo?:(target:ModelInfoTarget)=>void;
+ modelInfoEditing?:boolean;modelInfoReceipt?:ModelInfoReceipt;initialRunId?:string;queryOnly?:boolean;snapshot?:CanvasSnapshot;
+ hasUnsaved?:boolean;historyJson?:string;focusCardIds?:string[];onSelectCardTargets?:(ids:string[],focused?:CanvasCard)=>void;
+ cardTargetLabel?:(card:CanvasCard)=>string|undefined;visible?:boolean;initialQuestion?:string;onInitialQuestionUsed?:()=>void;
+ onHandoff?:(run:AssistantRun)=>void;onApplyTask?:(prepared:PreparedTask,baseJson:string)=>Promise<number|null>;
+}){
  const service=useMemo(()=>new AssistantApi(api),[api]);const t=(zh:string,english:string)=>en?english:zh;
  const mode:AssistantMode|null=snapshot?(queryOnly?'cockpit_query':'workbench'):null;
  const [taskId,setTaskId]=useState<LlmTask>(queryOnly?'query':'analysis');
@@ -40,6 +49,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const continuation=conversation&&assistantConversationMatches(conversation,mode)?conversation:null;
  const [loadingHistory,setLoadingHistory]=useState(false);
  const [contextOpen,setContextOpen]=useState(false),[historyOpen,setHistoryOpen]=useState(false);
+ const [cardPickerOpen,setCardPickerOpen]=useState(false);
  const scrollArea=useRef<HTMLDivElement>(null),composerInput=useRef<HTMLTextAreaElement>(null);
  const composing=useRef(false),submitting=useRef<string|null>(null);
  const autoScroll=useRef(true);
@@ -59,7 +69,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const current=useRef(context);current.current=context;
  const alive=useRef(true),scope=useRef<AssistantApi|null>(null);
  useEffect(()=>{alive.current=true;automatic.current=null;setRun(null);setError(null);setPending(null);setSummaries(null);setConversation(null);setConversations([]);setTurns([]);setHasEarlier(false);setLoadingHistory(false);setTransferRun(null);setSourceView(null);setSceneView(null);setDeviceView(null);setDocumentView(null);setModelView(null);setConfigurationView(null);historyGeneration.current++;setQuestion(initialQuestion??'');if(initialQuestion)onInitialQuestionUsed?.();
-  setPollState('reading');setShowPrompts(true);composing.current=false;
+  setPollState('reading');setShowPrompts(true);setCardPickerOpen(false);composing.current=false;
   const fixed=new AssistantApi(api.assistantScope());scope.current=fixed;
   return()=>{alive.current=false;const previous=latest.current;if(running(previous))void fixed.cancel(previous!).catch(()=>{});};
  },[context]);
@@ -95,13 +105,14 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
    if(!earlier){if(!queryOnly)setTaskId(detail.items.at(-1)?.taskId??'analysis');setRun(detail.items.at(-1)??null);setPending(null);setSummaries(null);setQuestion('');}
   }catch(e){if(alive.current&&current.current===key&&historyGeneration.current===generation)setError(e);}finally{if(alive.current&&current.current===key&&historyGeneration.current===generation)setLoadingHistory(false);}
  }
- function newConversation(){autoScroll.current=true;setContextOpen(false);setHistoryOpen(false);historyGeneration.current++;setConversation(null);setTurns([]);setRun(null);setPending(null);setError(null);setQuestion('');setShowPrompts(true);setHasEarlier(false);setLoadingHistory(false);}
+ function newConversation(){autoScroll.current=true;setContextOpen(false);setHistoryOpen(false);setCardPickerOpen(false);historyGeneration.current++;setConversation(null);setTurns([]);setRun(null);setPending(null);setError(null);setQuestion('');setShowPrompts(true);setHasEarlier(false);setLoadingHistory(false);}
  const transcript=mergeConversationTurns(turns,run);
  useEffect(()=>{if(autoScroll.current&&scrollArea.current)scrollArea.current.scrollTop=scrollArea.current.scrollHeight;},[run?.runId,run?.state,loadingHistory]);
+ useEffect(()=>{if(cardPickerOpen&&scrollArea.current){autoScroll.current=false;scrollArea.current.scrollTop=0;}},[cardPickerOpen]);
  const selection=()=>({analysisSessionId:receipt!.analysisSessionId,expectedAnalysisRevision:receipt!.analysisRevision,evidenceRefIds:selected});
  async function start(){if((!receipt&&!snapshot)||!view||sendBlocker||composing.current||submitting.current===context)return;
   autoScroll.current=true;const key=context,requestId=crypto.randomUUID(),fixed=scope.current!;submitting.current=key;
-  historyGeneration.current++;setTurns(previous=>mergeConversationTurns(previous,run));setBusy(true);setError(null);setPending(requestId);setSummaries(null);setShowPrompts(false);
+  historyGeneration.current++;setTurns(previous=>mergeConversationTurns(previous,run));setBusy(true);setError(null);setPending(requestId);setSummaries(null);setShowPrompts(false);setCardPickerOpen(false);
   try{const value=await api.request<AssistantRun>(ASSISTANT_ROOT+(snapshot?'/task-start':'/start'),{...(snapshot?{protocol:TASK_PROTOCOL,mode,...(!queryOnly&&historyJson?{historyJson}:{}),
    focusCardIds:focusCardIds.filter(id=>cards.some(card=>card.id===id)),
    ...(receipt&&selected.length&&selectionEditedIn===context?{preferSelectedEvidence:true}:{}),
@@ -137,6 +148,14 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const refreshService=()=>{setError(null);setReload(v=>v+1);};
  const canRefreshService=sendBlocker==='ASSISTANT_POLICY_READ_FAILED'||!!view&&view.policy.enabled&&!effectiveService?.enabled;
  const retryQuestion=(item:AssistantRun)=>{setQuestion(item.question??'');setSummaries(null);composerInput.current?.focus();};
+ const review=assistantEditReview(run?.result?.task,run?.result?.answer.gaps);
+ const canSelectCards=!!onSelectCardTargets&&!queryOnly&&!focusedEarlier;
+ const inlineCardPicker=canSelectCards&&review?.target==='card';
+ const targetCards=canSelectCards?cards.filter(card=>!card.historical&&(!cardTargetLabel||cardTargetLabel(card)!==undefined)):[];
+ const targetCount=targetCards.filter(card=>focusCardIds.includes(card.id)).length;
+ const cardPicker=canSelectCards&&onSelectCardTargets?<AssistantCardPicker cards={targetCards} selected={focusCardIds} en={en} locked={locked}
+  groups={Object.fromEntries((snapshot?.frames??[]).map(frame=>[frame.id,frame.title]))}
+  label={card=>cardTargetLabel?.(card)??card.title} onSelect={onSelectCardTargets}/>:null;
  async function acknowledgeExecution(){const pending=execution.current;if(!pending)return;setBusy(true);setError(null);try{const value=await api.request<{run:AssistantRun}>(ASSISTANT_ROOT+'/task-ack',{runId:pending.runId,selectedKeys:pending.keys,snapshotJson:JSON.stringify(pending.prepared.snapshot),savedRevision:pending.savedRevision});setTurns(previous=>mergeConversationTurns(previous,value.run));setRun(value.run);execution.current=null;setExecutionPending(false);}catch(e){setError(e);}finally{setBusy(false);}}
  async function executeTask(item:AssistantRun,keys:string[]){if(!snapshot||!applyTaskRef.current||queryOnly||locked||execution.current||applying.current)return;const baseJson=JSON.stringify(snapshot),key=context,fixed=scope.current?.api??api;applying.current=true;setBusy(true);setError(null);try{if(await snapshotDigest(baseJson)!==item.result?.task?.baseDigest)throw new Error(t('画布已变化，请重新发送操作指令；修改已保留。','The draft changed. Send a new instruction; current edits are retained.'));const prepared=await fixed.request<PreparedTask>(ASSISTANT_ROOT+'/task-prepare',{runId:item.runId,selectedKeys:keys,snapshotJson:baseJson});if(!alive.current||current.current!==key||!applyTaskRef.current)return;const savedRevision=await applyTaskRef.current(prepared,baseJson);execution.current={runId:item.runId,keys,prepared,savedRevision};setExecutionPending(true);await acknowledgeExecution();}catch(e){if(alive.current)setError(e);}finally{applying.current=false;if(alive.current)setBusy(false);}}
  useEffect(()=>{const fresh=automatic.current;if(!fresh||!run||fresh.runId!==run.runId||fresh.context!==context||locked||queryOnly||!applyTaskRef.current||!['complete','partial'].includes(run.state))return;automatic.current=null;if(canApplyFreshTask(run.result?.task,true,hasUnsaved))void executeTask(run,[]);},[run?.runId,run?.state,busy,loadingHistory,executionPending]);
@@ -174,12 +193,20 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {!activity&&sendBlocker&&sendBlocker!=='ASSISTANT_QUESTION_REQUIRED'&&<p className="ap-caption" role="status" id={sendStatusId}>{assistantMessage(sendBlocker,en)}{canRefreshService&&<button type="button" disabled={locked} onClick={refreshService}>{t('刷新服务','Refresh service')}</button>}</p>}
   {!activity&&sendBlocker==='ASSISTANT_QUESTION_REQUIRED'&&<span className="as-visually-hidden" id={sendStatusId}>{assistantMessage(sendBlocker,en)}</span>}
   <small>{t('回车发送 · Shift + 回车换行','Enter to send · Shift + Enter for a new line')}{snapshot&&!queryOnly&&t(' · 画布修改可撤销',' · Canvas edits can be undone')}</small></div>;
- return <div className="as-panel">{snapshot&&<div className="as-scope-heading"><span>{t('本项目 · 按需检索','This project · search on demand')}</span><span>{queryOnly?t('查询模式','Query only'):onApplyTask?t('后台编辑','Workbench editing'):t('只读画布','Read-only canvas')}</span></div>}<div className="as-toolbar"><button type="button" className="as-context-toggle" aria-expanded={contextOpen} onClick={()=>setContextOpen(v=>!v)}>{t(snapshot?'画布资料':'本次资料',snapshot?'Canvas materials':'Materials')} <b>{selected.length}</b>{!!metadataCount&&<small>{t(`${metadataCount}份仅元数据`,`${metadataCount} metadata only`)}</small>}<ChevronDown size={13}/></button><button type="button" aria-label={t('对话与服务','Conversations and service')} title={t('对话与服务','Conversations and service')} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(v=>!v)}><History size={15}/></button><button type="button" disabled={locked} onClick={newConversation}><Plus size={14}/>{t('新对话','New')}</button></div>
+ return <div className="as-panel">{snapshot&&<div className="as-scope-heading">
+  <span>{t('本项目 · 按需检索','This project · search on demand')}</span>
+  {canSelectCards?(inlineCardPicker?
+   <span>{t(`已选 ${targetCount} 张操作卡片`,`${targetCount} cards selected for editing`)}</span>:
+   <button type="button" className="as-target-toggle" aria-expanded={cardPickerOpen} disabled={locked}
+    onClick={()=>setCardPickerOpen(open=>!open)}>{t('选择操作卡片','Select cards to edit')}{targetCount>0?' · '+targetCount:''}<ChevronDown size={13}/></button>):
+   <span>{queryOnly?t('查询模式','Query only'):t('只读画布','Read-only canvas')}</span>}
+ </div>}<div className="as-toolbar"><button type="button" className="as-context-toggle" aria-expanded={contextOpen} onClick={()=>setContextOpen(v=>!v)}>{t('分析用资料','Materials for analysis')} <b>{selected.length}</b>{!!metadataCount&&<small>{t(`${metadataCount}份仅元数据`,`${metadataCount} metadata only`)}</small>}<ChevronDown size={13}/></button><button type="button" aria-label={t('对话与服务','Conversations and service')} title={t('对话与服务','Conversations and service')} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(v=>!v)}><History size={15}/></button><button type="button" disabled={locked} onClick={newConversation}><Plus size={14}/>{t('新对话','New')}</button></div>
   <div className="as-scroll" ref={scrollArea} onScroll={e=>{const el=e.currentTarget;autoScroll.current=el.scrollHeight-el.scrollTop-el.clientHeight<60;}}>
+  {cardPickerOpen&&!inlineCardPicker&&cardPicker&&<section className="as-edit-review as-picker-section">{cardPicker}</section>}
   {historyOpen&&<div className="as-history-tools"><div className="as-conversation"><label>{t('当前对话','Current conversation')}<select aria-label={t('当前对话','Current conversation')} disabled={locked} value={conversation?.conversationId??''} onChange={e=>e.target.value?void openConversation(e.target.value):newConversation()}><option value="">{t('新对话','New conversation')}</option>{conversations.map(item=><option key={item.conversationId} value={item.conversationId}>{displayText(item.title)}</option>)}{conversation&&!conversations.some(c=>c.conversationId===conversation.conversationId)&&<option value={conversation.conversationId}>{displayText(conversation.title)}</option>}</select></label></div><div className="as-service"><span>{effectiveService?.provider??'—'} · {effectiveService?.modelId||'—'}</span><Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn></div></div>}
   {loadingHistory&&<p role="status">{t('读取已保存对话…','Loading saved conversation…')}</p>}
   {contextOpen&&<section className="as-sources">
-  <div className="as-section-heading"><h4 id="as-materials-title">{t('本次资料','Selected materials')}</h4><span>{t('已选','Selected')} {selected.length}</span></div>
+  <div className="as-section-heading"><h4 id="as-materials-title">{t('提供给助手阅读','Materials the assistant can read')}</h4><span>{t('已勾选','Checked')} {selected.length}</span></div>
   {!!metadataCount&&<p className="as-material-hint">{t(`${metadataCount}份图纸、照片或模型仅提供元数据，不包含原图或几何。`,`${metadataCount} drawing, photo or model sources contain metadata only, without images or geometry.`)}</p>}
   <div className="as-materials" role="group" aria-labelledby="as-materials-title">{available.length?available.map(card=>{
    const key=assistantEvidenceKey(card.source!.id,selected),disabled=active||busy;
@@ -192,7 +219,9 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {summaries&&<details open className="as-summaries"><summary>{t('摘要预览 · 未调用模型','Summary preview · no model call')}</summary>{summaries.map(row=><p key={row.key}><strong>{row.key} · {sourceLabels[row.kind]?.[en?1:0]}</strong><span>{displayText(row.summary)}</span></p>)}<AssistantRetrieval sources={summaries} cards={cards} en={en} onFocus={onFocus}/></details>}
   <AssistantGraph service={service} cards={available} receipt={receipt} en={en} onFocus={onFocus}/>
   </section>}
-  <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} key={item.runId} run={item} cards={cards} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/><AssistantTaskResult hasUnsaved={hasUnsaved} run={item} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined} onPage={index=>void taskPage(item,index)} loadModelUsage={(query,signal)=>api.assistantScope().request<ModelUsagePage>(ASSISTANT_ROOT+'/task-page',{runId:item.runId,modelUsage:query},signal)} onViewScene={(target,trigger)=>setSceneView({target,trigger,workbench:item.result?.task?.mode==='workbench'})} onViewDevice={setDeviceView} onViewDocument={setDocumentView} onViewModel={(target,trigger)=>setModelView({target,trigger,context,workbench:item.result?.task?.mode==='workbench'})} onViewConfiguration={(target,title)=>setConfigurationView({target,title,context,workbench:item.result?.task?.mode==='workbench'})}/></div>)}</div>
+  <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} run={item} cards={cards}
+    cardPicker={item.runId===run?.runId&&inlineCardPicker?cardPicker:undefined}
+    onContinueEdit={item.runId===run?.runId&&canSelectCards&&!locked?()=>retryQuestion(item):undefined} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/><AssistantTaskResult hasUnsaved={hasUnsaved} run={item} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined} onPage={index=>void taskPage(item,index)} loadModelUsage={(query,signal)=>api.assistantScope().request<ModelUsagePage>(ASSISTANT_ROOT+'/task-page',{runId:item.runId,modelUsage:query},signal)} onViewScene={(target,trigger)=>setSceneView({target,trigger,workbench:item.result?.task?.mode==='workbench'})} onViewDevice={setDeviceView} onViewDocument={setDocumentView} onViewModel={(target,trigger)=>setModelView({target,trigger,context,workbench:item.result?.task?.mode==='workbench'})} onViewConfiguration={(target,title)=>setConfigurationView({target,title,context,workbench:item.result?.task?.mode==='workbench'})}/></div>)}</div>
   {deviceView&&<AssistantDeviceMaterials api={api} target={deviceView} en={en} onClose={()=>setDeviceView(null)}/>}
   {!modelInfoEditing&&modelView?.context===context&&<AssistantModelViewer key={context+':'+modelView.target.modelVersionId}
     api={api} target={modelView.target} en={en} infoReceipt={modelInfoReceipt} onClose={()=>setModelView(null)}

@@ -200,6 +200,7 @@ test('model outcomes have distinct actionable messages without changing the sele
   assert.ok(messages.every((message,index)=>message!==codes[index]));
  }
  assert.match(assistantMessage('ASSISTANT_MODEL_UNAVAILABLE'),/旧回执未保留具体原因/);
+ assert.match(assistantMessage('ASSISTANT_INTERNAL_ERROR'),/本轮处理遇到错误/);
 });
 test('a failed model step never appears as reference validation complete',async()=>{
  const {assistantRunPhase}=await import('../src/assistantApi.ts');

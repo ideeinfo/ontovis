@@ -1,6 +1,7 @@
 """Serve fixed synthetic evidence and real project/session authorization."""
 from contextlib import contextmanager
 from hashlib import sha256
+import json
 from pathlib import Path
 from threading import Event
 from unittest.mock import patch
@@ -198,6 +199,15 @@ def browser_site(public: Path):
                     return dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,
                         engineeringConfirmation=False,usage={},answer=dict(observations=[],hypotheses=[],gaps=[],
                             nextSteps=[dict(text='核对报警接点及报警时间，记录复测结果。',refs=['E1'])]))
+                if body['question']=='把选中的卡片改名为「现场核查对象」':
+                    assert body['workflow']['phase']=='plan'
+                    context=json.loads(body['workflow']['context'])
+                    targets=context['focusCards']
+                    if targets:
+                        assert [card['kind'] for card in context['cards'] if card['key'] in targets]==['object']
+                    return dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,
+                        engineeringConfirmation=False,usage={},plan=dict(intent='edit',queries=[],
+                            actions=[dict(kind='rename_card',targets=targets,text='现场核查对象',x=None,y=None)]))
                 assert body['question']=='先添加相关图纸，再整理画布布局'
                 assert body['workflow']['phase']=='plan'
                 return dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,

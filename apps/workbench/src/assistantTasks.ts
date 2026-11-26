@@ -26,9 +26,22 @@ export type SelectedEvidenceRead={evidenceRefId:string;kind:string}&(
  {state:'complete';sourceKey:string;metadataOnly:boolean}|
  {state:'budget_limited'|'policy_excluded'|'unavailable';reason:string}
 );
+export type EditReview={target:'card'|'group'|'relation'|'result'|'instruction';message:string;legacyGap?:string};
 export type EngineeringTask={mode:'workbench'|'cockpit_query';baseDigest:string;plan:{intent:'query'|'edit';queries:{tool:string;query:string;faultCode:string}[];actions:{kind:string;targets:string[];text:string;x:number|null;y:number|null}[]};
  results:TaskCandidate[];graphs:{kind:'engineering'|'knowledge';graph:Record<string,unknown>}[];trace:{tool:string;state:string;count?:number;total?:number;nextCursor?:number|string|null;reason?:string;truncated?:boolean;scope?:string}[];
- reads:number;selectedReads?:SelectedEvidenceRead[];receipts:TaskReceipt[];execution:string;disposition?:boolean};
+ reads:number;selectedReads?:SelectedEvidenceRead[];receipts:TaskReceipt[];execution:string;disposition?:boolean;editReview?:EditReview};
+
+export function assistantEditReview(task:EngineeringTask|undefined,gaps:{text:string;refs:string[]}[]=[]):EditReview|undefined{
+ if(!task||task.plan.intent!=='edit'||task.plan.actions.length||task.receipts.length)return;
+ if(task.editReview)return task.editReview;
+ const legacyCardPrompts=[
+  '请选中目标卡片，或补充卡片、分组或连线的准确名称。',
+  '请选中要编辑的卡片，或补充目标名称和具体修改。',
+ ];
+ const legacyGap=gaps.find(row=>!row.refs.length&&legacyCardPrompts.includes(row.text));
+ if(legacyGap)return {target:'card',message:'',legacyGap:legacyGap.text};
+}
+
 export type PreparedTask={operationId:string;baseDigest:string;snapshot:CanvasSnapshot;receipts:TaskReceipt['items'];wantsSave:boolean;analysis:DraftReceipt;baseline:CanvasSnapshot|null;alreadyApplied?:boolean};
 export async function snapshotDigest(raw:string){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw)))].map(n=>n.toString(16).padStart(2,'0')).join('');}
 export function checkedTaskSnapshot(current:CanvasSnapshot,prepared:PreparedTask,scope:ProjectScope,baseJson:string){

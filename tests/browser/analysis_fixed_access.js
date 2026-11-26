@@ -209,7 +209,7 @@ async (page, facts, phase) => {
     page.on('request',watchStart);
     await promptChoices.getByRole('button',{name:'加入相关的工程对象',exact:true}).waitFor();
     check(await promptChoices.getByRole('button').count()===3,'The assistant did not offer three prompts on open');
-    await assistant.getByRole('button',{name:/^画布资料/}).click();
+    await assistant.getByRole('button',{name:/^分析用资料/}).click();
     for(const [kind,entry] of Object.entries(facts.cards)){
       const choice=assistant.getByRole('checkbox',{name:entry.title,exact:true});
       if(kind==='alarm')await choice.check();
@@ -289,10 +289,45 @@ async (page, facts, phase) => {
     await assistant.getByText('核对报警接点及报警时间，记录复测结果。',{exact:false}).last().waitFor({state:'visible'});
     await button('撤销修改',canvas).click();
     await powerEdge.waitFor({state:'detached'});
+
     await button('关闭助手',canvas).click();
     await button('分析助手',canvas).click();
     await promptChoices.getByRole('button',{name:'添加相关图纸',exact:true}).waitFor();
     check(await promptChoices.getByRole('button').count()===3,'Recent prompts were not shown with the restored conversation');
+
+    await canvas.locator('.ad-canvas').press('Escape');
+    const rename='把选中的卡片改名为「现场核查对象」';
+    const edits=[];
+    const trackEdit=request=>{if(new URL(request.url()).pathname==='/api/workbench/assistant/task-start')edits.push(request);};
+    page.on('request',trackEdit);
+    await composer.fill(rename);
+    await composer.press('Enter');
+    const review=assistant.locator('.as-turn').last();
+    await review.getByRole('heading',{name:'选择要操作的卡片',exact:true}).waitFor();
+    check(await review.getByText('还需补充的依据',{exact:true}).count()===0&&
+      await review.getByText('使用这份回答',{exact:true}).count()===0,'An unclear edit was shown as an analysis answer');
+    const operationCards=review.getByRole('group',{name:'操作卡片列表',exact:true});
+    const objectChoice=operationCards.getByRole('checkbox',{name:new RegExp(facts.cards.object.title)});
+    const alarmChoice=operationCards.getByRole('checkbox',{name:new RegExp(facts.cards.alarm.title)});
+    await objectChoice.check();
+    await alarmChoice.check();
+    for(const kind of ['alarm','object'])await canvas.locator('.ad-card.selected[data-card-id="'+facts.cards[kind].id+'"]').waitFor({state:'attached'});
+    await alarmChoice.uncheck();
+    await canvas.locator('.ad-card.selected[data-card-id="'+facts.cards.alarm.id+'"]').waitFor({state:'detached'});
+    check(await objectChoice.isChecked()&&edits.length===1,'Selecting edit targets must not submit a request');
+    await button('继续原指令',review).click();
+    check(await composer.inputValue()===rename&&edits.length===1,'Continuing must place the original instruction in the input');
+    const [renameAck]=await Promise.all([
+      page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/assistant/task-ack'),
+      composer.press('Enter'),
+    ]);
+    const renamed=await renameAck.json();
+    page.off('request',trackEdit);
+    check(renameAck.ok()&&edits[1]?.postDataJSON()?.focusCardIds.join(',')===facts.cards.object.id&&
+      renamed.receipt.items[0]?.cardId===facts.cards.object.id,'The edit did not use the selected card');
+    await button('现场核查对象',objectCards).waitFor({state:'attached'});
+    await button('撤销修改',canvas).click();
+    await button(facts.cards.object.title,objectCards).waitFor({state:'attached'});
 
     const workbenchEdges=canvas.locator('.ad-links [data-relation-id]');
     const edgeIds=locator=>locator.evaluateAll(nodes=>nodes.map(node=>node.dataset.relationId).sort());
@@ -315,7 +350,7 @@ async (page, facts, phase) => {
     return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true,
       drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,
       alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true,assistantCompoundEdit:true,
-      recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true};
+      recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true,assistantCardSelection:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

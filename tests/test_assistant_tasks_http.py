@@ -41,6 +41,28 @@ class TaskHttpTests(unittest.TestCase):
             snapshot=json.loads(self.body['snapshotJson']);snapshot['projectCode']='B'
             self.assertEqual(404,self.request('task-start',{**self.body,'snapshotJson':json.dumps(snapshot)})[0]);model.assert_not_called()
 
+    def test_ambiguous_edit_targets_are_identified_separately_from_evidence_gaps(self):
+        for kind, target in (('rename_card','card'),('rename_group','group'),
+                             ('update_relation','relation'),('add_results','result')):
+            with self.subTest(kind=kind):
+                plan=dict(intent='edit',queries=[],actions=[action(kind,text='待补充')])
+                with patch('apps.api.assistant_task_api.call_source',return_value=dict(
+                    plan=plan,usage={},modelCalls=1,engineeringConfirmation=False,
+                    purpose='ontovis_analysis',serviceRevision='a'*64)):
+                    status, started=self.request('task-start',{**self.body,'mode':'workbench',
+                        'requestId':str(uuid4()),'question':'修改刚才选中的内容'})
+                    self.assertEqual(200,status,started)
+                    for _ in range(100):
+                        _,run=self.request('status',dict(runId=started['runId']))
+                        if run['state'] not in ('reading','model','validating'):break
+                        time.sleep(.01)
+                self.assertEqual('complete',run['state'],run)
+                result=run['result']
+                self.assertEqual([],result['answer']['gaps'])
+                self.assertEqual(target,result['task']['editReview']['target'])
+                self.assertEqual([],result['task']['plan']['actions'])
+                self.assertEqual([],result['task']['receipts'])
+
     def test_disposition_uses_canvas_notes_relations_and_fixed_evidence_but_does_not_plan_edits(self):
         base = json.loads(self.body['snapshotJson'])
         card = dict(x=0,y=0,width=300,height=200,pinned=False)

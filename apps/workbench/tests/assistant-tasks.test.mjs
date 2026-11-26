@@ -1,10 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adoptedModelTarget,equipmentConfigurationTarget,checkedTaskSnapshot,snapshotDigest,canApplyFreshTask} from '../src/assistantTasks.ts';
+import {adoptedModelTarget,equipmentConfigurationTarget,checkedTaskSnapshot,snapshotDigest,canApplyFreshTask,assistantEditReview} from '../src/assistantTasks.ts';
 import {assistantSendBlocker} from '../src/assistantApi.ts';
 import {blankAnalysisDraft} from '../src/analysisDraftState.ts';
 import {assistantEntrySeed} from '../src/analysisSources.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'Demo-PDS'};
+test('target prompts remain operable in old turns while actual evidence needs remain in the answer',()=>{
+ const task={plan:{intent:'edit',actions:[]},receipts:[]};
+ const legacyText='请选中目标卡片，或补充卡片、分组或连线的准确名称。';
+ const missingMaterials={text:'需要故障发生时段的趋势。',refs:['E1']};
+ assert.deepEqual(assistantEditReview(task,[missingMaterials,{text:legacyText,refs:[]}]),
+  {target:'card',message:'',legacyGap:legacyText});
+ assert.equal(assistantEditReview(task,[missingMaterials]),undefined);
+ assert.equal(assistantEditReview(task,[{text:legacyText,refs:['E1']}]),undefined);
+ assert.equal(assistantEditReview({...task,plan:{intent:'query',actions:[]}},[{text:legacyText,refs:[]}]),undefined);
+ const editReview={target:'group',message:'请在指令中写明要修改的分组名称。'};
+ assert.deepEqual(assistantEditReview({...task,editReview}),editReview);
+});
 test('the adopted model viewer uses the fixed pair returned by the catalogue',()=>{
  const row={key:'R1',title:'配置模型',identifier:'asset-9',version:'fixed-version-2',kind:'adopted_model',simulated:false,reason:''};
  assert.deepEqual(adoptedModelTarget(row),{modelAssetId:'asset-9',modelVersionId:'fixed-version-2',title:'配置模型'});

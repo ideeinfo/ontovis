@@ -5,11 +5,23 @@ import re
 from uuid import UUID,uuid5
 from .assistant_store import require,digest,encoded,now
 from .analysis_drafts import validate_snapshot
+from .authority import PreviewError
 
 ACTIONS = ('add_results','remove_cards','add_note','arrange','rename','save','set_window','add_relation','move_card','resize_card',
            'update_note','append_note','rename_card','copy_card','pin_cards','unpin_cards','group_cards','rename_group','ungroup',
            'update_relation','remove_relations','add_support','add_contradiction','add_reference','replace_source',
            'undo','redo','restore_revision','reset_card_view')
+
+
+class CanvasTargetError(PreviewError):
+    def __init__(self, target):
+        super().__init__(409, 'ASSISTANT_TARGET_AMBIGUOUS')
+        self.target = target
+
+
+def require_target(condition, target):
+    if not condition:
+        raise CanvasTargetError(target)
 
 
 def frame_bounds(board):
@@ -47,13 +59,13 @@ def operation_id(run_id,label):return str(uuid5(UUID(run_id),label))
 
 
 def result_targets(results, keys):
-    require(keys and len(keys)==len(set(keys)), 'ASSISTANT_TARGET_AMBIGUOUS', 409)
+    require_target(keys and len(keys)==len(set(keys)), 'result')
     rows = []
     for key in keys:
         matches = [r for r in results if key == r['key'] or key == r['identifier']]
-        require(len(matches)==1 and matches[0].get('selector'), 'ASSISTANT_TARGET_AMBIGUOUS', 409)
+        require_target(len(matches)==1 and matches[0].get('selector'), 'result')
         rows.append(matches[0])
-    require(len({row['key'] for row in rows})==len(rows), 'ASSISTANT_TARGET_AMBIGUOUS', 409)
+    require_target(len({row['key'] for row in rows})==len(rows), 'result')
     return rows
 
 
@@ -79,7 +91,7 @@ def validate_draft_plan(snapshot, plan, results, fixed, history, revision, run_i
             require(len(keys)==2,'ASSISTANT_TARGET_AMBIGUOUS',409)
             originals={'C'+str(i+1):card['id'] for i,card in enumerate(snapshot['cards'])}
             card=next((c for c in board['cards'] if c['id']==originals.get(keys[0])),None)
-            require(card and card.get('source') and not card.get('historical'),'ASSISTANT_TARGET_AMBIGUOUS',409)
+            require_target(card and card.get('source') and not card.get('historical'), 'card')
             target=result_targets(results,keys[1:])[0]
             require(target['kind']==('model' if card['kind']=='model3d' else card['kind']),'ASSISTANT_SOURCE_MISMATCH',409)
         return board
@@ -96,19 +108,19 @@ def build(snapshot,plan,results,register,run_id,connection,project,special=None)
             'ASSISTANT_HISTORY_EXCLUSIVE',409)
     def targets(action):
         ids=[aliases.get(k) for k in action['targets']]
-        require(ids and all(ids) and len(ids)==len(set(ids)),'ASSISTANT_TARGET_AMBIGUOUS',409)
+        require_target(ids and all(ids) and len(ids)==len(set(ids)), 'card')
         cards=[next((c for c in board['cards'] if c['id']==key),None) for key in ids]
-        require(all(cards),'ASSISTANT_TARGET_AMBIGUOUS',409)
+        require_target(all(cards), 'card')
         require(not any(c.get('historical') for c in cards),'ANALYSIS_HISTORY_READ_ONLY',409)
         return cards
-    def named(action,lookup,items):
+    def named(action,lookup,items,target):
         ids=[lookup.get(k) for k in action['targets']]
-        require(ids and all(ids) and len(ids)==len(set(ids)),'ASSISTANT_TARGET_AMBIGUOUS',409)
+        require_target(ids and all(ids) and len(ids)==len(set(ids)), target)
         found=[next((v for v in items if v['id']==key),None) for key in ids]
-        require(all(found),'ASSISTANT_TARGET_AMBIGUOUS',409)
+        require_target(all(found), target)
         return found
     def one(action):
-        cards=targets(action);require(len(cards)==1,'ASSISTANT_TARGET_AMBIGUOUS',409);return cards[0]
+        cards=targets(action);require_target(len(cards)==1, 'card');return cards[0]
     save=False
     for index,action in enumerate(plan['actions']):
         kind=action['kind'];receipt=dict(operationId=operation_id(run_id,'action:'+str(index)),kind=kind,status='prepared')
@@ -155,13 +167,14 @@ def build(snapshot,plan,results,register,run_id,connection,project,special=None)
                 else:card['pinned']=kind=='pin_cards'
             receipt['cardIds']=[c['id'] for c in cards]
         elif kind=='group_cards':
-            cards=targets(action);require(len(cards)>=2 and len(board.get('frames',[]))<10,'ANALYSIS_SIZE_LIMIT',413)
+            cards=targets(action);require_target(len(cards)>=2, 'card')
+            require(len(board.get('frames',[]))<10,'ANALYSIS_SIZE_LIMIT',413)
             group=dict(id=operation_id(run_id,'group:'+str(index)),title=action['text'].strip(),x=0,y=0,width=280,height=220)
             board.setdefault('frames',[]).append(group);groups['G'+str(len(groups)+1)]=group['id']
             for card in cards:card['frameId']=group['id']
             receipt.update(groupId=group['id'],label=group['title'],cardIds=[c['id'] for c in cards])
         elif kind in ('rename_group','ungroup'):
-            selected=named(action,groups,board.get('frames',[]));require(kind=='ungroup' or len(selected)==1,'ASSISTANT_TARGET_AMBIGUOUS',409)
+            selected=named(action,groups,board.get('frames',[]),'group');require_target(kind=='ungroup' or len(selected)==1, 'group')
             ids={g['id'] for g in selected}
             if kind=='rename_group':selected[0]['title']=action['text'].strip()
             else:
@@ -188,21 +201,22 @@ def build(snapshot,plan,results,register,run_id,connection,project,special=None)
                 board=special(kind,action,board,index)
             board['context'].update(timeFrom=dates[0],timeTo=dates[1])
         elif kind in ('add_relation','add_support','add_contradiction','add_reference'):
-            cards=targets(action);require(len(cards)==2 and action['text'].strip())
+            cards=targets(action);require_target(len(cards)==2, 'card');require(action['text'].strip())
             relation=dict(id=operation_id(run_id,'relation:'+str(index)),**{'from':cards[0]['id'],'to':cards[1]['id']},
                 kind={'add_relation':'hypothesis','add_support':'supports','add_contradiction':'contradicts','add_reference':'reference'}[kind],origin='manual',reason=action['text'].strip())
             if not any(all(r[k]==relation[k] for k in ('from','to','kind')) for r in board['relations']):
                 board['relations'].append(relation);links['L'+str(len(links)+1)]=relation['id']
             else:receipt['status']='already_present'
         elif kind in ('update_relation','remove_relations'):
-            selected=named(action,links,board['relations'])
+            selected=named(action,links,board['relations'],'relation')
             require(all(r['origin']=='manual' and r['kind']!='engineering' for r in selected),'ASSISTANT_SOURCE_RELATION_READ_ONLY',403)
-            require(kind=='remove_relations' or len(selected)==1,'ASSISTANT_TARGET_AMBIGUOUS',409)
+            require_target(kind=='remove_relations' or len(selected)==1, 'relation')
             if kind=='update_relation':selected[0]['reason']=action['text'].strip()
             else:board['relations']=[r for r in board['relations'] if r not in selected]
             receipt['relationIds']=[r['id'] for r in selected]
         elif kind in ('move_card','resize_card'):
-            cards=targets(action);require(len(cards)==1 and action['x'] is not None and action['y'] is not None)
+            cards=targets(action);require_target(len(cards)==1, 'card')
+            require(action['x'] is not None and action['y'] is not None)
             cards[0].update(dict(x=action['x'],y=action['y'],pinned=False) if kind=='move_card' else dict(width=action['x'],height=action['y'],pinned=False))
         else:require(False,'ASSISTANT_TOOL_NOT_ALLOWED',403)
         receipts.append(receipt)

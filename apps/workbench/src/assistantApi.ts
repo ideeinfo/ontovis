@@ -151,6 +151,7 @@ export function assistantMessage(error:unknown,en=false){
   ASSISTANT_SERVICE_NOT_APPROVED:['OntoBase 模型连接配置不可用，请联系管理员检查。','Ask an administrator to check the OntoBase model connection.'],
   ASSISTANT_SELECTION_REQUIRED:['请至少选择一份资料。','Select at least one material.'],
   ASSISTANT_RESULT_LIMIT:['候选列表已满，可缩小查询范围。','The result list is full. Narrow the search to continue.'],
+  ASSISTANT_INTERNAL_ERROR:['本轮处理遇到错误，可重新发送这条指令。','This turn could not be processed. Send the instruction again to retry.'],
   ASSISTANT_QUESTION_REQUIRED:['请输入问题后发送。','Enter a question to send.']};
  if(readiness[code])return readiness[code][en?1:0];
  if(code==='ASSISTANT_CANCELLED')return en?'This run stopped. No model answer was applied.':'本次运行已停止，未采用模型结果。';
