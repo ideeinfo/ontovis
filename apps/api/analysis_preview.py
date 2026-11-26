@@ -530,6 +530,30 @@ def relationships(reader, fixed, scene_library):
             if source_kind in ('alarm', 'work_order') and (value.get('dataset', {}).get('faultCode') or value.get('faultCode')) in codes:
                 matching = next(n for n in graph['nodes'] if n['faultCode'] == (value.get('dataset', {}).get('faultCode') or value.get('faultCode')))
                 add(alarm_id, doc_id, 'fault_manual', '故障代码手册', {'nodeId': matching['id'], 'pageNumber': descriptor['pageNumber']}, '已发布故障节点的代码与当前报警代码一致；适用范围见手册')
+    whole_drawings = {}
+    for identity, (kind, descriptor, _) in values.items():
+        if kind == 'drawing' and 'drawingUid' in descriptor:
+            whole_drawings.setdefault(descriptor['drawingUid'], []).append((identity, descriptor['expectedContentSha256']))
+    objects = {identity: descriptor for identity, (kind, descriptor, _) in values.items() if kind == 'object'}
+    if whole_drawings and objects:
+        from .related_drawings import RelatedDrawingsReader
+        related = RelatedDrawingsReader(reader.reader)
+        for object_id, descriptor in objects.items():
+            try:
+                matches = related.matching_drawings(descriptor, whole_drawings)
+            except PreviewError as error:
+                if error.status in (401, 403):
+                    raise
+                gap(object_id, error.code)
+                continue
+            for uid, row in matches.items():
+                direct = any(match['relation'] in ('self', 'shared_definition') for match in row['matchedObjects'])
+                for drawing_id, revision in whole_drawings[uid]:
+                    if row['availability'] == 'available' and row['contentSha256'] == revision:
+                        add(object_id, drawing_id, 'drawing_association' if direct else 'drawing_descendant',
+                            '关联图纸' if direct else '下级对象图纸',
+                            reason='此对象或其固定共享定义已登记这张图纸，打开整页' if direct
+                            else '此对象的下级对象已登记这张图纸，打开整页')
     reader.authorize()
     unique = {edge['id']: edge for edge in edges}
     return {'items': sorted(unique.values(),key=lambda edge:edge['origin']!='source')[:200], 'gaps': gaps[:200]}

@@ -130,6 +130,15 @@ async (page, facts, phase) => {
 
     await button('加入资料',canvas).click();
     const materials=canvas.locator('.ac-material-panel');
+    await materials.getByRole('button',{name:/^图纸/}).click();
+    await button('加入画布：'+facts.memberDrawingTitle,materials).click();
+    const descendantEdge=canvas.getByRole('button',{name:
+      '下级对象图纸：'+facts.cards.object.title+' → '+facts.memberDrawingTitle,exact:true});
+    await descendantEdge.waitFor({state:'attached'});
+    check(await descendantEdge.getAttribute('data-origin')==='source','The new drawing did not use the registered object relationship');
+    await button('撤销修改',canvas).click();
+    await descendantEdge.waitFor({state:'detached'});
+    await materials.locator('.ac-material-back').click();
     await materials.getByRole('button',{name:/^故障报警/}).click();
     const row=materials.locator('.ac-material-result');
     const alreadyAdded=row.filter({has:page.getByText('已加入',{exact:true})});
@@ -152,6 +161,7 @@ async (page, facts, phase) => {
     const workbenchEdges=canvas.locator('.ad-links [data-relation-id]');
     const edgeIds=locator=>locator.evaluateAll(nodes=>nodes.map(node=>node.dataset.relationId).sort());
     await workbenchEdges.filter({hasText:'同次报警趋势'}).waitFor({state:'attached'});
+    await workbenchEdges.filter({hasText:'关联图纸'}).waitFor({state:'attached'});
     await canvas.locator('.ad-links [data-origin="manual"]').waitFor({state:'attached'});
     const expected=await edgeIds(workbenchEdges);
     await button('驾驶舱').click();
@@ -162,10 +172,11 @@ async (page, facts, phase) => {
     await view.getByLabel('推荐分析画布',{exact:true}).selectOption(facts.analysisId);
     await view.locator('.pa-canvas-caption').getByText(/ · r3 · /).waitFor();
     await view.locator('.pa-relation-label').filter({hasText:'同次报警趋势'}).waitFor({state:'attached'});
+    await view.locator('.pa-relation-label').filter({hasText:'关联图纸'}).waitFor({state:'attached'});
     await view.locator('.pa-links path[data-origin="manual"]').waitFor({state:'attached'});
     check(JSON.stringify(await edgeIds(view.locator('.pa-links path[data-relation-id]')))===JSON.stringify(expected),
       'The cockpit did not display the workbench relationships for the same saved revision');
-    return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true};
+    return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

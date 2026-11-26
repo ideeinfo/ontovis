@@ -42,6 +42,8 @@ def browser_site(public: Path):
                                                           scopeType='project',scopeKey=PROJECT,status='accepted')])
         project_prefix = f'/api/v1/projects/{PROJECT}'
         drawing = 'fixture-13001-wiring'
+        member_drawing = 'fixture-13001-member-wiring'
+        member_title = 'Q-26 合成柜内接线图'
         img = dict(content=PNG,mediaType='image/png',sha256=sha256(PNG).hexdigest())
         pdf = dict(content=PDF,mediaType='application/pdf',sha256=sha256(PDF).hexdigest())
 
@@ -56,13 +58,29 @@ def browser_site(public: Path):
                 if blocked.is_set():
                     raise PreviewError(403,'NOT_FOUND_OR_FORBIDDEN')
                 return {'outline':[]} if route.endswith('/navigation') else fixed._request(method,path,body)
-            if route==f'/api/v1/drawings/{drawing}':
-                return dict(project_code=PROJECT,drawing_uid=drawing,drawing_name='合成接线图',source_page_number=89)
+            if route in (f'/api/v1/drawings/{drawing}', f'/api/v1/drawings/{member_drawing}'):
+                uid = route.rsplit('/', 1)[-1]
+                return dict(project_code=PROJECT,drawing_uid=uid,
+                            drawing_name=member_title if uid==member_drawing else '合成接线图',source_page_number=89)
             if route==project_prefix+'/objects' and parse_qs(url.query).get('primaryIdentifier')==[sample['primaryRds']]:
                 return dict(projectCode=PROJECT,items=[primary],total=1,nextCursor=None)
             if route==project_prefix+'/objects/resolve' and body['entityUids']==[primary['entityUid']]:
                 return dict(projectCode=PROJECT,resolutionMode='live',items=[dict(resolution='exact',
                     requestedEntityUid=primary['entityUid'],canonicalEntityUid=primary['entityUid'],object=primary,canonicalObject=primary)])
+            if route in (project_prefix+'/object-evidence/resolve', project_prefix+'/object-evidence/related'):
+                assert body['entityUid']==primary['entityUid']
+                scope = dict(entityUid=body['entityUid'],entityRevision=body['expectedEntityRevision'],
+                             installationContextId=None,hierarchyRevision=None)
+                if route.endswith('/resolve'):
+                    return {**scope,'complete':True,'versionMode':'current_content_snapshot','items':[]}
+                def page(uid, title, match):
+                    return dict(drawingUid=uid,title=title,drawingNumber=None,pageNumber=89,sourceRevision='a'*64,
+                                contentSha256=pdf['sha256'],availability='available',precision='page',region=None,
+                                matchedObjects=[{**match,'viaEntityUid':primary['entityUid'],'viaName':primary['displayName']}])
+                direct = {key:primary[key] for key in ('entityUid','entityRevision','displayName')} | {'relation':'self'}
+                member = dict(entityUid='fixture-terminal',entityRevision='object:1',displayName='合成端子',relation='definition_descendant')
+                return {**scope,'includeDescendants':True,'scopeComplete':True,'nextCursor':None,'snapshotRevision':'b'*64,'total':2,
+                        'items':[page(drawing,'合成接线图',direct),page(member_drawing,member_title,member)]}
             if route.endswith(('/object-locations','/installations','/objects','/result-relation-imports')):
                 return {'items':[],'total':0,'nextCursor':None}
             return original(account,method,path,body)
@@ -86,6 +104,7 @@ def browser_site(public: Path):
 
         with patch.object(source,'document_page',lambda *_args,**_kw:img,create=True), \
                 patch.object(source,'source_bytes',lambda *_args,**_kw:pdf,create=True), \
+                patch.object(source,'image',side_effect=AssertionError('Only drawing metadata is needed'),create=True), \
                 patch('apps.api.analysis_media.drawing_image',return_value=img):
             record = '本单已记录合成处置结果，用于固定资料权限验收。'
             order = fixture.new('Q-26 合成历史工单')
@@ -108,13 +127,14 @@ def browser_site(public: Path):
                 ('work_order','Q-26 合成固定工单',dict(orderId=order['orderId'],expectedOrderRevision=order['orderRevision'])),
                 ('alarm','13001 合成报警',{key:board['context'][key] for key in ('eventId','datasetId','datasetRevision')}),
                 ('trend','合成传感器温度',{key:sample[key] for key in ('datasetId','datasetRevision','timeFrom','timeTo')} | {'metricId':'sensor_temperature'}),
+                ('object',primary['displayName'],dict(entityUid=primary['entityUid'],expectedEntityRevision=primary['entityRevision'])),
             ]
             frames = [dict(id='current',title='本次调查',x=-560,y=-500,width=1040,height=275),
                       dict(id='history',title='历史参考 · 合成处置',x=-560,y=60,width=700,height=550)]
             board['frames'] = frames
             board['cards'][0].update(x=180,y=103)
             positions = [(-540,-457,'current'),(-200,-457,'current'),(-540,103,'history'),
-                         (-200,103,'history'),(140,-457,'current'),(-540,380,'history')]
+                         (-200,103,'history'),(140,-457,'current'),(-540,380,'history'),(-200,360,'history')]
             cards = {}
             for (kind,name,selector),(x,y,frame_id) in zip(entries,positions,strict=True):
                 ref = fixture.ok(ANALYSIS+'/evidence/register',dict(analysisSessionId=analysis_id,
@@ -140,7 +160,7 @@ def browser_site(public: Path):
 
             with serve_workbench(public.resolve(strict=True),fixture.sessions,commands) as origin:
                 yield dict(origin=origin,analysisId=analysis_id,title=title,cards=cards,frames=frames,record=record,
-                           datasetId=sample['datasetId'],datasetRevision=sample['datasetRevision']),restore,verify
+                           memberDrawingTitle=member_title,datasetId=sample['datasetId'],datasetRevision=sample['datasetRevision']),restore,verify
     finally:
         fixture.doCleanups()
         fixture.tearDownClass()

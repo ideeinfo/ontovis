@@ -12,6 +12,7 @@ import sqlite3
 from apps.api.authority import PreviewError
 from apps.api.analysis_evidence import validate_descriptor
 from apps.api.analysis_preview import drawing_preview, drawing_bytes, document_preview, fault_documents, relationships, preview
+from apps.api.scene_engineering import SceneEngineeringReader
 from apps.api import analysis_media
 from apps.api import simulated_faults as simulated
 
@@ -232,6 +233,51 @@ class SourceViewerTests(TestCase):
         photo['entityUid']='other';self.assertEqual(relationships(self.reader,fixed,None)['items'],[])
         self.reader.read.side_effect=PreviewError(403,'FORBIDDEN')
         with self.assertRaises(PreviewError):relationships(self.reader,fixed,None)
+
+    def test_whole_drawing_links_to_its_registered_object_and_cabinet_at_the_fixed_revision(self):
+        object_rows = {
+            'sensor': {'entityUid': 'sensor', 'entityRevision': 'r1', 'definitionParentEntityUid': 'cabinet'},
+            'cabinet': {'entityUid': 'cabinet', 'entityRevision': 'r2', 'displayName': 'Cabinet'},
+            'same-name': {'entityUid': 'same-name', 'entityRevision': 'r3', 'displayName': 'Cabinet'},
+        }
+        object_values = {uid: {'item': item, 'context': None} for uid, item in object_rows.items()}
+        self.reader.read.side_effect = lambda kind, descriptor: object_values[descriptor['entityUid']] if kind == 'object' else {}
+
+        def request(method, path, payload=None):
+            if not path.endswith('/object-evidence/related'):
+                return self.request(method, path)
+            self.assertEqual(method, 'POST')
+            uid = payload['entityUid']
+            matches = [{'entityUid': 'sensor', 'entityRevision': 'r1', 'displayName': 'Sensor',
+                        'relation': 'self' if uid == 'sensor' else 'definition_descendant',
+                        'viaEntityUid': uid, 'viaName': 'Selected object'}]
+            row = {'drawingUid': self.drawing['drawingUid'], 'title': 'Wiring', 'drawingNumber': '1',
+                   'pageNumber': 1, 'sourceRevision': 'b'*64, 'contentSha256': self.sha,
+                   'availability': 'available', 'precision': 'page', 'region': None, 'matchedObjects': matches}
+            items = [] if uid == 'same-name' else [row]
+            return {'entityUid': uid, 'entityRevision': payload['expectedEntityRevision'],
+                    'installationContextId': None, 'hierarchyRevision': None, 'includeDescendants': True,
+                    'items': items, 'total': len(items), 'nextCursor': None, 'snapshotRevision': 'c'*64, 'scopeComplete': True}
+
+        self.reader.reader = Mock(spec=SceneEngineeringReader, project_code='P', prefix=self.wrapper.prefix,
+                                  authorize=Mock(), authority=SimpleNamespace(image=Mock()), _request=Mock(side_effect=request),
+                                  detail=Mock(side_effect=lambda _context, uid, _revision, **_: object_values[uid]))
+        fixed = [
+            ({'evidenceRefId': uid, 'sourceKind': 'object'}, {'entityUid': uid, 'expectedEntityRevision': item['entityRevision'],
+             'installationContextId': None, 'expectedHierarchyRevision': None})
+            for uid, item in object_rows.items()
+        ] + [
+            ({'evidenceRefId': 'drawing', 'sourceKind': 'drawing'}, self.drawing),
+            ({'evidenceRefId': 'old-drawing', 'sourceKind': 'drawing'}, {**self.drawing, 'expectedContentSha256': 'd'*64}),
+        ]
+        result = relationships(self.reader, fixed, None)
+        self.assertEqual({(edge['fromRef'], edge['toRef'], edge['kind'], edge['origin'], edge['anchor'])
+                          for edge in result['items']}, {
+            ('sensor', 'cabinet', 'containment', 'source', None),
+            ('sensor', 'drawing', 'drawing_association', 'source', None),
+            ('cabinet', 'drawing', 'drawing_descendant', 'source', None),
+        })
+        self.assertEqual(result['gaps'], [])
 
     def test_alarm_links_only_to_trends_from_its_fixed_simulation_dataset(self):
         current = simulated.identity('13001')

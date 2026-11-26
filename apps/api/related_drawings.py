@@ -52,6 +52,30 @@ class RelatedDrawingsReader:
         _require(value['total']>=len(result) and (cursor is None or bool(result)))
         return {**{key:value[key] for key in ('total','nextCursor','snapshotRevision','scopeComplete','includeDescendants')},'items':result}
 
+    def matching_drawings(self, selection, drawing_uids):
+        pending = set(drawing_uids)
+        matches = {}
+        cursor = snapshot = None
+        seen = set()
+        while pending:
+            page = self.resolve({**selection, 'includeDescendants': True, 'limit': 20, 'cursor': cursor})
+            if snapshot is None:
+                snapshot = page['snapshotRevision']
+            _require(page['snapshotRevision'] == snapshot, 'SOURCE_CHANGED', 409)
+            for row in page['items']:
+                uid = row['drawingUid']
+                _require(uid not in seen)
+                seen.add(uid)
+                if uid in pending:
+                    matches[uid] = row
+                    pending.remove(uid)
+            cursor = page['nextCursor']
+            _require(len(seen) <= page['total'] and (not cursor or len(seen) < page['total']))
+            if not cursor:
+                _require(len(seen) == page['total'])
+                break
+        return matches
+
     def content(self,payload):
         body=self.selection(payload,True);selected=self.evidence._selected(body)
         self.reader.authorize()

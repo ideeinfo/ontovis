@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import unittest
+from unittest.mock import patch
 from apps.api.related_drawings import RelatedDrawingsReader
 from apps.api.scene_engineering import SceneEngineeringReader
 from tests import test_scene_engineering as objects
@@ -41,6 +42,14 @@ class RelatedDrawingsTests(unittest.TestCase):
   self.assertEqual(value['items'][0]['matchedObjects'][0]['relation'],'definition_descendant')
   call=next(call for call in self.authority.calls if call[1].endswith('/object-evidence/related'))
   self.assertEqual(call[2],body);self.assertNotIn('privateServerPath',str(value))
+ def test_matching_drawings_reads_later_pages_and_stops_on_the_requested_ids(self):
+  first = {'items': [{'drawingUid': 'drawing-1'}], 'total': 3, 'nextCursor': 'next', 'snapshotRevision': 'a'*64}
+  second = {**first, 'items': [{'drawingUid': 'drawing-2'}], 'nextCursor': 'later'}
+  with patch.object(self.reader, 'resolve', side_effect=[first, second]) as resolve:
+   self.assertEqual(self.reader.matching_drawings(self.selection(), {'drawing-2'}), {'drawing-2': second['items'][0]})
+   self.assertEqual([call.args[0]['cursor'] for call in resolve.call_args_list], [None, 'next'])
+  with patch.object(self.reader, 'resolve', side_effect=[first, {**second, 'snapshotRevision': 'b'*64}]):
+   self.expect('SOURCE_CHANGED', lambda: self.reader.matching_drawings(self.selection(), {'drawing-2'}), 409)
  def test_only_object_is_explicit_and_descendant_response_is_rejected(self):
   self.assertEqual(self.reader.resolve(self.body(includeDescendants=False))['items'][0]['matchedObjects'][0]['relation'],'self')
   self.authority.metadata_edit=lambda v:v['items'][0]['matchedObjects'][0].update(relation='definition_descendant')
