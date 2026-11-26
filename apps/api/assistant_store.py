@@ -1,6 +1,7 @@
 """Project policy history and owner-scoped assistant receipts in the paired library."""
 from __future__ import annotations
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from uuid import UUID, uuid4
@@ -155,6 +156,25 @@ class AssistantStore:
                          c.updated_at desc,c.id desc limit 20''',
                 (self.connection_id,project,owner,analysis,revision,mode,mode,mode,mode)).fetchall()
         return [self.conversation_public(dict(r)) for r in rows]
+
+    def recent_prompts(self, project, owner, mode):
+        from .assistant_summaries import redact
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace('+00:00', 'Z')
+        with self.library.connect() as db:
+            rows = db.execute('''select json_extract(input_json,'$.question') as question
+                from assistant_runs where connection_id=? and project_code=? and owner=?
+                and json_extract(input_json,'$.mode')=? and state in ('complete','partial') and created_at>=?
+                order by created_at desc,id desc limit 60''', (self.connection_id,project,owner,mode,cutoff)).fetchall()
+        counts, prompts = Counter(), {}
+        for row in rows:
+            question = (row['question'] or '').strip()
+            if not 4 <= len(question) <= 120 or len(question.splitlines()) != 1 or redact(question) != question:
+                continue
+            key = ' '.join(question.split()).casefold()
+            counts[key] += 1
+            prompts.setdefault(key, question)
+        return [prompts[key] for key, _ in counts.most_common(3)]
 
     @staticmethod
     def conversation_public(row):

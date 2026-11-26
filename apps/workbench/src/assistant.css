@@ -55,17 +55,12 @@
 .as-toolbar .as-context-toggle{margin-right:auto;color:var(--text);font-size:13px}
 .as-context-toggle b{font-size:11px;border-radius:4px;background:var(--selected);color:var(--primary);padding:0 5px}
 .as-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:0 16px 16px;scrollbar-width:thin}
-.as-toolbar button:focus-visible,.as-composer button:focus-visible,.as-welcome button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.as-toolbar button:focus-visible,.as-composer button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .as-history-tools{padding:0 0 12px;border-bottom:1px solid var(--borderSubtle)}
 .as-panel .as-sources{padding:0 0 12px}.as-panel .as-sources .as-materials{max-height:none;overflow:visible;scrollbar-gutter:auto}
 .as-material-copy small{font-size:11px;color:var(--textSecondary);line-height:1.55}
 .as-panel .as-sources .as-material-row{padding:8px;border-radius:5px}
 .as-panel .as-material-copy{gap:3px}
-.as-welcome{padding:28px 0 16px;display:grid;gap:10px}
-.as-welcome>strong{font-size:15px;font-weight:600;color:var(--text)}
-.ad-inspector .as-welcome>p{font-size:13px;margin:0 0 6px}
-.as-welcome>button{border:1px solid var(--borderSubtle);background:var(--surface);padding:10px 12px;text-align:left;border-radius:6px;color:var(--text);font:inherit;cursor:pointer}
-.as-welcome>button:hover{border-color:var(--primary);background:var(--selected)}
 .as-panel .as-transcript{margin-top:16px;gap:24px}
 .as-panel .as-user-message{padding:10px 12px;background:var(--selected);border-radius:8px}
 .as-panel .as-assistant-message{padding:0;border:0;background:transparent}
@@ -84,6 +79,13 @@
 .as-failure{border-left:2px solid var(--borderControl);padding:0 0 0 12px;margin:8px 0}
 .ad-inspector .as-failure>p{font-size:13px;color:var(--text);margin:0 0 8px}.as-failure .ov-btn{font-size:11px;padding:6px 9px}
 .as-composer{flex:none;padding:12px 16px 10px;border-top:1px solid var(--borderSubtle);background:var(--surface)}
+.as-prompts{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-bottom:8px}
+.as-prompts>small{flex-basis:100%;color:var(--textSecondary);font-size:11px}
+.as-prompts>button{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;
+  border:1px solid var(--borderSubtle);border-radius:5px;background:var(--surface);color:var(--text);
+  font:inherit;font-size:11px;padding:4px 7px;cursor:pointer}
+.as-prompts>button:hover:not(:disabled){border-color:var(--primary);background:var(--selected)}
+.as-prompts>button:disabled{opacity:.65;cursor:default}
 .as-run-status{
   display:flex;align-items:center;gap:9px;min-height:35px;margin:0 0 9px;padding:5px 9px;
   border:1px solid var(--borderSubtle);border-inline-start:3px solid var(--primary);

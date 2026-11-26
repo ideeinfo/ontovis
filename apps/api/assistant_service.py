@@ -204,7 +204,9 @@ def request(sessions,sid,path,payload):
             'defaultService':default_service,'protocol':default_service.get('protocol'),
             'services':services(),'canManage':access.get('role')=='admin'})
     if action in ('policy','history','preview'):
-        require(set(body)==({'policy'} if action=='preview' else set()))
+        mode=body.get('mode')
+        require(set(body)==({'policy'} if action=='preview' else set()) or
+                action=='policy' and set(body)=={'mode'} and mode in ('workbench','cockpit_query'))
         current=runtime.store.policy(project)
         if action=='preview':current={**current,'policy':validate_policy(body['policy'])}
         try:available=service()
@@ -212,7 +214,8 @@ def request(sessions,sid,path,payload):
             if error.status in (401,403):raise
             available={'enabled':False,'canRun':False,'reason':error.code}
         return reply({**current,'service':available,'services':services(),'canManage':access.get('role')=='admin',
-            **({'items':runtime.store.history(project)} if action=='history' else {})})
+            **({'items':runtime.store.history(project)} if action=='history' else {}),
+            **({'recentPrompts':runtime.store.recent_prompts(project,actor,mode)} if mode else {})})
     require(access.get('role')=='admin','ASSISTANT_RUN_FORBIDDEN',403)
     if action=='model-config-save':
         require(body.get('expectedAccessRevision')==access['accessRevision'],'ACCESS_CHANGED',409)

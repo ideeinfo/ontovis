@@ -98,6 +98,30 @@ class ConversationTests(unittest.TestCase):
             self.begin(self.follow(workbench))
         self.assertEqual('ASSISTANT_CONVERSATION_MODE_CHANGED', blocked.exception.code)
 
+    def test_recent_prompts_rank_successful_owner_project_mode_turns_without_new_storage(self):
+        def turn(question, *, owner=None, project='P', mode='workbench', state='complete'):
+            body={**self.body(mode=mode), 'question':question}
+            row=self.begin(body,owner,project)
+            self.store.update(row['id'],state,result=dict(answer=answer()))
+            return row
+
+        turn('Group selected cards')
+        turn('整理画布布局')
+        turn('group  selected cards',state='partial')
+        turn('生成整体处置建议')
+        old=turn('历史过期提示')
+        with self.library.connect() as db:
+            db.execute("update assistant_runs set created_at='2000-01-01T00:00:00Z' where id=?",(old['id'],))
+        turn('已失败的请求',state='failed')
+        turn('请核验\n多行资料')
+        turn('token: sample-placeholder')
+        turn('其他账号输入',owner=str(uuid4()))
+        turn('其他项目输入',project='Q')
+        turn('查询历史工单',mode='cockpit_query')
+        self.assertEqual(['group  selected cards','生成整体处置建议','整理画布布局'],
+                         self.store.recent_prompts('P',self.owner,'workbench'))
+        self.assertEqual(['查询历史工单'],self.store.recent_prompts('P',self.owner,'cockpit_query'))
+
     def test_memory_remaps_reference_keys_by_stable_material_id(self):
         source=dict(key='E1',kind='object',evidenceRefId=self.ref,sourceRevision='r',summaryHash='hash',retrievalRevision='graph',availability='available')
         row=self.complete(self.begin(),[source]);changed={**source,'key':'E7'}

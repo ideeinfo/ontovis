@@ -26,7 +26,7 @@ import {AssistantWorkOrderDialog} from './AssistantWorkOrderDialog';
 import './assistant.css';
 import {llmTaskNames,type LlmTask} from './llmSettings';
 
-export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,onEditScene,onEditEquipment,onEditModelInfo,modelInfoEditing,modelInfoReceipt,initialRunId,queryOnly=false,snapshot,onApplyTask,onHandoff,initialQuestion,onInitialQuestionUsed,hasUnsaved=false,historyJson}:{api:WorkbenchApi;cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string,record?:string)=>void;onEditScene?:(target:AssistantSceneEditTarget)=>void;onEditEquipment?:(target:EquipmentConfigurationEdit)=>void;onEditModelInfo?:(target:ModelInfoTarget)=>void;modelInfoEditing?:boolean;modelInfoReceipt?:ModelInfoReceipt;initialRunId?:string;queryOnly?:boolean;snapshot?:CanvasSnapshot;hasUnsaved?:boolean;historyJson?:string;initialQuestion?:string;onInitialQuestionUsed?:()=>void;onHandoff?:(run:AssistantRun)=>void;onApplyTask?:(prepared:PreparedTask,baseJson:string)=>Promise<number|null>}){
+export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNote,canTransfer=false,preferredOrderId,faultCode,onOpenOrder,onEditScene,onEditEquipment,onEditModelInfo,modelInfoEditing,modelInfoReceipt,initialRunId,queryOnly=false,snapshot,onApplyTask,onHandoff,initialQuestion,onInitialQuestionUsed,hasUnsaved=false,historyJson,focusCardIds=[],visible=true}:{api:WorkbenchApi;cards:CanvasCard[];receipt:DraftReceipt|null;en:boolean;canAddNote:boolean;onFocus:(card:CanvasCard,anchor?:SourceAnchor|null)=>void;onAddNote:(text:string)=>void;canTransfer?:boolean;preferredOrderId?:string;faultCode?:string;onOpenOrder?:(id:string,record?:string)=>void;onEditScene?:(target:AssistantSceneEditTarget)=>void;onEditEquipment?:(target:EquipmentConfigurationEdit)=>void;onEditModelInfo?:(target:ModelInfoTarget)=>void;modelInfoEditing?:boolean;modelInfoReceipt?:ModelInfoReceipt;initialRunId?:string;queryOnly?:boolean;snapshot?:CanvasSnapshot;hasUnsaved?:boolean;historyJson?:string;focusCardIds?:string[];visible?:boolean;initialQuestion?:string;onInitialQuestionUsed?:()=>void;onHandoff?:(run:AssistantRun)=>void;onApplyTask?:(prepared:PreparedTask,baseJson:string)=>Promise<number|null>}){
  const service=useMemo(()=>new AssistantApi(api),[api]);const t=(zh:string,english:string)=>en?english:zh;
  const mode:AssistantMode|null=snapshot?(queryOnly?'cockpit_query':'workbench'):null;
  const [taskId,setTaskId]=useState<LlmTask>(queryOnly?'query':'analysis');
@@ -34,13 +34,14 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const [view,setView]=useState<AssistantPolicyView|null>(null),[selected,setSelected]=useState<string[]>(()=>defaultAssistantEvidence(available));
  const [selectionEditedIn,setSelectionEditedIn]=useState('');
  const [policyError,setPolicyError]=useState<unknown>(null),sendStatusId=useId();
- const [question,setQuestion]=useState(''),[run,setRun]=useState<AssistantRun|null>(null),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[reload,setReload]=useState(0),[summaries,setSummaries]=useState<AssistantSource[]|null>(null),[pending,setPending]=useState<string|null>(null);
+ const [question,setQuestion]=useState(''),[showPrompts,setShowPrompts]=useState(true),[run,setRun]=useState<AssistantRun|null>(null),[error,setError]=useState<unknown>(null),[busy,setBusy]=useState(false),[reload,setReload]=useState(0),[summaries,setSummaries]=useState<AssistantSource[]|null>(null),[pending,setPending]=useState<string|null>(null);
  const [pollState,setPollState]=useState<AssistantPollState>('reading'),[pollReload,setPollReload]=useState(0);
  const [conversations,setConversations]=useState<AssistantConversation[]>([]),[conversation,setConversation]=useState<AssistantConversation|null>(null),[turns,setTurns]=useState<AssistantRun[]>([]),[hasEarlier,setHasEarlier]=useState(false);
  const continuation=conversation&&assistantConversationMatches(conversation,mode)?conversation:null;
  const [loadingHistory,setLoadingHistory]=useState(false);
  const [contextOpen,setContextOpen]=useState(false),[historyOpen,setHistoryOpen]=useState(false);
  const scrollArea=useRef<HTMLDivElement>(null),composerInput=useRef<HTMLTextAreaElement>(null);
+ const composing=useRef(false),submitting=useRef<string|null>(null);
  const autoScroll=useRef(true);
  const [transferRun,setTransferRun]=useState<AssistantRun|null>(null);
  const [sourceView,setSourceView]=useState<{runId:string;reference:AssistantSource}|null>(null);
@@ -58,11 +59,12 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const current=useRef(context);current.current=context;
  const alive=useRef(true),scope=useRef<AssistantApi|null>(null);
  useEffect(()=>{alive.current=true;automatic.current=null;setRun(null);setError(null);setPending(null);setSummaries(null);setConversation(null);setConversations([]);setTurns([]);setHasEarlier(false);setLoadingHistory(false);setTransferRun(null);setSourceView(null);setSceneView(null);setDeviceView(null);setDocumentView(null);setModelView(null);setConfigurationView(null);historyGeneration.current++;setQuestion(initialQuestion??'');if(initialQuestion)onInitialQuestionUsed?.();
-  setPollState('reading');const fixed=new AssistantApi(api.assistantScope());scope.current=fixed;
+  setPollState('reading');setShowPrompts(true);composing.current=false;
+  const fixed=new AssistantApi(api.assistantScope());scope.current=fixed;
   return()=>{alive.current=false;const previous=latest.current;if(running(previous))void fixed.cancel(previous!).catch(()=>{});};
  },[context]);
  useEffect(()=>{setSelected(previous=>previous.filter(id=>available.some(card=>card.source!.id===id)));setSummaries(null);},[inventory]);
- useEffect(()=>{const abort=new AbortController();setView(null);setPolicyError(null);service.policy(abort.signal).then(value=>{if(!abort.signal.aborted){setView(value);setSelected(ids=>ids.slice(0,value.policy.reads));}}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setPolicyError(e);});return()=>abort.abort();},[service,context,reload]);
+ useEffect(()=>{if(!visible)return;setShowPrompts(true);const abort=new AbortController();setView(null);setPolicyError(null);service.policy(abort.signal,mode??undefined).then(value=>{if(!abort.signal.aborted){setView(value);setSelected(ids=>ids.slice(0,value.policy.reads));}}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setPolicyError(e);});return()=>abort.abort();},[service,context,reload,visible]);
  useEffect(()=>{if(busy||!run||!running(run))return;const abort=new AbortController(),key=context;
   const stop=watchAssistantRun(service,run,abort.signal,value=>{if(current.current===key){setRun(value);setError(null);setPollState('reading');}},
    (e,retrying)=>{if(current.current===key){setError(e);setPollState(retrying?'retrying':'paused');}});
@@ -93,12 +95,15 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
    if(!earlier){if(!queryOnly)setTaskId(detail.items.at(-1)?.taskId??'analysis');setRun(detail.items.at(-1)??null);setPending(null);setSummaries(null);setQuestion('');}
   }catch(e){if(alive.current&&current.current===key&&historyGeneration.current===generation)setError(e);}finally{if(alive.current&&current.current===key&&historyGeneration.current===generation)setLoadingHistory(false);}
  }
- function newConversation(){autoScroll.current=true;setContextOpen(false);setHistoryOpen(false);historyGeneration.current++;setConversation(null);setTurns([]);setRun(null);setPending(null);setError(null);setQuestion('');setHasEarlier(false);setLoadingHistory(false);}
+ function newConversation(){autoScroll.current=true;setContextOpen(false);setHistoryOpen(false);historyGeneration.current++;setConversation(null);setTurns([]);setRun(null);setPending(null);setError(null);setQuestion('');setShowPrompts(true);setHasEarlier(false);setLoadingHistory(false);}
  const transcript=mergeConversationTurns(turns,run);
  useEffect(()=>{if(autoScroll.current&&scrollArea.current)scrollArea.current.scrollTop=scrollArea.current.scrollHeight;},[run?.runId,run?.state,loadingHistory]);
  const selection=()=>({analysisSessionId:receipt!.analysisSessionId,expectedAnalysisRevision:receipt!.analysisRevision,evidenceRefIds:selected});
- async function start(){if((!receipt&&!snapshot)||!view||sendBlocker)return;autoScroll.current=true;const key=context,requestId=crypto.randomUUID(),fixed=scope.current!;historyGeneration.current++;setTurns(previous=>mergeConversationTurns(previous,run));setBusy(true);setError(null);setPending(requestId);setSummaries(null);
+ async function start(){if((!receipt&&!snapshot)||!view||sendBlocker||composing.current||submitting.current===context)return;
+  autoScroll.current=true;const key=context,requestId=crypto.randomUUID(),fixed=scope.current!;submitting.current=key;
+  historyGeneration.current++;setTurns(previous=>mergeConversationTurns(previous,run));setBusy(true);setError(null);setPending(requestId);setSummaries(null);setShowPrompts(false);
   try{const value=await api.request<AssistantRun>(ASSISTANT_ROOT+(snapshot?'/task-start':'/start'),{...(snapshot?{protocol:TASK_PROTOCOL,mode,...(!queryOnly&&historyJson?{historyJson}:{}),
+   focusCardIds:focusCardIds.filter(id=>cards.some(card=>card.id===id)),
    ...(receipt&&selected.length&&selectionEditedIn===context?{preferSelectedEvidence:true}:{}),
    snapshotJson:JSON.stringify(snapshot),analysisSessionId:receipt?.analysisSessionId??draftId.current,expectedAnalysisRevision:receipt?.analysisRevision??0,evidenceRefIds:receipt?selected:[]}:selection()),requestId,question:question.trim(),conversationId:continuation?.conversationId??null,expectedConversationVersion:continuation?.version??0,parentRunId:continuation?.headRunId??null,expectedPolicyRevision:view.revision,
     expectedAccessRevision:view.accessRevision,expectedServiceRevision:effectiveService?.serviceRevision,taskId});
@@ -107,7 +112,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
     automatic.current={runId:value.runId,context:key};setRun(value);setPending(null);setQuestion('');setPollState('reading');
     if(value.conversationId){const head={conversationId:value.conversationId,title:continuation?.title||value.question||'分析',version:value.conversationVersion||1,headRunId:value.runId,analysisSessionId:value.analysisSessionId,analysisRevision:value.analysisRevision,updatedAt:new Date().toISOString(),mode};setConversation(head);setConversations(items=>[head,...items.filter(v=>v.conversationId!==head.conversationId)].slice(0,20));}
   }catch(e){if(alive.current&&current.current===key){setError(e);if(e&&typeof e==='object'&&'status'in e)setPending(null);}}
-  finally{if(alive.current&&current.current===key)setBusy(false);}
+  finally{if(submitting.current===key)submitting.current=null;if(alive.current&&current.current===key)setBusy(false);}
  }
  async function inspectRun(){if(!pending&&!run)return;const key=context;setBusy(true);setError(null);try{
   const value=pending?await api.request<AssistantRun>(ASSISTANT_ROOT+'/status',{requestId:pending}):await service.status(run!);
@@ -140,6 +145,13 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const metadataCount=available.filter(card=>selected.includes(card.source!.id)&&['drawing','photo','model3d'].includes(card.kind)).length;
  const activity=assistantRunActivity(run,!!pending,busy,pollState);
  const needsCheck=activity==='unconfirmed'||activity==='paused';
+ const defaults=[
+  t('基于当前画布生成整体处置建议','Generate an overall response plan from this canvas'),
+  snapshot&&!queryOnly?t('加入相关的工程对象','Add the related engineering objects'):t('查找当前故障代码的历史工单','Find historical orders for the current fault code'),
+  snapshot&&!queryOnly?t('整理画布布局','Arrange the canvas'):t('梳理现有资料能支持哪些结论和缺口','Review what the evidence supports and what is missing'),
+ ];
+ const recentPrompts=view?.recentPrompts??[];
+ const prompts=Array.from(new Set([...recentPrompts,...defaults])).slice(0,3);
  const composer=<div className="as-composer">
   {activity&&<div className="as-run-status" data-activity={activity} data-waiting={needsCheck||undefined}>
    <span className="as-run-status-marker" aria-hidden="true"/>
@@ -148,11 +160,21 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
    </div>
    {needsCheck&&<Btn disabled={busy} onClick={()=>void inspectRun()}>{t('检查运行','Check run')}</Btn>}
   </div>}
-  <label className="as-question"><span className="as-visually-hidden">{t('继续提问','Continue the conversation')}</span><textarea ref={composerInput} aria-label={t('向分析助手提问','Ask the analysis assistant')} maxLength={1000} disabled={locked||focusedEarlier} value={question} placeholder={t(queryOnly?'查询本项目工单、工程关系或分析资料…':'查询项目资料，或告诉我如何修改当前画布…',queryOnly?'Ask about project orders, graphs or evidence…':'Find project evidence or edit this canvas…')} onChange={event=>{setQuestion(event.target.value);setSummaries(null);}}/></label>
+  {showPrompts&&!question&&!activity&&!focusedEarlier&&<div className="as-prompts" role="group" aria-label={t('常用提示词','Suggested prompts')}>
+   <small>{recentPrompts.length?t('近期常用','Frequently used recently'):t('试试这样问','Try asking')}</small>
+   {prompts.map(prompt=><button type="button" key={prompt} title={prompt} disabled={locked} onClick={()=>{setQuestion(prompt);setShowPrompts(false);setSummaries(null);composerInput.current?.focus();}}>{displayText(prompt)}</button>)}
+  </div>}
+  <label className="as-question"><span className="as-visually-hidden">{t('继续提问','Continue the conversation')}</span><textarea ref={composerInput} aria-label={t('向分析助手提问','Ask the analysis assistant')} maxLength={1000} disabled={locked||focusedEarlier} value={question} placeholder={t(queryOnly?'查询本项目工单、工程关系或分析资料…':'查询项目资料，或告诉我如何修改当前画布…',queryOnly?'Ask about project orders, graphs or evidence…':'Find project evidence or edit this canvas…')}
+   onCompositionStart={()=>{composing.current=true;}} onCompositionEnd={()=>{composing.current=false;}}
+   onKeyDown={event=>{
+    if(event.key==='Escape'&&!composing.current)setShowPrompts(false);
+    if(event.key!=='Enter'||event.shiftKey||composing.current||event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return;
+    event.preventDefault();if(!event.repeat)void start();
+   }} onChange={event=>{setQuestion(event.target.value);setSummaries(null);}}/></label>
   <div className="as-compose-actions">{!queryOnly&&<select className="as-task" aria-label={t('助手任务','Assistant task')} value={taskId} disabled={locked} onChange={e=>{setTaskId(e.target.value as LlmTask);newConversation();}}>{(Object.keys(llmTaskNames) as LlmTask[]).map(id=><option value={id} key={id}>{llmTaskNames[id][en?1:0]}</option>)}</select>}<span className="as-compose-spacer"/>{active?<Btn disabled={busy||run?.state==='cancel_requested'} onClick={()=>void stop()}><Square size={14}/>{t('停止','Stop')}</Btn>:<Btn primary disabled={!!sendBlocker} aria-describedby={sendBlocker?sendStatusId:undefined} onClick={()=>void start()}><Send size={14}/>{t('发送','Send')}</Btn>}</div>
   {!activity&&sendBlocker&&sendBlocker!=='ASSISTANT_QUESTION_REQUIRED'&&<p className="ap-caption" role="status" id={sendStatusId}>{assistantMessage(sendBlocker,en)}{canRefreshService&&<button type="button" disabled={locked} onClick={refreshService}>{t('刷新服务','Refresh service')}</button>}</p>}
   {!activity&&sendBlocker==='ASSISTANT_QUESTION_REQUIRED'&&<span className="as-visually-hidden" id={sendStatusId}>{assistantMessage(sendBlocker,en)}</span>}
-  <small>{t(snapshot?(queryOnly?'项目检索与问答 · 编辑可转后台执行':'项目检索与画布操作 · 修改可撤销'):'仅发送所选资料摘要 · 回答需核对原依据',snapshot?'Project tools · source and execution receipts retained':'Selected summaries only · verify answers against their sources')}</small></div>;
+  <small>{t('回车发送 · Shift + 回车换行','Enter to send · Shift + Enter for a new line')}{snapshot&&!queryOnly&&t(' · 画布修改可撤销',' · Canvas edits can be undone')}</small></div>;
  return <div className="as-panel">{snapshot&&<div className="as-scope-heading"><span>{t('本项目 · 按需检索','This project · search on demand')}</span><span>{queryOnly?t('查询模式','Query only'):onApplyTask?t('后台编辑','Workbench editing'):t('只读画布','Read-only canvas')}</span></div>}<div className="as-toolbar"><button type="button" className="as-context-toggle" aria-expanded={contextOpen} onClick={()=>setContextOpen(v=>!v)}>{t(snapshot?'画布资料':'本次资料',snapshot?'Canvas materials':'Materials')} <b>{selected.length}</b>{!!metadataCount&&<small>{t(`${metadataCount}份仅元数据`,`${metadataCount} metadata only`)}</small>}<ChevronDown size={13}/></button><button type="button" aria-label={t('对话与服务','Conversations and service')} title={t('对话与服务','Conversations and service')} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(v=>!v)}><History size={15}/></button><button type="button" disabled={locked} onClick={newConversation}><Plus size={14}/>{t('新对话','New')}</button></div>
   <div className="as-scroll" ref={scrollArea} onScroll={e=>{const el=e.currentTarget;autoScroll.current=el.scrollHeight-el.scrollTop-el.clientHeight<60;}}>
   {historyOpen&&<div className="as-history-tools"><div className="as-conversation"><label>{t('当前对话','Current conversation')}<select aria-label={t('当前对话','Current conversation')} disabled={locked} value={conversation?.conversationId??''} onChange={e=>e.target.value?void openConversation(e.target.value):newConversation()}><option value="">{t('新对话','New conversation')}</option>{conversations.map(item=><option key={item.conversationId} value={item.conversationId}>{displayText(item.title)}</option>)}{conversation&&!conversations.some(c=>c.conversationId===conversation.conversationId)&&<option value={conversation.conversationId}>{displayText(conversation.title)}</option>}</select></label></div><div className="as-service"><span>{effectiveService?.provider??'—'} · {effectiveService?.modelId||'—'}</span><Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn></div></div>}
@@ -172,7 +194,6 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {summaries&&<details open className="as-summaries"><summary>{t('摘要预览 · 未调用模型','Summary preview · no model call')}</summary>{summaries.map(row=><p key={row.key}><strong>{row.key} · {sourceLabels[row.kind]?.[en?1:0]}</strong><span>{displayText(row.summary)}</span></p>)}<AssistantRetrieval sources={summaries} cards={cards} en={en} onFocus={onFocus}/></details>}
   <AssistantGraph service={service} cards={available} receipt={receipt} en={en} onFocus={onFocus}/>
   </section>}
-  {!transcript.length&&!loadingHistory&&<div className="as-welcome"><strong>{t('从一个问题开始','Start with a question')}</strong><p>{t(snapshot?'可检索项目工单、资料和知识图谱；画布中的资料可作为补充依据。':'结合所选资料，整理已知情况、待验证假设、资料缺口和下一步核查。',snapshot?'Search project orders, documents and knowledge graphs; canvas materials provide additional context.':'Use selected evidence to organize facts and checks.')}</p><button type="button" disabled={locked} onClick={()=>{setQuestion(t('查找当前故障代码的历史工单，列出编号、版本和匹配依据。','Find historical orders for the current fault code, with identifiers, versions and match reasons.'));composerInput.current?.focus();}}>{t('查找相关历史工单','Find related work orders')}</button><button type="button" disabled={locked} onClick={()=>{setQuestion(t('现有资料能支持哪些信息链段？请列出未读取或待复核的连接。','Which parts of the information path are supported? List unread or unverified connections.'));composerInput.current?.focus();}}>{t('梳理信息链路与缺口','Review the information path and gaps')}</button>{snapshot&&<button type="button" disabled={locked} onClick={()=>{setQuestion(t('查看设备配置','View device configurations'));composerInput.current?.focus();}}>{t('查看设备配置','View device configurations')}</button>}</div>}
   <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} key={item.runId} run={item} cards={cards} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/><AssistantTaskResult hasUnsaved={hasUnsaved} run={item} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined} onPage={index=>void taskPage(item,index)} loadModelUsage={(query,signal)=>api.assistantScope().request<ModelUsagePage>(ASSISTANT_ROOT+'/task-page',{runId:item.runId,modelUsage:query},signal)} onViewScene={(target,trigger)=>setSceneView({target,trigger,workbench:item.result?.task?.mode==='workbench'})} onViewDevice={setDeviceView} onViewDocument={setDocumentView} onViewModel={(target,trigger)=>setModelView({target,trigger,context,workbench:item.result?.task?.mode==='workbench'})} onViewConfiguration={(target,title)=>setConfigurationView({target,title,context,workbench:item.result?.task?.mode==='workbench'})}/></div>)}</div>
   {deviceView&&<AssistantDeviceMaterials api={api} target={deviceView} en={en} onClose={()=>setDeviceView(null)}/>}
   {!modelInfoEditing&&modelView?.context===context&&<AssistantModelViewer key={context+':'+modelView.target.modelVersionId}

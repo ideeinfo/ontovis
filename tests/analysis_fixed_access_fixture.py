@@ -189,7 +189,16 @@ def browser_site(public: Path):
                 available = fixture.ok(ANALYSIS+'/history-candidates',dict(entry={key:sample[key] for key in ('datasetId','datasetRevision')}))
                 assert [(item['analysisSessionId'],item['relevance']) for item in available['items']]==[(analysis_id,'same_event')]
 
-            with serve_workbench(public.resolve(strict=True),fixture.sessions,commands) as origin:
+            def plan(_authority, _path, body, _cancelled, _deadline):
+                assert body['question']=='先添加相关图纸，再整理画布布局'
+                assert body['workflow']['phase']=='plan'
+                return dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,
+                    engineeringConfirmation=False,usage={},plan=dict(intent='edit',
+                        queries=[dict(tool='materials',query='',faultCode='')],
+                        actions=[dict(kind=kind,targets=[],text='',x=None,y=None) for kind in ('add_results','arrange')]))
+
+            with patch('apps.api.assistant_task_api.call_source',side_effect=plan), \
+                    serve_workbench(public.resolve(strict=True),fixture.sessions,commands) as origin:
                 yield dict(origin=origin,analysisId=analysis_id,title=title,cards=cards,frames=frames,record=record,
                            memberDrawingTitle=member_title,powerDrawingTitle=power_title,
                            drawingObjectTitle=terminal['displayName'],

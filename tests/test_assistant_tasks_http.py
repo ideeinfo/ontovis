@@ -40,6 +40,45 @@ class TaskHttpTests(unittest.TestCase):
             snapshot=json.loads(self.body['snapshotJson']);snapshot['projectCode']='B'
             self.assertEqual(404,self.request('task-start',{**self.body,'snapshotJson':json.dumps(snapshot)})[0]);model.assert_not_called()
 
+    def test_disposition_uses_canvas_notes_relations_and_fixed_evidence_but_does_not_plan_edits(self):
+        base = json.loads(self.body['snapshotJson'])
+        card = dict(x=0,y=0,width=300,height=200,pinned=False)
+        base['cards']=[{**card,'id':'alarm','title':'浪涌保护报警','kind':'alarm',
+                        'source':dict(system='ontovis',ontobaseConnectionId=base['ontobaseConnectionId'],
+                                    projectCode=base['projectCode'],id=self.fixture.evidence,revision='a'*64)},
+                       {**card,'id':'note','title':'现场观察','kind':'analysis','note':'现场记录待核对','checkState':'checking'}]
+        base['relations']=[dict(id='observed',**{'from':'alarm','to':'note'},kind='reference',origin='manual',reason='核查记录')]
+        body={**self.body,'mode':'workbench','question':'基于当前画布生成整体处置建议',
+              'analysisSessionId':self.fixture.analysis,'expectedAnalysisRevision':1,'evidenceRefIds':[self.fixture.evidence],
+              'focusCardIds':['note'],'snapshotJson':json.dumps(base),'taskId':'analysis'}
+        body['expectedServiceRevision']=self.request('policy')[1]['services']['analysis']['serviceRevision']
+        reply=dict(answer=answer(),usage={},modelCalls=1,engineeringConfirmation=False,purpose='ontovis_analysis',serviceRevision='a'*64)
+        with (patch('apps.api.assistant_task_api.call_source',return_value=reply) as model,
+              patch('apps.api.assistant_task_api.analysis_store') as open_store,
+              patch('apps.api.analysis_canvas.validate_handles')):
+            open_store.return_value.__enter__.return_value.detail.return_value={'lifecycle':'active'}
+            status,started=self.request('task-start',body)
+            self.assertEqual(200,status,started)
+            for _ in range(60):
+                _,run=self.request('status',dict(runId=started['runId']))
+                if run['state'] not in ('reading','model','validating'):break
+                time.sleep(.01)
+            self.assertEqual('complete',run['state'],run)
+            self.assertEqual(1,model.call_count)
+            payload=model.call_args.args[2]
+            self.assertEqual('answer',payload['workflow']['phase'])
+            self.assertIn('通过条件',payload['question'])
+            context=json.loads(payload['workflow']['context'])['canvas']
+            self.assertEqual('E1',context['cards'][0]['evidence'])
+            self.assertEqual('现场记录待核对',context['cards'][1]['note'])
+            self.assertEqual('核查记录',context['manualRelations'][0]['reason'])
+            self.assertTrue(run['result']['task']['disposition'])
+            self.assertEqual([],run['result']['task']['plan']['actions'])
+            self.assertFalse(run['result']['engineeringConfirmation'])
+            _,policy=self.request('policy',{'mode':'workbench'})
+            self.assertEqual([body['question']],policy['recentPrompts'])
+            self.assertEqual([],self.request('policy',{'mode':'cockpit_query'})[1]['recentPrompts'])
+
     def test_an_old_drawing_turn_cannot_apply_unrelated_catalogue_results(self):
         body = {**self.body, 'mode': 'workbench', 'question': '添加相关图纸'}
         model_result = dict(plan=dict(intent='edit', queries=[dict(tool='materials', query='', faultCode='')],

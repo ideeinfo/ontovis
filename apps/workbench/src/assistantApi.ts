@@ -57,7 +57,7 @@ export function defaultAssistantEvidence(cards:CanvasCard[]){
 }
 export interface AssistantPolicy {enabled:boolean;serviceRef:string;allowedKinds:string[];reads:number;parallel:number;seconds:number}
 export interface AssistantPolicyView {revision:number;policy:AssistantPolicy;canManage:boolean;accessRevision:string;savedAt:string|null;
- service:LlmService;services?:Record<LlmTask,LlmService>;}
+ service:LlmService;services?:Record<LlmTask,LlmService>;recentPrompts?:string[];}
 export function assistantSendBlocker(state:{busy:boolean;active:boolean;pending:boolean;loadingHistory:boolean;focusedEarlier:boolean;taskMismatch:boolean;hasReceipt:boolean;view:AssistantPolicyView|null;policyError:unknown;service?:LlmService;selectedCount:number;question:string;projectTools?:boolean}){
  if(state.busy)return 'ASSISTANT_WORKING';
  if(state.pending)return 'ASSISTANT_START_UNCERTAIN';
@@ -190,7 +190,7 @@ export function assistantMessage(error:unknown,en=false){
 export class AssistantApi {
  readonly api:DraftApi;
  constructor(api:DraftApi){this.api=api;}
- policy(signal?:AbortSignal){return this.api.request<AssistantPolicyView>(ASSISTANT_ROOT+'/policy',{},signal);}
+ policy(signal?:AbortSignal,mode?:AssistantMode){return this.api.request<AssistantPolicyView>(ASSISTANT_ROOT+'/policy',mode?{mode}:{},signal);}
  preview(policy:AssistantPolicy,signal?:AbortSignal){return this.api.request<AssistantPolicyView>(ASSISTANT_ROOT+'/preview',{policy},signal);}
  history(signal?:AbortSignal){return this.api.request<AssistantPolicyView&{items:{revision:number;savedAt:string;operation:string;policy:AssistantPolicy}[]}>(ASSISTANT_ROOT+'/history',{},signal);}
  publish(view:AssistantPolicyView,policy:AssistantPolicy,restoreRevision?:number){return this.api.request<AssistantPolicyView>(ASSISTANT_ROOT+(restoreRevision===undefined?'/publish':'/rollback'),{

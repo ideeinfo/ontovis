@@ -8,12 +8,96 @@ from uuid import uuid4
 from .assistant_store import require, digest
 from .assistant_summaries import redact, summarize, work_order_summary, validate_answer
 from .authority import PreviewError
-from .assistant_canvas_tasks import ACTIONS
+from .assistant_canvas_tasks import ACTIONS, result_targets, validate_draft_plan
 from .assistant_drawings import drawing_add_scope, drawing_answer
 
 PROTOCOL='ontovis-engineering-tasks-v1'
 QUERY_TOOLS=('work_orders','objects','materials','graph','knowledge')
 CATALOGUE_TOOLS=('equipment_materials','processing_tasks','equipment_configurations')
+
+DISPOSITION_GUIDANCE = (
+    '请结合本轮授权摘要和画布上下文给出整体处置建议。先归纳已知情况及影响范围，再给出有依据的待验证假设，'
+    '明确缺少的资料与需核对的对象。按优先级列出人工核验、可考虑的处置与恢复验证，每项写清对象、依据及通过条件。'
+    '人工笔记和画布手工连线只用于识别待核线索；历史参考不能证明当前状态。仅元数据的来源不能证明图面、接线或实际几何。'
+    '无依据的环节写明需要核实的内容，不编造现场结果或确认根因，不要求直接控制设备。'
+)
+
+
+def disposition_request(question):
+    return bool(re.match(
+        r'(?:(?:请帮我|帮我|请|能否|能不能|可以)\s*)?(?:基于|结合|根据|参考|按)?'
+        r'(?:(?:当前|现有|这张|本次|本轮)?(?:的)?(?:画布|报警|故障|历史工单|手册|资料)[^。；\n]{0,28}?)?'
+        r'(?:生成|给出|提供|整理|提出|输出|给我|制定)\s*[^。；\n]{0,40}?'
+        r'(?:处置|排查|故障处理)的?(?:建议|方案|计划|流程)'
+        r'|(?:整体|综合|完整|总体)(?:处置|排查)(?:建议|方案|计划|流程)'
+        r'|(?:(?:这次|本次|当前)(?:报警|故障))?(?:该|应该)?(?:如何|怎么)(?:处置|排查|处理)'
+        r'|(?:please )?(?:generate|provide|suggest|draft|give me) [^.!?\n]{0,60}'
+        r'(?:response plan|disposition plan|troubleshooting plan|overall recommendations)',
+        question.strip(), re.I))
+
+
+def disposition_context(draft, planning, reads, private):
+    by_ref = {read['evidenceRefId']: read for read in reads}
+    cards = []
+    note_budget = 4800
+    for card, key in zip(draft['cards'], planning['cards']):
+        row = {k: key[k] for k in ('key', 'kind', 'title', 'historical', 'frame')}
+        ref = card.get('source', {}).get('id')
+        if ref:
+            read = by_ref.get(ref, {})
+            row.update(evidenceState=read.get('state', 'not_selected'))
+            if read.get('sourceKey'):
+                row.update(evidence=read['sourceKey'], metadataOnly=read['metadataOnly'])
+        else:
+            note = redact(card.get('note', ''), private)
+            excerpt = note[:min(320, note_budget)]
+            note_budget -= len(excerpt)
+            row.update(note=excerpt, noteTruncated=len(excerpt)<len(note), checkState=card.get('checkState', 'not_started'))
+        cards.append(row)
+    return {**{key: planning[key] for key in ('title', 'status', 'faultCode', 'timeFrom', 'timeTo', 'timezone', 'groups')},
+            'cards': cards, 'manualRelations': planning['relations']}
+
+
+def canonical_additions(plan, results, question):
+    """Bind directory additions to named candidates. An empty target never selects a page."""
+    normalized = ' '.join(question.casefold().split())
+
+    def mentioned(text):
+        text = ' '.join(text.casefold().split())
+        return len(text) >= 2 and re.search(r'(?<![a-z0-9])'+re.escape(text)+r'(?![a-z0-9])',normalized)
+
+    drawing_only = re.search(r'图纸|\bdrawings?\b', question, re.I) and not re.search(
+        r'文档|手册|照片|\b(?:documents?|manuals?|photos?)\b', question, re.I)
+    candidates = [row for row in results if row.get('selector') and (not drawing_only or row['kind']=='drawing')]
+    exact = [row for row in candidates if mentioned(row['title']) or mentioned(row['identifier'])]
+    for action in plan['actions']:
+        if action['kind'] != 'add_results':
+            continue
+        if action['targets']:
+            selected = result_targets(candidates, action['targets'])
+            # The first planning call has no R keys. An invented alias cannot select a directory item.
+            require(all(row in exact or row['identifier'] in action['targets'] for row in selected),
+                    'ASSISTANT_TARGET_AMBIGUOUS',409)
+        else:
+            require(len(exact)==1, 'ASSISTANT_TARGET_AMBIGUOUS',409)
+            selected = exact
+        action['targets'] = [row['key'] for row in selected]
+
+
+def edit_review_message(error, has_choices):
+    if error.code == 'ASSISTANT_TARGET_AMBIGUOUS':
+        return ('请核对下方候选并选择要加入的资料，或在指令中写明名称或位号。'
+                if has_choices else '请选中目标卡片，或补充卡片、分组或连线的准确名称。')
+    messages = {
+        'ANALYSIS_HISTORY_READ_ONLY': '历史参考卡片为只读。请选择当前卡片。',
+        'ASSISTANT_SOURCE_RELATION_READ_ONLY': '这条连线来自已登记的工程关系。可编辑画布上的手工连线。',
+        'ASSISTANT_HISTORY_EMPTY': '当前没有对应的撤销或重做记录。',
+        'ASSISTANT_HISTORY_EXCLUSIVE': '请先单独提交撤销、重做或恢复历史的指令。',
+        'ASSISTANT_SOURCE_MISMATCH': '请指定原卡片与同一来源的新版本。',
+        'ANALYSIS_CHANGED': '请指定当前画布中可恢复的一版历史。',
+        'ANALYSIS_SIZE_LIMIT': '这批操作超过画布的卡片、分组或关系数量限制。',
+    }
+    return messages.get(error.code, '请核对操作参数，补充要修改的内容后重试。')
 
 
 def equipment_configuration_question(value):
@@ -33,7 +117,19 @@ def related_object_add_request(question):
     request = re.fullmatch(r'(?:请\s*)?(?:加入|添加)\s*'+target+r'\s*(?:(?:到|至)(?:当前)?画布[上中]?)?', text)
     if request is None:
         request = re.fullmatch(r'(?:请\s*)?(?:把|将)\s*'+target+r'\s*(?:加入|添加)(?:到|至)?(?:当前)?画布[上中]?', text)
+    if request is None and re.fullmatch(r'(?:please )?add (?:the )?(?:related|associated) engineering objects(?: to (?:the )?canvas)?\.?',text,re.I):
+        return 'canvas'
     return ('alarm' if request['alarm'] else 'canvas') if request else None
+
+
+def contextual_addition(question):
+    drawing, objects = drawing_add_scope(question), related_object_add_request(question)
+    if drawing or objects:
+        return drawing, objects, False
+    clauses = re.split(r'[，,；;\n]|然后|并且|并|再', question.strip().removeprefix('先'), maxsplit=1)
+    if len(clauses) == 2:
+        drawing, objects = drawing_add_scope(clauses[0]), related_object_add_request(clauses[0])
+    return drawing, objects, bool(drawing or objects)
 
 
 def replay_equipment_context(context, fixed, question):
@@ -355,12 +451,14 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         require(current['revision']==policy['revision'] and current['policy']['enabled'],'ASSISTANT_POLICY_CHANGED',409)
         require(runtime.store.run(job.project,job.owner,run_id)['state']!='cancel_requested','ASSISTANT_CANCELLED',409)
         authorize(force)
-    def model(phase,context,evidence):
+    def model(phase,context,evidence,*,question=None):
         nonlocal calls
         guard(True);require(calls<3,'ASSISTANT_READ_LIMIT',409)
         runtime.store.update(run_id,'model',progress=trace)
-        result=source_call(dict(operationId=str(uuid4()),expectedAccessRevision=service['accessRevision'],question=body['question'],
-            evidence=evidence,workflow=dict(protocol=PROTOCOL,phase=phase,context=json.dumps(context,ensure_ascii=False))),job.cancelled,deadline)
+        result=source_call(dict(operationId=str(uuid4()),expectedAccessRevision=service['accessRevision'],
+            question=redact(question if question is not None else body['question'],job.private)[:1000],
+            evidence=evidence,workflow=dict(protocol=PROTOCOL,phase=phase,
+                context=json.dumps(context,ensure_ascii=False,separators=(',',':')))),job.cancelled,deadline)
         guard(True);calls+=1
         require(result.get('modelCalls')==1 and result.get('engineeringConfirmation') is False,'ASSISTANT_OUTPUT_INVALID',502)
         for k,v in result.get('usage',{}).items():usage[k]=usage.get(k,0)+v
@@ -375,14 +473,20 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             history=[dict(question=json.loads(r['input_json'])['question'][:400],candidates=[{k:v for k,v in item.items() if k in ('identifier','version','faultCode','kind')} for item in (json.loads(r['result_json']).get('task',{}).get('results',[]) if r['result_json'] else [])][:6]) for r in previous if r['id']!=run_id][-3:]
         history_state=draft_history(body,runtime.store.connection_id,job.project)
         card_keys={c['id']:'C'+str(i+1) for i,c in enumerate(draft['cards'])}
+        group_keys={g['id']:'G'+str(i+1) for i,g in enumerate(draft.get('frames',[]))}
         context=dict(faultCode=draft['context'].get('faultCode') or draft.get('reuse',{}).get('faultCode',''),mode=body['mode'],history=history,
-            title=draft['title'],savedRevision=body['expectedAnalysisRevision'],canUndo='undo' in history_state,canRedo='redo' in history_state,
+            title=redact(draft['title'],job.private),status=draft['status'],savedRevision=body['expectedAnalysisRevision'],
+            canUndo='undo' in history_state,canRedo='redo' in history_state,
+            focusCards=[card_keys[card] for card in body.get('focusCardIds',[])],
             newCardKeys=['C'+str(len(draft['cards'])+i+1) for i in range(8)],
             timeFrom=draft['context']['timeFrom'],timeTo=draft['context']['timeTo'],timezone=draft['context']['timezone'],
-            cards=[dict(key=card_keys[c['id']],kind=c['kind'],title=c['title'][:80],pinned=c['pinned'],historical=c.get('historical',False),
-                        frame=c.get('frameId'),x=c['x'],y=c['y'],width=c['width'],height=c['height']) for c in draft['cards']],
-            groups=[dict(key='G'+str(i+1),title=g['title'][:80],cards=[card_keys[c['id']] for c in draft['cards'] if c.get('frameId')==g['id']]) for i,g in enumerate(draft.get('frames',[]))],
-            relations=[dict(key='L'+str(i+1),source=card_keys[r['from']],target=card_keys[r['to']],kind=r['kind'],origin=r['origin']) for i,r in enumerate(draft['relations'])])
+            cards=[dict(key=card_keys[c['id']],kind=c['kind'],title=redact(c['title'],job.private)[:80],
+                        pinned=c['pinned'],historical=c.get('historical',False),frame=group_keys.get(c.get('frameId')),
+                        x=c['x'],y=c['y'],width=c['width'],height=c['height']) for c in draft['cards']],
+            groups=[dict(key=group_keys[g['id']],title=redact(g['title'],job.private)[:80],
+                         cards=[card_keys[c['id']] for c in draft['cards'] if c.get('frameId')==g['id']]) for g in draft.get('frames',[])],
+            relations=[dict(key='L'+str(i+1),source=card_keys[r['from']],target=card_keys[r['to']],kind=r['kind'],origin=r['origin'],
+                            reason=redact(r['reason'],job.private)[:64]) for i,r in enumerate(draft['relations'])])
         kinds=set(policy['policy']['allowedKinds'])
         allow_models='model' in kinds
         scene_directory=allow_models and callable(getattr(reader,'scene_listing',None))
@@ -401,12 +505,22 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         equipment_query=equipment_configuration_question(body['question'])
         explicit_equipment=equipment_query is not None
         question=body['question']
-        related_scope=related_object_add_request(question)
-        drawing_scope=drawing_add_scope(question)
+        disposition=disposition_request(question)
+        switches=set(service.get('settings',{}).get('tools',('selected_sources','engineering_neighborhood','manual_fault_lookup')))
+        drawing_scope,related_scope,compound_add=contextual_addition(question)
         contextual_add=related_scope or drawing_scope
+        if compound_add:
+            context['relatedAddition']=dict(kind='drawing' if drawing_scope else 'object',scope=contextual_add)
         replay=replay_equipment_context(draft['context'],fixed,question) if equipment_materials and 'alarm' in kinds else None
         replay_materials=replay is not None and re.fullmatch(r'(?:请问\s*)?(?:这台设备|这个(?:设备|柜体|柜))\s*有(?:哪些)?\s*(?:图纸|说明书|资料)(?:和(?:图纸|说明书|资料))?[？?。]?',question.strip())
-        if contextual_add:
+        if disposition:
+            queries=[]
+            if context['faultCode'] and 'work_order' in kinds and re.search(r'历史工单|同码工单|\bhistorical work orders?\b',question,re.I):
+                queries.append(dict(tool='work_orders',query='',faultCode=context['faultCode']))
+            if context['faultCode'] and 'document' in kinds and 'manual_fault_lookup' in switches and re.search(r'手册|知识库|\bmanuals?\b',question,re.I):
+                queries.append(dict(tool='knowledge',query='',faultCode=context['faultCode']))
+            proposed=dict(intent='query',queries=queries,actions=[])
+        elif contextual_add and not compound_add:
             proposed=dict(intent='edit' if body['mode']=='workbench' else 'query',queries=[],actions=[])
         elif replay_materials and not explicit_equipment:
             proposed=dict(intent='query',queries=[dict(tool='equipment_materials',query=replay['primaryRds'],faultCode='')],actions=[])
@@ -418,11 +532,13 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         plan=validate_plan(proposed,scene_directory=scene_directory,adopted_models=adopted_models,
                            equipment_materials=equipment_materials,processing_tasks=processing_tasks,
                            equipment_configurations=equipment_configurations)
-        switches=set(service.get('settings',{}).get('tools',('selected_sources','engineering_neighborhood','manual_fault_lookup')))
         require(all(q['tool']!='graph' or 'engineering_neighborhood' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         require(all(q['tool']!='knowledge' or 'manual_fault_lookup' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         tools=ProjectTools(reader,guard,policy['policy']['reads'],policy['policy']['allowedKinds'],job.private)
-        prefer_selected=body.get('preferSelectedEvidence',False) and not explicit_equipment and not contextual_add
+        if compound_add and not disposition:
+            plan['queries']=[]
+        needs_evidence=not explicit_equipment and not contextual_add and (plan['intent']=='query' or bool(plan['queries']))
+        prefer_selected=needs_evidence and (disposition or body.get('preferSelectedEvidence',False))
         selected_reads=read_selected_evidence(tools,fixed) if prefer_selected else []
         for q in plan['queries']:
             try:tools.query(q,replay=replay,drawings=bool(re.search(r'图纸|drawings?',question,re.I)))
@@ -430,23 +546,60 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
                 state='budget_limited' if error.code=='ASSISTANT_READ_LIMIT' else 'unavailable'
                 tools.trace.append(dict(tool=q['tool'],state=state,reason=error.code))
-        if not prefer_selected and not explicit_equipment and not contextual_add:
+        if needs_evidence and not prefer_selected:
             selected_reads=read_selected_evidence(tools,fixed)
+        addition_plan=dict(intent=plan['intent'],actions=[]) if compound_add else plan
         if drawing_scope:
-            related_answer=drawing_answer(tools,fixed,draft,body,drawing_scope,plan)
+            related_answer=drawing_answer(tools,fixed,draft,body,drawing_scope,addition_plan)
         else:
-            related_answer=related_object_answer(tools,fixed,draft,related_scope,plan) if related_scope else None
+            related_answer=related_object_answer(tools,fixed,draft,related_scope,addition_plan) if related_scope else None
+        if compound_add and plan['intent']=='edit':
+            additions=[index for index,action in enumerate(plan['actions']) if action['kind']=='add_results']
+            if len(additions)==1 and addition_plan['actions']:
+                plan['actions'][additions[0]]=addition_plan['actions'][0]
+            else:
+                plan['actions']=[]
+                related_answer['nextSteps'].append(dict(text='请先选定要加入的资料，再提交其余画布操作。',refs=[]))
+        review_message = None
+        if plan['actions']:
+            try:
+                if not contextual_add:
+                    canonical_additions(plan,tools.results,question)
+                validate_draft_plan(draft,plan,tools.results,fixed,history_state,body['expectedAnalysisRevision'],
+                                    run_id,runtime.store.connection_id,job.project)
+            except PreviewError as error:
+                review_message=edit_review_message(error,any(row.get('selector') for row in tools.results))
+                plan['actions']=[]
         trace=[dict(key=t['tool'],state=t['state']) for t in tools.trace]
         runtime.store.update(run_id,'reading',progress=trace,sources=tools.sources)
         evidence=[{k:s[k] for k in ('key','kind','summary')} for s in tools.sources]
         catalogue_query=explicit_equipment or body['taskId']=='query' and plan['queries'] and all(q['tool'] in CATALOGUE_TOOLS for q in plan['queries'])
-        if related_answer is not None or catalogue_query:
+        if disposition:
+            if evidence:
+                answer_context=dict(scope='当前画布处置建议',canvas=disposition_context(draft,context,selected_reads,job.private),tools=tools.trace)
+                request=redact(question,job.private)[:1000-len(DISPOSITION_GUIDANCE)-2]+'\n\n'+DISPOSITION_GUIDANCE
+                answer=validate_answer(model('answer',answer_context,evidence,question=request)['answer'],{s['key'] for s in evidence})
+                unread = sum(card.get('evidenceState','complete')!='complete' for card in answer_context['canvas']['cards'])
+                if unread:
+                    answer['gaps']=[dict(text=f'画布中有 {unread} 张来源卡片本轮未读取。可核对关键卡片后补充处置依据。',refs=[]),
+                                    *answer['gaps'][:4]]
+            else:
+                answer=dict(observations=[],hypotheses=[],
+                    gaps=[dict(text='本轮缺少可核对的报警、趋势或工程资料。',refs=[])],
+                    nextSteps=[dict(text='先核对报警来源、发生时间和涉及的设备，再补充对应趋势或适用资料。',refs=[]),
+                               dict(text='补齐依据后，按经核实的影响范围安排检查，并记录处置前后状态供复核。',refs=[])])
+        elif review_message:
+            answer=dict(observations=[],hypotheses=[],gaps=[dict(text=review_message,refs=[])],nextSteps=[])
+        elif related_answer is not None or catalogue_query:
             answer=related_answer if related_answer is not None else tools.catalogue_answer()
-        elif evidence:
-            answer=validate_answer(model('answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'],{s['key'] for s in evidence})
-        elif plan['intent']=='edit' and plan['actions'] and not plan['queries']:
+        elif plan['intent']=='edit' and plan['actions']:
             message='已列出画布操作计划，尚未执行。' if body['mode']=='workbench' else '已列出画布操作建议，可转后台执行；驾驶舱未修改画布。'
             answer=dict(observations=[dict(text=message,refs=[])],hypotheses=[],gaps=[],nextSteps=[])
+        elif plan['intent']=='edit':
+            answer=dict(observations=[],hypotheses=[],gaps=[
+                dict(text='请选中要编辑的卡片，或补充目标名称和具体修改。',refs=[])],nextSteps=[])
+        elif evidence:
+            answer=validate_answer(model('answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'],{s['key'] for s in evidence})
         else:answer=dict(observations=[],hypotheses=[],gaps=[dict(text='本次未取得可引用的项目资料。请查看检索过程中的范围或服务状态。',refs=[])],nextSteps=[])
         guard(True)
         result=dict(protocol=PROTOCOL,answer=answer,usage=usage,modelCalls=calls,engineeringConfirmation=False,
@@ -454,7 +607,8 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             model=dict(taskId=service.get('taskId','analysis'),provider=service.get('provider'),modelId=service.get('modelId')),
             task=dict(mode=body['mode'],baseDigest=base,plan=plan,results=tools.results,graphs=tools.graphs,trace=tools.trace,
                 reads=tools.reads,readLimit=tools.limit,selectedReads=selected_reads,receipts=[],
-                execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query'))
+                execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query',
+                **({'disposition':True} if disposition else {})))
         require(runtime.store.finish(run_id,'partial' if result['partial'] else 'complete',result,trace,tools.sources),
                 'ASSISTANT_CANCELLED',409)
     except PreviewError as error:

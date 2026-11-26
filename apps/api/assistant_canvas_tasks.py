@@ -1,6 +1,7 @@
 """Validated, atomic draft changes. Registration does not assert engineering facts."""
 import copy
 import json
+import re
 from uuid import UUID,uuid5
 from .assistant_store import require,digest,encoded,now
 from .analysis_drafts import validate_snapshot
@@ -45,6 +46,47 @@ def arrange(board):
 def operation_id(run_id,label):return str(uuid5(UUID(run_id),label))
 
 
+def result_targets(results, keys):
+    require(keys and len(keys)==len(set(keys)), 'ASSISTANT_TARGET_AMBIGUOUS', 409)
+    rows = []
+    for key in keys:
+        matches = [r for r in results if key == r['key'] or key == r['identifier']]
+        require(len(matches)==1 and matches[0].get('selector'), 'ASSISTANT_TARGET_AMBIGUOUS', 409)
+        rows.append(matches[0])
+    require(len({row['key'] for row in rows})==len(rows), 'ASSISTANT_TARGET_AMBIGUOUS', 409)
+    return rows
+
+
+def validate_draft_plan(snapshot, plan, results, fixed, history, revision, run_id, connection, project):
+    """Run the same canvas checks before offering a plan, without writing a draft or evidence."""
+    def register(row, _index):
+        for ref, descriptor in fixed:
+            if ref['sourceKind']==row['kind'] and all(descriptor.get(k)==v for k,v in row['selector'].items()):
+                return ref
+        return dict(evidenceRefId=operation_id(run_id,'check:'+row['key']),
+                    sourceRevision=digest([row['kind'],row['selector']]))
+
+    def special(kind, action, board, _index):
+        if kind in ('undo','redo'):
+            require(kind in history,'ASSISTANT_HISTORY_EMPTY',409)
+            return copy.deepcopy(history[kind])
+        if kind=='restore_revision':
+            target=action['text']
+            require(re.fullmatch(r'r?[1-9][0-9]{0,3}',target) and int(target.removeprefix('r'))<revision,
+                    'ANALYSIS_CHANGED',409)
+        if kind=='replace_source':
+            keys=action['targets']
+            require(len(keys)==2,'ASSISTANT_TARGET_AMBIGUOUS',409)
+            originals={'C'+str(i+1):card['id'] for i,card in enumerate(snapshot['cards'])}
+            card=next((c for c in board['cards'] if c['id']==originals.get(keys[0])),None)
+            require(card and card.get('source') and not card.get('historical'),'ASSISTANT_TARGET_AMBIGUOUS',409)
+            target=result_targets(results,keys[1:])[0]
+            require(target['kind']==('model' if card['kind']=='model3d' else card['kind']),'ASSISTANT_SOURCE_MISMATCH',409)
+        return board
+
+    build(snapshot,plan,results,register,run_id,connection,project,special=special)
+
+
 def build(snapshot,plan,results,register,run_id,connection,project,special=None):
     board=copy.deepcopy(snapshot);receipts=[];aliases={'C'+str(i+1):c['id'] for i,c in enumerate(snapshot['cards'])}
     groups={'G'+str(i+1):g['id'] for i,g in enumerate(snapshot.get('frames',[]))}
@@ -71,10 +113,7 @@ def build(snapshot,plan,results,register,run_id,connection,project,special=None)
     for index,action in enumerate(plan['actions']):
         kind=action['kind'];receipt=dict(operationId=operation_id(run_id,'action:'+str(index)),kind=kind,status='prepared')
         if kind=='add_results':
-            rows=[r for r in results if not action['targets'] or r['key'] in action['targets'] or r['identifier'] in action['targets']]
-            require(rows and (not action['targets'] or all(any(k in (r['key'],r['identifier']) for r in rows) for k in action['targets'])),
-                    'ASSISTANT_TARGET_AMBIGUOUS',409)
-            for row in rows:
+            for row in result_targets(results,action['targets']):
                 ref=register(row,index)
                 existing=next((c for c in board['cards'] if not c.get('historical') and c.get('source',{}).get('revision')==ref['sourceRevision']
                                and c['kind']==('model3d' if row['kind']=='model' else row['kind'])),None)

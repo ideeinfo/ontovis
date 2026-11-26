@@ -202,17 +202,33 @@ async (page, facts, phase) => {
 
     const assistant=canvas.locator('.as-panel');
     await button('分析助手',canvas).click();
+    const promptChoices=assistant.getByRole('group',{name:'常用提示词'});
+    const composer=assistant.getByRole('textbox',{name:'向分析助手提问',exact:true});
+    const starts=[];
+    const watchStart=request=>{if(new URL(request.url()).pathname==='/api/workbench/assistant/task-start')starts.push(request);};
+    page.on('request',watchStart);
+    await promptChoices.getByRole('button',{name:'加入相关的工程对象',exact:true}).waitFor();
+    check(await promptChoices.getByRole('button').count()===3,'The assistant did not offer three prompts on open');
     await assistant.getByRole('button',{name:/^画布资料/}).click();
     for(const [kind,entry] of Object.entries(facts.cards)){
       const choice=assistant.getByRole('checkbox',{name:entry.title,exact:true});
       if(kind==='alarm')await choice.check();
       else await choice.uncheck();
     }
-    await assistant.getByRole('textbox',{name:'向分析助手提问',exact:true}).fill('加入相关的工程对象');
+    await promptChoices.getByRole('button',{name:'加入相关的工程对象',exact:true}).click();
+    check(await composer.inputValue()==='加入相关的工程对象'&&starts.length===0,
+      'Choosing a suggestion should fill the composer without sending');
+    await composer.press('Shift+Enter');
+    check((await composer.inputValue()).endsWith('\n')&&starts.length===0,'Shift+Enter did not insert a newline');
+    await composer.press('Backspace');
+    await composer.evaluate(input=>input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,isComposing:true})));
+    check(starts.length===0,'An Enter used by the input method sent the question');
     const [ack]=await Promise.all([
       page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/assistant/task-ack'),
-      button('发送',assistant).click(),
+      composer.press('Enter'),
     ]);
+    check(starts.length===1,'Enter did not send exactly one request');
+    page.off('request',watchStart);
     const applied=await ack.json();
     check(ack.ok()&&applied.run.result.modelCalls===0&&applied.receipt.state==='applied_draft'&&applied.receipt.analysisRevision===3,
       'The assistant did not apply the verified additions to the unsaved draft');
@@ -243,8 +259,25 @@ async (page, facts, phase) => {
     await button('撤销修改',canvas).click();
     await descendantEdge.waitFor({state:'detached'});
 
+    await composer.fill('先添加相关图纸，再整理画布布局');
+    const [compoundAck]=await Promise.all([
+      page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/assistant/task-ack'),
+      composer.press('Enter'),
+    ]);
+    const compound=await compoundAck.json();
+    check(compoundAck.ok()&&compound.run.result.modelCalls===1&&
+      compound.receipt.items.map(item=>item.kind).join(',')==='add_results,arrange'&&await nonDrawings.count()===materialCount,
+      'The compound edit did not bind the drawing and arrangement in one draft batch');
+    await descendantEdge.waitFor({state:'attached'});
+    await button('撤销修改',canvas).click();
+    await descendantEdge.waitFor({state:'detached'});
+
     await button('撤销修改',canvas).click();
     check(await objectCards.count()===1,'Undo did not remove the assistant additions');
+    await button('关闭助手',canvas).click();
+    await button('分析助手',canvas).click();
+    await promptChoices.getByRole('button',{name:'添加相关图纸',exact:true}).waitFor();
+    check(await promptChoices.getByRole('button').count()===3,'Recent prompts were not shown with the restored conversation');
 
     const workbenchEdges=canvas.locator('.ad-links [data-relation-id]');
     const edgeIds=locator=>locator.evaluateAll(nodes=>nodes.map(node=>node.dataset.relationId).sort());
@@ -266,7 +299,8 @@ async (page, facts, phase) => {
       'The cockpit did not display the workbench relationships for the same saved revision');
     return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true,
       drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,
-      alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true};
+      alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true,assistantCompoundEdit:true,
+      recentAssistantPrompts:true,assistantKeyboard:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

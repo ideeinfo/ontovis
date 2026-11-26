@@ -10,8 +10,9 @@ from tests import test_work_orders as orders_fixture
 from tests.test_assistant import answer
 from apps.api.assistant_service import AssistantRuntime
 from apps.api.assistant_store import DEFAULT,digest
-from apps.api.assistant_tasks import PROTOCOL,ProjectTools,read_selected_evidence,related_object_add_request,related_object_answer,validate_plan,snapshot
-from apps.api.assistant_canvas_tasks import build,load,retain,acknowledge
+from apps.api.assistant_tasks import (PROTOCOL,ProjectTools,read_selected_evidence,related_object_add_request,
+    related_object_answer,contextual_addition,canonical_additions,disposition_request,validate_plan,snapshot)
+from apps.api.assistant_canvas_tasks import build,load,retain,acknowledge,validate_draft_plan
 from apps.api.assistant_drawings import drawing_add_scope, drawing_answer, drawing_context, checked_drawing_results
 from apps.api.authority import PreviewError
 
@@ -54,6 +55,9 @@ class DrawingTaskTests(unittest.TestCase):
             self.assertEqual(scope, drawing_add_scope(question), question)
         self.assertEqual(['alarm', 'target', 'other', 'retained'], drawing_context(self.body, self.board)['evidenceRefIds'])
         self.assertEqual(['alarm'], self.body['evidenceRefIds'])
+        self.assertEqual(('canvas', None, True),contextual_addition('先添加相关图纸，再整理画布布局'))
+        self.assertEqual((None, 'alarm', True),contextual_addition('加入本次报警的工程对象并整理布局'))
+        self.assertEqual((None, None, False),contextual_addition('添加笔记，正文是“添加相关图纸”'))
 
     def test_additions_use_the_alarm_object_and_deduplicate_fixed_pages(self):
         first = self.row('previous-evidence', 89)
@@ -67,6 +71,9 @@ class DrawingTaskTests(unittest.TestCase):
             self.assertEqual([action('add_results', ['R1'])], self.plan['actions'])
             self.assertEqual([candidate], checked_drawing_results(self.reader, self.fixed, self.board, self.body,
                 'canvas', self.tools.allowed, self.plan, self.tools.results))
+            compound={**self.plan,'actions':self.plan['actions']+[action('arrange')]}
+            self.assertEqual([candidate], checked_drawing_results(self.reader, self.fixed, self.board, self.body,
+                'canvas', self.tools.allowed, compound, self.tools.results, compound=True))
             read.return_value = {'items': [first], 'nextCursor': None}
             with self.assertRaises(PreviewError) as changed:
                 checked_drawing_results(self.reader, self.fixed, self.board, self.body,
@@ -164,6 +171,49 @@ class TaskTests(unittest.TestCase):
         self.assertFalse(original['cards'])
         original['cards']=[dict(id='old',kind='analysis',title='old',note='n',x=0,y=0,width=300,height=200,pinned=False,historical=True)]
         with self.assertRaises(PreviewError):build(original,dict(actions=[action('remove_cards',['C1'])]),[],None,str(uuid4()),'source','Demo-PDS')
+
+    def test_ordered_edits_can_address_new_cards_and_stale_targets_fail_before_execution(self):
+        original=board()
+        run=str(uuid4())
+        plan=dict(actions=[action('add_note',text='供电核查'),action('copy_card',['C1']),
+            action('rename_card',['C2'],'现场记录'),action('append_note',['C2'],'。待现场复核'),
+            action('group_cards',['C1','C2'],'核查依据'),action('pin_cards',['C1']),
+            action('add_reference',['C1','C2'],'人工核对依据')])
+        validate_draft_plan(original,plan,[],[],{},0,run,'source','Demo-PDS')
+        draft,receipts,save=build(original,plan,[],None,run,'source','Demo-PDS')
+        self.assertFalse(save or original['cards'])
+        self.assertEqual(7,len(receipts))
+        first,second=draft['cards']
+        self.assertTrue(first['pinned'])
+        self.assertEqual(first['frameId'],second['frameId'])
+        self.assertEqual(('现场记录','供电核查。待现场复核'),(second['title'],second['note']))
+        self.assertEqual((first['id'],second['id']), (draft['relations'][0]['from'],draft['relations'][0]['to']))
+        with self.assertRaises(PreviewError) as stale:
+            validate_draft_plan(original,{**plan,'actions':plan['actions']+[action('remove_cards',['C9'])]},
+                [],[],{},0,run,'source','Demo-PDS')
+        self.assertEqual('ASSISTANT_TARGET_AMBIGUOUS',stale.exception.code)
+
+    def test_additions_require_a_literal_match_or_exact_identity_and_never_use_a_wildcard(self):
+        results=[dict(key='R1',identifier='object-one',kind='object',title='+CN1-1U2',selector={'entityUid':'object-one'}),
+                 dict(key='R2',identifier='document-two',kind='document',title='工程手册',selector={'documentId':'document-two'})]
+        plan=dict(actions=[action('add_results'),action('arrange')])
+        canonical_additions(plan,results,'将 +CN1-1U2 加入画布，再整理布局')
+        self.assertEqual(['R1'],plan['actions'][0]['targets'])
+        for question,keys in [('加一些相关资料',[]),('添加建议的资料',['R2']),('添加工程手册的图纸',['document-two'])]:
+            with self.subTest(question=question),self.assertRaises(PreviewError):
+                canonical_additions(dict(actions=[action('add_results',keys)]),[results[0],{**results[1], 'title':'供电图'}],
+                                    question if keys!=['document-two'] else '添加供电图纸')
+        register=Mock()
+        with self.assertRaises(PreviewError):
+            build(board(),dict(actions=[action('add_results')]),results,register,str(uuid4()),'source','Demo-PDS')
+        register.assert_not_called()
+
+    def test_disposition_intent_distinguishes_advice_from_note_edits(self):
+        for question in ('基于当前画布生成整体处置建议','结合历史工单和手册给出完整的处置流程','这次故障该怎么处理？',
+                         'Generate an overall response plan from this canvas'):
+            self.assertTrue(disposition_request(question),question)
+        for question in ('新增笔记，内容为生成整体处置建议','把「整体处置建议」移到左侧','查询相关工单'):
+            self.assertFalse(disposition_request(question),question)
     def test_foreign_scope_query_write_injection_and_arbitrary_tools_rejected(self):
         with self.assertRaises(PreviewError):snapshot(dict(snapshotJson=json.dumps(board())),'other','Demo-PDS')
         for plan in [dict(intent='query',queries=[],actions=[action('save')]),dict(intent='edit',queries=[dict(tool='http',query='x',faultCode='')],actions=[]),

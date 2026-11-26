@@ -167,10 +167,10 @@ def drawing_answer(tools, fixed, draft, body, scope, plan):
     return answer
 
 
-def checked_drawing_results(reader, fixed, draft, body, scope, allowed, plan, results):
+def checked_drawing_results(reader, fixed, draft, body, scope, allowed, plan, results, *, compound=False):
     """Recheck the registered relation before a fresh or retried draft application."""
     error = 'ASSISTANT_DRAWING_REVIEW_REQUIRED'
-    actions = plan['actions']
+    actions = [action for action in plan['actions'] if action['kind']=='add_results'] if compound else plan['actions']
     require(len(actions) == 1 and actions[0]['kind'] == 'add_results' and actions[0]['targets'], error, 409)
     choices = {row['key']: row for row in results}
     rows = [choices.get(key) for key in actions[0]['targets']]

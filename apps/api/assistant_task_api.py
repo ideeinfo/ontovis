@@ -3,8 +3,8 @@ import copy
 import json
 from uuid import uuid4
 from .assistant_store import require,identifier,digest,encoded
-from .assistant_tasks import PROTOCOL,snapshot,draft_history,ProjectTools
-from .assistant_drawings import drawing_add_scope, drawing_context, checked_drawing_results
+from .assistant_tasks import PROTOCOL,snapshot,draft_history,ProjectTools,contextual_addition
+from .assistant_drawings import drawing_context, checked_drawing_results
 from .assistant_transport import call_source
 
 
@@ -12,7 +12,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
     if action=='task-start':
         fields={'protocol','mode','snapshotJson','analysisSessionId','expectedAnalysisRevision','evidenceRefIds','requestId','question',
             'conversationId','expectedConversationVersion','parentRunId','expectedPolicyRevision','expectedAccessRevision','expectedServiceRevision','taskId'}
-        require(fields<=set(body)<=fields|{'historyJson','preferSelectedEvidence'}
+        require(fields<=set(body)<=fields|{'historyJson','preferSelectedEvidence','focusCardIds'}
                 and body['protocol']==PROTOCOL and body['mode'] in ('workbench','cockpit_query')
                 and type(body.get('preferSelectedEvidence',False)) is bool)
         identifier(body['analysisSessionId']);identifier(body['requestId'])
@@ -22,6 +22,9 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
         ids=body['evidenceRefIds'];require(type(ids) is list and len(ids)<=8 and len(set(ids))==len(ids))
         for item in ids:identifier(item)
         board,_=snapshot(body,sessions.connection_id,project)
+        focused=body.get('focusCardIds',[])
+        require(type(focused) is list and len(focused)<=50 and all(type(item) is str for item in focused)
+                and len(focused)==len(set(focused)) and set(focused)<={card['id'] for card in board['cards']})
         history=draft_history(body,sessions.connection_id,project)
         if body['expectedAnalysisRevision']==0:
             require(not ids and all(c['kind']=='analysis' for b in [board,*history.values()] for c in b['cards'])
@@ -49,7 +52,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
             require(value.get('serviceRevision')==selected['sourceServiceRevision'] and value.get('purpose')=='ontovis_analysis','ASSISTANT_CONFIGURATION_CHANGED',409)
             authorize(True);require(service(body['taskId'])['serviceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
             return value
-        lookup_body=drawing_context(body,board) if drawing_add_scope(body['question']) else body
+        lookup_body=drawing_context(body,board) if contextual_addition(body['question'])[0] else body
         return runtime.start(dict(project=project,owner=actor,sid=sid,private=(project,access.get('projectName'))),body,policy,selected,
                              lambda guard:prepare(guard,lookup_body),authorize,invoke)
 
@@ -159,17 +162,20 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
     if keys:
         require(set(keys)<=set(r['key'] for r in choices),'ASSISTANT_TARGET_AMBIGUOUS',409)
         plan=dict(intent='edit',queries=[],actions=[dict(kind='add_results',targets=keys,text='',x=None,y=None)])
-    require(plan['intent']=='edit' and plan['actions'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
-    drawing_scope=drawing_add_scope(original['question'])
+    drawing_scope,_,compound_add=contextual_addition(original['question'])
+    if not drawing_scope:
+        require(plan['intent']=='edit' and plan['actions'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
     fixed,reader=prepare(authorize,drawing_context(original,board) if drawing_scope else original)
     if drawing_scope:
         allowed=set(runtime.store.policy(project)['policy']['allowedKinds'])
-        choices=checked_drawing_results(reader,fixed,board,original,drawing_scope,allowed,plan,choices)
+        choices=checked_drawing_results(reader,fixed,board,original,drawing_scope,allowed,plan,choices,compound=compound_add)
+    operations.validate_draft_plan(board,plan,choices,fixed,draft_history(original,sessions.connection_id,project),
+                                   original['expectedAnalysisRevision'],record['id'],sessions.connection_id,project)
     # A retained preparation is not a grant to use a now-stale source version.
     def checked_preparation(prior):
         prepared=json.loads(prior['prepared_json'])
         for candidate in choices:
-            if any(a['kind'] in ('add_results','replace_source') and (not a['targets'] or candidate['key'] in a['targets'] or candidate['identifier'] in a['targets']) for a in plan['actions']):
+            if any(a['kind'] in ('add_results','replace_source') and (candidate['key'] in a['targets'] or candidate['identifier'] in a['targets']) for a in plan['actions']):
                 reader.resolve(candidate['kind'],candidate['selector'])
         with analysis_store(sessions,project) as store:
             identity=prepared['analysis'];current=store.detail(actor,identity['analysisSessionId'],lambda:authorize(True))
