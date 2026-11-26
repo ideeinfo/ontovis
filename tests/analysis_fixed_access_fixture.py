@@ -49,6 +49,7 @@ def browser_site(public: Path):
         cabinet = project_object('fixture-cabinet','合成机舱动力柜','=WEC+CN1','cabinet')
         module = project_object('fixture-feedback-module','合成反馈输入模块','=WEC+CN1-105A3','device')
         terminal = project_object('fixture-terminal','合成端子','=WEC+CN1-X1','device')
+        terminal['definitionParentEntityUid']=cabinet['entityUid']
         objects = {item['entityUid']:item for item in (primary,cabinet,module,terminal)}
         tags = {item['identifiers'][0]['value']:item for item in objects.values()}
         project_prefix = f'/api/v1/projects/{PROJECT}'
@@ -93,8 +94,18 @@ def browser_site(public: Path):
                     for uid in body['entityUids']])
             if route==f'/api/v1/drawings/{drawing}/object-locations':
                 return {'items':[dict(id='position-'+item['entityUid'],project_code=PROJECT,drawing_uid=drawing,
-                                      entity_uid=item['entityUid'],display_name=item['displayName'])
+                                      entity_uid=item['entityUid'],display_name=item['displayName'],
+                                      bbox={'x':.2,'y':.3,'width':.1,'height':.1},
+                                      entity_properties={'result_import':{'drawing_revision':pdf['sha256']}})
                                  for item in (primary, terminal)]}
+            if route==project_prefix+'/object-evidence/photos/resolve':
+                return dict(entityUid=body['entityUid'],entityRevision=body['expectedEntityRevision'],
+                            installationContextId=None,hierarchyRevision=None,complete=True,
+                            versionMode='fixed_content_version',scope='stored_object_photo_locations',items=[])
+            if route==project_prefix+'/equipment/shared-photos/query':
+                items=[dict(documentId=photo_id,contentVersionId=photo_version,title=photo.document['name'],
+                            availability='available')] if body['entityUid']==cabinet['entityUid'] else []
+                return dict(projectCode=PROJECT,items=items,nextCursor=None)
             if route in (project_prefix+'/object-evidence/resolve', project_prefix+'/object-evidence/related'):
                 subject = objects[body['entityUid']]
                 main = subject==primary

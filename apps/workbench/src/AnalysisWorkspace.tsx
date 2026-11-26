@@ -74,6 +74,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   const lifecyclePending=useRef<{item:AnalysisListItem;action:'trash'|'untrash';task:ReturnType<typeof pendingLifecycle>}|null>(null);
   const [section,setSection]=useState('types'),[recommendations,setRecommendations]=useState<Recommendations|null>(null),[recommendLoading,setRecommendLoading]=useState(false);
   const [materialCardId,setMaterialCardId]=useState('');
+  const [drawingPhotoTarget,setDrawingPhotoTarget]=useState<{cardId:string;title:string;selector:{entityUid:string}}|null>(null);
   const [related,setRelated]=useState<{entityUid:string;expectedEntityRevision:string}|null>(null),[relatedLabel,setRelatedLabel]=useState(''),[sourceAttempt,setSourceAttempt]=useState(0);
   const [relatedSource,setRelatedSource]=useState(''),[relatedPending,setRelatedPending]=useState(false);
   const [expandedAnchor,setExpandedAnchor]=useState<SourceAnchor|null>(null);
@@ -159,7 +160,8 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   }
   const canvasSourceScope=[...sourceTitles.keys()].join('|');
   const scopeTarget=objectContextSection&&!canvasSourceScope?relatedTarget:undefined;
-  const recommendationObject=scopeTarget?.id===relatedSource?related:null;
+  const drawingPhoto=section==='photos'&&drawingPhotoTarget?.cardId===materialCard?.id?drawingPhotoTarget:null;
+  const recommendationObject=drawingPhoto?.selector??(scopeTarget?.id===relatedSource?related:null);
   const materialSession=receipt?.analysisSessionId;
   const addedMaterialKeys=useMemo(()=>new Set(recommendations?.items
     .filter(item=>addedMaterialCard(draft?.cards||[],item.kind,item.registeredSourceRevisions)).map(item=>item.key)),[recommendations,draft?.cards]);
@@ -358,10 +360,11 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
       snapshot:draft,historySessionId:item.analysisSessionId,historyRevision:item.analysisRevision,requestId:crypto.randomUUID()},abort.signal);
       if(!abort.signal.aborted){apply(value.snapshot);setHistoryCandidates(null);setNotice(t('历史参考已载入；保存后记录本次选择','History loaded. Save to record your selection'));}}
     catch(value){failure(value);}finally{if(!abort.signal.aborted)setBusy(false);}}
-  function chooseRelated(card:CanvasCard,value?:EvidenceSource){
+  function chooseRelated(card:CanvasCard,value?:EvidenceSource,drawingObject?:{entityUid:string;title:string}){
     if(!card.source)return;
     setSelected(card.id);setMaterialCardId(card.id);
-    setSection(card.kind==='object'?relatedMaterialSection(value?.item?.objectScope):'objects');
+    setDrawingPhotoTarget(drawingObject?{cardId:card.id,title:drawingObject.title,selector:{entityUid:drawingObject.entityUid}}:null);
+    setSection(drawingObject?'photos':card.kind==='object'?relatedMaterialSection(value?.item?.objectScope):'objects');
     setRecommendQuery('');setRecommendFilter(undefined);setChosen([]);setExpanded('');setExpandedAnchor(null);setMaterialsOpen(true);setRight(false);
   }
   function changePage(card:CanvasCard,page:number,value:EvidenceSource){if(!value.documentId||!value.contentVersionId||!value.sourceSha256)return;
@@ -504,6 +507,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     return !!loaded;
   }
   const sourceContent=(card:CanvasCard,full=false)=>sources&&<AnalysisSourceCard key={card.id+(full?':full':':inline')} card={card} sources={sources} en={en} full={full} anchor={full?expandedAnchor:null} onAddMaterial={editable?item=>void addAndOpen(item):undefined} onUpdateWorkOrder={editable&&card.kind==='work_order'?item=>loadOrderProgress(card,item):undefined} active={full||inlinePreviewActive(card,collapsedPreviews)}
+    onRecommendPhotos={full&&card.kind==='drawing'?(entityUid,title)=>chooseRelated(card,undefined,{entityUid,title}):undefined}
     onAdoptDocumentVersion={full&&card.kind==='document'&&writable&&!fixed&&!archived?(source,version,page)=>adoptDocumentVersion(card,source,version,page):undefined}
     onActivate={()=>setCollapsedPreviews(closed=>setCardPreviewCollapsed(closed,card.id,false))} onDeactivate={()=>setCollapsedPreviews(closed=>setCardPreviewCollapsed(closed,card.id,true))} onOpen={()=>openSource(card)} onRelated={value=>chooseRelated(card,value)} onPage={(page,value)=>pageAction.current(card,page,value)}
     onAvailability={(id,state)=>setReferenceState(previous=>previous[id]===state?previous:{...previous,[id]:state})}
@@ -563,7 +567,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           onAuxClick={event=>{if(event.button===1)event.preventDefault();}}
           onPointerDown={event=>pointerDown(event)} onPointerMove={pointerMove} onPointerUp={finishGesture} onPointerCancel={finishGesture} onLostPointerCapture={finishGesture}>
           {materialsOpen&&<AnalysisMaterialPanel section={section} query={recommendQuery} en={en} loading={recommendLoading||!!scopeTarget&&relatedPending} value={recommendations} chosen={selectedMaterials.map(item=>item.key)} added={addedMaterialKeys} canAdd={editable&&draft.cards.length<50} sourceTitles={sourceTitles}
-            contextLabel={canvasSourceScope?t('按画布卡片推荐工程对象','Engineering objects by canvas card'):section==='objects'&&recommendFilter?t('本项目工程对象检索','Project engineering object search'):section==='project_documents'?t('本项目文档库','Project document library'):[draft.context.faultCode?t('当前报警 '+draft.context.faultCode,'Current alarm '+draft.context.faultCode):'',recommendationObject?relatedLabel:''].filter(Boolean).join(' · ')} onClose={()=>setMaterialsOpen(false)}
+            contextLabel={drawingPhoto?displayText(drawingPhoto.title):canvasSourceScope?t('按画布卡片推荐工程对象','Engineering objects by canvas card'):section==='objects'&&recommendFilter?t('本项目工程对象检索','Project engineering object search'):section==='project_documents'?t('本项目文档库','Project document library'):[draft.context.faultCode?t('当前报警 '+draft.context.faultCode,'Current alarm '+draft.context.faultCode):'',recommendationObject?relatedLabel:''].filter(Boolean).join(' · ')} onClose={()=>setMaterialsOpen(false)}
             onSection={value=>{setSection(value);setRecommendFilter(undefined);setRecommendQuery('');setChosen([]);}} onQuery={setRecommendQuery} onSearch={()=>{if(section!=='types')setRecommendFilter(recommendQuery.trim()||undefined);}}
             onToggle={key=>setChosen(keys=>keys.includes(key)?keys.filter(value=>value!==key):[...keys,key])} onAdd={item=>void addSource(item)} onAddChosen={()=>void addSources(selectedMaterials)}
             onNote={addNote} onMore={()=>void moreRecommendations()} onRefresh={()=>setSourceAttempt(v=>v+1)}/>}

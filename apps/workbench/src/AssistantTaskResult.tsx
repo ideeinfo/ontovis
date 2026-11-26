@@ -42,12 +42,15 @@ export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,
  const materialKind=(key?:string)=>materialKinds[key??'']?.[en?1:0]??t('资料','Material');
  const linked=task.linkedAnchorRef!==undefined;
  const results=linked?task.results.filter(row=>!taskResultReceipt(task.receipts,row)):task.results;
+ const pendingKeys=results.filter(row=>row.selector&&!taskResultReceipt(task.receipts,row)).map(row=>row.key);
  const names:Record<string,string>={work_orders:t('项目工单','Project work orders'),objects:t('工程对象','Objects'),graph:t('工程关系','Engineering graph'),knowledge:t('文档知识图谱','Document knowledge'),materials:t('项目资料','Materials'),related_drawings:t('登记关联图纸','Linked drawings'),related_photos:t('登记关联照片','Linked photos'),alarm_object:t('报警对象','Alarm object'),alarm_manuals:t('故障码手册','Fault-code manuals'),disposition:t('生成处置建议','Generate response plan'),scenes:t('项目场景','Project scenes'),adopted_models:t('项目采用模型','Project model adoption'),equipment_materials:t('安装设备目录','Installed equipment'),equipment_applicable_materials:t('设备适用资料','Applicable materials'),processing_tasks:t('资料处理任务','Processing tasks'),fixed_manual_neighborhood:t('固定发布版知识邻域','Fixed publication neighborhood'),selected_material:t('画布补充资料','Canvas context')};
  const states:Record<string,string>={complete:t('已读取','Read'),unavailable:t('读取失败','Unavailable'),budget_limited:t('当时读取次数达上限 · 未读取','Previous read count reached · unread'),policy_excluded:t('项目策略未允许读取','Excluded by policy')};
  return <section className="as-task-result" aria-label={t('项目检索与操作','Project results and actions')}>
   {task.mode==='cockpit_query'&&onHandoff&&<Btn disabled={locked} onClick={onHandoff}>{t('转后台继续','Continue in workbench')}</Btn>}
   {operationFailure&&<div className="as-failure" role="alert"><p>{operationFailure}</p><Btn disabled={locked} onClick={onRetryAddition}>{t('重新填写这条指令','Fill in this instruction again')}</Btn></div>}
-  {!!results.length&&<><h4>{linked?t('关联资料','Linked materials'):t('项目检索结果','Project results')}</h4><div className="as-project-results">{results.map(row=>{
+  {!!results.length&&<><div className="as-result-heading"><h4>{linked?t('关联资料','Linked materials'):t('项目检索结果','Project results')}</h4>
+   {onExecute&&pendingKeys.length>1&&<Btn disabled={locked} onClick={()=>onExecute(pendingKeys)}>{t('全部加入','Add all')}</Btn>}
+  </div><div className="as-project-results">{results.map(row=>{
    const scene=row.kind==='scene',adopted=row.kind==='adopted_model',device=row.kind==='equipment_material_scope',version=String(row.version);
    const model=adoptedModelTarget(row),configuration=equipmentConfigurationTarget(row);
    const name=displayText(taskMaterialName(row.title,en));

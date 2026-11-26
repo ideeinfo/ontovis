@@ -7,6 +7,9 @@ from .assistant_store import require,digest,encoded,now
 from .analysis_drafts import validate_snapshot
 from .authority import PreviewError
 
+MAX_CANVAS_CARDS = 50
+MAX_AUTOMATIC_ADDITIONS = 4
+
 ACTIONS = ('add_results','remove_cards','add_note','arrange','rename','save','set_window','add_relation','move_card','resize_card',
            'update_note','append_note','rename_card','copy_card','pin_cards','unpin_cards','group_cards','rename_group','ungroup',
            'update_relation','remove_relations','add_support','add_contradiction','add_reference','replace_source',
@@ -67,6 +70,23 @@ def result_targets(results, keys):
         rows.append(matches[0])
     require_target(len({row['key'] for row in rows})==len(rows), 'result')
     return rows
+
+
+def plan_candidate_additions(draft, plan, results, answer, *, complete):
+    if plan['intent'] != 'edit' or not results:
+        return
+    room = MAX_CANVAS_CARDS - len(draft['cards'])
+    if complete and len(results) <= min(room, MAX_AUTOMATIC_ADDITIONS):
+        plan['actions'] = [dict(kind='add_results', targets=[row['key'] for row in results], text='', x=None, y=None)]
+    elif room <= 0:
+        answer['gaps'].append(dict(text='画布已达卡片数量上限。', refs=[]))
+    elif len(results) > room:
+        answer['nextSteps'].append(dict(text=f'画布还可加入 {room} 张卡片，请从候选中选择。', refs=[]))
+    else:
+        reason = (f'本轮候选超过 {MAX_AUTOMATIC_ADDITIONS} 项。' if len(results) > MAX_AUTOMATIC_ADDITIONS
+                  else '本轮还有未核对的资料或关联。')
+        choice = '可在候选列表逐项选择，或点击「全部加入」。' if len(results)>1 else '可从候选列表加入已核对的资料。'
+        answer['nextSteps'].append(dict(text=reason+choice, refs=[]))
 
 
 def validate_draft_plan(snapshot, plan, results, fixed, history, revision, run_id, connection, project, *, present=None):
@@ -133,7 +153,7 @@ def build(snapshot,plan,results,register,run_id,connection,project,special=None)
                                and c['kind']==('model3d' if row['kind']=='model' else row['kind'])),None)
                 if existing:card_id=existing['id'];status='already_present'
                 else:
-                    require(len(board['cards'])<50,'ANALYSIS_SIZE_LIMIT',413)
+                    require(len(board['cards'])<MAX_CANVAS_CARDS,'ANALYSIS_SIZE_LIMIT',413)
                     card_id=operation_id(run_id,'card:'+row['key']);n=len(board['cards'])
                     board['cards'].append(dict(id=card_id,kind='model3d' if row['kind']=='model' else row['kind'],title=row['title'][:120],
                         x=40+(n%3)*380,y=40+(n//3)*300,width=340,height=250,pinned=False,

@@ -162,6 +162,7 @@ export function assistantMessage(error:unknown,en=false){
   ASSISTANT_QUERY_ONLY:['驾驶舱仅查询；请转后台执行画布操作。','Cockpit is query only. Open the workbench to edit the canvas.'],
   ASSISTANT_CONVERSATION_MODE_CHANGED:['此对话属于另一个界面，请在当前界面开启新对话。','This conversation belongs to another workspace. Start a conversation here to continue.'],
   ASSISTANT_DRAFT_CHANGED:['画布已变化，请重新发送操作指令；当前修改保留。','The canvas changed. Send a new instruction; edits are retained.'],
+  ANALYSIS_SIZE_LIMIT:['这些资料超过画布剩余容量，请逐项加入。','These materials exceed the available canvas space. Add them individually.'],
   ASSISTANT_HISTORY_EMPTY:['当前没有可撤销或重做的修改。','There is no available undo or redo step.'],
   ASSISTANT_HISTORY_EXCLUSIVE:['撤销、重做或恢复历史需单独执行，可同时明确保存。','Run undo, redo or restoration separately; an explicit save may follow.'],
   ASSISTANT_SOURCE_MISMATCH:['检索结果不是这张卡片的同一来源，未替换资料。','The result is a different source. The card was not replaced.'],

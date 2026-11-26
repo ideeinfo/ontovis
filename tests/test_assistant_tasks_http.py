@@ -18,6 +18,58 @@ class TaskHttpTests(unittest.TestCase):
             'protocol':PROTOCOL,'mode':'cockpit_query','snapshotJson':json.dumps({**board(),'ontobaseConnectionId':self.fixture.sessions.connection_id}),
             'taskId':'query','conversationId':None,'expectedConversationVersion':0,'parentRunId':None}
         self.body['expectedServiceRevision']=self.request('policy')[1]['services']['query']['serviceRevision']
+
+    def test_all_candidates_can_be_applied_as_one_batch_with_capacity_checked_first(self):
+        from apps.api.assistant_store import digest
+        base=json.loads(self.body['snapshotJson'])
+        base['cards']=[dict(id='alarm',kind='alarm',title='故障报警',x=0,y=0,width=300,height=200,pinned=False,
+            source=dict(system='ontovis',ontobaseConnectionId=base['ontobaseConnectionId'],
+                        projectCode=base['projectCode'],id=self.fixture.evidence,revision='a'*64))]
+        body={**self.body,'mode':'workbench','question':'检索候选目录','analysisSessionId':self.fixture.analysis,
+              'expectedAnalysisRevision':1,'evidenceRefIds':[self.fixture.evidence],'snapshotJson':json.dumps(base)}
+        plan=dict(plan=dict(intent='query',queries=[dict(tool='objects',query='fixture',faultCode='')],actions=[]),
+                  usage={},modelCalls=1,engineeringConfirmation=False,purpose='ontovis_analysis',serviceRevision='a'*64)
+        candidates=[dict(key=f'R{i+1}',kind='object',title=f'对象 {i+1}',identifier=f'entity-{i}',version='r1',
+                         reason='目录匹配',simulated=False,selector=dict(entityUid=f'entity-{i}',expectedEntityRevision='r1')) for i in range(14)]
+
+        def directory(tools,*_args,**_kwargs):
+            tools.results.extend(candidates)
+
+        with (patch('apps.api.assistant_task_api.call_source',return_value=plan),
+              patch('apps.api.assistant_tasks.ProjectTools.query',new=directory),
+              patch('apps.api.assistant_tasks.read_selected_evidence',return_value=[]),
+              patch('apps.api.assistant_task_api.analysis_store') as open_store,
+              patch('apps.api.analysis_canvas.validate_handles'),
+              patch('apps.api.analysis_evidence.AnalysisEvidence.register') as register):
+            open_store.return_value.__enter__.return_value.detail.return_value=dict(
+                analysisSessionId=self.fixture.analysis,analysisRevision=1,lifecycle='active')
+            status,started=self.request('task-start',body)
+            self.assertEqual(200,status,started)
+            for _ in range(100):
+                _,turn=self.request('status',dict(runId=started['runId']))
+                if turn['state'] not in ('reading','model','validating'):break
+                time.sleep(.01)
+            self.assertEqual('complete',turn['state'],turn)
+            operation=dict(runId=started['runId'],selectedKeys=[r['key'] for r in candidates],
+                           analysisSessionId=self.fixture.analysis,expectedAnalysisRevision=1)
+            full={**base,'cards':[base['cards'][0]]+[dict(id=f'note-{i}',kind='analysis',title='备忘',note='已有资料',
+                   x=10,y=10,width=300,height=200,pinned=False) for i in range(39)]}
+            status,rejected=self.request('task-prepare',{**operation,'snapshotJson':json.dumps(full)})
+            self.assertEqual((413,'ANALYSIS_SIZE_LIMIT'),(status,rejected['code']))
+            register.assert_not_called()
+            register.side_effect=lambda _actor,row,*_:dict(evidenceRefId=str(uuid4()),sourceRevision=digest(row['selector']))
+            status,prepared=self.request('task-prepare',{**operation,'snapshotJson':body['snapshotJson']})
+            self.assertEqual(200,status,prepared)
+            self.assertEqual(15,len(prepared['snapshot']['cards']))
+            self.assertEqual(14,register.call_count)
+            status,ack=self.request('task-ack',dict(runId=started['runId'],selectedKeys=operation['selectedKeys'],
+                                    snapshotJson=json.dumps(prepared['snapshot']),savedRevision=None))
+            self.assertEqual(200,status,ack)
+            self.assertEqual(operation['selectedKeys'],[row['resultKey'] for row in ack['receipt']['items']])
+            _,replayed=self.request('task-prepare',{**operation,'snapshotJson':body['snapshotJson']})
+            self.assertTrue(replayed['alreadyApplied'])
+            self.assertEqual(14,register.call_count)
+
     def test_query_only_cannot_prepare_or_ack_even_with_forged_mode_and_empty_canvas_queries(self):
         result=dict(plan=dict(intent='edit',queries=[],actions=[action('add_note',text='candidate')]),usage={},modelCalls=1,
                     engineeringConfirmation=False,purpose='ontovis_analysis',serviceRevision='a'*64)

@@ -16,13 +16,13 @@ from .display_labels import matches_display_text
 PRIORITY = {'field_record':0, 'same_event':0, 'selected_object':0,
     'object_association':10, 'shared_definition':10, 'binding':10,
     'fault_evidence':20, 'simulation_mapping':20, 'same_object_fault':20,
-    'descendant':30, 'shared_photos':30, 'model_applicable':40, 'same_fault':40,
+    'descendant':30, 'shared_photos':30, 'model_applicable':40, 'same_fault':40, 'parent_photos':45,
     'historical_binding':50, 'simulation_rule':60, 'name_candidate':70, 'catalogue_search':90}
 RELATED_SECTIONS = ('materials','drawings','photos','documents','device_materials')
 PLANS = {
-    'materials':(('field',),('drawings','photos'),('fault',),('child_drawings','shared_photos'),('applicable',)),
+    'materials':(('field',),('drawings','photos'),('fault',),('child_drawings','shared_photos'),('applicable',),('parent_photos',)),
     'drawings':(('drawings',),('child_drawings',)),
-    'photos':(('field',),('photos',),('shared_photos',),('applicable',)),
+    'photos':(('field',),('photos',),('shared_photos',),('applicable',),('parent_photos',)),
     'documents':(('fault',),('applicable',),('catalogue',)),
     'device_materials':(('applicable',),),
 }
@@ -145,6 +145,25 @@ def _photos(reader, chosen, purpose, memo):
     return result
 
 
+def _photo_parent(reader, chosen, memo):
+    if 'photo_parent' not in memo:
+        item = chosen['item']
+        context = chosen.get('context')
+        ancestors = (chosen.get('ancestors') or {}).get('path', ())
+        if context:
+            parent = ancestors[0]['object'] if ancestors else None
+            target = reader.reader.context_for_object(parent['entityUid'],parent['entityRevision']) if parent else None
+            if target:
+                d.require(target.get('context') == context, 'ENGINEERING_CHANGED', 409)
+        else:
+            uid = item.get('definitionParentEntityUid') if item.get('objectScope') != 'installation' else None
+            target = reader.reader.context_for_object(uid) if uid else None
+            if target:
+                d.require(not target.get('context') and target['item'].get('objectScope') != 'installation', 'ENGINEERING_CHANGED', 409)
+        memo['photo_parent'] = target
+    return memo['photo_parent']
+
+
 def _source_page(reader, chosen, dataset, section, name, cursor, query, memo):
     selection=selected(chosen) if chosen else None
     if name in ('photos','field'):
@@ -175,16 +194,22 @@ def _source_page(reader, chosen, dataset, section, name, cursor, query, memo):
                 reasonEn='Drawing linked to registered descendants; whole page.',relevance='descendant',
                 asset_key=_drawing_page_key(row)))
         return result,value['nextCursor']
-    if name=='shared_photos':
+    if name in ('shared_photos','parent_photos'):
         if not chosen:return [],None
+        reason,reason_en='本对象及下级的共享照片 · 整图','Shared photo of this object or its registered members; whole image.'
+        if name=='parent_photos':
+            parent=_photo_parent(reader,chosen,memo)
+            if parent is None:return [],None
+            selection=selected(parent)
+            title=parent['item']['displayName']
+            reason,reason_en=f'所属设备「{title}」的共享照片 · 整图',f'Shared photo of parent equipment {title} · whole image.'
         value=reader.reader._request('POST',reader.reader.prefix+'/equipment/shared-photos/query',{**selection,'limit':12,'cursor':cursor})
         d.require(value.get('projectCode')==reader.reader.project_code and type(value.get('items')) is list
             and len(value['items'])<=12,'SOURCE_CHANGED',409)
         result=[]
         for row in value['items']:
             d.require(type(row) is dict and row.get('availability') in ('available','unavailable'),'SOURCE_CHANGED',409)
-            value_row=_document({**row,'kind':'photo'},'本对象及下级的共享照片 · 整图',
-                'Shared photo of this object or its registered members; whole image.','shared_photos')
+            value_row=_document({**row,'kind':'photo'},reason,reason_en,name)
             if value_row is not None:result.append(value_row)
         return result,value.get('nextCursor')
     if name=='fault':

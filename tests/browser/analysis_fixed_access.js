@@ -142,6 +142,17 @@ async (page, facts, phase) => {
       'An existing object could still be selected from the recommendation');
     await alarmGroup.getByText(/也关联/).filter({hasText:facts.cards.drawing.title}).waitFor();
     await button('关闭资料库',materials).click();
+    await button('展开查看',target).click();
+    const drawingDialog=page.getByRole('dialog',{name:original.title,exact:true});
+    await drawingDialog.getByRole('navigation',{name:'图纸内容列表'}).getByRole('button',{name:new RegExp(facts.drawingObjectTitle)}).click();
+    await drawingDialog.getByText('可定位',{exact:true}).waitFor();
+    await button('推荐照片',drawingDialog).click();
+    await drawingDialog.waitFor({state:'hidden'});
+    const parentPhoto=materials.locator('.ac-material-result').filter({hasText:facts.cards.photo.title});
+    await parentPhoto.getByText('所属设备照片',{exact:true}).waitFor();
+    check(await parentPhoto.getByText(/所属设备.*共享照片.*整图/).count()===1,
+      'The selected drawing object did not scope photos to its registered parent equipment');
+    await button('关闭资料库',materials).click();
     await button('加入资料',canvas).click();
     const firstCategory=materials.locator('.ac-material-category').first();
     check(await firstCategory.locator('strong').innerText()==='故障报警','Fault alarms were not the first material type');
@@ -459,13 +470,19 @@ async (page, facts, phase) => {
     const firstResult=directory.locator('article').filter({hasText:firstObject});
     await firstResult.getByRole('button',{name:'已处理',exact:true}).waitFor();
     check(await firstResult.getByRole('button',{name:'已处理',exact:true}).isDisabled(),'The completed candidate could be re-added');
-    const secondAck=assistantResponse('task-ack');
-    await choice(secondObject).click();
-    check((await secondAck).ok(),'Adding the first candidate disabled another valid candidate');
+    const remainingCount=await directory.getByRole('button',{name:/^加入画布 · /}).count();
+    check(remainingCount>=2,'The fixture needs multiple remaining candidates');
+    const bulkAck=assistantResponse('task-ack');
+    await button('全部加入',assistant.locator('.as-task-result').last()).click();
+    const bulkResponse=await bulkAck;
+    const bulk=await bulkResponse.json();
+    check(bulkResponse.ok()&&bulk.receipt.items.length===remainingCount&&bulk.receipt.items.every(item=>item.status==='added'&&item.label!==firstObject),
+      'Add all did not apply exactly the remaining candidates in one operation');
     await locate(secondObject).click();
     await button(secondObject,objectCards).waitFor({state:'attached'});
-    await button('适应全部',canvas).click();
-    check(await objectCards.count()===2,'Manual add lost an earlier result');
+    check(await objectCards.count()===remainingCount+1,'The batch lost an earlier candidate or created a duplicate');
+    await button('撤销修改',canvas).click();
+    check(await objectCards.count()===1,'Undo did not remove the whole batch at once');
 
     await sendLinked('查找四类资料候选');
     const floating=canvas.locator('.ad-assistant-window');
@@ -518,6 +535,14 @@ async (page, facts, phase) => {
       await dialog.waitFor({state:'hidden'});
     }
     check(await floating.locator('.as-turn:visible').count()===1,'Previous candidate lists remained expanded');
+    const remembered=await floating.boundingBox();
+    await button('关闭助手',floating).click();
+    await floating.waitFor({state:'detached'});
+    await button('分析助手',canvas).click();
+    await floating.waitFor();
+    const restored=await floating.boundingBox();
+    check(['x','y','width','height'].every(key=>Math.abs(restored[key]-remembered[key])<2),
+      'Reopening the assistant lost its last position or size');
     await button('本画布对话',floating).click();
     const currentConversation=floating.getByRole('combobox',{name:'当前对话',exact:true});
     check(!(await currentConversation.locator('option').allTextContents()).some(title=>title.includes('加入相关的工程对象')),
@@ -546,7 +571,8 @@ async (page, facts, phase) => {
       drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,assistantAlarmObjectCheckLinks:true,
       alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true,assistantCompoundEdit:true,
       recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true,assistantCardSelection:true,
-      assistantLinkedObjectAndDrawing:true,assistantLinkedDedupAndUndo:true,assistantManualAddAfterZoom:true,
+      assistantLinkedObjectAndDrawing:true,assistantLinkedDedupAndUndo:true,assistantManualAddAfterZoom:true,assistantAddAll:true,
+      drawingObjectParentPhotos:true,assistantWindowRestored:true,
       assistantFourTypes:true,assistantCandidatePreview:true,assistantFloatingWindow:true,assistantCanvasConversationScope:true,compactMaterialRows:true};
   }
   if(phase==='grouped-layout'){

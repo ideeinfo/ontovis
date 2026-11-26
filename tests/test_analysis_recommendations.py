@@ -271,6 +271,27 @@ class MaterialRecommendationTests(TestCase):
             self.assertNotIn('preview',row);self.assertNotIn('bbox',row['selector']);self.assertNotIn('entityUid',row['selector'])
             self.assertIn('下级',row['reason']);self.assertEqual(row['availability'],'available')
 
+    def test_object_without_photo_regions_recommends_registered_parent_whole_photos(self):
+        reader,photos=self.cabinet_reader()
+        parent=reader.reader.context_for_object.return_value
+        parent['item']['displayName']='Registered cabinet'
+        child={'item': dict(entityUid='module',entityRevision='r1',definitionParentEntityUid='cabinet'), 'context':None}
+        reader.reader.context_for_object.side_effect=lambda uid,*_: child if uid=='module' else parent
+        reader.reader._request.side_effect=lambda _method,_path,body: dict(projectCode='Demo-PDS',
+            items=photos if body['entityUid']=='cabinet' else [],nextCursor=None)
+        result=recommendations(reader,{'entry':{'projectOnly':True},'section':'photos','entityUid':'module'})
+        self.assertEqual([row['title'] for row in result['items']],[row['title'] for row in photos])
+        for row in result['items']:
+            self.assertEqual('parent_photos',row['relevance'])
+            self.assertIn('Registered cabinet',row['reason'])
+            self.assertEqual(set(row['selector']),{'sourceType','documentId','contentVersionId'})
+            self.assertNotIn('preview',row)
+        self.assertEqual(['module','cabinet'],[call.args[2]['entityUid'] for call in reader.reader._request.call_args_list])
+        parent['context']={'installationContextId':'different-installation'}
+        with self.assertRaises(PreviewError) as changed:
+            recommendations(reader,{'entry':{'projectOnly':True},'section':'photos','entityUid':'module'})
+        self.assertEqual('ENGINEERING_CHANGED',changed.exception.code)
+
     def test_shared_photo_cursor_and_unavailable_state_are_preserved(self):
         reader,photos=self.cabinet_reader();photos[1]['availability']='unavailable'
         photos += [dict(photos[0],documentId=str(uuid4()),title='Extra '+str(i)) for i in range(9)]

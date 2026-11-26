@@ -8,7 +8,7 @@ from uuid import uuid4
 from .assistant_store import require, digest
 from .assistant_summaries import redact, summarize, work_order_summary, answer_batches
 from .authority import PreviewError
-from .assistant_canvas_tasks import ACTIONS, require_target, result_targets, validate_draft_plan
+from .assistant_canvas_tasks import ACTIONS, plan_candidate_additions, require_target, result_targets, validate_draft_plan
 from .assistant_drawings import drawing_add_scope, drawing_answer
 from . import assistant_alarm_materials
 
@@ -475,13 +475,7 @@ def related_object_answer(tools, fixed, draft, scope, plan):
         items=[dict(key=row['key'], title=row['title'], version=row['version']) for row in tools.results]), ensure_ascii=False), tools.private)[:1000]
     tools.catalogue_source('object', summary, message)
     answer = tools.catalogue_answer()
-    if plan['intent'] == 'edit' and count:
-        if not gaps and count <= min(12, 50-len(draft['cards'])):
-            plan['actions'] = [dict(kind='add_results', targets=[row['key'] for row in tools.results], text='', x=None, y=None)]
-        elif len(draft['cards']) < 50:
-            answer['nextSteps'].append(dict(text='可从下方候选中选择要加入的对象。', refs=[]))
-        else:
-            answer['gaps'].append(dict(text='画布已达卡片数量上限。', refs=[]))
+    plan_candidate_additions(draft, plan, tools.results, answer, complete=not gaps and count==len(tools.results))
     return answer
 
 
@@ -585,7 +579,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             plan['queries']=[]
         anchor=None
         if linked:
-            anchor=assistant_alarm_materials.linked_anchor(fixed,draft,body,linked.scope)
+            anchor=assistant_alarm_materials.linked_anchor(fixed,draft,body,linked.scope,linked.kinds)
         elif alarm_materials:
             anchor=assistant_alarm_materials.alarm_anchor(fixed,draft,body)
         chosen=[item for item in fixed if item[0]['evidenceRefId'] in body['evidenceRefIds']]
@@ -616,6 +610,8 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 has_source=any(card['kind'] in ('alarm','object') and not card.get('historical') for card in draft['cards'])
                 if plan['intent']=='edit':
                     review=dict(target='card' if has_source else 'instruction',message=(
+                        '请选择一张工程对象卡片，或在图纸中选中对象后点击「推荐照片」。'
+                        if linked.scope=='canvas' and 'photo' in linked.kinds else
                         f'请选择一张{relation}卡片，再继续这条指令。' if has_source else
                         '请先在「加入资料」中添加一张故障报警或工程对象卡片。'))
                     plan['actions']=[]

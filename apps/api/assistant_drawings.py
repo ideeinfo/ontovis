@@ -5,6 +5,7 @@ import re
 from .analysis_preview import drawing_identity
 from .analysis_recommendations import PAGE_SIZE, _drawing_page_key
 from .analysis_source_reader import selected
+from .assistant_canvas_tasks import plan_candidate_additions
 from .assistant_store import require
 from .assistant_summaries import redact
 from .authority import PreviewError
@@ -163,14 +164,7 @@ def drawing_answer(tools, fixed, draft, body, scope, plan):
         ensure_ascii=False), tools.private)[:1000]
     tools.catalogue_source('drawing', summary, message)
     answer = tools.catalogue_answer()
-    room = 50-len(draft['cards'])
-    if plan['intent'] == 'edit' and count:
-        if not gaps and not truncated and count <= room:
-            plan['actions'] = [dict(kind='add_results', targets=[row['key'] for row in tools.results], text='', x=None, y=None)]
-        elif room:
-            answer['nextSteps'].append(dict(text='可从下方选择要加入的图纸。', refs=[]))
-        else:
-            answer['gaps'].append(dict(text='画布已达卡片数量上限。', refs=[]))
+    plan_candidate_additions(draft, plan, tools.results, answer, complete=not gaps and not truncated)
     return answer
 
 

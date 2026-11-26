@@ -27,6 +27,36 @@ def action(kind,targets=None,text=''):return dict(kind=kind,targets=targets or [
 
 
 class LinkedMaterialIntentTests(unittest.TestCase):
+    def test_verified_batch_rule_is_independent_of_material_type(self):
+        from apps.api.assistant_canvas_tasks import plan_candidate_additions
+        for kind, count, complete, automatic in (
+            ('object',3,True,True), ('drawing',3,True,True), ('photo',4,True,True),
+            ('object',3,False,False), ('drawing',3,False,False), ('drawing',12,True,False),
+        ):
+            with self.subTest(kind=kind,count=count,complete=complete):
+                plan=dict(intent='edit',actions=[])
+                answer=dict(nextSteps=[],gaps=[])
+                rows=[dict(kind=kind,key=f'R{i+1}') for i in range(count)]
+                plan_candidate_additions(board(),plan,rows,answer,complete=complete)
+                self.assertEqual([action('add_results',[row['key'] for row in rows])] if automatic else [],plan['actions'])
+                if not automatic:
+                    self.assertIn('全部加入',answer['nextSteps'][0]['text'])
+
+    def test_photo_request_uses_the_fixed_object_of_a_focused_drawing(self):
+        from apps.api.assistant_alarm_materials import _material_object_source
+        draft=board()
+        draft['cards']=[dict(id=kind,kind=kind,source=dict(id=kind)) for kind in ('alarm','drawing')]
+        scope=dict(entityUid='module',expectedEntityRevision='r2',installationContextId=None,expectedHierarchyRevision=None)
+        drawing=dict(evidenceRef='location:module',expectedSourceRevision='a'*64,expectedContentSha256='b'*64,**scope)
+        fixed=[(dict(evidenceRefId=kind,sourceKind=kind),desc) for kind,desc in (('alarm',dict(eventId='event')),('drawing',drawing))]
+        body=dict(focusCardIds=['drawing'])
+        self.assertEqual(fixed[1],linked_anchor(fixed,draft,body,'canvas',{'photo'}))
+        self.assertEqual(fixed[0],linked_anchor(fixed,draft,body,'alarm',{'photo'}))
+        reader=SimpleNamespace(read=Mock())
+        self.assertEqual(scope,_material_object_source(reader,'drawing',drawing,{'object'},lambda fn:fn()))
+        reader.read.assert_called_once_with('drawing',drawing)
+        self.assertIsNone(linked_anchor(fixed[:1]+[(fixed[1][0],dict(drawingUid='unscoped'))],draft,body,'canvas',{'photo'}))
+
     def test_material_lists_keep_the_requested_types_and_canvas_scope(self):
         pair=frozenset(('object','drawing'))
         all_types=pair|{'photo','document'}
