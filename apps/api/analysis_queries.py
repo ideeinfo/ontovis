@@ -112,21 +112,28 @@ def recommendations(reader, body, scene_library=None, *, cursor_key=None, sessio
                 '当前选中的工程对象',relevance='selected_object',reasonEn='The selected engineering object.'))
         if dataset:
             from .demo_faults import diagnosis
-            tags=[(dataset['primaryRds'],'模拟报警配置的显式位号映射'),('=WEC+'+dataset['cabinet'],'演练配置指定的柜体')]
-            channel=sim.PROFILES[dataset['faultCode']].get('channel')
-            tags += [(channel['moduleRds'] if channel and node['rds']==channel['rds'] else node['rds'],
-                '模块内地址 '+channel['address']+'；定位所属模块' if channel and node['rds']==channel['rds'] else '演练排查参照对象')
-                for node in diagnosis(dataset['faultCode'])['nodes'] if node['kind']=='component']
+            fault_code=dataset['faultCode']
+            tags=[(dataset['primaryRds'],f'来自 {fault_code} 的演练设置',f'Set as the alarm target in exercise {fault_code}'),
+                ('=WEC+'+dataset['cabinet'],'本次演练涉及的柜体','Cabinet involved in this exercise')]
+            channel=sim.PROFILES[fault_code].get('channel')
+            for node in diagnosis(fault_code)['nodes']:
+                if node['kind']!='component':continue
+                if channel and node['rds']==channel['rds']:
+                    address=channel['address']
+                    tags.append((channel['moduleRds'],f'检查该模块的 {address} 通道',f'Check channel {address} on this module'))
+                else:
+                    tags.append((node['rds'],f"{node['label']} · {fault_code} 演练排查清单",f'Listed in the {fault_code} exercise checklist'))
             seen_tags=set()
-            for tag,reason in tags:
+            for tag,reason,reason_en in tags:
                 if tag in seen_tags:continue
                 seen_tags.add(tag)
-                def add(tag=tag,reason=reason):
+                def add(tag=tag,reason=reason,reason_en=reason_en):
                     value=reader._rds(tag);item=value['item']
                     if item['entityUid'] in seen:return
                     seen.add(item['entityUid']);basis='simulation_mapping' if tag==dataset['primaryRds'] else 'simulation_rule'
                     rows.append(recommendation('object',item.get('displayName',tag),
-                        {k:selected(value)[k] for k in ('entityUid','expectedEntityRevision')},reason,relevance=basis,identifier=tag,matchType=basis))
+                        {k:selected(value)[k] for k in ('entityUid','expectedEntityRevision')},reason,reasonEn=reason_en,
+                        relevance=basis,identifier=tag,matchType=basis))
                 attempt(add)
         if not rows:gaps.append('选择工程对象、故障，或输入名称/位号检索。')
     elif section in ('alarms','trends'):

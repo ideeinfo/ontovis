@@ -15,6 +15,13 @@ test('installed equipment and definitions enter the same related material picker
  for(const scope of ['installation','definition','unclassified',undefined])assert.equal(relatedMaterialSection(scope),'materials');
  assert.equal(MATERIAL_CATEGORIES[0].id,'materials');
 });
+test('exercise recommendations distinguish the alarm target from suggested checks',()=>{
+ const target={relevance:'simulation_mapping'},check={relevance:'simulation_rule'};
+ assert.equal(recommendationRelevanceLabel(target,false),'模拟报警对象');
+ assert.equal(recommendationRelevanceLabel(target,true),'Simulated alarm target');
+ assert.equal(recommendationRelevanceLabel(check,false),'建议检查');
+ assert.equal(recommendationRelevanceLabel(check,true),'Suggested check');
+});
 test('related pages sort by evidence strength and preserve the original located fixed source',()=>{
  const direct={key:'region',assetKey:'photo:one:v1',kind:'photo',title:'Located',selector:{evidenceRef:'original'},relevance:'object_association',relevancePriority:10,availability:'available'};
  const whole={...direct,key:'whole',title:'Whole',selector:{documentId:'one'},relevance:'shared_photos',relevancePriority:30};

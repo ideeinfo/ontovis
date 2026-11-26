@@ -19,8 +19,11 @@ class MaterialRecommendationTests(TestCase):
     def test_alarm_candidates_prioritize_current_fixed_event_and_keep_recurrence_separate(self):
         reader=self.reader();entry=self.entry(recurrence=True)
         value=recommendations(reader,{'entry':entry,'section':'alarms'})
-        self.assertEqual(len(value['items']),5);self.assertEqual(value['items'][0]['selector']['datasetId'],entry['datasetId'])
-        self.assertEqual(len({row['key'] for row in value['items']}),5)
+        catalogue=sim.catalogue('Demo-PDS')['items']
+        self.assertCountEqual([row['selector']['datasetId'] for row in value['items']],
+            [item['datasetId'] for item in catalogue])
+        self.assertEqual(value['items'][0]['selector']['datasetId'],entry['datasetId'])
+        self.assertEqual(len({row['key'] for row in value['items']}),len(catalogue))
         for row in value['items']:
             descriptor=row['selector'];self.assertEqual(descriptor['eventId'],descriptor['datasetId']+'-event-1')
             self.assertEqual(row['preview']['dataset'],sim.dataset(descriptor['datasetId'],descriptor['datasetRevision']))
@@ -32,6 +35,21 @@ class MaterialRecommendationTests(TestCase):
         self.assertEqual(len(value['items']),1);self.assertEqual(value['items'][0]['preview']['dataset']['faultCode'],'13002')
         other=recommendations(self.reader('OTHER'),{'entry':{'projectOnly':True},'section':'alarms'})
         self.assertEqual(other['items'],[]);self.assertIn('SIMULATION_PROJECT_REQUIRED',other['gaps'])
+
+    def test_object_recommendations_explain_the_exercise_target_and_cable_check(self):
+        reader=self.reader()
+        reader._rds=Mock(side_effect=lambda tag: {
+            'item':{'entityUid':tag,'entityRevision':'r1'},'context':None})
+        value=recommendations(reader,{'entry':self.entry('13033'),'section':'objects'})
+        rows={row['identifier']:row for row in value['items']}
+        target=rows['=WEC+CN1']
+        self.assertEqual(target['relevance'],'simulation_mapping')
+        self.assertEqual(target['reason'],'来自 13033 的演练设置')
+        self.assertEqual(target['reasonEn'],'Set as the alarm target in exercise 13033')
+        cable=rows['=WEC+CN1-80W1']
+        self.assertEqual(cable['relevance'],'simulation_rule')
+        self.assertEqual(cable['reason'],'24VDC供电线缆 · 13033 演练排查清单')
+        self.assertEqual(cable['reasonEn'],'Listed in the 13033 exercise checklist')
 
     def test_trends_offer_fixed_descriptors_only_and_preserve_current_event_window(self):
         for code,count in (('13001',5),('13004',3)):
