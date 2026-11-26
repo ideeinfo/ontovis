@@ -52,6 +52,26 @@ class MaterialRecommendationTests(TestCase):
         self.assertEqual(cable['reason'],'24VDC供电线缆 · 13033 排查清单')
         self.assertEqual(cable['reasonEn'],'Listed in the 13033 troubleshooting checklist')
 
+    def test_canvas_object_recommendations_keep_each_objects_source_cards(self):
+        dataset = sim.identity('13003')
+        primary = {'entityUid': 'protector', 'entityRevision': 'r1', 'displayName': '+CN1-1U2'}
+        cabinet = {'entityUid': 'cabinet', 'entityRevision': 'r1', 'displayName': 'CN1 机舱动力柜'}
+        module = {'entityUid': 'module', 'entityRevision': 'r1', 'displayName': '+CN1-105A3'}
+        tags = dict(zip((dataset['primaryRds'], '=WEC+CN1', '=WEC+CN1-105A3'), (primary, cabinet, module)))
+        reader = self.reader()
+        reader._rds = Mock(side_effect=lambda tag: {'item': tags[tag]})
+        reader.read = Mock(side_effect=lambda kind, _: {'dataset': dataset} if kind in ('alarm', 'trend')
+                           else {'item': {'entityUid': 'other', 'entityRevision': 'r2', 'displayName': '另一工程对象'}})
+        fixed = [(dict(evidenceRefId=ref, sourceKind=kind), {})
+                 for ref, kind in [('alarm-card', 'alarm'), ('trend-card', 'trend'), ('object-card', 'object')]]
+        value = recommendations(reader, {'entry': {'projectOnly': True}, 'section': 'objects'}, canvas_sources=fixed)
+        self.assertEqual([], value['gaps'])
+        rows = {item['selector']['entityUid']: item['relatedSourceRefs'] for item in value['items']}
+        self.assertEqual(len(value['items']), len(rows))
+        self.assertEqual({**dict.fromkeys(('protector', 'cabinet', 'module'), ['alarm-card', 'trend-card']),
+                          'other': ['object-card']}, rows)
+        self.assertEqual(3, reader._rds.call_count)
+
     def test_alarm_search_accepts_displayed_title_with_the_same_fixed_revision(self):
         reader=self.reader()
         body={'entry':{'projectOnly':True},'section':'alarms'}

@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 from apps.api.authority import PreviewError
+from apps.api.assistant_store import DEFAULT
 from apps.api.simulated_faults import identity
 from apps.api.user_sessions import MAX_SECONDS
 from tests.test_analysis_drafts import snapshot
@@ -44,7 +45,8 @@ def browser_site(public: Path):
         primary = project_object('fixture-surge-protector','合成浪涌保护器',sample['primaryRds'],'device')
         cabinet = project_object('fixture-cabinet','合成机舱动力柜','=WEC+CN1','cabinet')
         module = project_object('fixture-feedback-module','合成反馈输入模块','=WEC+CN1-105A3','device')
-        objects = {item['entityUid']:item for item in (primary,cabinet,module)}
+        terminal = project_object('fixture-terminal','合成端子','=WEC+CN1-X1','device')
+        objects = {item['entityUid']:item for item in (primary,cabinet,module,terminal)}
         tags = {item['identifiers'][0]['value']:item for item in objects.values()}
         project_prefix = f'/api/v1/projects/{PROJECT}'
         drawing = 'fixture-13003-wiring'
@@ -57,6 +59,9 @@ def browser_site(public: Path):
         def request(account, method, path, body=None):
             url = urlsplit(path)
             route = url.path
+            if route in (project_prefix+'/ontovis-assistant/service', project_prefix+'/ontovis-assistant/profile'):
+                return dict(serviceRef=DEFAULT['serviceRef'],purpose='ontovis_analysis',serviceRevision='a'*64,
+                            accessRevision=PROJECT+':admin',enabled=True,canRun=True,modelId='synthetic-model')
             if f'/documents/{photo_id}' in route:
                 if photo_blocked.is_set():
                     raise PreviewError(403,'NOT_FOUND_OR_FORBIDDEN')
@@ -76,6 +81,10 @@ def browser_site(public: Path):
                 return dict(projectCode=PROJECT,resolutionMode='live',items=[dict(resolution='exact',
                     requestedEntityUid=uid,canonicalEntityUid=uid,object=objects[uid],canonicalObject=objects[uid])
                     for uid in body['entityUids']])
+            if route==f'/api/v1/drawings/{drawing}/object-locations':
+                return {'items':[dict(id='position-'+item['entityUid'],project_code=PROJECT,drawing_uid=drawing,
+                                      entity_uid=item['entityUid'],display_name=item['displayName'])
+                                 for item in (primary, terminal)]}
             if route in (project_prefix+'/object-evidence/resolve', project_prefix+'/object-evidence/related'):
                 subject = objects[body['entityUid']]
                 main = subject==primary
@@ -164,6 +173,10 @@ def browser_site(public: Path):
                                        'kind':'reference','origin':'manual','reason':'合成分组连线'})
             saved = fixture.ok(ANALYSIS+'/save',dict(analysisSessionId=analysis_id,expectedAnalysisRevision=1,
                 snapshot=board,requestId=str(uuid4())))
+            policy = fixture.ok('/api/workbench/assistant/policy',{})
+            fixture.ok('/api/workbench/assistant/publish',dict(requestId=str(uuid4()),expectedRevision=policy['revision'],
+                       expectedAccessRevision=policy['accessRevision'],expectedServiceRevision=policy['service']['serviceRevision'],
+                       policy={**DEFAULT, 'enabled':True}))
 
             def verify():
                 result = fixture.ok(ANALYSIS+'/detail',dict(analysisSessionId=analysis_id))
@@ -178,6 +191,7 @@ def browser_site(public: Path):
             with serve_workbench(public.resolve(strict=True),fixture.sessions,commands) as origin:
                 yield dict(origin=origin,analysisId=analysis_id,title=title,cards=cards,frames=frames,record=record,
                            memberDrawingTitle=member_title,powerDrawingTitle=power_title,
+                           drawingObjectTitle=terminal['displayName'],
                            additionalObjectTitles=[cabinet['displayName'],module['displayName']],
                            datasetId=sample['datasetId'],datasetRevision=sample['datasetRevision']),restore,verify
     finally:

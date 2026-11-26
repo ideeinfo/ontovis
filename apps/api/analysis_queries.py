@@ -58,8 +58,9 @@ def matching_history(store, actor, dataset, object_id, authorize):
     return [{'analysisSessionId': r[0], 'analysisRevision': r[1], 'snapshot': json.loads(r[2]), 'contentSha256': r[3]} for r in rows]
 
 
-def recommendations(reader, body, scene_library=None, *, cursor_key=None, session_revision='', registered_sources=()):
-    from .analysis_recommendations import (RELATED_SECTIONS, recommendation, related_recommendations,
+def recommendations(reader, body, scene_library=None, *, cursor_key=None, session_revision='', registered_sources=(), canvas_sources=None):
+    from .analysis_object_recommendations import alarm_object_recommendations, canvas_object_recommendations
+    from .analysis_recommendations import (RELATED_SECTIONS, related_recommendations,
         cursor_secret, scope_digest, encode_cursor, decode_cursor)
     d.require(type(body) is dict and 'entry' in body and set(body) <= {'entry','section','offset','cursor','entityUid','expectedEntityRevision','q'})
     dataset, order = (None,None) if body['entry']=={'projectOnly':True} else entry_dataset(reader,body['entry'])
@@ -106,37 +107,18 @@ def recommendations(reader, body, scene_library=None, *, cursor_key=None, sessio
                 '本项目名称或位号检索',relevance='catalogue_search',reasonEn='Project object name or identifier search.'))
         return {'items':rows,'nextOffset':None,'nextCursor':value.get('nextCursor'),'gaps':gaps,'dataset':dataset,'order':'source'}
     elif section=='objects':
-        seen=set()
-        if body.get('entityUid'):
-            chosen=reader.reader.context_for_object(body['entityUid'],body.get('expectedEntityRevision'));item=chosen['item'];seen.add(item['entityUid'])
-            rows.append(recommendation('object',item['displayName'],{'entityUid':item['entityUid'],'expectedEntityRevision':item['entityRevision']},
-                '当前选中的工程对象',relevance='selected_object',reasonEn='The selected engineering object.'))
-        if dataset:
-            from .demo_faults import diagnosis
-            fault_code=dataset['faultCode']
-            tags=[(dataset['primaryRds'],f'由 {fault_code} 的报警配置指定',f'Specified by the alarm configuration for {fault_code}'),
-                ('=WEC+'+dataset['cabinet'],'本次报警涉及的柜体','Cabinet involved in this alarm')]
-            channel=sim.PROFILES[fault_code].get('channel')
-            for node in diagnosis(fault_code)['nodes']:
-                if node['kind']!='component':continue
-                if channel and node['rds']==channel['rds']:
-                    address=channel['address']
-                    tags.append((channel['moduleRds'],f'检查该模块的 {address} 通道',f'Check channel {address} on this module'))
-                else:
-                    tags.append((node['rds'],f"{node['label']} · {fault_code} 排查清单",f'Listed in the {fault_code} troubleshooting checklist'))
-            seen_tags=set()
-            for tag,reason,reason_en in tags:
-                if tag in seen_tags:continue
-                seen_tags.add(tag)
-                def add(tag=tag,reason=reason,reason_en=reason_en):
-                    value=reader._rds(tag);item=value['item']
-                    if item['entityUid'] in seen:return
-                    seen.add(item['entityUid']);basis='simulation_mapping' if tag==dataset['primaryRds'] else 'simulation_rule'
-                    rows.append(recommendation('object',item.get('displayName',tag),
-                        {k:selected(value)[k] for k in ('entityUid','expectedEntityRevision')},reason,reasonEn=reason_en,
-                        relevance=basis,identifier=tag,matchType=basis))
-                attempt(add)
-        if not rows:gaps.append('选择工程对象、故障，或输入名称/位号检索。')
+        if canvas_sources is not None:
+            rows,gaps=canvas_object_recommendations(reader,canvas_sources)
+        else:
+            chosen_uid=body.get('entityUid')
+            if chosen_uid:
+                item=reader.reader.context_for_object(chosen_uid,body.get('expectedEntityRevision'))['item']
+                rows.append(recommendation('object',item['displayName'],{'entityUid':item['entityUid'],'expectedEntityRevision':item['entityRevision']},
+                    '当前选中的工程对象',relevance='selected_object',reasonEn='The selected engineering object.'))
+            if dataset:
+                candidates,gaps=alarm_object_recommendations(reader,dataset)
+                rows.extend(item for item in candidates if item['selector']['entityUid']!=chosen_uid)
+            if not rows:gaps.append('选择工程对象、故障，或输入名称/位号检索。')
     elif section in ('alarms','trends'):
         if section=='alarms':
             def add_alarms():

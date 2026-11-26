@@ -40,8 +40,20 @@ export function mergeRecommendations(previous:Recommendation[],incoming:Recommen
     const preferred=usable&&!oldUsable||usable===oldUsable&&(item.relevancePriority??90)<(old.relevancePriority??90)?item:old;
     const revisions=[...new Set([...(old.registeredSourceRevisions||[]),...(item.registeredSourceRevisions||[])])];
     result[index]=revisions.length?{...preferred,registeredSourceRevisions:revisions}:preferred;
+    if(old.relatedSourceRefs||item.relatedSourceRefs){
+      result[index]={...result[index],relatedSourceRefs:[...new Set([...(old.relatedSourceRefs||[]),...(item.relatedSourceRefs||[])])]};
+    }
   }
   return result.sort((a,b)=>(a.relevancePriority??90)-(b.relevancePriority??90));
+}
+export function groupMaterialRecommendations(items:readonly Recommendation[],sourceTitles:ReadonlyMap<string,string>){
+  const groups=new Map([...sourceTitles.keys()].map(ref=>[ref,[] as Recommendation[]]));
+  const ungrouped:Recommendation[]=[];
+  for(const item of items){
+    const ref=item.relatedSourceRefs?.find(id=>groups.has(id));
+    (ref?groups.get(ref)!:ungrouped).push(item);
+  }
+  return {groups:[...groups].filter(([,rows])=>rows.length),ungrouped};
 }
 export function materialPosition(view:Viewport,point:{x:number;y:number}){
   return {x:Math.max(-20000,Math.min(20000,Math.round((point.x-view.x)/view.zoom))),

@@ -637,11 +637,21 @@ class ProjectSessions(UserSessions):
                     from .analysis_queries import recommendations
                     from .analysis_recommendations import registered_recommendation_revisions
                     registered = []
-                    if 'analysisSessionId' in body:
-                        registered = sources.registered_sources(actor, body.pop('analysisSessionId'), guard)
+                    canvas_sources = None
+                    session_id = identifier(body.pop('analysisSessionId')) if 'analysisSessionId' in body else None
+                    if session_id is not None:
+                        registered = sources.registered_sources(actor, session_id, guard)
+                    if 'canvasEvidenceRefIds' in body:
+                        ids = body.pop('canvasEvidenceRefIds')
+                        require(session_id is not None and body.get('section') == 'objects' and not body.get('q')
+                                and not {'entityUid', 'expectedEntityRevision'} & body.keys()
+                                and type(ids) is list and 1 <= len(ids) <= 50)
+                        canvas_sources = [sources.descriptor(actor, {'analysisSessionId': session_id, 'evidenceRefId': evidence_id}, guard)
+                                          for evidence_id in dict.fromkeys(identifier(identity) for identity in ids)]
                     release_store()
                     value = recommendations(reader, body, service.library,
-                        cursor_key=self.cursor_key, session_revision=row.revision, registered_sources=registered)
+                        cursor_key=self.cursor_key, session_revision=row.revision, registered_sources=registered,
+                        canvas_sources=canvas_sources)
                     for item in value['items']:
                         if 'registeredSourceRevisions' in item:
                             continue

@@ -64,7 +64,8 @@ class AnalysisSourceHttpTests(unittest.TestCase):
 
         with patch.object(self.source, 'request', source), patch(
                 'apps.api.scene_engineering.SceneEngineeringReader.context_for_object',
-                return_value={'item': primary, 'context': {'installationContextId': 'context', 'hierarchyRevision': 'h1'}}):
+                return_value={'item': primary, 'context': {'installationContextId': 'context', 'hierarchyRevision': 'h1'}}), patch(
+                'apps.api.scene_engineering.SceneEngineeringReader.detail', return_value={'item': primary}):
             status, ref, _ = self.request(ROOT+'/evidence/register', self.body(analysisSessionId=created['analysisSessionId'],
                 expectedAnalysisRevision=1, requestId=str(uuid4()), sourceKind='object', selector=selection))
             self.assertEqual(status, 200, ref)
@@ -80,6 +81,13 @@ class AnalysisSourceHttpTests(unittest.TestCase):
             self.assertEqual(status, 200, result)
             self.assertTrue(all('registeredSourceRevisions' not in item for item in result['items']))
             self.assertEqual(self.request(ROOT+'/recommendations', request, client=viewer)[0], 404)
+            scope = {**request, 'q': '', 'canvasEvidenceRefIds': [ref['evidenceRefId']]}
+            status, result, _ = self.request(ROOT+'/recommendations', scope)
+            self.assertEqual(status, 200, result)
+            self.assertEqual([ref['evidenceRefId']], result['items'][0]['relatedSourceRefs'])
+            self.assertEqual([ref['sourceRevision']], result['items'][0]['registeredSourceRevisions'])
+            self.assertEqual(self.request(ROOT+'/recommendations', {**scope, 'analysisSessionId': other['analysisSessionId']})[0], 404)
+            self.assertEqual(self.request(ROOT+'/recommendations', scope, client=viewer)[0], 404)
             self.assertEqual(export_package(self.urls[0]), before)
 
     def read_bytes(self,path,payload):

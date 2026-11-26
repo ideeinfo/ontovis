@@ -29,8 +29,9 @@ export function draftChanged(value:CanvasSnapshot|null,saved:string,includeViewp
   const previous=JSON.parse(saved) as CanvasSnapshot;
   return JSON.stringify({...value,viewport:previous.viewport})!==saved;
 }
+export const DEFAULT_ANALYSIS_TITLE='新建分析';
 export function blankAnalysisDraft(scope:ProjectScope, now=new Date()):CanvasSnapshot {
-  return {schemaVersion:1,...scope,title:'新建分析',status:'analyzing',
+  return {schemaVersion:1,...scope,title:DEFAULT_ANALYSIS_TITLE,status:'analyzing',
     context:{objectIds:[],timeFrom:new Date(now.getTime()-86400000).toISOString(),timeTo:now.toISOString(),timezone:'Asia/Shanghai'},
     cards:[],relations:[],viewport:{x:24,y:24,zoom:1}};
 }

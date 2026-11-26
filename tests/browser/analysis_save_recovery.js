@@ -38,12 +38,31 @@ async (page, facts, phase) => {
     check(await collapse.getAttribute('aria-expanded')==='true','The navigation did not reopen');
     await button('分析画布',page).click();
     await workspace.locator('.ad-list-items .ov-list-main').filter({hasText:facts.title}).click();
+    const checkDefaultName = async () => {
+      await page.waitForFunction(()=>{
+        const input=document.querySelector('input[aria-label="分析名称"]');
+        return input&&document.activeElement===input&&input.value==='新建分析'
+          &&input.selectionStart===0&&input.selectionEnd===input.value.length;
+      });
+      await workspace.getByText('可直接输入新的分析名称',{exact:true}).waitFor();
+    };
+    await button('新建分析').click();
+    await checkDefaultName();
+    await page.keyboard.type('Q-13 replacement title');
+    check(await title.inputValue()==='Q-13 replacement title','Typing did not replace the selected default name');
+    const discard = page.getByRole('dialog',{name:'画布有未保存的修改',exact:true});
+    await button('新建分析').click();
+    await button('放弃并离开',discard).click();
+    await checkDefaultName();
+    await workspace.locator('.ad-list-items .ov-list-main').filter({hasText:facts.title}).click();
+    await button('放弃并离开',discard).click();
+    await page.waitForFunction(expected=>document.querySelector('input[aria-label="分析名称"]')?.value===expected,facts.title);
     check(await title.inputValue()===facts.title,'The isolated canvas was not opened');
     check(await button('保存当前视图').isDisabled(),'An unchanged canvas could be saved again');
     await button('放大画布').click();
     check(await button('保存当前视图').isEnabled(),'A viewport-only edit could not be saved');
     await title.fill(busyTitle);
-    return {opened:true,navigationDefaultExpanded:true};
+    return {opened:true,navigationDefaultExpanded:true,newTitleSelected:true};
   }
   if (phase==='busy') {
     const response = await send('保存');

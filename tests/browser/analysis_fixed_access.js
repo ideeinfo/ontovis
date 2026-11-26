@@ -128,8 +128,21 @@ async (page, facts, phase) => {
     check(reopened.ok()&&detail.analysisRevision===3&&
       detail.snapshot.cards.find(row=>row.id===original.id).frameId===targetGroup.id,'Reopening lost the saved group');
 
-    await button('加入资料',canvas).click();
     const materials=canvas.locator('.ac-material-panel');
+    const alarmMenu=button('更多操作： '+facts.cards.alarm.title,card('alarm'));
+    await alarmMenu.click();
+    await page.getByRole('menuitem',{name:'推荐相关资料',exact:true}).click();
+    const alarmGroup=materials.locator('.ac-material-group').filter({has:page.getByRole('heading',{name:facts.cards.alarm.title,exact:true})});
+    const drawingGroup=materials.locator('.ac-material-group').filter({has:page.getByRole('heading',{name:facts.cards.drawing.title,exact:true})});
+    await alarmGroup.getByRole('checkbox',{name:'选择资料 '+facts.cards.object.title,exact:true}).waitFor();
+    await drawingGroup.getByRole('checkbox',{name:'选择资料 '+facts.drawingObjectTitle,exact:true}).waitFor();
+    check(await materials.getByRole('checkbox',{name:'选择资料 '+facts.cards.object.title,exact:true}).count()===1,
+      'A shared object was listed more than once');
+    check(await alarmGroup.getByRole('checkbox',{name:'选择资料 '+facts.cards.object.title,exact:true}).isDisabled(),
+      'An existing object could still be selected from the recommendation');
+    await alarmGroup.getByText(/也关联/).filter({hasText:facts.cards.drawing.title}).waitFor();
+    await button('关闭资料库',materials).click();
+    await button('加入资料',canvas).click();
     const drawingCategory=()=>materials.getByRole('button',{name:/^图纸/});
     const drawingResult=materials.locator('.ac-material-result').filter({has:page.getByText(facts.powerDrawingTitle,{exact:true})});
     await drawingCategory().click();
@@ -181,6 +194,31 @@ async (page, facts, phase) => {
     check(await targetRow.getByRole('button').isEnabled(),'Undo did not restore the add controls');
     await button('关闭资料库',materials).click();
 
+    const assistant=canvas.locator('.as-panel');
+    await button('分析助手',canvas).click();
+    await assistant.getByRole('button',{name:/^画布资料/}).click();
+    for(const [kind,entry] of Object.entries(facts.cards)){
+      const choice=assistant.getByRole('checkbox',{name:entry.title,exact:true});
+      if(kind==='alarm')await choice.check();
+      else await choice.uncheck();
+    }
+    await assistant.getByRole('textbox',{name:'向分析助手提问',exact:true}).fill('加入相关的工程对象');
+    const [ack]=await Promise.all([
+      page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/assistant/task-ack'),
+      button('发送',assistant).click(),
+    ]);
+    const applied=await ack.json();
+    check(ack.ok()&&applied.run.result.modelCalls===0&&applied.receipt.state==='applied_draft'&&applied.receipt.analysisRevision===3,
+      'The assistant did not apply the verified additions to the unsaved draft');
+    check(applied.receipt.items.filter(item=>item.status==='added').length===2&&
+      applied.receipt.items.filter(item=>item.status==='already_present').length===1,
+      'The assistant did not preserve the existing object while adding the two missing ones');
+    const objectCards=canvas.locator('.ad-card[data-card-kind="object"]');
+    for(const title of facts.additionalObjectTitles)await button(title,objectCards).waitFor({state:'attached'});
+    check(await objectCards.count()===3,'The assistant draft lacked registered alarm objects');
+    await button('撤销修改',canvas).click();
+    check(await objectCards.count()===1,'Undo did not remove the assistant additions');
+
     const workbenchEdges=canvas.locator('.ad-links [data-relation-id]');
     const edgeIds=locator=>locator.evaluateAll(nodes=>nodes.map(node=>node.dataset.relationId).sort());
     await workbenchEdges.filter({hasText:'同次报警趋势'}).waitFor({state:'attached'});
@@ -200,7 +238,7 @@ async (page, facts, phase) => {
     check(JSON.stringify(await edgeIds(view.locator('.pa-links path[data-relation-id]')))===JSON.stringify(expected),
       'The cockpit did not display the workbench relationships for the same saved revision');
     return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true,
-      drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true};
+      drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

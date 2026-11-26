@@ -10,7 +10,7 @@ from tests import test_work_orders as orders_fixture
 from tests.test_assistant import answer
 from apps.api.assistant_service import AssistantRuntime
 from apps.api.assistant_store import DEFAULT,digest
-from apps.api.assistant_tasks import PROTOCOL,ProjectTools,read_selected_evidence,validate_plan,snapshot
+from apps.api.assistant_tasks import PROTOCOL,ProjectTools,read_selected_evidence,related_object_add_request,related_object_answer,validate_plan,snapshot
 from apps.api.assistant_canvas_tasks import build,load,retain,acknowledge
 from apps.api.authority import PreviewError
 
@@ -30,6 +30,32 @@ class TaskTests(unittest.TestCase):
         self.reader=SimpleNamespace(orders=self.orders,reader=SimpleNamespace(prefix='/api/v1/projects/Demo-PDS'))
     def search(self,fault='13001',cursor=0,revision=None):
         return self.orders.assistant_search(dict(q='',faultCode=fault,cursor=cursor,limit=2,snapshotRevision=revision))
+
+    def test_related_object_add_requests_do_not_replace_named_object_search(self):
+        for question, scope in [('加入相关的工程对象', 'canvas'), ('请把当前报警涉及的工程对象加入画布。', 'alarm'),
+                                ('添加本次报警的所有工程对象', 'alarm'), ('加入名为“浪涌保护”的工程对象', None),
+                                ('加入相关工程对象并保存画布', None)]:
+            self.assertEqual(scope, related_object_add_request(question), question)
+
+    def test_related_objects_keep_selected_scope_and_do_not_auto_add_a_partial_result(self):
+        from apps.api.simulated_faults import identity
+        dataset = identity('13003')
+        primary = dataset['primaryRds']
+        reader = SimpleNamespace(read=Mock(return_value={'dataset': dataset}),
+            _rds=Mock(side_effect=lambda tag: {'item': dict(entityUid=tag, entityRevision='r1', displayName=tag)}))
+        ref = dict(sourceKind='alarm', evidenceRefId='fixed-alarm')
+        fixed = [(ref, {'eventId': dataset['datasetId']+'-event-1'})]
+        draft = board()
+        draft['cards'] = [dict(source={'id': 'fixed-alarm'})]
+        plan = dict(intent='edit', queries=[], actions=[])
+        limited = ProjectTools(reader, lambda: None, 2, ['alarm', 'object'], ())
+        result = related_object_answer(limited, fixed, draft, 'canvas', plan)
+        self.assertEqual([], plan['actions'])
+        self.assertEqual(primary, limited.results[0]['selector']['entityUid'])
+        self.assertEqual('budget_limited', limited.trace[0]['state'])
+        self.assertTrue(result['nextSteps'])
+        self.assertTrue(related_object_answer(limited, [], draft, 'alarm', plan)['gaps'])
+        self.assertEqual(2, limited.reads)
     def test_exact_filter_before_paging_and_snapshot_rejects_change(self):
         first=self.search();self.assertEqual(3,first['total']);self.assertTrue(all(r['faultCode']=='13001' for r in first['items']))
         second=self.search(cursor=first['nextCursor'],revision=first['snapshotRevision']);self.assertEqual(1,len(second['items']))

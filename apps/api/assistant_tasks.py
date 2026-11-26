@@ -25,6 +25,16 @@ def equipment_configuration_question(value):
     return term if len(term)<=200 else None
 
 
+def related_object_add_request(question):
+    target = (r'(?:所有|全部)?(?:(?P<alarm>(?:当前|本次|这条|这个)?(?:故障)?报警)的?'
+              r'(?:相关|关联|涉及)?的?|(?:当前画布的?)?(?:相关|关联)的?)(?:所有|全部)?工程对象')
+    text = question.strip().rstrip('。！？!?')
+    request = re.fullmatch(r'(?:请\s*)?(?:加入|添加)\s*'+target+r'\s*(?:(?:到|至)(?:当前)?画布[上中]?)?', text)
+    if request is None:
+        request = re.fullmatch(r'(?:请\s*)?(?:把|将)\s*'+target+r'\s*(?:加入|添加)(?:到|至)?(?:当前)?画布[上中]?', text)
+    return ('alarm' if request['alarm'] else 'canvas') if request else None
+
+
 def replay_equipment_context(context, fixed, question):
     from . import simulated_faults
     if context.get('sourceConnectionId')!=simulated_faults.SOURCE_ID:
@@ -282,6 +292,58 @@ class ProjectTools:
             self.catalogue_source('model',message,message)
 
 
+def related_object_answer(tools, fixed, draft, scope, plan):
+    from .analysis_object_recommendations import canvas_object_recommendations
+
+    require('object' in tools.allowed, 'ASSISTANT_TOOL_NOT_ALLOWED', 403)
+    current = {card['source']['id'] for card in draft['cards'] if card.get('source') and not card.get('historical')}
+    selected = [(ref, descriptor) for ref, descriptor in fixed
+                if ref['evidenceRefId'] in current and ref['sourceKind'] in tools.allowed]
+    existing = {(descriptor['entityUid'], descriptor['expectedEntityRevision'])
+                for ref, descriptor in selected if ref['sourceKind'] == 'object'}
+    if scope == 'alarm':
+        event_id = draft['context'].get('eventId')
+        selected = [(ref, descriptor) for ref, descriptor in selected if ref['sourceKind'] == 'alarm'
+                    and (not event_id or descriptor['eventId'] == event_id)]
+    else:
+        selected.sort(key=lambda source: source[0]['sourceKind'] != 'alarm')
+    if not selected:
+        message = ('请在画布资料中选用当前报警，再加入它关联的工程对象。' if scope == 'alarm'
+                   else '请在画布资料中选用报警或其他来源卡片，再加入关联的工程对象。')
+        return dict(observations=[], hypotheses=[], gaps=[dict(text=message, refs=[])], nextSteps=[])
+
+    rows, gaps = canvas_object_recommendations(tools.reader, selected, read=tools.read)
+    candidates = [row for row in rows if (row['selector']['entityUid'], row['selector']['expectedEntityRevision']) not in existing]
+    for row in candidates[:12]:
+        selector = row['selector']
+        tools.results.append(dict(key=f'R{len(tools.results)+1}', kind='object', title=row['title'],
+            identifier=selector['entityUid'], version=selector['expectedEntityRevision'],
+            reason=row['reason'], simulated=False, selector=selector))
+    count = len(candidates)
+    if count:
+        message = f'根据所选卡片的登记关系，找到 {count} 个可加入的工程对象。'
+    elif rows and not gaps:
+        message = '所选卡片的关联工程对象均已加入当前画布。'
+    else:
+        message = '本轮暂无可加入的已登记工程对象。'
+    scope_label = '所选报警的登记关系' if scope == 'alarm' else '所选画布卡片的登记关系'
+    state = 'budget_limited' if 'ASSISTANT_READ_LIMIT' in gaps else 'unavailable' if gaps else 'complete'
+    tools.trace.append(dict(tool='objects', state=state, scope=scope_label, count=len(tools.results),
+                            total=count, truncated=count>len(tools.results), **({'reason': gaps[0]} if gaps else {})))
+    summary = redact(json.dumps(dict(scope=scope_label, total=count,
+        items=[dict(key=row['key'], title=row['title'], version=row['version']) for row in tools.results]), ensure_ascii=False), tools.private)[:1000]
+    tools.catalogue_source('object', summary, message)
+    answer = tools.catalogue_answer()
+    if plan['intent'] == 'edit' and count:
+        if not gaps and count <= min(12, 50-len(draft['cards'])):
+            plan['actions'] = [dict(kind='add_results', targets=[row['key'] for row in tools.results], text='', x=None, y=None)]
+        elif len(draft['cards']) < 50:
+            answer['nextSteps'].append(dict(text='可从下方候选中选择要加入的对象。', refs=[]))
+        else:
+            answer['gaps'].append(dict(text='画布已达卡片数量上限。', refs=[]))
+    return answer
+
+
 def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
     import time
     run_id=record['id'];deadline=time.monotonic()+policy['policy']['seconds'];trace=[];usage={};calls=0
@@ -338,9 +400,12 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         equipment_query=equipment_configuration_question(body['question'])
         explicit_equipment=equipment_query is not None
         question=body['question']
+        related_scope=related_object_add_request(question)
         replay=replay_equipment_context(draft['context'],fixed,question) if equipment_materials and 'alarm' in kinds else None
         replay_materials=replay is not None and re.fullmatch(r'(?:请问\s*)?(?:这台设备|这个(?:设备|柜体|柜))\s*有(?:哪些)?\s*(?:图纸|说明书|资料)(?:和(?:图纸|说明书|资料))?[？?。]?',question.strip())
-        if replay_materials and not explicit_equipment:
+        if related_scope:
+            proposed=dict(intent='edit' if body['mode']=='workbench' else 'query',queries=[],actions=[])
+        elif replay_materials and not explicit_equipment:
             proposed=dict(intent='query',queries=[dict(tool='equipment_materials',query=replay['primaryRds'],faultCode='')],actions=[])
         elif explicit_equipment:
             require(equipment_configurations,'ASSISTANT_TOOL_NOT_ALLOWED',403)
@@ -354,7 +419,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         require(all(q['tool']!='graph' or 'engineering_neighborhood' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         require(all(q['tool']!='knowledge' or 'manual_fault_lookup' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         tools=ProjectTools(reader,guard,policy['policy']['reads'],policy['policy']['allowedKinds'],job.private)
-        prefer_selected=body.get('preferSelectedEvidence',False) and not explicit_equipment
+        prefer_selected=body.get('preferSelectedEvidence',False) and not explicit_equipment and not related_scope
         selected_reads=read_selected_evidence(tools,fixed) if prefer_selected else []
         for q in plan['queries']:
             try:tools.query(q,replay=replay,drawings=bool(re.search(r'图纸|drawings?',question,re.I)))
@@ -362,14 +427,15 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
                 state='budget_limited' if error.code=='ASSISTANT_READ_LIMIT' else 'unavailable'
                 tools.trace.append(dict(tool=q['tool'],state=state,reason=error.code))
-        if not prefer_selected and not explicit_equipment:
+        if not prefer_selected and not explicit_equipment and not related_scope:
             selected_reads=read_selected_evidence(tools,fixed)
+        related_answer=related_object_answer(tools,fixed,draft,related_scope,plan) if related_scope else None
         trace=[dict(key=t['tool'],state=t['state']) for t in tools.trace]
         runtime.store.update(run_id,'reading',progress=trace,sources=tools.sources)
         evidence=[{k:s[k] for k in ('key','kind','summary')} for s in tools.sources]
         catalogue_query=explicit_equipment or body['taskId']=='query' and plan['queries'] and all(q['tool'] in CATALOGUE_TOOLS for q in plan['queries'])
-        if catalogue_query:
-            answer=tools.catalogue_answer()
+        if related_answer is not None or catalogue_query:
+            answer=related_answer if related_answer is not None else tools.catalogue_answer()
         elif evidence:
             answer=validate_answer(model('answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'],{s['key'] for s in evidence})
         elif plan['intent']=='edit' and plan['actions'] and not plan['queries']:

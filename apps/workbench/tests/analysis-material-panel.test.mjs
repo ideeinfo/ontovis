@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {MATERIAL_CATEGORIES,addedMaterialCard,materialCategories,materialPosition,relatedMaterialSection,withPrimaryAlarm,mergeRecommendations,recommendationRelevanceLabel} from '../src/analysisMaterials.ts';
+import {MATERIAL_CATEGORIES,addedMaterialCard,groupMaterialRecommendations,materialCategories,materialPosition,relatedMaterialSection,withPrimaryAlarm,mergeRecommendations,recommendationRelevanceLabel} from '../src/analysisMaterials.ts';
 import {validateSnapshot} from '../src/analysisCanvas.ts';
 
 test('all nine material types are reachable and type search stays local',()=>{
@@ -53,6 +53,15 @@ test('merging paged drawing recommendations keeps registered references for both
  const direct={key:'location',assetKey:'drawing:89:digest',kind:'drawing',relevancePriority:10,registeredSourceRevisions:['located']};
  const whole={...direct,key:'page',relevancePriority:30,registeredSourceRevisions:['whole-page']};
  assert.deepEqual(mergeRecommendations([direct],[whole]),[{...direct,registeredSourceRevisions:['located','whole-page']}]);
+});
+test('canvas recommendations display each object once and retain its other card associations',()=>{
+ const alarm={key:'one',kind:'object',relatedSourceRefs:['alarm']};
+ const drawing={key:'two',kind:'object',relatedSourceRefs:['drawing']};
+ const merged=mergeRecommendations([alarm],[{...alarm,relatedSourceRefs:['drawing']},drawing]);
+ const titles=new Map([['alarm','报警'],['drawing','图纸']]);
+ assert.deepEqual(groupMaterialRecommendations(merged,titles),{
+   groups:[['alarm',[{...alarm,relatedSourceRefs:['alarm','drawing']}]],['drawing',[drawing]]],ungrouped:[]
+ });
 });
 test('drops resolve to canvas coordinates at different pan and zoom without leaving layout limits',()=>{
  const point={x:725,y:420};for(const zoom of [.25,.43,1,1.5]){
