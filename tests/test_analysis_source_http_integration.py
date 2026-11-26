@@ -48,6 +48,40 @@ class AnalysisSourceHttpTests(unittest.TestCase):
     def reference(self,created,ref):
         return self.body(analysisSessionId=created['analysisSessionId'],evidenceRefId=ref['evidenceRefId'])
 
+    def test_object_recommendations_report_owned_registered_revisions_without_writing_evidence(self):
+        from tools.analysis_draft_backup import export_package
+        created, _ = self.create()
+        other, _ = self.create()
+        selection = {'entityUid': 'fixture-cabinet', 'expectedEntityRevision': 'r7'}
+        primary = dict(entityUid=selection['entityUid'], entityRevision='r7', displayName='Same name')
+        sibling = {**primary, 'entityUid': 'another-cabinet'}
+        original = self.source.request
+
+        def source(account, method, path, body=None):
+            if '/objects?q=' in path:
+                return {'items': [primary, sibling], 'nextCursor': None}
+            return original(account, method, path, body)
+
+        with patch.object(self.source, 'request', source), patch(
+                'apps.api.scene_engineering.SceneEngineeringReader.context_for_object',
+                return_value={'item': primary, 'context': {'installationContextId': 'context', 'hierarchyRevision': 'h1'}}):
+            status, ref, _ = self.request(ROOT+'/evidence/register', self.body(analysisSessionId=created['analysisSessionId'],
+                expectedAnalysisRevision=1, requestId=str(uuid4()), sourceKind='object', selector=selection))
+            self.assertEqual(status, 200, ref)
+            viewer = self.login('other')
+            before = export_package(self.urls[0])
+            request = self.body(entry={'projectOnly': True}, section='objects', q='Same name',
+                                analysisSessionId=created['analysisSessionId'])
+            status, result, _ = self.request(ROOT+'/recommendations', request)
+            self.assertEqual(status, 200, result)
+            self.assertEqual(result['items'][0]['registeredSourceRevisions'], [ref['sourceRevision']])
+            self.assertNotIn('registeredSourceRevisions', result['items'][1])
+            status, result, _ = self.request(ROOT+'/recommendations', {**request, 'analysisSessionId': other['analysisSessionId']})
+            self.assertEqual(status, 200, result)
+            self.assertTrue(all('registeredSourceRevisions' not in item for item in result['items']))
+            self.assertEqual(self.request(ROOT+'/recommendations', request, client=viewer)[0], 404)
+            self.assertEqual(export_package(self.urls[0]), before)
+
     def read_bytes(self,path,payload):
         connection=HTTPConnection(*self.server.server_address,timeout=5)
         try:

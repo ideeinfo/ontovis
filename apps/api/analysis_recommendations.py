@@ -39,6 +39,18 @@ def recommendation(kind, title, selector, reason, *, relevance='catalogue_search
     return value
 
 
+def registered_recommendation_revisions(item, sources):
+    kind, selector = item['kind'], item['selector']
+    names = {'expectedContentRevision': 'contentRevision', 'expectedSha256': 'sha256',
+             'expectedOrderRevision': 'orderRevision'}
+    qualifiers = {'document': ('knowledgeReleaseId', 'knowledgeNodeId'),
+                  'photo': ('sourceType', 'photoPurpose')}.get(kind, ())
+    # Selectors omit some fields that are filled in when the source is fixed.
+    return sorted({revision for source_kind, descriptor, revision in sources
+                   if source_kind == kind and all(selector.get(key) == descriptor.get(key) for key in qualifiers)
+                   and all(descriptor.get(names.get(key, key)) == value for key, value in selector.items())})
+
+
 def cursor_secret(reader, supplied):
     if supplied is not None:
         d.require(type(supplied) is bytes and len(supplied)>=32)

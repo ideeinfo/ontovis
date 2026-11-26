@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {MATERIAL_CATEGORIES,materialCategories,materialPosition,relatedMaterialSection,withPrimaryAlarm,mergeRecommendations,recommendationRelevanceLabel} from '../src/analysisMaterials.ts';
+import {MATERIAL_CATEGORIES,addedMaterialCard,materialCategories,materialPosition,relatedMaterialSection,withPrimaryAlarm,mergeRecommendations,recommendationRelevanceLabel} from '../src/analysisMaterials.ts';
 import {validateSnapshot} from '../src/analysisCanvas.ts';
 
 test('all nine material types are reachable and type search stays local',()=>{
@@ -36,6 +36,18 @@ test('fixed file deduplication prefers readable sources and never merges differe
  const b={...a,key:'readable',availability:'available',relevancePriority:30},c={...a,key:'new',assetKey:'photo:one:v2',availability:'available'};
  assert.deepEqual(mergeRecommendations([a],[b,c]),[c,b]);
  assert.deepEqual(mergeRecommendations([a],[a]),[a]);assert.equal(recommendationRelevanceLabel({matchType:'name_candidate'},false),'名称候选');
+});
+test('an added material needs a current card with the matching fixed reference',()=>{
+ const historical={kind:'object',historical:true,source:{revision:'old'}};
+ const object={kind:'object',source:{revision:'current'}};
+ const model={kind:'model3d',source:{revision:'model-version'}};
+ const cards=[historical,object,model];
+ assert.equal(addedMaterialCard(cards,'object',['current']),object);
+ assert.equal(addedMaterialCard(cards,'object',['old']),undefined);
+ assert.equal(addedMaterialCard(cards,'object',['another version']),undefined);
+ assert.equal(addedMaterialCard([historical,model],'object',['current']),undefined);
+ assert.equal(addedMaterialCard(cards,'model',['model-version']),model);
+ assert.equal(addedMaterialCard(cards,'document',['model-version']),undefined);
 });
 test('drops resolve to canvas coordinates at different pan and zoom without leaving layout limits',()=>{
  const point={x:725,y:420};for(const zoom of [.25,.43,1,1.5]){

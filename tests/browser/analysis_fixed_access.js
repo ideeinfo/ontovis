@@ -127,6 +127,28 @@ async (page, facts, phase) => {
     const detail=await reopened.json();
     check(reopened.ok()&&detail.analysisRevision===3&&
       detail.snapshot.cards.find(row=>row.id===original.id).frameId===targetGroup.id,'Reopening lost the saved group');
+
+    await button('加入资料',canvas).click();
+    const materials=canvas.locator('.ac-material-panel');
+    await materials.getByRole('button',{name:/^故障报警/}).click();
+    const row=materials.locator('.ac-material-result');
+    const alreadyAdded=row.filter({has:page.getByText('已加入',{exact:true})});
+    await alreadyAdded.waitFor();
+    check(await alreadyAdded.getByRole('checkbox').isDisabled()&&await alreadyAdded.getByRole('button').isDisabled()
+      &&await alreadyAdded.getAttribute('draggable')==='false','A registered card still offered add controls');
+    const candidate=materials.locator('.ac-material-result[draggable=true]').first();
+    const name=await candidate.locator('strong').innerText();
+    const targetRow=row.filter({has:page.getByText(name,{exact:true})});
+    await targetRow.getByRole('checkbox').check();
+    await button('加入所选资料 (1)',materials).click();
+    await targetRow.getByText('已加入',{exact:true}).waitFor();
+    check(await targetRow.getByRole('checkbox').isDisabled()&&await targetRow.getByRole('button').isDisabled(),
+      'A newly added material did not update its controls');
+    await button('撤销修改',canvas).click();
+    await targetRow.locator('input:enabled').waitFor();
+    check(await targetRow.getByRole('button').isEnabled(),'Undo did not restore the add controls');
+    await button('关闭资料库',materials).click();
+
     const workbenchEdges=canvas.locator('.ad-links [data-relation-id]');
     const edgeIds=locator=>locator.evaluateAll(nodes=>nodes.map(node=>node.dataset.relationId).sort());
     await workbenchEdges.filter({hasText:'同次报警趋势'}).waitFor({state:'attached'});
@@ -143,7 +165,7 @@ async (page, facts, phase) => {
     await view.locator('.pa-links path[data-origin="manual"]').waitFor({state:'attached'});
     check(JSON.stringify(await edgeIds(view.locator('.pa-links path[data-relation-id]')))===JSON.stringify(expected),
       'The cockpit did not display the workbench relationships for the same saved revision');
-    return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true};
+    return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

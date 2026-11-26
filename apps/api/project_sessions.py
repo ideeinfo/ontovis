@@ -635,9 +635,17 @@ class ProjectSessions(UserSessions):
                     value={'items':results}
                 elif action == 'recommendations':
                     from .analysis_queries import recommendations
+                    from .analysis_recommendations import registered_recommendation_revisions
+                    registered = []
+                    if 'analysisSessionId' in body:
+                        registered = sources.registered_sources(actor, body.pop('analysisSessionId'), guard)
                     release_store()
                     value = recommendations(reader, body, service.library,
                         cursor_key=self.cursor_key, session_revision=row.revision)
+                    for item in value['items']:
+                        revisions = registered_recommendation_revisions(item, registered)
+                        if revisions:
+                            item['registeredSourceRevisions'] = revisions
                 elif action == 'evidence/batch':
                     require(set(body) == {'analysisSessionId','evidenceRefIds'} and type(body['evidenceRefIds']) is list
                             and 1 <= len(body['evidenceRefIds']) <= 12)

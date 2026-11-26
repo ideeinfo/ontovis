@@ -169,3 +169,15 @@ class AnalysisEvidence:
             draft.require(raw == row[4] and hashlib.sha256(raw.encode()).hexdigest() == row[5], 'ANALYSIS_STORAGE_INVALID', 409)
             authorize()
             return self.public(row), descriptor
+
+    def registered_sources(self, actor_id, session_id, authorize):
+        authorize()
+        with self.store.connection.transaction(readonly=True) as cursor:
+            self.store._session(cursor, session_id, actor_id)
+            if self.store.schema_version < 2:
+                return []
+            cursor.execute(f'''select source_kind,descriptor_json,descriptor_sha256
+                from {draft.SCHEMA}.analysis_evidence_refs where session_id=%s''', (session_id,))
+            rows = cursor.fetchall()
+            authorize()
+        return [(kind, json.loads(descriptor), revision) for kind, descriptor, revision in rows]

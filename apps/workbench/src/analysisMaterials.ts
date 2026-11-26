@@ -1,5 +1,5 @@
-import type {CanvasSnapshot,Viewport} from './analysisCanvas';
-import type {Recommendation,RecommendationRelevance} from './analysisSources';
+import type {CanvasCard,CanvasSnapshot,Viewport} from './analysisCanvas';
+import type {Recommendation,RecommendationRelevance,SourceKind} from './analysisSources';
 
 export const MATERIAL_CATEGORIES=[
   {id:'materials',kind:'document',zh:'相关资料',en:'Related materials',hint:'按关联依据排列图纸、照片和文档',hintEn:'Drawings, photos and documents ordered by recorded relevance'},
@@ -26,6 +26,10 @@ const relevanceLabels:Record<RecommendationRelevance,[string,string]>={field_rec
 export function recommendationRelevanceLabel(item:Recommendation,en:boolean){
   const basis=item.relevance||item.matchType;
   return basis&&relevanceLabels[basis]?.[en?1:0]||'';
+}
+export function addedMaterialCard(cards:readonly CanvasCard[],kind:SourceKind,revisions:readonly string[]=[]){
+  const cardKind=kind==='model'?'model3d':kind;
+  return cards.find(card=>!card.historical&&card.kind===cardKind&&card.source&&revisions.includes(card.source.revision));
 }
 export function mergeRecommendations(previous:Recommendation[],incoming:Recommendation[]){
   const result:Recommendation[]=[],positions=new Map<string,number>();

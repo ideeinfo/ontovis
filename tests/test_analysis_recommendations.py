@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from apps.api.analysis_queries import recommendations
+from apps.api.analysis_recommendations import registered_recommendation_revisions
 from apps.api import simulated_faults as sim
 from apps.api.authority import PreviewError
 
@@ -59,6 +60,25 @@ class MaterialRecommendationTests(TestCase):
         self.assertEqual(len(current),1)
         self.assertEqual(current,previous)
         self.assertEqual(current[0]['selector']['datasetRevision'],sim.identity('13033')['datasetRevision'])
+
+    def test_registered_matches_distinguish_document_pages_versions_and_knowledge_anchors(self):
+        selector = dict(documentId='document', contentVersionId='current', pageNumber=2)
+        fixed = {**selector, 'sourceSha256': 'a' * 64}
+        registered = [
+            ('document', fixed, 'matching'),
+            ('document', {**fixed, 'pageNumber': 3}, 'another page'),
+            ('document', {**fixed, 'contentVersionId': 'older'}, 'another version'),
+            ('document', {**fixed, 'knowledgeReleaseId': 'release', 'knowledgeNodeId': 'node'}, 'knowledge'),
+        ]
+        self.assertEqual(registered_recommendation_revisions({'kind': 'document', 'selector': selector}, registered),
+                         ['matching'])
+
+    def test_registered_model_matches_expected_fields_against_its_fixed_content(self):
+        selector = dict(modelAssetId='asset', modelVersionId='version', expectedContentRevision='revision', expectedSha256='sha')
+        descriptor = dict(modelAssetId='asset', modelVersionId='version', contentRevision='revision',
+                          sha256='sha', configurationRefs=[])
+        self.assertEqual(registered_recommendation_revisions({'kind': 'model', 'selector': selector},
+                         [('model', descriptor, 'matching')]), ['matching'])
 
     def test_trends_offer_fixed_descriptors_only_and_preserve_current_event_window(self):
         for code,count in (('13001',5),('13004',3)):

@@ -6,7 +6,7 @@ import {addManualRelation,frameBounds,setCardFrame,selectedInBox,arrangeCards,fi
 import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle,sameDraftSnapshot,stepDraftHistory,assistantHistory,type AnalysisListItem,type DraftReceipt,type PendingDraft} from './analysisDraftState';
 import {RowActions,RowContext,type ListAction} from './ListMenus';
 import {AnalysisMaterialPanel} from './AnalysisMaterialPanel';
-import {materialPosition,relatedMaterialSection,withPrimaryAlarm,mergeRecommendations} from './analysisMaterials';
+import {addedMaterialCard,materialPosition,relatedMaterialSection,withPrimaryAlarm,mergeRecommendations} from './analysisMaterials';
 import {AnalysisSources,ANALYSIS_ROOT,analysisEntryRequest,assistantEntrySeed,documentVersionChoice,keepFixedDocumentCard,inlinePreviewActive,setCardPreviewCollapsed,type AnalysisEntry,type Recommendation,type Recommendations,type EvidenceSource,type SourceAnchor} from './analysisSources';
 import {AnalysisSourceCard,AnalysisTrend,materialNames} from './AnalysisSourceCard';
 import {useSourceRelations,SourceRelationLines,SourceRelationDetails,type CardSourceRelation} from './AnalysisSourceRelations';
@@ -133,8 +133,13 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   const analysisEntry=useMemo<AnalysisEntry|null>(()=>draft?(draft.workflowOrderId?{orderId:draft.workflowOrderId}:draft.context.datasetId&&draft.context.datasetRevision?{datasetId:draft.context.datasetId,datasetRevision:draft.context.datasetRevision}:{projectOnly:true}):initialEntry&& !('analysisSessionId' in initialEntry)&&!('entityUid' in initialEntry)?initialEntry:null,[draft?.workflowOrderId,draft?.context.datasetId,draft?.context.datasetRevision,!!draft,initialEntry]);
   const objectContextSection=section==='types'||OBJECT_MATERIAL_SECTIONS.includes(section)&&!(section==='objects'&&recommendFilter?.trim());
   const scopeTarget=objectContextSection?relatedTarget:undefined;
+  const materialSession=receipt?.analysisSessionId;
+  const addedMaterialKeys=useMemo(()=>new Set(recommendations?.items
+    .filter(item=>addedMaterialCard(draft?.cards||[],item.kind,item.registeredSourceRevisions)).map(item=>item.key)),[recommendations,draft?.cards]);
+  const selectedMaterials=recommendations?.items.filter(item=>chosen.includes(item.key)
+    &&!addedMaterialKeys.has(item.key)&&(!item.availability||item.availability==='available'))||[];
   const recommendationScope=useRef('');recommendationScope.current=JSON.stringify([api.project,api.epoch,api.revision,analysisEntry,materialsOpen,section,
-    objectContextSection?related:null,scopeTarget?.id,scopeTarget?.revision,recommendFilter,sourceAttempt]);
+    objectContextSection?related:null,scopeTarget?.id,scopeTarget?.revision,recommendFilter,sourceAttempt,materialSession]);
   useEffect(()=>{
     if(!initialEntry)return;
     if('newDraft' in initialEntry){fresh();setMaterialsOpen(false);return;}
@@ -162,10 +167,11 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     moreRequest.current?.abort();moreRequest.current=null;
     if(!materialsOpen||!analysisEntry||section==='types'||objectContextSection&&(relatedPending||scopeTarget&&relatedSource!==scopeTarget.id)){setRecommendations(null);setRecommendLoading(false);return;}const abort=new AbortController();setRecommendLoading(true);setRecommendations(null);
     setChosen([]);
-    void api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendFilter!==undefined?{q:recommendFilter}:{}),...(objectContextSection&&related?related:{})},abort.signal)
+    void api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(materialSession?{analysisSessionId:materialSession}:{}),
+      ...(recommendFilter!==undefined?{q:recommendFilter}:{}),...(objectContextSection&&related?related:{})},abort.signal)
       .then(value=>{if(!abort.signal.aborted)setRecommendations({...value,items:mergeRecommendations([],value.items)});}).catch(value=>{if(!abort.signal.aborted)failure(value);}).finally(()=>{if(!abort.signal.aborted)setRecommendLoading(false);});
     return()=>{abort.abort();moreRequest.current?.abort();};
-  },[analysisEntry,materialsOpen,section,related,relatedPending,relatedSource,scopeTarget?.id,sourceAttempt,recommendFilter,objectContextSection,api]);
+  },[analysisEntry,materialsOpen,section,related,relatedPending,relatedSource,scopeTarget?.id,sourceAttempt,recommendFilter,objectContextSection,materialSession,api]);
   useEffect(()=>{onDirtyChange?.(dirty);return()=>onDirtyChange?.(false);},[dirty,onDirtyChange]);
   useEffect(()=>{const warn=(event:BeforeUnloadEvent)=>{if(dirty){event.preventDefault();event.returnValue='';}};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty]);
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;request.current?.abort();moreRequest.current?.abort();cancelAnimationFrame(frame.current);};},[]);
@@ -271,15 +277,18 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   function focusCard(card:CanvasCard){setSelected(card.id);setMulti([card.id]);if(current.current&&canvas.current)setDraft({...current.current,viewport:{...current.current.viewport,x:canvas.current.clientWidth/2-(card.x+card.width/2)*current.current.viewport.zoom,y:canvas.current.clientHeight/2-(card.y+card.height/2)*current.current.viewport.zoom}});}
   async function moreRecommendations(){if(!recommendations||!analysisEntry||recommendLoading||relatedPending)return;
     moreRequest.current?.abort();const abort=new AbortController();moreRequest.current=abort;const scope=recommendationScope.current;setRecommendLoading(true);
-    try{const value=await api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(recommendations.nextCursor?{cursor:recommendations.nextCursor}:{offset:recommendations.nextOffset}),...(recommendFilter!==undefined?{q:recommendFilter}:{}),...(objectContextSection&&related?related:{})},abort.signal);
+    try{const value=await api.request<Recommendations>(ROOT+'/recommendations',{entry:analysisEntry,section,...(materialSession?{analysisSessionId:materialSession}:{}),
+      ...(recommendations.nextCursor?{cursor:recommendations.nextCursor}:{offset:recommendations.nextOffset}),...(recommendFilter!==undefined?{q:recommendFilter}:{}),...(objectContextSection&&related?related:{})},abort.signal);
       if(!abort.signal.aborted&&alive.current&&scope===recommendationScope.current)setRecommendations(previous=>previous&&scope===recommendationScope.current?{...value,items:mergeRecommendations(previous.items,value.items)}:previous);}
     catch(value){if(!abort.signal.aborted&&scope===recommendationScope.current)failure(value);}finally{
       if(moreRequest.current===abort)moreRequest.current=null;
       if(!abort.signal.aborted&&alive.current&&scope===recommendationScope.current)setRecommendLoading(false);}}
   async function addSource(item:Recommendation,choice?:{replaceId?:string;updateVersion?:boolean},position?:{x:number;y:number}){return addSources([item],choice,position);}
-  async function addSources(items:Recommendation[],choice?:{replaceId?:string;updateVersion?:boolean},position?:{x:number;y:number}){
+  async function addSources(candidates:Recommendation[],choice?:{replaceId?:string;updateVersion?:boolean},position?:{x:number;y:number}){
     const snapshot=current.current,replaceId=choice?.replaceId;
     if(!snapshot||!editable||replaceId&&!snapshot.cards.some(card=>card.id===replaceId))return;
+    const items=choice?candidates:candidates.filter(item=>!addedMaterialCard(snapshot.cards,item.kind,item.registeredSourceRevisions));
+    if(!items.length)return;
     let version=receipt;
     if(!version){if(!await commit()||!lastCommitted.current)return;version=lastCommitted.current;}
     const abort=new AbortController();request.current=abort;setBusy(true);setError(null);let next=snapshot;let added=0;let addedId='';const failed:string[]=[];
@@ -288,11 +297,16 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
         analysisSessionId:version.analysisSessionId,expectedAnalysisRevision:version.analysisRevision,
         items:items.slice(start,start+12).map(item=>({key:item.key,requestId:crypto.randomUUID(),sourceKind:item.kind,selector:item.selector}))},abort.signal);
         result.items.forEach(item=>{if(item.reference)references.set(item.key,item.reference);});}
-      if(choice?.updateVersion&&current.current!==snapshot)return;
+      if(!alive.current||abort.signal.aborted||choice?.updateVersion&&current.current!==snapshot)return;
+      if(!choice)setRecommendations(value=>value&&{...value,items:value.items.map(item=>{
+        const revision=references.get(item.key)?.sourceRevision;
+        return revision&&!item.registeredSourceRevisions?.includes(revision)
+          ?{...item,registeredSourceRevisions:[...(item.registeredSourceRevisions||[]),revision]}:item;
+      })});
       for(const item of items){if(!replaceId&&next.cards.length>=50)break;
       try{const ref=references.get(item.key);if(!ref){failed.push(item.title);continue;}
         if(!alive.current||abort.signal.aborted)return;const kind=item.kind==='model'?'model3d':item.kind;
-        const existing=next.cards.find(c=>!c.historical&&c.kind===kind&&c.source?.revision===ref.sourceRevision);
+        const existing=addedMaterialCard(next.cards,item.kind,[ref.sourceRevision]);
         if(existing&&!replaceId){addedId=existing.id;setCollapsedPreviews(closed=>setCardPreviewCollapsed(closed,existing.id,false));if(items.length===1)focusCard(existing);continue;}
         const id=replaceId||crypto.randomUUID(),height=['photo','drawing','document','model'].includes(item.kind)?360:250;
         const board=canvas.current,panel=materialsOpen?Math.min(380,(board?.clientWidth||0)/2):0;
@@ -514,10 +528,10 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           onPointerDownCapture={event=>{if(event.button===1||event.button===0&&(tool==='hand'||space.current))pointerDown(event);}}
           onAuxClick={event=>{if(event.button===1)event.preventDefault();}}
           onPointerDown={event=>pointerDown(event)} onPointerMove={pointerMove} onPointerUp={finishGesture} onPointerCancel={finishGesture} onLostPointerCapture={finishGesture}>
-          {materialsOpen&&<AnalysisMaterialPanel section={section} query={recommendQuery} en={en} loading={recommendLoading||objectContextSection&&relatedPending} value={recommendations} chosen={chosen} editable={editable} canAdd={editable&&draft.cards.length<50}
+          {materialsOpen&&<AnalysisMaterialPanel section={section} query={recommendQuery} en={en} loading={recommendLoading||objectContextSection&&relatedPending} value={recommendations} chosen={selectedMaterials.map(item=>item.key)} added={addedMaterialKeys} canAdd={editable&&draft.cards.length<50}
             contextLabel={section==='project_documents'?t('本项目文档库','Project document library'):[draft.context.faultCode?t('当前报警 '+draft.context.faultCode,'Current alarm '+draft.context.faultCode):'',objectContextSection&&related?relatedLabel:''].filter(Boolean).join(' · ')} onClose={()=>setMaterialsOpen(false)}
             onSection={value=>{setSection(value);setRecommendFilter(undefined);setRecommendQuery('');setChosen([]);}} onQuery={setRecommendQuery} onSearch={()=>{if(section!=='types')setRecommendFilter(recommendQuery);}}
-            onToggle={key=>setChosen(keys=>keys.includes(key)?keys.filter(value=>value!==key):[...keys,key])} onAdd={item=>void addSource(item)} onAddChosen={()=>void addSources(recommendations!.items.filter(item=>chosen.includes(item.key)))}
+            onToggle={key=>setChosen(keys=>keys.includes(key)?keys.filter(value=>value!==key):[...keys,key])} onAdd={item=>void addSource(item)} onAddChosen={()=>void addSources(selectedMaterials)}
             onNote={addNote} onMore={()=>void moreRecommendations()} onRefresh={()=>setSourceAttempt(v=>v+1)}/>}
           <div className="ad-world" style={{transform:`translate(${draft.viewport.x}px,${draft.viewport.y}px) scale(${draft.viewport.zoom})`}}>
             {selectionBox&&<div className="ac-selection-box" style={{left:selectionBox.x,top:selectionBox.y,width:selectionBox.width,height:selectionBox.height}}/>}
