@@ -105,11 +105,10 @@ class AssistantProjectModelsTests(unittest.TestCase):
                    state='active',instanceCount=100,scenes=[dict(title='"'*90)]*4,moreScenes=True)
         value = dict(items=[row]*4,total=43,snapshotRevision='fixed',truncated=True,sceneUsageTruncated=True)
         reader = SimpleNamespace(reader=self.reader,adopted_model_listing=Mock(return_value=value))
-        for budget,kinds in ((0,['model']),(8,['document'])):
-            with self.assertRaises(PreviewError):
-                ProjectTools(reader,self.guard,budget,kinds,()).query(query)
+        with self.assertRaises(PreviewError):
+            ProjectTools(reader,self.guard,['document'],()).query(query)
         reader.adopted_model_listing.assert_not_called()
-        tools=ProjectTools(reader,self.guard,1,['model'],())
+        tools=ProjectTools(reader,self.guard,['model'],())
         tools.query(query)
         self.assertEqual(1,tools.reads)
         self.assertEqual(4,len(tools.results))

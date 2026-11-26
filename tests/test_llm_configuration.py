@@ -66,7 +66,7 @@ class ModelConfigurationTests(unittest.TestCase):
 
     def test_only_explicit_capability_fields_and_supported_tools_are_accepted(self):
         for change in ({'apiKey':KEY},{'provider':'openai'},{'endpoint':'http://private'},{'execution':'ontovis'},
-                       {'tools':['selected_sources','write']},{'tools':[]},{'timeoutSeconds':51},{'concurrency':3},{'readLimit':9},{'readParallel':True},{'goal':' '}):
+                       {'tools':['selected_sources','write']},{'tools':[]},{'timeoutSeconds':51},{'concurrency':3},{'readParallel':True},{'goal':' '}):
             with self.subTest(change=change),self.assertRaises(PreviewError):self.save(self.body({**defaults('analysis'),**change}))
         with self.assertRaises(PreviewError):self.save({**self.body(),'change':{'kind':'provider','apiKey':KEY}})
     def test_stale_source_or_permission_rolls_back_and_replay_does_not_validate_again(self):
@@ -202,11 +202,12 @@ class ModelConfigurationHttpTests(http_fixture.AssistantHttpTests):
             self.assertEqual(run['state'],'complete',run);self.assertEqual(invoke.call_count,1)
             self.connection_version=3
             _,changed=self.request('status',dict(runId=run['runId']));self.assertEqual(changed['state'],'changed');self.assertIsNone(changed['result'])
-    def test_capability_read_limit_is_enforced_before_start(self):
+    def test_legacy_capability_read_limit_is_retired(self):
         self.enable();settings={**defaults('analysis'),'readLimit':1}
         self.assertEqual(self.save_settings(settings)[0],200)
         selected=self.request('policy')[1]['services']['analysis'];body={**self.start_body(),'evidenceRefIds':[self.evidence,str(uuid4())],'expectedServiceRevision':selected['serviceRevision']}
-        self.assertEqual(self.request('start',body)[1]['code'],'ASSISTANT_READ_LIMIT')
+        self.assertNotIn('readLimit',selected['settings'])
+        self.assertEqual(self.request('start',body)[0],200)
     def test_capability_concurrency_is_enforced_across_different_project_users(self):
         from apps.api.assistant_service import Job
         self.enable();self.assertEqual(self.save_settings({**defaults('analysis'),'concurrency':1})[0],200)

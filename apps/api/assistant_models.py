@@ -13,15 +13,15 @@ TOOLS=('selected_sources','engineering_neighborhood','manual_fault_lookup')
 
 def defaults(task):
     return dict(enabled=True,connectionId=None,modelId='',timeoutSeconds=50,concurrency=2,
-        reasoningEffort='default',goal=FOCUS[task],focus='',readLimit=8,readParallel=2,tools=list(TOOLS))
+        reasoningEffort='default',goal=FOCUS[task],focus='',readParallel=2,tools=list(TOOLS))
 
 
 def validate_settings(value):
-    require(type(value) is dict and set(value)==set(defaults('analysis')))
+    require(type(value) is dict and set(value)-{'readLimit'}==set(defaults('analysis')))
     require(type(value['enabled']) is bool)
     if value['connectionId'] is not None:identifier(value['connectionId']);model_id(value['modelId'])
     else:require(value['modelId']=='','LLM_MODEL_REQUIRED')
-    for key,lo,hi in [('timeoutSeconds',10,50),('concurrency',1,2),('readLimit',1,8),('readParallel',1,2)]:
+    for key,lo,hi in [('timeoutSeconds',10,50),('concurrency',1,2),('readParallel',1,2)]:
         require(type(value[key]) is int and lo<=value[key]<=hi,'LLM_SETTINGS_INVALID')
     require(type(value['reasoningEffort']) is str and 0<len(value['reasoningEffort'])<=32)
     for key in ('goal','focus'):
@@ -29,7 +29,7 @@ def validate_settings(value):
     require(bool(value['goal'].strip()),'LLM_SETTINGS_INVALID')
     require(type(value['tools']) is list and all(type(t) is str for t in value['tools']) and len(set(value['tools']))==len(value['tools'])
         and set(value['tools'])<=set(TOOLS) and 'selected_sources' in value['tools'],'ASSISTANT_TOOL_NOT_ALLOWED')
-    return copy.deepcopy(value)
+    return copy.deepcopy({k:v for k,v in value.items() if k!='readLimit'})
 
 
 def source_configuration(task_id, settings):
@@ -101,7 +101,7 @@ class AssistantModels:
     @staticmethod
     def settings(config, task_id):
         saved=config.get('capabilities',{}).get(task_id)
-        if saved is not None:return copy.deepcopy(saved)
+        if saved is not None:return copy.deepcopy({k:v for k,v in saved.items() if k!='readLimit'})
         old=config['tasks'][task_id]
         return {**defaults(task_id),'enabled':old['enabled'] and old['execution']=='ontobase'}
 
@@ -141,7 +141,7 @@ class AssistantModels:
                 validate_source(source_configuration(task_id, task), change['expectedConnectionVersion'])
             config = current['config']
             capabilities = config.setdefault('capabilities', {})
-            if capabilities.get(task_id) != task:
+            if task_id not in capabilities or self.settings(config,task_id) != task:
                 capabilities[task_id] = task
                 stamp, revision = now(), current['revision'] + 1
                 db.execute('''insert into assistant_model_configs values(?,?,?,?,?,?)
@@ -169,7 +169,7 @@ class AssistantModels:
         if not configured:
             revision=source.get('serviceRevision') if value['revision']==0 and task_id=='analysis' else digest([
                 value['revision'],task_id,old,None,'ontobase',source.get('serviceRevision')])
-        else:revision=digest([value['revision'],task_id,task,source.get('serviceRevision')])
+        else:revision=digest([value['revision'],task_id,config['capabilities'][task_id],source.get('serviceRevision')])
         ready=task['enabled'] and source.get('enabled') is True
         return {'taskId':task_id,'execution':'ontobase','provider':source.get('provider'),'modelId':source.get('modelId'),
             'enabled':ready,'canRun':ready and source.get('canRun') is True,'serviceRef':'ontovis-task-model-v1',

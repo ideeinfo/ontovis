@@ -64,7 +64,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   return()=>{alive.current=false;const previous=latest.current;if(running(previous))void fixed.cancel(previous!).catch(()=>{});};
  },[context]);
  useEffect(()=>{setSelected(previous=>previous.filter(id=>available.some(card=>card.source!.id===id)));setSummaries(null);},[inventory]);
- useEffect(()=>{if(!visible)return;setShowPrompts(true);const abort=new AbortController();setView(null);setPolicyError(null);service.policy(abort.signal,mode??undefined).then(value=>{if(!abort.signal.aborted){setView(value);setSelected(ids=>ids.slice(0,value.policy.reads));}}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setPolicyError(e);});return()=>abort.abort();},[service,context,reload,visible]);
+ useEffect(()=>{if(!visible)return;setShowPrompts(true);const abort=new AbortController();setView(null);setPolicyError(null);service.policy(abort.signal,mode??undefined).then(value=>{if(!abort.signal.aborted)setView(value);}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setPolicyError(e);});return()=>abort.abort();},[service,context,reload,visible]);
  useEffect(()=>{if(busy||!run||!running(run))return;const abort=new AbortController(),key=context;
   const stop=watchAssistantRun(service,run,abort.signal,value=>{if(current.current===key){setRun(value);setError(null);setPollState('reading');}},
    (e,retrying)=>{if(current.current===key){setError(e);setPollState(retrying?'retrying':'paused');}});
@@ -132,7 +132,6 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const focusedEarlier=!!initialRunId&&run?.runId===initialRunId&&!!conversation&&conversation.headRunId!==initialRunId;
  const active=running(run),locked=busy||running(run)||loadingHistory||!!pending||executionPending;
  const effectiveService=view?.services?.[taskId]??view?.service;
- const limit=Math.min(view?.policy.reads??8,effectiveService?.settings?.readLimit??8);
  const taskMismatch=!!continuation&&!!run&&(run.taskId??'analysis')!==taskId;
  const sendBlocker=assistantSendBlocker({busy,active,pending:!!pending||executionPending,loadingHistory,focusedEarlier,taskMismatch,hasReceipt:!!receipt,view,policyError,service:effectiveService,selectedCount:selected.length,question,projectTools:!!snapshot});
  const refreshService=()=>{setError(null);setReload(v=>v+1);};
@@ -180,11 +179,10 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   {historyOpen&&<div className="as-history-tools"><div className="as-conversation"><label>{t('当前对话','Current conversation')}<select aria-label={t('当前对话','Current conversation')} disabled={locked} value={conversation?.conversationId??''} onChange={e=>e.target.value?void openConversation(e.target.value):newConversation()}><option value="">{t('新对话','New conversation')}</option>{conversations.map(item=><option key={item.conversationId} value={item.conversationId}>{displayText(item.title)}</option>)}{conversation&&!conversations.some(c=>c.conversationId===conversation.conversationId)&&<option value={conversation.conversationId}>{displayText(conversation.title)}</option>}</select></label></div><div className="as-service"><span>{effectiveService?.provider??'—'} · {effectiveService?.modelId||'—'}</span><Btn disabled={locked} onClick={refreshService}><RefreshCw size={13}/>{t('刷新服务','Refresh service')}</Btn></div></div>}
   {loadingHistory&&<p role="status">{t('读取已保存对话…','Loading saved conversation…')}</p>}
   {contextOpen&&<section className="as-sources">
-  <div className="as-section-heading"><h4 id="as-materials-title">{t('本次资料','Selected materials')}</h4><span>{t('已选','Selected')} {selected.length} / {limit}</span></div>
-  <p className="as-material-hint">{limit>6?t(`默认选取最多6份资料，可手动增加至${limit}份。`,`Up to 6 materials are selected automatically. You can select up to ${limit}.`):t(`每次最多选择${limit}份资料。`,`Select up to ${limit} materials per question.`)}</p>
+  <div className="as-section-heading"><h4 id="as-materials-title">{t('本次资料','Selected materials')}</h4><span>{t('已选','Selected')} {selected.length}</span></div>
   {!!metadataCount&&<p className="as-material-hint">{t(`${metadataCount}份图纸、照片或模型仅提供元数据，不包含原图或几何。`,`${metadataCount} drawing, photo or model sources contain metadata only, without images or geometry.`)}</p>}
   <div className="as-materials" role="group" aria-labelledby="as-materials-title">{available.length?available.map(card=>{
-   const key=assistantEvidenceKey(card.source!.id,selected),disabled=active||busy||!key&&selected.length>=limit;
+   const key=assistantEvidenceKey(card.source!.id,selected),disabled=active||busy;
    return <label className="as-material-row" data-selected={!!key} data-disabled={disabled} key={card.id}><input type="checkbox" aria-label={displayText(card.title+(card.historical?' · '+t('历史参考','Historical reference'):''))} aria-describedby={'as-material-type-'+card.id} checked={!!key} disabled={disabled} onChange={event=>{
     const checked=event.target.checked, id=card.source!.id;
     setSelected(ids=>checked?[...ids,id]:ids.filter(value=>value!==id));setSelectionEditedIn(context);setSummaries(null);

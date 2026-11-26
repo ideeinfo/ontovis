@@ -274,6 +274,21 @@ async (page, facts, phase) => {
 
     await button('撤销修改',canvas).click();
     check(await objectCards.count()===1,'Undo did not remove the assistant additions');
+    await composer.fill('加入报警相关资料卡片，分析处置方案');
+    const [mixedAck]=await Promise.all([
+      page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/assistant/task-ack'),
+      composer.press('Enter'),
+    ]);
+    const mixed=await mixedAck.json();
+    check(mixedAck.ok()&&mixed.receipt.items.some(item=>item.kind==='add_results'&&item.status==='added')&&
+      mixed.run.result.task.selectedReads[0].state==='complete'&&mixed.run.result.task.disposition,
+      'The compound alarm request did not read the alarm and apply the verified materials');
+    const powerEdge=canvas.getByRole('button',{name:
+      '图纸定位：'+facts.cards.object.title+' → '+facts.powerDrawingTitle,exact:true});
+    await powerEdge.waitFor({state:'attached'});
+    await assistant.getByText('核对报警接点及报警时间，记录复测结果。',{exact:false}).last().waitFor({state:'visible'});
+    await button('撤销修改',canvas).click();
+    await powerEdge.waitFor({state:'detached'});
     await button('关闭助手',canvas).click();
     await button('分析助手',canvas).click();
     await promptChoices.getByRole('button',{name:'添加相关图纸',exact:true}).waitFor();
@@ -300,7 +315,7 @@ async (page, facts, phase) => {
     return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true,
       drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,
       alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true,assistantCompoundEdit:true,
-      recentAssistantPrompts:true,assistantKeyboard:true};
+      recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

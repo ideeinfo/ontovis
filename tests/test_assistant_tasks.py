@@ -11,7 +11,7 @@ from tests.test_assistant import answer
 from apps.api.assistant_service import AssistantRuntime
 from apps.api.assistant_store import DEFAULT,digest
 from apps.api.assistant_tasks import (PROTOCOL,ProjectTools,read_selected_evidence,related_object_add_request,
-    related_object_answer,contextual_addition,canonical_additions,disposition_request,validate_plan,snapshot)
+    related_object_answer,contextual_addition,canonical_additions,disposition_request,turn_requests,validate_plan,snapshot)
 from apps.api.assistant_canvas_tasks import build,load,retain,acknowledge,validate_draft_plan
 from apps.api.assistant_drawings import drawing_add_scope, drawing_answer, drawing_context, checked_drawing_results
 from apps.api.authority import PreviewError
@@ -41,7 +41,7 @@ class DrawingTaskTests(unittest.TestCase):
         self.fixed = [(dict(evidenceRefId=ref, sourceKind=kind), descriptors[ref]) for kind, ref in sources if ref in descriptors]
         self.reader = SimpleNamespace(read=Mock(return_value={'dataset': {'primaryRds': '=WEC+CN1-1U2'}}),
             _rds=Mock(return_value={'item': {'entityUid': 'protector', 'entityRevision': 'r1'}, 'context': None}))
-        self.tools = ProjectTools(self.reader, lambda: None, 8, DEFAULT['allowedKinds'], ())
+        self.tools = ProjectTools(self.reader, lambda: None,DEFAULT['allowedKinds'], ())
         self.plan = dict(intent='edit', queries=[], actions=[])
 
     def row(self, uid, page, content_hash='a'*64):
@@ -115,25 +115,28 @@ class TaskTests(unittest.TestCase):
                                 ('加入相关工程对象并保存画布', None)]:
             self.assertEqual(scope, related_object_add_request(question), question)
 
-    def test_related_objects_keep_selected_scope_and_do_not_auto_add_a_partial_result(self):
+    def test_related_objects_keep_selected_scope_and_do_not_auto_add_a_missing_source(self):
         from apps.api.simulated_faults import identity
         dataset = identity('13003')
         primary = dataset['primaryRds']
-        reader = SimpleNamespace(read=Mock(return_value={'dataset': dataset}),
-            _rds=Mock(side_effect=lambda tag: {'item': dict(entityUid=tag, entityRevision='r1', displayName=tag)}))
+        def lookup(tag):
+            if tag != primary:
+                raise PreviewError(409,'DIAGNOSTIC_OBJECT_UNRESOLVED')
+            return {'item':dict(entityUid=tag,entityRevision='r1',displayName=tag)}
+        reader = SimpleNamespace(read=Mock(return_value={'dataset': dataset}),_rds=Mock(side_effect=lookup))
         ref = dict(sourceKind='alarm', evidenceRefId='fixed-alarm')
         fixed = [(ref, {'eventId': dataset['datasetId']+'-event-1'})]
         draft = board()
         draft['cards'] = [dict(source={'id': 'fixed-alarm'})]
         plan = dict(intent='edit', queries=[], actions=[])
-        limited = ProjectTools(reader, lambda: None, 2, ['alarm', 'object'], ())
+        limited = ProjectTools(reader, lambda: None, ['alarm', 'object'], ())
         result = related_object_answer(limited, fixed, draft, 'canvas', plan)
         self.assertEqual([], plan['actions'])
         self.assertEqual(primary, limited.results[0]['selector']['entityUid'])
-        self.assertEqual('budget_limited', limited.trace[0]['state'])
+        self.assertEqual('unavailable', limited.trace[0]['state'])
         self.assertTrue(result['nextSteps'])
         self.assertTrue(related_object_answer(limited, [], draft, 'alarm', plan)['gaps'])
-        self.assertEqual(2, limited.reads)
+        self.assertGreater(limited.reads,2)
     def test_exact_filter_before_paging_and_snapshot_rejects_change(self):
         first=self.search();self.assertEqual(3,first['total']);self.assertTrue(all(r['faultCode']=='13001' for r in first['items']))
         second=self.search(cursor=first['nextCursor'],revision=first['snapshotRevision']);self.assertEqual(1,len(second['items']))
@@ -145,14 +148,14 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(1,one['total']);self.assertEqual(row['orderId'],one['items'][0]['orderId'])
 
     def test_model_prose_does_not_narrow_an_exact_fault_or_order_filter(self):
-        tools=ProjectTools(self.reader,lambda:None,8,DEFAULT['allowedKinds'],())
+        tools=ProjectTools(self.reader,lambda:None,DEFAULT['allowedKinds'],())
         tools.query(dict(tool='work_orders',query='查找本项目所有故障代码为13001的历史工单，仅限模拟记录，不限制历史时间，不确认相同根因。',faultCode='13001',orderId=''))
         self.assertEqual(3,len(tools.results));self.assertEqual('',tools.trace[0]['filters']['query'])
-        selected=tools.results[0]['identifier'];other=ProjectTools(self.reader,lambda:None,8,DEFAULT['allowedKinds'],())
+        selected=tools.results[0]['identifier'];other=ProjectTools(self.reader,lambda:None,DEFAULT['allowedKinds'],())
         other.query(dict(tool='work_orders',query='只加入这一个编号，不确认同根因',faultCode='13001',orderId=selected))
         self.assertEqual([selected],[r['identifier'] for r in other.results])
     def test_removed_card_still_found_fixed_identity_and_duplicate_are_preserved(self):
-        tools=ProjectTools(self.reader,lambda:None,8,DEFAULT['allowedKinds'],())
+        tools=ProjectTools(self.reader,lambda:None,DEFAULT['allowedKinds'],())
         tools.query(dict(tool='work_orders',query='',faultCode='13001'))
         self.assertEqual(3,len(tools.results));self.assertEqual(3,tools.reads)
         self.assertIn('orderId',tools.sources[1]['summary']);self.assertIn('测试',tools.sources[1]['summary'])
@@ -214,6 +217,9 @@ class TaskTests(unittest.TestCase):
             self.assertTrue(disposition_request(question),question)
         for question in ('新增笔记，内容为生成整体处置建议','把「整体处置建议」移到左侧','查询相关工单'):
             self.assertFalse(disposition_request(question),question)
+        self.assertEqual(('',True),turn_requests('基于当前画布，生成整体处置建议'))
+        self.assertEqual(('加入报警相关资料卡片',True),turn_requests('加入报警相关资料卡片，再分析处置方案'))
+        self.assertEqual(('新增笔记「核查后，再记录」',True),turn_requests('新增笔记「核查后，再记录」，并分析处置方案'))
     def test_foreign_scope_query_write_injection_and_arbitrary_tools_rejected(self):
         with self.assertRaises(PreviewError):snapshot(dict(snapshotJson=json.dumps(board())),'other','Demo-PDS')
         for plan in [dict(intent='query',queries=[],actions=[action('save')]),dict(intent='edit',queries=[dict(tool='http',query='x',faultCode='')],actions=[]),
@@ -238,13 +244,12 @@ class TaskTests(unittest.TestCase):
             'items': [dict(sceneId=scene_id, displayName='Crystal Rig', headRevision=revision, instanceCount=91)],
             'snapshotRevision': 'directory:1', 'nextCursor': 'more-scenes',
         })
-        for kinds, budget in ((['work_order'], 8), (['model'], 0)):
-            denied = ProjectTools(self.reader, lambda: None, budget, kinds, ())
-            with self.assertRaises(PreviewError):
-                denied.query(entry)
+        denied = ProjectTools(self.reader, lambda: None, ['work_order'], ())
+        with self.assertRaises(PreviewError):
+            denied.query(entry)
         listing.assert_not_called()
         guard = Mock()
-        allowed = ProjectTools(self.reader, guard, 2, ['model'], ())
+        allowed = ProjectTools(self.reader, guard,['model'], ())
         allowed.query(entry)
         listing.assert_called_once_with('Crystal Rig')
         self.assertEqual(2, guard.call_count)
@@ -268,7 +273,7 @@ class TaskTests(unittest.TestCase):
         graph=dict(project_code='P',nodes=[dict(kind='FaultDefinition',payload=dict(properties={OB+'fault_code':[dict(value='13002')],
             OB+'title':[dict(value='机舱柜温度低')]}),source=dict(document=dict(id='document'),version=dict(id='version'),release_id='release',local_id='root'))],relations=[],next_cursor=None)
         reader=SimpleNamespace(reader=SimpleNamespace(prefix='/api/v1/projects/P',project_code='P',_request=lambda *_:graph))
-        tools=ProjectTools(reader,lambda:None,8,['document'],())
+        tools=ProjectTools(reader,lambda:None,['document'],())
         with patch('apps.api.fixed_documents.FixedDocuments.metadata',return_value=dict(sourceSha256='a'*64)),\
              patch('apps.api.analysis_preview.node_evidence',return_value=dict(items=[dict(selector=dict(page=49))])),\
              patch('apps.api.assistant_knowledge.read_neighborhood',return_value=response()):
@@ -277,7 +282,7 @@ class TaskTests(unittest.TestCase):
         edge=tools.graphs[-1]['graph']['relations'][0]
         self.assertEqual(49,edge['provenance']['pageNumber']);self.assertEqual('release/a',edge['provenance']['recordId'])
         graph['next_cursor']=1
-        paged=ProjectTools(reader,lambda:None,8,['document'],())
+        paged=ProjectTools(reader,lambda:None,['document'],())
         with patch('apps.api.fixed_documents.FixedDocuments.metadata',return_value=dict(sourceSha256='a'*64)),\
              patch('apps.api.analysis_preview.node_evidence',return_value=dict(items=[dict(selector=dict(page=49))])),\
              patch('apps.api.assistant_knowledge.read_neighborhood',return_value=response()):
@@ -296,7 +301,7 @@ class TaskTests(unittest.TestCase):
             return dict(projectCode='P',items=[row],nextCursor=None)
         source=SimpleNamespace(prefix='/api/v1/projects/P',project_code='P',_request=request,
             context_for_object=lambda *_:dict(item=row,context=None))
-        tools=ProjectTools(SimpleNamespace(reader=source),lambda:None,8,['object'],())
+        tools=ProjectTools(SimpleNamespace(reader=source),lambda:None,['object'],())
         with patch('apps.api.assistant_graph.read_graph',return_value=graph()):
             tools.query(dict(tool='graph',query='=WEC+CN1',faultCode=''))
         self.assertEqual([{'primaryIdentifier':['=WEC+CN1'],'limit':['6']}],calls)
@@ -305,7 +310,7 @@ class TaskTests(unittest.TestCase):
         calls.clear()
         source._request=lambda method,path: calls.append(parse_qs(urlsplit(path).query)) or dict(projectCode='P',
             items=[] if 'primaryIdentifier=' in path else [row,row],nextCursor=None)
-        fallback=ProjectTools(SimpleNamespace(reader=source),lambda:None,8,['object'],())
+        fallback=ProjectTools(SimpleNamespace(reader=source),lambda:None,['object'],())
         fallback.query(dict(tool='graph',query='柜体',faultCode=''))
         self.assertEqual(2,len(calls));self.assertEqual(['柜体'],calls[1]['q']);self.assertEqual([],fallback.graphs)
         source._request=lambda *_:dict(projectCode='other',items=[row],nextCursor=None)
@@ -341,7 +346,7 @@ class TaskTests(unittest.TestCase):
 
         from tests.test_assistant import Reader
         reader=Reader();reader.orders=self.orders;reader.reader=self.reader.reader
-        fixed=[(dict(evidenceRefId=str(uuid4()),sourceKind='alarm',sourceRevision='a'*64),{}) for _ in range(8)]
+        fixed=[(dict(evidenceRefId=str(uuid4()),sourceKind='alarm',sourceRevision='a'*64),{'fixture':i}) for i in range(9)]
         second={**b,'requestId':str(uuid4()),'analysisSessionId':str(uuid4()),'evidenceRefIds':[r['evidenceRefId'] for r,_ in fixed]}
         started=runtime.start(dict(project='Demo-PDS',owner=self.actor,sid='s'),second,runtime.store.policy('Demo-PDS'),
             dict(serviceRevision='a'*64,accessRevision='g',taskId='analysis',settings={}),lambda _:(fixed,reader),lambda *_:None,source)
@@ -350,9 +355,13 @@ class TaskTests(unittest.TestCase):
             result=runtime.store.public(runtime.store.run('Demo-PDS',self.actor,started['runId']))
             if result['state'] not in ('reading','model','validating'):break
             time.sleep(.01)
-        self.assertEqual('partial',result['state'],result)
-        limited=[t for t in result['result']['task']['trace'] if t['state']=='budget_limited']
-        self.assertEqual(3,limited[0]['count']);self.assertEqual(8,result['result']['task']['reads'])
+        self.assertEqual('complete',result['state'],result)
+        task=result['result']['task']
+        self.assertEqual(12,task['reads'])
+        self.assertEqual(9,len(task['selectedReads']))
+        self.assertTrue(all(item['state']=='complete' for item in task['selectedReads']))
+        self.assertEqual([8,4],[len(data['evidence']) for data in calls[-2:]])
+        self.assertTrue(any(row['refs']==['E9'] for row in result['result']['answer']['observations']))
 
     def test_explicitly_selected_cards_keep_their_reads_in_both_modes(self):
         from tests.test_assistant import Reader
@@ -360,8 +369,8 @@ class TaskTests(unittest.TestCase):
         runtime.store.publish('Demo-PDS',self.actor,dict(requestId=str(uuid4()),expectedRevision=0,
             policy={**DEFAULT,'enabled':True}),lambda:None)
         reader=Reader();reader.orders=self.orders;reader.reader=self.reader.reader
-        fixed=[(dict(evidenceRefId=str(uuid4()),sourceKind=kind,sourceRevision='a'*64),{})
-               for kind in ('alarm','alarm','alarm','alarm','alarm','drawing')]
+        fixed=[(dict(evidenceRefId=str(uuid4()),sourceKind=kind,sourceRevision='a'*64),{'fixture':i})
+               for i,kind in enumerate(('alarm','alarm','alarm','alarm','alarm','drawing'))]
         ids=[ref['evidenceRefId'] for ref,_ in fixed]
         for mode in ('workbench','cockpit_query'):
             with self.subTest(mode=mode):
@@ -384,19 +393,20 @@ class TaskTests(unittest.TestCase):
                     time.sleep(.01)
                 self.assertEqual(ids,[row['evidenceRefId'] for row in run['sources'] if row['evidenceRefId']])
                 task=run['result']['task']
-                self.assertEqual(8,task['reads'])
+                self.assertEqual(9,task['reads'])
                 self.assertEqual(3,len(task['results']))
                 self.assertEqual(ids,[row['evidenceRefId'] for row in task['selectedReads']])
                 self.assertTrue(all(row['state']=='complete' and row['sourceKey'] for row in task['selectedReads']))
                 self.assertTrue(task['selectedReads'][-1]['metadataOnly'])
-                self.assertEqual(2,len(calls))
+                self.assertEqual(3,len(calls))
                 self.assertEqual('query_only' if mode=='cockpit_query' else 'query',task['execution'])
 
     def test_every_selected_card_reports_why_it_was_or_was_not_read(self):
         kinds=['document','trend','photo','alarm','drawing']
         fixed=[(dict(evidenceRefId=str(uuid4()),sourceKind=kind,sourceRevision='a'*64),{})
                for kind in kinds]
-        tools=ProjectTools(self.reader,lambda:None,2,['document','trend','alarm','drawing'],())
+        reader=SimpleNamespace(read=lambda *args:{})
+        tools=ProjectTools(reader,lambda:None,['document','trend','alarm','drawing'],())
         def material(reader,kind,descriptor,private):
             if kind=='trend':
                 raise PreviewError(409,'SOURCE_CHANGED')
@@ -404,13 +414,13 @@ class TaskTests(unittest.TestCase):
         with patch('apps.api.assistant_graph.material_summary',side_effect=material) as read:
             result=read_selected_evidence(tools,fixed)
         self.assertEqual(kinds,[row['kind'] for row in result])
-        self.assertEqual(['complete','unavailable','policy_excluded','budget_limited','budget_limited'],
+        self.assertEqual(['complete','unavailable','policy_excluded','complete','complete'],
                          [row['state'] for row in result])
-        self.assertEqual(['SOURCE_CHANGED','ASSISTANT_TOOL_NOT_ALLOWED','ASSISTANT_READ_LIMIT','ASSISTANT_READ_LIMIT'],
-                         [row['reason'] for row in result[1:]])
+        self.assertEqual(['SOURCE_CHANGED','ASSISTANT_TOOL_NOT_ALLOWED'],
+                         [row['reason'] for row in result if 'reason' in row])
         self.assertTrue(result[0]['metadataOnly'])
         self.assertEqual('E1',result[0]['sourceKey'])
-        self.assertEqual(2,read.call_count)
+        self.assertEqual(3,read.call_count)
 
 
     def test_edit_only_has_pending_receipt_message_without_false_evidence_gap(self):

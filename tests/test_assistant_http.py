@@ -78,7 +78,8 @@ class AssistantHttpTests(unittest.TestCase):
         self.assertFalse(self.request('policy')[1]['canManage']);self.assertEqual(self.enable()[0],403)
 
     def test_publish_preview_history_and_stale_version(self):
-        self.assertEqual(self.request('preview',{'policy':{**DEFAULT,'reads':9}})[0],422)
+        status,preview=self.request('preview',{'policy':{**DEFAULT,'reads':1}})
+        self.assertEqual(status,200);self.assertNotIn('reads',preview['policy'])
         self.assertEqual(self.enable()[0],200);self.assertEqual(self.enable()[0],409)
         self.assertEqual(len(self.request('history')[1]['items']),1)
         self.assertEqual(self.request('policy',project='B')[1]['revision'],0)
@@ -161,6 +162,6 @@ class AssistantHttpTests(unittest.TestCase):
                     time.sleep(.01)
                 self.assertEqual('complete',previous['state'])
             _,detail=self.request('conversation',{'conversationId':previous['conversationId']})
-            self.assertEqual('ASSISTANT_HISTORY_SCOPE_LIMIT',detail['items'][0]['error']);self.assertIsNone(detail['items'][0]['result'])
+            self.assertTrue(all(item.get('result') for item in detail['items']))
             _,earlier=self.request('status',{'runId':ids[0]});self.assertEqual('complete',earlier['state']);self.assertIsNotNone(earlier['result'])
             self.assertEqual(3,model.call_count)

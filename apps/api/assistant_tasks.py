@@ -6,10 +6,11 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 from .assistant_store import require, digest
-from .assistant_summaries import redact, summarize, work_order_summary, validate_answer
+from .assistant_summaries import redact, summarize, work_order_summary, answer_batches
 from .authority import PreviewError
 from .assistant_canvas_tasks import ACTIONS, result_targets, validate_draft_plan
 from .assistant_drawings import drawing_add_scope, drawing_answer
+from . import assistant_alarm_materials
 
 PROTOCOL='ontovis-engineering-tasks-v1'
 QUERY_TOOLS=('work_orders','objects','materials','graph','knowledge')
@@ -23,17 +24,40 @@ DISPOSITION_GUIDANCE = (
 )
 
 
-def disposition_request(question):
+def _disposition_clause(question):
     return bool(re.match(
         r'(?:(?:请帮我|帮我|请|能否|能不能|可以)\s*)?(?:基于|结合|根据|参考|按)?'
         r'(?:(?:当前|现有|这张|本次|本轮)?(?:的)?(?:画布|报警|故障|历史工单|手册|资料)[^。；\n]{0,28}?)?'
-        r'(?:生成|给出|提供|整理|提出|输出|给我|制定)\s*[^。；\n]{0,40}?'
+        r'(?:生成|给出|提供|分析|整理|提出|输出|给我|制定)\s*[^。；\n]{0,40}?'
         r'(?:处置|排查|故障处理)的?(?:建议|方案|计划|流程)'
         r'|(?:整体|综合|完整|总体)(?:处置|排查)(?:建议|方案|计划|流程)'
         r'|(?:(?:这次|本次|当前)(?:报警|故障))?(?:该|应该)?(?:如何|怎么)(?:处置|排查|处理)'
         r'|(?:please )?(?:generate|provide|suggest|draft|give me) [^.!?\n]{0,60}'
         r'(?:response plan|disposition plan|troubleshooting plan|overall recommendations)',
         question.strip(), re.I))
+
+
+def turn_requests(question):
+    # Quoted titles and note contents remain part of the edit instruction.
+    parts, start = [], 0
+    separators = r'“[^”]*”|「[^」]*」|『[^』]*』|"[^"]*"|[，,；;。\n]|然后|并且|并|再'
+    for match in re.finditer(separators, question):
+        if match[0][0] in '“「『"':
+            continue
+        parts.append(question[start:match.start()].strip())
+        start = match.end()
+    parts.append(question[start:].strip())
+    advice = [_disposition_clause(part.removeprefix('先').strip()) for part in parts]
+    if not any(advice):
+        return question, False
+    edit_parts = [part for part, is_advice in zip(parts, advice) if part and not is_advice]
+    if len(edit_parts)==1 and re.fullmatch(r'(?:基于|结合|根据|参考|按)(?:当前|现有|这张|本次|本轮)?(?:的)?(?:画布|报警|故障|历史工单|手册|资料)', edit_parts[0]):
+        edit_parts.clear()
+    return '，'.join(edit_parts), True
+
+
+def disposition_request(question):
+    return turn_requests(question)[1]
 
 
 def disposition_context(draft, planning, reads, private):
@@ -205,11 +229,13 @@ def read_selected_evidence(tools, fixed):
         receipts.append(receipt)
         if kind not in tools.allowed:
             state, reason = 'policy_excluded', 'ASSISTANT_TOOL_NOT_ALLOWED'
-        elif tools.reads >= tools.limit or len(tools.sources) >= 8:
-            state, reason = 'budget_limited', 'ASSISTANT_READ_LIMIT'
         else:
             try:
-                material = tools.read(lambda: material_summary(tools.reader, kind, descriptor, tools.private))
+                if kind == 'alarm':
+                    value = tools.alarm(descriptor)
+                    material = dict(summary=summarize(tools.reader, kind, descriptor, tools.private, value=value))
+                else:
+                    material = tools.read(lambda: material_summary(tools.reader, kind, descriptor, tools.private))
                 source = tools.source(kind, material.pop('summary'), sourceRevision=ref['sourceRevision'],
                                       evidenceRefId=ref['evidenceRefId'], descriptor=descriptor, **material)
                 receipt.update(state='complete', sourceKey=source['key'],
@@ -227,18 +253,24 @@ def read_selected_evidence(tools, fixed):
 
 
 class ProjectTools:
-    def __init__(self,reader,guard,limit,allowed,private):
-        self.reader,self.guard,self.limit,self.allowed,self.private=reader,guard,limit,set(allowed),private
+    def __init__(self,reader,guard,allowed,private):
+        self.reader,self.guard,self.allowed,self.private=reader,guard,set(allowed),private
         self.reads=0;self.sources=[];self.results=[];self.graphs=[];self.trace=[]
         self.catalogue_observations=[]
+        self.alarm_reads={}
 
     def read(self,operation):
-        self.guard();require(self.reads<self.limit,'ASSISTANT_READ_LIMIT',409);self.reads+=1
+        self.guard();self.reads+=1
         value=operation();self.guard();return value
+
+    def alarm(self, descriptor):
+        key=digest(descriptor)
+        if key not in self.alarm_reads:
+            self.alarm_reads[key]=self.read(lambda:self.reader.read('alarm',descriptor))
+        return self.alarm_reads[key]
 
     def source(self,kind,summary,**fields):
         require(kind in self.allowed,'ASSISTANT_TOOL_NOT_ALLOWED',403)
-        if len(self.sources)>=8:return None
         row=dict(key='E'+str(len(self.sources)+1),kind=kind,summary=summary,summaryHash=digest(summary),
                  availability='available',evidenceRefId='')
         row.update(fields)
@@ -281,7 +313,6 @@ class ProjectTools:
             # Each candidate keeps its full identity/version in the structured result, outside the model summary.
             self.source('work_order',redact(text,self.private)[:1000])
             for item in result['items'][:2]:
-                if self.reads>=self.limit:break
                 detail=self.read(lambda:reader.orders.detail(dict(orderId=item['orderId'])))
                 require(detail['orderRevision']==item['orderRevision'],'WORK_ORDER_CHANGED',409)
                 self.source('work_order',work_order_summary(detail,self.private),projectOrderId=item['orderId'],sourceRevision=str(item['orderRevision']))
@@ -424,7 +455,7 @@ def related_object_answer(tools, fixed, draft, scope, plan):
     else:
         message = '本轮暂无可加入的已登记工程对象。'
     scope_label = '所选报警的登记关系' if scope == 'alarm' else '所选画布卡片的登记关系'
-    state = 'budget_limited' if 'ASSISTANT_READ_LIMIT' in gaps else 'unavailable' if gaps else 'complete'
+    state = 'unavailable' if gaps else 'complete'
     tools.trace.append(dict(tool='objects', state=state, scope=scope_label, count=len(tools.results),
                             total=count, truncated=count>len(tools.results), **({'reason': gaps[0]} if gaps else {})))
     summary = redact(json.dumps(dict(scope=scope_label, total=count,
@@ -453,7 +484,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         authorize(force)
     def model(phase,context,evidence,*,question=None):
         nonlocal calls
-        guard(True);require(calls<3,'ASSISTANT_READ_LIMIT',409)
+        guard(True)
         runtime.store.update(run_id,'model',progress=trace)
         result=source_call(dict(operationId=str(uuid4()),expectedAccessRevision=service['accessRevision'],
             question=redact(question if question is not None else body['question'],job.private)[:1000],
@@ -505,15 +536,16 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         equipment_query=equipment_configuration_question(body['question'])
         explicit_equipment=equipment_query is not None
         question=body['question']
-        disposition=disposition_request(question)
+        edit_question,disposition=turn_requests(question)
         switches=set(service.get('settings',{}).get('tools',('selected_sources','engineering_neighborhood','manual_fault_lookup')))
-        drawing_scope,related_scope,compound_add=contextual_addition(question)
-        contextual_add=related_scope or drawing_scope
+        drawing_scope,related_scope,compound_add=contextual_addition(edit_question)
+        alarm_materials=assistant_alarm_materials.alarm_material_add(edit_question)
+        contextual_add=related_scope or drawing_scope or alarm_materials
         if compound_add:
             context['relatedAddition']=dict(kind='drawing' if drawing_scope else 'object',scope=contextual_add)
         replay=replay_equipment_context(draft['context'],fixed,question) if equipment_materials and 'alarm' in kinds else None
         replay_materials=replay is not None and re.fullmatch(r'(?:请问\s*)?(?:这台设备|这个(?:设备|柜体|柜))\s*有(?:哪些)?\s*(?:图纸|说明书|资料)(?:和(?:图纸|说明书|资料))?[？?。]?',question.strip())
-        if disposition:
+        if disposition and not edit_question:
             queries=[]
             if context['faultCode'] and 'work_order' in kinds and re.search(r'历史工单|同码工单|\bhistorical work orders?\b',question,re.I):
                 queries.append(dict(tool='work_orders',query='',faultCode=context['faultCode']))
@@ -528,28 +560,34 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
             require(equipment_configurations,'ASSISTANT_TOOL_NOT_ALLOWED',403)
             proposed=dict(intent='query',queries=[dict(tool='equipment_configurations',query=equipment_query,faultCode='')],actions=[])
         else:
-            proposed=model('plan',context,[])['plan']
+            proposed=model('plan',context,[],question=edit_question)['plan']
         plan=validate_plan(proposed,scene_directory=scene_directory,adopted_models=adopted_models,
                            equipment_materials=equipment_materials,processing_tasks=processing_tasks,
                            equipment_configurations=equipment_configurations)
         require(all(q['tool']!='graph' or 'engineering_neighborhood' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         require(all(q['tool']!='knowledge' or 'manual_fault_lookup' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
-        tools=ProjectTools(reader,guard,policy['policy']['reads'],policy['policy']['allowedKinds'],job.private)
-        if compound_add and not disposition:
+        tools=ProjectTools(reader,guard,policy['policy']['allowedKinds'],job.private)
+        if compound_add:
             plan['queries']=[]
-        needs_evidence=not explicit_equipment and not contextual_add and (plan['intent']=='query' or bool(plan['queries']))
+        anchor=assistant_alarm_materials.alarm_anchor(fixed,draft,body) if alarm_materials else None
+        chosen=[item for item in fixed if item[0]['evidenceRefId'] in body['evidenceRefIds']]
+        if anchor:
+            chosen=[anchor]+[item for item in chosen if item!=anchor]
+        needs_evidence=disposition or alarm_materials or (
+            not explicit_equipment and not contextual_add and (plan['intent']=='query' or bool(plan['queries'])))
         prefer_selected=needs_evidence and (disposition or body.get('preferSelectedEvidence',False))
-        selected_reads=read_selected_evidence(tools,fixed) if prefer_selected else []
+        selected_reads=read_selected_evidence(tools,chosen) if prefer_selected else []
         for q in plan['queries']:
             try:tools.query(q,replay=replay,drawings=bool(re.search(r'图纸|drawings?',question,re.I)))
             except PreviewError as error:
                 if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
-                state='budget_limited' if error.code=='ASSISTANT_READ_LIMIT' else 'unavailable'
-                tools.trace.append(dict(tool=q['tool'],state=state,reason=error.code))
+                tools.trace.append(dict(tool=q['tool'],state='unavailable',reason=error.code))
         if needs_evidence and not prefer_selected:
-            selected_reads=read_selected_evidence(tools,fixed)
+            selected_reads=read_selected_evidence(tools,chosen)
         addition_plan=dict(intent=plan['intent'],actions=[]) if compound_add else plan
-        if drawing_scope:
+        if alarm_materials:
+            related_answer=assistant_alarm_materials.plan_addition(tools,fixed,draft,anchor,plan,switches,analyze=disposition)
+        elif drawing_scope:
             related_answer=drawing_answer(tools,fixed,draft,body,drawing_scope,addition_plan)
         else:
             related_answer=related_object_answer(tools,fixed,draft,related_scope,addition_plan) if related_scope else None
@@ -564,7 +602,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         if plan['actions']:
             try:
                 if not contextual_add:
-                    canonical_additions(plan,tools.results,question)
+                    canonical_additions(plan,tools.results,edit_question)
                 validate_draft_plan(draft,plan,tools.results,fixed,history_state,body['expectedAnalysisRevision'],
                                     run_id,runtime.store.connection_id,job.project)
             except PreviewError as error:
@@ -572,14 +610,27 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 plan['actions']=[]
         trace=[dict(key=t['tool'],state=t['state']) for t in tools.trace]
         runtime.store.update(run_id,'reading',progress=trace,sources=tools.sources)
-        evidence=[{k:s[k] for k in ('key','kind','summary')} for s in tools.sources]
         catalogue_query=explicit_equipment or body['taskId']=='query' and plan['queries'] and all(q['tool'] in CATALOGUE_TOOLS for q in plan['queries'])
         if disposition:
-            if evidence:
-                answer_context=dict(scope='当前画布处置建议',canvas=disposition_context(draft,context,selected_reads,job.private),tools=tools.trace)
+            if tools.sources:
                 request=redact(question,job.private)[:1000-len(DISPOSITION_GUIDANCE)-2]+'\n\n'+DISPOSITION_GUIDANCE
-                answer=validate_answer(model('answer',answer_context,evidence,question=request)['answer'],{s['key'] for s in evidence})
-                unread = sum(card.get('evidenceState','complete')!='complete' for card in answer_context['canvas']['cards'])
+                canvas=disposition_context(draft,context,selected_reads,job.private)
+                def respond(evidence,aliases):
+                    cards=[{key:value for key,value in card.items() if key!='evidence'} |
+                           ({'evidence':aliases[card['evidence']]} if card.get('evidence') in aliases else {})
+                           for card in canvas['cards']]
+                    return model('answer',dict(scope='当前画布处置建议',canvas={**canvas,'cards':cards},
+                                              tools=tools.trace),evidence,question=request)['answer']
+                try:
+                    answer=answer_batches(tools.sources,respond)
+                except PreviewError as error:
+                    if not plan['actions'] or not error.code.startswith((
+                        'ASSISTANT_MODEL_', 'ASSISTANT_OUTPUT_', 'ASSISTANT_REFERENCE_')):
+                        raise
+                    tools.trace.append(dict(tool='disposition',state='unavailable',reason=error.code))
+                    answer=dict(observations=[],hypotheses=[],gaps=[
+                        dict(text='本轮关联资料已核对，生成处置建议时模型服务返回错误。',refs=[])],nextSteps=[])
+                unread = sum(card.get('evidenceState','complete')!='complete' for card in canvas['cards'])
                 if unread:
                     answer['gaps']=[dict(text=f'画布中有 {unread} 张来源卡片本轮未读取。可核对关键卡片后补充处置依据。',refs=[]),
                                     *answer['gaps'][:4]]
@@ -588,6 +639,11 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                     gaps=[dict(text='本轮缺少可核对的报警、趋势或工程资料。',refs=[])],
                     nextSteps=[dict(text='先核对报警来源、发生时间和涉及的设备，再补充对应趋势或适用资料。',refs=[]),
                                dict(text='补齐依据后，按经核实的影响范围安排检查，并记录处置前后状态供复核。',refs=[])])
+            if related_answer:
+                for group in ('gaps','nextSteps'):
+                    answer[group]=[*related_answer[group],*answer[group]][:5]
+            if review_message:
+                answer['gaps']=[dict(text=review_message,refs=[]),*answer['gaps'][:4]]
         elif review_message:
             answer=dict(observations=[],hypotheses=[],gaps=[dict(text=review_message,refs=[])],nextSteps=[])
         elif related_answer is not None or catalogue_query:
@@ -598,15 +654,17 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         elif plan['intent']=='edit':
             answer=dict(observations=[],hypotheses=[],gaps=[
                 dict(text='请选中要编辑的卡片，或补充目标名称和具体修改。',refs=[])],nextSteps=[])
-        elif evidence:
-            answer=validate_answer(model('answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'],{s['key'] for s in evidence})
+        elif tools.sources:
+            answer=answer_batches(tools.sources,lambda evidence,_aliases:model(
+                'answer',dict(scope='当前项目；尚未执行编辑',tools=tools.trace),evidence)['answer'])
         else:answer=dict(observations=[],hypotheses=[],gaps=[dict(text='本次未取得可引用的项目资料。请查看检索过程中的范围或服务状态。',refs=[])],nextSteps=[])
+        trace=[dict(key=t['tool'],state=t['state']) for t in tools.trace]
         guard(True)
         result=dict(protocol=PROTOCOL,answer=answer,usage=usage,modelCalls=calls,engineeringConfirmation=False,
             partial=any(t['state']!='complete' or t.get('truncated') or t.get('nextCursor') is not None for t in tools.trace),
             model=dict(taskId=service.get('taskId','analysis'),provider=service.get('provider'),modelId=service.get('modelId')),
             task=dict(mode=body['mode'],baseDigest=base,plan=plan,results=tools.results,graphs=tools.graphs,trace=tools.trace,
-                reads=tools.reads,readLimit=tools.limit,selectedReads=selected_reads,receipts=[],
+                reads=tools.reads,selectedReads=selected_reads,receipts=[],
                 execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query',
                 **({'disposition':True} if disposition else {})))
         require(runtime.store.finish(run_id,'partial' if result['partial'] else 'complete',result,trace,tools.sources),

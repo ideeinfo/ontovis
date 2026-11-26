@@ -28,7 +28,7 @@ export type SelectedEvidenceRead={evidenceRefId:string;kind:string}&(
 );
 export type EngineeringTask={mode:'workbench'|'cockpit_query';baseDigest:string;plan:{intent:'query'|'edit';queries:{tool:string;query:string;faultCode:string}[];actions:{kind:string;targets:string[];text:string;x:number|null;y:number|null}[]};
  results:TaskCandidate[];graphs:{kind:'engineering'|'knowledge';graph:Record<string,unknown>}[];trace:{tool:string;state:string;count?:number;total?:number;nextCursor?:number|string|null;reason?:string;truncated?:boolean;scope?:string}[];
- reads:number;readLimit:number;selectedReads?:SelectedEvidenceRead[];receipts:TaskReceipt[];execution:string;disposition?:boolean};
+ reads:number;selectedReads?:SelectedEvidenceRead[];receipts:TaskReceipt[];execution:string;disposition?:boolean};
 export type PreparedTask={operationId:string;baseDigest:string;snapshot:CanvasSnapshot;receipts:TaskReceipt['items'];wantsSave:boolean;analysis:DraftReceipt;baseline:CanvasSnapshot|null;alreadyApplied?:boolean};
 export async function snapshotDigest(raw:string){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw)))].map(n=>n.toString(16).padStart(2,'0')).join('');}
 export function checkedTaskSnapshot(current:CanvasSnapshot,prepared:PreparedTask,scope:ProjectScope,baseJson:string){

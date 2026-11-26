@@ -51,6 +51,7 @@ def browser_site(public: Path):
         project_prefix = f'/api/v1/projects/{PROJECT}'
         drawing = 'fixture-13003-wiring'
         member_drawing = 'fixture-13003-member-wiring'
+        power_drawing = 'fixture-13003-power'
         member_title = 'Q-26 合成柜内接线图'
         power_title = 'Q-26 合成动力柜供电图'
         img = dict(content=PNG,mediaType='image/png',sha256=sha256(PNG).hexdigest())
@@ -70,11 +71,13 @@ def browser_site(public: Path):
                 if blocked.is_set():
                     raise PreviewError(403,'NOT_FOUND_OR_FORBIDDEN')
                 return {'outline':[]} if route.endswith('/navigation') else fixed._request(method,path,body)
-            if route in (f'/api/v1/drawings/{drawing}', f'/api/v1/drawings/{member_drawing}'):
+            if route in ('/api/v1/object-locations/supply-1','/api/v1/object-locations/supply-2'):
+                return dict(id=route.rsplit('/',1)[-1],project_code=PROJECT,drawing_uid=power_drawing,
+                            entity_uid=primary['entityUid'],display_name=primary['displayName'])
+            if route in (f'/api/v1/drawings/{drawing}', f'/api/v1/drawings/{member_drawing}', f'/api/v1/drawings/{power_drawing}'):
                 uid = route.rsplit('/', 1)[-1]
-                return dict(project_code=PROJECT,drawing_uid=uid,
-                            drawing_name=member_title if uid==member_drawing else '合成接线图',
-                            source_page_number=90 if uid==member_drawing else 89)
+                title,page = {drawing:('合成接线图',89),member_drawing:(member_title,90),power_drawing:(power_title,88)}[uid]
+                return dict(project_code=PROJECT,drawing_uid=uid,drawing_name=title,source_page_number=page)
             if route==project_prefix+'/objects':
                 items = [tags[tag] for tag in parse_qs(url.query).get('primaryIdentifier',[]) if tag in tags]
                 return dict(projectCode=PROJECT,items=items,total=len(items),nextCursor=None)
@@ -190,6 +193,11 @@ def browser_site(public: Path):
                 assert [(item['analysisSessionId'],item['relevance']) for item in available['items']]==[(analysis_id,'same_event')]
 
             def plan(_authority, _path, body, _cancelled, _deadline):
+                if body['workflow']['phase']=='answer' and '加入报警相关资料卡片，分析处置方案' in body['question']:
+                    assert body['evidence'][0]['kind']=='alarm'
+                    return dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,
+                        engineeringConfirmation=False,usage={},answer=dict(observations=[],hypotheses=[],gaps=[],
+                            nextSteps=[dict(text='核对报警接点及报警时间，记录复测结果。',refs=['E1'])]))
                 assert body['question']=='先添加相关图纸，再整理画布布局'
                 assert body['workflow']['phase']=='plan'
                 return dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,
@@ -198,6 +206,7 @@ def browser_site(public: Path):
                         actions=[dict(kind=kind,targets=[],text='',x=None,y=None) for kind in ('add_results','arrange')]))
 
             with patch('apps.api.assistant_task_api.call_source',side_effect=plan), \
+                    patch('apps.api.analysis_preview.fault_documents',return_value=[]), \
                     serve_workbench(public.resolve(strict=True),fixture.sessions,commands) as origin:
                 yield dict(origin=origin,analysisId=analysis_id,title=title,cards=cards,frames=frames,record=record,
                            memberDrawingTitle=member_title,powerDrawingTitle=power_title,

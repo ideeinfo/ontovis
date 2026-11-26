@@ -7,6 +7,7 @@ from tests import test_assistant_http as fixture
 from tests.test_assistant import answer
 from tests.test_assistant_tasks import board,action
 from apps.api.assistant_tasks import PROTOCOL
+from apps.api.authority import PreviewError
 
 
 class TaskHttpTests(unittest.TestCase):
@@ -100,6 +101,59 @@ class TaskHttpTests(unittest.TestCase):
         for keys in ([], ['R1']):
             status, blocked = self.request('task-prepare', dict(runId=run['runId'], selectedKeys=keys, snapshotJson=body['snapshotJson']))
             self.assertEqual((409, 'ASSISTANT_DRAWING_REVIEW_REQUIRED'), (status, blocked['code']))
+
+    def test_add_alarm_materials_and_analyze_in_the_same_turn(self):
+        base=json.loads(self.body['snapshotJson'])
+        base['cards']=[dict(id='alarm',kind='alarm',title='浪涌保护报警',x=0,y=0,width=300,height=200,pinned=False,
+            source=dict(system='ontovis',ontobaseConnectionId=base['ontobaseConnectionId'],projectCode=base['projectCode'],
+                        id=self.fixture.evidence,revision='a'*64))]
+        body={**self.body,'mode':'workbench','taskId':'analysis','question':'加入报警相关资料卡片，分析处置方案',
+              'analysisSessionId':self.fixture.analysis,'expectedAnalysisRevision':1,'evidenceRefIds':[self.fixture.evidence],
+              'focusCardIds':['alarm'],'snapshotJson':json.dumps(base)}
+        body['expectedServiceRevision']=self.request('policy')[1]['services']['analysis']['serviceRevision']
+        def finish(request):
+            status,started=self.request('task-start',request)
+            self.assertEqual(200,status,started)
+            for _ in range(100):
+                _,turn=self.request('status',dict(runId=started['runId']))
+                if turn['state'] not in ('reading','model','validating'):
+                    return turn
+                time.sleep(.01)
+            self.fail('Assistant did not finish')
+        def analyze(_authority,_path,payload,*_):
+            self.assertEqual('answer',payload['workflow']['phase'])
+            self.assertEqual('alarm',payload['evidence'][0]['kind'])
+            self.assertIn('document',[row['kind'] for row in payload['evidence']])
+            response={**answer(),'nextSteps':[dict(text='核对报警并复测接点。',refs=['E1'])]}
+            return dict(answer=response,usage={},modelCalls=1,engineeringConfirmation=False,
+                        purpose='ontovis_analysis',serviceRevision='a'*64)
+        obj=dict(item=dict(entityUid='fixture-object',entityRevision='r1',displayName='报警部件'),context=None)
+        drawing=dict(availability='available',evidenceRef='location:fixture',sourceRevision='f'*64,pageNumber=3,
+                     title='关联图纸',contentSha256='c'*64,sourceRelation='direct')
+        document=dict(title='对应故障码手册',reason='固定页码',selector=dict(documentId=str(uuid4()),
+                      contentVersionId=str(uuid4()),pageNumber=4,sourceSha256='b'*64))
+        with (patch('apps.api.assistant_task_api.call_source',side_effect=analyze) as model,
+              patch('apps.api.assistant_task_api.analysis_store') as open_store,
+              patch('apps.api.analysis_canvas.validate_handles'),
+              patch('apps.api.analysis_source_reader.AnalysisSourceReader._rds',return_value=obj),
+              patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing_reader,
+              patch('apps.api.analysis_preview.fault_documents',return_value=[document]),
+              patch('apps.api.assistant_alarm_materials.material_summary',return_value={'summary':'已读手册固定摘录'})):
+            open_store.return_value.__enter__.return_value.detail.return_value={'lifecycle':'active'}
+            drawing_reader.return_value.resolve.return_value={'items':[drawing]}
+            turn=finish(body)
+            self.assertEqual('complete',turn['state'],turn)
+            self.assertEqual(1,model.call_count)
+            result=turn['result'];task=result['task']
+            self.assertTrue(task['disposition'])
+            self.assertEqual(['object','drawing','document'],[row['kind'] for row in task['results']])
+            self.assertEqual([action('add_results',['R1','R2','R3'])],task['plan']['actions'])
+            self.assertEqual('complete',task['selectedReads'][0]['state'])
+            self.assertTrue(result['answer']['nextSteps'])
+            model.side_effect=PreviewError(502,'ASSISTANT_OUTPUT_INCOMPLETE')
+            partial=finish({**body,'requestId':str(uuid4())})
+            self.assertEqual('partial',partial['state'],partial)
+            self.assertEqual(task['plan'],partial['result']['task']['plan'])
 
     def test_same_canvas_restores_only_the_current_mode_and_rejects_cross_mode_followups(self):
         body = {**self.body, 'analysisSessionId': self.fixture.analysis, 'expectedAnalysisRevision': 1}

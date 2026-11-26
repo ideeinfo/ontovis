@@ -3,6 +3,7 @@ import json
 import math
 import re
 from datetime import datetime
+from itertools import zip_longest
 from .assistant_store import require
 
 def redact(value, private=()):
@@ -88,12 +89,13 @@ def treatment_summary(value, private):
             encoded = expanded
     return encoded
 
-def summarize(reader, kind, descriptor, private=()):
+def summarize(reader, kind, descriptor, private=(), *, value=None):
     if kind=='document' and descriptor.get('knowledgeNodeId'):
         from .assistant_knowledge import read_neighborhood, summary
         return summary(read_neighborhood(reader,descriptor),descriptor,lambda text:redact(text,private))
     else:
-        value=reader.read(kind,descriptor)
+        if value is None:
+            value=reader.read(kind,descriptor)
         if kind=='object':
             item=value.get('item',{});category=item.get('classification') or {}
             result={'kind':kind,'objectKind':item.get('objectKind'),'scope':item.get('objectScope'),
@@ -158,3 +160,27 @@ def validate_answer(value, keys):
                 'ASSISTANT_REFERENCE_INVALID',502)
             row['text']=redact(row['text'])
     return value
+
+
+def answer_batches(sources, respond):
+    """The source model API takes E1–E8 per call. Retain the turn's source IDs across calls."""
+    groups = []
+    for start in range(0,len(sources),8):
+        batch = sources[start:start+8]
+        aliases = {row['key']:f'E{i}' for i,row in enumerate(batch,1)}
+        original = {alias:key for key,alias in aliases.items()}
+        evidence = [dict(key=aliases[row['key']],kind=row['kind'],summary=row['summary']) for row in batch]
+        answer = validate_answer(respond(evidence,aliases),set(original))
+        groups.append({name:[{**row,'refs':[original[key] for key in row['refs']]} for row in rows]
+                       for name,rows in answer.items()})
+    if len(groups)==1:
+        return groups[0]
+    combined = {}
+    for name in ('observations','hypotheses','gaps','nextSteps'):
+        unique = {}
+        for lines in zip_longest(*(reply[name] for reply in groups)):
+            for row in lines:
+                if row is not None:
+                    unique.setdefault((row['text'],tuple(row['refs'])),row)
+        combined[name]=list(unique.values())[:5]
+    return combined

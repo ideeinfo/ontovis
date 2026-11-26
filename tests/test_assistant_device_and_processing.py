@@ -14,7 +14,7 @@ def identifier():
 class AssistantDeviceAndProcessingTests(unittest.TestCase):
     def setUp(self):
         self.engineering=SimpleNamespace(prefix='/api/v1/projects/P',_request=Mock())
-        self.tools=ProjectTools(SimpleNamespace(reader=self.engineering),Mock(),8,['object','document'],('Private Project',))
+        self.tools=ProjectTools(SimpleNamespace(reader=self.engineering),Mock(),['object','document'],('Private Project',))
         self.a=dict(displayName='Machine 1',entityUid='e1',entityRevision='r4',equipmentState='active')
         self.b=dict(displayName='Machine 2',entityUid='e2',entityRevision='r3',equipmentState='active')
         self.context=dict(installationContextId='install',hierarchyRevision='install:r3')

@@ -16,17 +16,14 @@ TOOLS = {'object': 'engineering_neighborhood', 'document': 'selected_manual', 'a
          'photo': 'selected_metadata', 'model': 'selected_metadata'}
 
 
-def plan(fixed, question, budget, allowed_tools=None):
-    require(1 <= len(fixed) <= budget <= 8, 'ASSISTANT_READ_LIMIT', 422)
+def plan(fixed, question, allowed_tools=None):
     codes = list(dict.fromkeys(re.findall(r'(?<![A-Za-z0-9_])\d{5}(?![A-Za-z0-9_])', question)))[:3]
-    remaining = budget - len(fixed)
     rows = []
     for ref, descriptor in fixed:
         tool = TOOLS[ref['sourceKind']]
         if tool=='engineering_neighborhood' and allowed_tools is not None and 'engineering_neighborhood' not in allowed_tools:
             tool='selected_object'
-        query = codes[0] if codes and tool == 'selected_manual' and descriptor.get('knowledgeReleaseId') and remaining and (allowed_tools is None or 'manual_fault_lookup' in allowed_tools) else None
-        if query: remaining -= 1
+        query = codes[0] if codes and tool == 'selected_manual' and descriptor.get('knowledgeReleaseId') and (allowed_tools is None or 'manual_fault_lookup' in allowed_tools) else None
         rows.append(dict(tool=tool, faultCode=query, operations=2 if query else 1))
     return rows
 

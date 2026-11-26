@@ -41,9 +41,6 @@ def alarm_object_recommendations(reader, dataset, *, read=None):
             lookup = lambda: reader._rds(tag)
             item = (read(lookup) if read else lookup())['item']
         except PreviewError as error:
-            if error.code == 'ASSISTANT_READ_LIMIT':
-                gaps.append(error.code)
-                break
             if error.status in (401, 403, 504) or error.status == 409 and error.code != 'DIAGNOSTIC_OBJECT_UNRESOLVED':
                 raise
             gaps.append(error.code)
@@ -136,8 +133,6 @@ def canvas_object_recommendations(reader, fixed, *, read=None):
                     'ACCESS_CHANGED', 'SESSION_CHANGED', 'ASSISTANT_TIMEOUT'):
                 raise
             gaps.append(error.code)
-            if error.code == 'ASSISTANT_READ_LIMIT':
-                break
             continue
         gaps.extend(missing)
         for item in candidates:
@@ -145,6 +140,4 @@ def canvas_object_recommendations(reader, fixed, *, read=None):
             previous = rows.setdefault(uid, {**item, 'relatedSourceRefs': []})
             if identity not in previous['relatedSourceRefs']:
                 previous['relatedSourceRefs'].append(identity)
-        if 'ASSISTANT_READ_LIMIT' in missing:
-            break
     return list(rows.values()), list(dict.fromkeys(gaps))

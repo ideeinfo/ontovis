@@ -42,7 +42,7 @@ class AssistantTests(unittest.TestCase):
         with self.library.connect() as db:self.assertEqual(db.execute('select count(*) from assistant_policy_heads').fetchone()[0],0)
 
     def test_policy_rejects_unapproved_service_tool_budget_and_extra_fields(self):
-        for change in [{'serviceRef':'custom-url'},{'allowedKinds':['script']},{'reads':9},{'parallel':3},{'seconds':121},{'seconds':True},{'enabled':1},{'extra':'x'}]:
+        for change in [{'serviceRef':'custom-url'},{'allowedKinds':['script']},{'parallel':3},{'seconds':121},{'seconds':True},{'enabled':1},{'extra':'x'}]:
             with self.subTest(change=change),self.assertRaises(PreviewError):validate_policy({**DEFAULT,**change})
 
     def test_publish_is_project_scoped_versioned_and_idempotent(self):
@@ -64,7 +64,7 @@ class AssistantTests(unittest.TestCase):
         with self.library.connect() as db:self.assertEqual(db.execute('select count(*) from assistant_policy_requests').fetchone()[0],0)
 
     def test_rollback_creates_a_new_immutable_revision(self):
-        first=self.publish();self.publish(reads=3)
+        first=self.publish();self.publish(seconds=30)
         result=self.store.publish('A',self.owner,{'requestId':str(uuid4()),'expectedRevision':2,'restoreRevision':1},lambda:None)
         self.assertEqual(result['revision'],3);self.assertEqual(result['policy'],first['policy'])
         with self.library.connect() as db:

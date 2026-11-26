@@ -17,13 +17,13 @@ def root(release):
 
 
 class KnowledgeTests(unittest.TestCase):
-    def setup_tools(self,pages,limit=8):
+    def setup_tools(self,pages):
         calls=[]
         def request(_method,path):
             params=parse_qs(urlsplit(path).query);calls.append(params)
             return copy.deepcopy(pages[int(params.get('cursor',['0'])[0])])
         reader=SimpleNamespace(reader=SimpleNamespace(prefix='/api/v1/projects/P',project_code='P',_request=request))
-        return ProjectTools(reader,lambda:None,limit,['document'],()),calls
+        return ProjectTools(reader,lambda:None,['document'],()),calls
     def page(self,nodes,cursor=None,token='a'*64):
         return dict(project_code='P',nodes=nodes,relations=[],next_cursor=cursor,scope_token=token)
     def run_query(self,tools,neighborhood=None):
@@ -47,12 +47,11 @@ class KnowledgeTests(unittest.TestCase):
         self.run_query(tools,neighborhood=[PreviewError(409,'KNOWLEDGE_RELEASE_UNAVAILABLE'),response()])
         self.assertEqual('B',tools.sources[-1]['descriptor']['knowledgeReleaseId'])
         self.assertTrue(any(t['state']=='unavailable' and t['releaseId']=='A' for t in tools.trace))
-    def test_budget_and_multiple_matches_are_explicit(self):
-        tools,_=self.setup_tools([self.page([root('A'),root('A'),root('B'),root('C')],1)],limit=4)
+    def test_all_distinct_publications_in_the_result_page_are_read(self):
+        tools,_=self.setup_tools([self.page([root('A'),root('A'),root('B'),root('C')],1)])
         self.run_query(tools)
-        self.assertEqual(4,tools.reads)
-        limited=[t for t in tools.trace if t['state']=='budget_limited']
-        self.assertEqual(2,limited[0]['count'])
+        self.assertEqual(10,tools.reads)
+        self.assertEqual(['A','B','C'],[row['descriptor']['knowledgeReleaseId'] for row in tools.sources if row.get('descriptor')])
         self.assertEqual(1,tools.trace[0]['nextCursor'])
     def test_changed_page_scope_stops_before_fixed_read(self):
         tools,_=self.setup_tools([self.page([root('A')],1),self.page([root('B')],token='b'*64)])

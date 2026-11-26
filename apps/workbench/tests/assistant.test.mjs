@@ -3,7 +3,7 @@ import test from 'node:test';
 import {WorkbenchApi,ApiError} from '../src/api.ts';
 import {AssistantApi,answerNote,assistantActivityLabel,assistantConversationMatches,assistantEvidenceKey,assistantMessage,assistantRunActivity,assistantSendBlocker,filterEngineeringGraph,groupEngineeringEdges,mergeConversationTurns,policyChanges,policyProblems,running,watchAssistantRun} from '../src/assistantApi.ts';
 
-const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],reads:8,parallel:2,seconds:120};
+const policy={enabled:false,serviceRef:'ontobase-qwen-ontovis-v1',allowedKinds:['alarm','trend'],parallel:2,seconds:120};
 const view={revision:1,accessRevision:'grant',policy,service:{serviceRevision:'r'}};
 const readyToSend={busy:false,active:false,pending:false,loadingHistory:false,focusedEarlier:false,taskMismatch:false,
  hasReceipt:true,view:{...view,policy:{...policy,enabled:true}},policyError:null,service:{enabled:true,canRun:true},selectedCount:6,question:'比较所选资料'};
@@ -16,14 +16,14 @@ test('send readiness reports the exact unmet condition and requires all guards t
   [{view:null},'ASSISTANT_POLICY_LOADING'],[{view:null,policyError:new ApiError(502,'SOURCE_UNAVAILABLE')},'ASSISTANT_POLICY_READ_FAILED'],
   [{view},'ASSISTANT_POLICY_DISABLED'],[{service:{enabled:false,canRun:false,reason:'SOURCE_UNAVAILABLE'}},'SOURCE_UNAVAILABLE'],
   [{service:{enabled:true,canRun:false}},'ASSISTANT_RUN_FORBIDDEN'],[{selectedCount:0},'ASSISTANT_SELECTION_REQUIRED'],
-  [{selectedCount:9},'ASSISTANT_SELECTION_LIMIT'],[{question:'  '},'ASSISTANT_QUESTION_REQUIRED']
+  [{question:'  '},'ASSISTANT_QUESTION_REQUIRED']
  ])assert.equal(assistantSendBlocker({...readyToSend,...change}),reason);
 });
 test('service refresh restores sending without changing the question or materials',()=>{
  const unavailable={...readyToSend,selectedCount:7,service:{enabled:false,canRun:false,reason:'SOURCE_UNAVAILABLE'}};
  assert.equal(assistantSendBlocker(unavailable),'SOURCE_UNAVAILABLE');
  assert.equal(assistantSendBlocker({...unavailable,service:readyToSend.service}),null);
- assert.equal(assistantSendBlocker({...readyToSend,selectedCount:8}),null);
+ assert.equal(assistantSendBlocker({...readyToSend,selectedCount:12}),null);
  assert.equal(assistantSendBlocker({...readyToSend,pending:true,active:true}),'ASSISTANT_START_UNCERTAIN');
 });
 test('source availability failures are not mislabeled as changed engineering evidence',()=>{
@@ -51,7 +51,7 @@ test('policy differences compare source sets and still expose a same-count subst
 });
 test('project policy only accepts the approved service, sources and upper bounds',()=>{
  assert.deepEqual(policyProblems(policy),[]);
- for(const change of [{serviceRef:'custom-endpoint'},{enabled:1},{allowedKinds:['script']},{reads:9},{parallel:3},{seconds:121},{seconds:NaN},{allowedKinds:['alarm','alarm']}])assert.ok(policyProblems({...policy,...change}).length);
+ for(const change of [{serviceRef:'custom-endpoint'},{enabled:1},{allowedKinds:['script']},{parallel:3},{seconds:121},{seconds:NaN},{allowedKinds:['alarm','alarm']}])assert.ok(policyProblems({...policy,...change}).length);
 });
 test('applying and restoring a policy pins scope, access and the displayed revision',async()=>{
  const calls=[];const api=new AssistantApi({request:async(path,body)=>{calls.push({path,body});return {};}});

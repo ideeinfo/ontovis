@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {llmTaskNames,modelTaskState,modelConfigurationApi,capabilitySettings,capabilityProblems} from '../src/llmSettings.ts';
 import {WorkbenchApi} from '../src/api.ts';
-const settings={enabled:true,connectionId:null,modelId:'',timeoutSeconds:50,concurrency:2,reasoningEffort:'default',goal:'按资料核对',focus:'',readLimit:8,readParallel:2,tools:['selected_sources']};
+const settings={enabled:true,connectionId:null,modelId:'',timeoutSeconds:50,concurrency:2,reasoningEffort:'default',goal:'按资料核对',focus:'',readParallel:2,tools:['selected_sources']};
 test('capabilities have no provider or execution decision and accept source connection IDs',async()=>{
  assert.deepEqual(Object.keys(llmTaskNames),['analysis','query','work_order']);assert.deepEqual(capabilityProblems(settings),[]);
  const calls=[],client=modelConfigurationApi({request:async(path,body)=>{calls.push({path,body});return {};}}),view={revision:4,accessRevision:'grant',connections:[{id:'shared',version:3}]};
@@ -12,7 +12,7 @@ test('capabilities have no provider or execution decision and accept source conn
  await client.catalogue(view,view.connections[0]);assert.equal(calls[1].body.connectionId,'shared');assert.equal(calls[1].body.expectedConnectionVersion,3);assert.equal('question' in calls[1].body,false);
 });
 test('invalid runtime, instructions and tools cannot be saved',()=>{
- for(const change of [{timeoutSeconds:51},{concurrency:3},{readLimit:9},{readParallel:0},{goal:' '},{tools:[]},{tools:['selected_sources','write']},{connectionId:'shared',modelId:''}])assert.ok(capabilityProblems({...settings,...change}).length);
+ for(const change of [{timeoutSeconds:51},{concurrency:3},{readParallel:0},{goal:' '},{tools:[]},{tools:['selected_sources','write']},{connectionId:'shared',modelId:''}])assert.ok(capabilityProblems({...settings,...change}).length);
  assert.deepEqual(capabilitySettings({...settings,id:'query',legacyNeedsReview:false}),settings);
 });
 test('source availability, capability switch and legacy review have distinct states',()=>{

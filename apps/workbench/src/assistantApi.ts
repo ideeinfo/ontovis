@@ -55,7 +55,7 @@ export function defaultAssistantEvidence(cards:CanvasCard[]){
  for(const card of cards){if(selected.length===6)break;if(card.source&&!selected.includes(card.source.id))selected.push(card.source.id);}
  return selected;
 }
-export interface AssistantPolicy {enabled:boolean;serviceRef:string;allowedKinds:string[];reads:number;parallel:number;seconds:number}
+export interface AssistantPolicy {enabled:boolean;serviceRef:string;allowedKinds:string[];parallel:number;seconds:number}
 export interface AssistantPolicyView {revision:number;policy:AssistantPolicy;canManage:boolean;accessRevision:string;savedAt:string|null;
  service:LlmService;services?:Record<LlmTask,LlmService>;recentPrompts?:string[];}
 export function assistantSendBlocker(state:{busy:boolean;active:boolean;pending:boolean;loadingHistory:boolean;focusedEarlier:boolean;taskMismatch:boolean;hasReceipt:boolean;view:AssistantPolicyView|null;policyError:unknown;service?:LlmService;selectedCount:number;question:string;projectTools?:boolean}){
@@ -71,12 +71,11 @@ export function assistantSendBlocker(state:{busy:boolean;active:boolean;pending:
  if(!state.service?.enabled)return state.service?.reason||'ASSISTANT_SERVICE_UNAVAILABLE';
  if(!state.service.canRun)return state.service.reason||'ASSISTANT_RUN_FORBIDDEN';
  if(!state.selectedCount&&!state.projectTools)return 'ASSISTANT_SELECTION_REQUIRED';
- if(state.selectedCount>Math.min(state.view.policy.reads,state.service?.settings?.readLimit??8))return 'ASSISTANT_SELECTION_LIMIT';
  if(!state.question.trim())return 'ASSISTANT_QUESTION_REQUIRED';
  return null;
 }
 export function policyChanges(current:AssistantPolicy,next:AssistantPolicy){
- return (['enabled','allowedKinds','reads','parallel','seconds'] as const).filter(key=>key==='allowedKinds'
+ return (['enabled','allowedKinds','parallel','seconds'] as const).filter(key=>key==='allowedKinds'
   ?JSON.stringify([...current.allowedKinds].sort())!==JSON.stringify([...next.allowedKinds].sort())
   :current[key]!==next[key]);
 }
@@ -119,7 +118,7 @@ export function policyProblems(value:AssistantPolicy){
  if(typeof value.enabled!=='boolean')errors.push('enabled');
  if(value.serviceRef!=='ontobase-qwen-ontovis-v1')errors.push('service');
  if(!value.allowedKinds.length||value.allowedKinds.some(v=>!Object.hasOwn(sourceLabels,v))||new Set(value.allowedKinds).size!==value.allowedKinds.length)errors.push('kinds');
- for(const [key,min,max] of [['reads',1,8],['parallel',1,2],['seconds',10,120]] as const)if(!Number.isInteger(value[key])||value[key]<min||value[key]>max)errors.push(key);
+ for(const [key,min,max] of [['parallel',1,2],['seconds',10,120]] as const)if(!Number.isInteger(value[key])||value[key]<min||value[key]>max)errors.push(key);
  return errors;
 }
 export function answerNote(run:AssistantRun){
@@ -151,7 +150,7 @@ export function assistantMessage(error:unknown,en=false){
   ASSISTANT_PROJECT_DISABLED:['OntoBase 尚未为本项目开放助手服务，请联系管理员。','Ask an administrator to enable the OntoBase assistant for this project.'],
   ASSISTANT_SERVICE_NOT_APPROVED:['OntoBase 模型连接配置不可用，请联系管理员检查。','Ask an administrator to check the OntoBase model connection.'],
   ASSISTANT_SELECTION_REQUIRED:['请至少选择一份资料。','Select at least one material.'],
-  ASSISTANT_SELECTION_LIMIT:['已选资料超过本项目上限，请减少选择。','Reduce the selection to the project limit.'],
+  ASSISTANT_RESULT_LIMIT:['候选列表已满，可缩小查询范围。','The result list is full. Narrow the search to continue.'],
   ASSISTANT_QUESTION_REQUIRED:['请输入问题后发送。','Enter a question to send.']};
  if(readiness[code])return readiness[code][en?1:0];
  if(code==='ASSISTANT_CANCELLED')return en?'This run stopped. No model answer was applied.':'本次运行已停止，未采用模型结果。';

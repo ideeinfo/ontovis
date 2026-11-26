@@ -3,9 +3,20 @@ import copy
 import json
 from uuid import uuid4
 from .assistant_store import require,identifier,digest,encoded
-from .assistant_tasks import PROTOCOL,snapshot,draft_history,ProjectTools,contextual_addition
+from .assistant_tasks import PROTOCOL,snapshot,draft_history,ProjectTools,contextual_addition,turn_requests
 from .assistant_drawings import drawing_context, checked_drawing_results
+from .assistant_alarm_materials import alarm_material_add, checked_additions
 from .assistant_transport import call_source
+
+
+def lookup_scope(body, board):
+    edit,_=turn_requests(body['question'])
+    drawing,_,compound=contextual_addition(edit)
+    related=alarm_material_add(edit)
+    if not drawing and not related:
+        return body,drawing,compound,related
+    expanded=drawing_context(body,board,kinds=('alarm','object','drawing','document') if related else ('alarm','object','drawing'))
+    return {**expanded,'evidenceRefIds':list(dict.fromkeys(body['evidenceRefIds']+expanded['evidenceRefIds']))},drawing,compound,related
 
 
 def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,prepare,project_reader,authorize,prefix):
@@ -19,7 +30,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
         require(type(body['expectedAnalysisRevision']) is int and 0<=body['expectedAnalysisRevision']<=1000)
         require(type(body['question']) is str and 0<len(body['question'].strip())<=1000 and '\0' not in body['question'])
         require(body['taskId'] in ('analysis','query','work_order'))
-        ids=body['evidenceRefIds'];require(type(ids) is list and len(ids)<=8 and len(set(ids))==len(ids))
+        ids=body['evidenceRefIds'];require(type(ids) is list and all(type(item) is str for item in ids) and len(set(ids))==len(ids))
         for item in ids:identifier(item)
         board,_=snapshot(body,sessions.connection_id,project)
         focused=body.get('focusCardIds',[])
@@ -41,7 +52,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
         selected=service(body['taskId']);require(selected.get('canRun'),selected.get('reason') or 'ASSISTANT_RUN_FORBIDDEN',403)
         require(body['expectedAccessRevision']==access['accessRevision'] and body['expectedPolicyRevision']==policy['revision']
             and body['expectedServiceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
-        settings=selected['settings'];policy={**policy,'policy':{**policy['policy'],'reads':min(policy['policy']['reads'],settings['readLimit']),
+        settings=selected['settings'];policy={**policy,'policy':{**policy['policy'],
             'parallel':min(policy['policy']['parallel'],settings['readParallel'])}}
         def invoke(data,cancelled,deadline):
             authorize(True);latest=service(body['taskId'])
@@ -52,7 +63,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
             require(value.get('serviceRevision')==selected['sourceServiceRevision'] and value.get('purpose')=='ontovis_analysis','ASSISTANT_CONFIGURATION_CHANGED',409)
             authorize(True);require(service(body['taskId'])['serviceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
             return value
-        lookup_body=drawing_context(body,board) if contextual_addition(body['question'])[0] else body
+        lookup_body,*_=lookup_scope(body,board)
         return runtime.start(dict(project=project,owner=actor,sid=sid,private=(project,access.get('projectName'))),body,policy,selected,
                              lambda guard:prepare(guard,lookup_body),authorize,invoke)
 
@@ -117,7 +128,7 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
         _,reader=prepare(authorize,original)
         value=reader.orders.assistant_search(dict(q=trace['filters']['query'],faultCode=trace['filters']['faultCode'],
             orderId=trace['filters'].get('orderId',''),cursor=trace['nextCursor'],limit=6,snapshotRevision=trace['snapshotRevision']))
-        require(len(task['results'])+len(value['items'])<=50,'ASSISTANT_READ_LIMIT',409)
+        require(len(task['results'])+len(value['items'])<=50,'ASSISTANT_RESULT_LIMIT',409)
         for item in value['items']:
             task['results'].append(dict(key='R'+str(len(task['results'])+1),kind='work_order',title=item['title'],identifier=item['orderId'],
                 version=item['orderRevision'],state=item['state'],faultCode=item['faultCode'],simulated=item['sourceKind']=='simulated',
@@ -162,13 +173,15 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
     if keys:
         require(set(keys)<=set(r['key'] for r in choices),'ASSISTANT_TARGET_AMBIGUOUS',409)
         plan=dict(intent='edit',queries=[],actions=[dict(kind='add_results',targets=keys,text='',x=None,y=None)])
-    drawing_scope,_,compound_add=contextual_addition(original['question'])
+    lookup_body,drawing_scope,compound_add,related=lookup_scope(original,board)
     if not drawing_scope:
         require(plan['intent']=='edit' and plan['actions'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
-    fixed,reader=prepare(authorize,drawing_context(original,board) if drawing_scope else original)
+    fixed,reader=prepare(authorize,lookup_body)
+    allowed=set(runtime.store.policy(project)['policy']['allowedKinds'])
     if drawing_scope:
-        allowed=set(runtime.store.policy(project)['policy']['allowedKinds'])
         choices=checked_drawing_results(reader,fixed,board,original,drawing_scope,allowed,plan,choices,compound=compound_add)
+    if related:
+        checked_additions(reader,fixed,board,original,allowed,set(selected['settings']['tools']),plan,choices)
     operations.validate_draft_plan(board,plan,choices,fixed,draft_history(original,sessions.connection_id,project),
                                    original['expectedAnalysisRevision'],record['id'],sessions.connection_id,project)
     # A retained preparation is not a grant to use a now-stale source version.

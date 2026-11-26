@@ -30,8 +30,7 @@ def query(tools,query):
             if identity not in seen:seen.add(identity);roots.append(node)
         return value
     value=page(params)
-    # Keep enough budget to read two fixed publications after the second directory page.
-    if len(roots)<2 and value.get('next_cursor') is not None and value.get('scope_token') and tools.limit-tools.reads>=7:
+    if len(roots)<2 and value.get('next_cursor') is not None and value.get('scope_token'):
         value=page({**params,'cursor':value['next_cursor'],'scope_token':value['scope_token']})
     next_cursor=value.get('next_cursor')
     directory=dict(scope='项目已发布知识目录；未读原文的匹配不能支持现场结论',nodes=[],truncated=next_cursor is not None)
@@ -43,9 +42,7 @@ def query(tools,query):
     tools.source('document',json.dumps(directory,ensure_ascii=False,separators=(',',':')),retrievalRevision=digest(pages))
     tools.trace.append(dict(tool='knowledge',state='complete',count=sum(len(p['nodes']) for p in pages),
         nextCursor=next_cursor,scopeToken=value.get('scope_token'),filters=query,pagesRead=len(pages)))
-    read=0
-    for node in roots[:2]:
-        if tools.limit-tools.reads<3:break
+    for node in roots:
         source=node['source'];fixed=dict(documentId=source['document']['id'],contentVersionId=source['version']['id'])
         try:
             metadata=tools.read(lambda:FixedDocuments(reader.reader).metadata(fixed))
@@ -72,7 +69,3 @@ def query(tools,query):
         except PreviewError as error:
             if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
             tools.trace.append(dict(tool='fixed_manual_neighborhood',state='unavailable',releaseId=source['release_id'],reason=error.code))
-        read+=1
-    if len(roots)>read:
-        tools.trace.append(dict(tool='fixed_manual_neighborhood',state='budget_limited',count=len(roots)-read,
-            reason='ASSISTANT_READ_LIMIT',scope='其余发布版未读原文；不能把未读取当成没有证据'))

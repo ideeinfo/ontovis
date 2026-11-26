@@ -35,7 +35,7 @@ test('a cockpit handoff stays on its target canvas and does not replay after con
 });
 test('project querying accepts an unsaved empty canvas but retains permission and uncertainty guards',()=>{
  const state={projectTools:true,busy:false,active:false,pending:false,loadingHistory:false,focusedEarlier:false,taskMismatch:false,hasReceipt:false,
-  view:{policy:{enabled:true,reads:8}},policyError:null,service:{enabled:true,canRun:true},selectedCount:0,question:'Find orders'};
+  view:{policy:{enabled:true}},policyError:null,service:{enabled:true,canRun:true},selectedCount:0,question:'Find orders'};
  assert.equal(assistantSendBlocker(state),null);assert.equal(assistantSendBlocker({...state,pending:true}),'ASSISTANT_START_UNCERTAIN');
  assert.equal(assistantSendBlocker({...state,service:{enabled:true,canRun:false}}),'ASSISTANT_RUN_FORBIDDEN');
 });

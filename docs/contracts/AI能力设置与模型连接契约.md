@@ -4,20 +4,20 @@
 
 ## 页面与能力
 
-AI 策略默认进入“AI 能力”，左侧为三项实际能力，右侧为共享模型连接和三个设置分区。原项目启用、允许资料类型、读取/时间预算与版本历史保留在“项目限制”。页面只保留工作台主标题，能力导航与表单共用一个框架；三个分区及项目限制统一控件、间距、分隔线和底部操作栏。指令在宽屏并列、窄屏纵排；项目限制将资料与预算分栏，固定规则按需展开，不用固定高度填充表单。沿用 MagicPath 原工作台组件463127544821075968，修订468331068504834048；正文13px、说明11px，深浅主题共用语义tokens。
+AI 策略默认进入「AI 能力」，左侧为三项实际能力，右侧为共享模型连接和三个设置分区。「项目限制」设置项目启用、允许资料类型、读取并行数和运行时间。沿用 MagicPath 原工作台组件 463127544821075968 的修订 468331068504834048。正文 13px、说明 11px，深浅主题共用语义 tokens。
 
 - 模型连接：默认沿用 OntoBase 当前默认连接和模型；也可选择其已保存连接，再从账号目录选择或填写模型标识。连接与凭据在源端管理，不在 Vis 新增连接、录入密钥或填写地址。列表来自源端，不依赖固定供应商卡片。
 - 运行参数：模型调用时限10—50秒、当前能力并发1—2、源端支持的推理强度。仍受总运行120秒、全局2运行和同人同项目单运行限制，不自动重试生成。
 - 任务指令：任务目标、补充要求、恢复默认和完整指令预览。预览不调用模型；固定协议从源端返回，配置目标不能放开业务写入、现场控制或结构/引用校验。
-- 读取与工具：读取1—8次、并行1—2，与项目上限取更严值。已选资料摘要必选；工程对象邻域和固定手册故障码检索可分别关闭。关闭图谱邻域时对象仅取自身摘要；关闭定向检索时不按问题扩查故障码，固定资料摘要仍保留。
+- 「读取与工具」的并行数为 1 至 2，采用项目与能力设置中的较小值。助手读取已选资料的摘要。工程对象邻域和固定手册故障码检索可分别关闭。
 
-自动选择最多6份；手动上限为项目与当前能力读取上限的较小值。图谱候选/身份缺口不单独阻断发送。后台助手可选择三项能力；驾驶舱悬浮助手固定为资料问答、只查询。
+自动选择最多 6 份，可手动勾选画布上所有允许使用的资料。图谱候选和身份缺口可随回答展示。后台助手可选择三项能力，驾驶舱悬浮助手固定为资料问答。
 
 ## API 与存储
 
 ONTOVis 继续使用同源POST `assistant/model-config`、`model-config-save`、`model-catalogue`。回读为schemaVersion 2：tasks、defaults、connections、defaultService、protocol、services、revision与canManage。连接仅含ID、名称、供应商、版本和凭据是否配置；项目只读成员可看能力及生效服务，但不读取全局连接目录。
 
-保存只接受 `change={kind:'capability',taskId,settings,expectedConnectionVersion}`，连同requestId、expectedRevision、expectedAccessRevision、原会话和项目范围。settings含enabled、connectionId、modelId、timeoutSeconds、concurrency、reasoningEffort、goal、focus、readLimit、readParallel、tools。后端验证参数、项目管理员、所见配置及连接版本，授权前后复核；事务失败回滚，幂等重放不再次保存。停用能力可以在模型服务离线时保存。
+保存接受 `change={kind:'capability',taskId,settings,expectedConnectionVersion}`，连同 requestId、expectedRevision、expectedAccessRevision、原会话和项目范围。settings 含 enabled、connectionId、modelId、timeoutSeconds、concurrency、reasoningEffort、goal、focus、readParallel、tools。旧配置的 readLimit 在回读时忽略。后端验证参数、项目管理员、所见配置及连接版本，授权前后复核。事务失败回滚，幂等重放返回已有回执。停用能力可以在模型服务离线时保存。
 
 通过 `assistant_model_configs.config_json` 的 `capabilities` 字段保存当前能力设置。保存请求记录摘要，实际变更的审计记录操作人、时间和能力名称。重试返回当前设置，已有回执可继续重放。相同设置的重复提交沿用当前生效标记，页面只显示保存状态。旧自有模型使用源端连接前需重新选择并保存。未配置故障分析能力时，原默认服务继续沿用源端生效标记。配对备份保留既有配置、加密密钥和审计记录。
 

@@ -9,7 +9,7 @@ from .authority import PreviewError
 
 KINDS = ('object','alarm','trend','drawing','photo','model','document','work_order')
 SERVICE = 'ontobase-qwen-ontovis-v1'
-DEFAULT = dict(enabled=False, serviceRef=SERVICE, allowedKinds=list(KINDS), reads=8, parallel=2, seconds=120)
+DEFAULT = dict(enabled=False, serviceRef=SERVICE, allowedKinds=list(KINDS), parallel=2, seconds=120)
 ACTIVE = ('reading','model','validating','cancel_requested')
 
 def require(value, code='INVALID_REQUEST', status=422):
@@ -25,14 +25,14 @@ def digest(value): return hashlib.sha256(encoded(value).encode()).hexdigest()
 def now(): return datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
 
 def validate_policy(value):
-    require(type(value) is dict and set(value) == set(DEFAULT))
+    require(type(value) is dict and set(value)-{'reads'} == set(DEFAULT))
     require(type(value['enabled']) is bool and value['serviceRef'] == SERVICE)
     require(type(value['allowedKinds']) is list and 1 <= len(value['allowedKinds']) <= 8
             and all(type(v) is str and v in KINDS for v in value['allowedKinds'])
             and len(set(value['allowedKinds'])) == len(value['allowedKinds']))
-    for key, high in [('reads',8),('parallel',2),('seconds',120)]:
+    for key, high in [('parallel',2),('seconds',120)]:
         require(type(value[key]) is int and (10 if key == 'seconds' else 1) <= value[key] <= high)
-    return {**value, 'allowedKinds': sorted(value['allowedKinds'])}
+    return {**{key:value[key] for key in DEFAULT}, 'allowedKinds': sorted(value['allowedKinds'])}
 
 
 class AssistantStore:
@@ -89,12 +89,12 @@ class AssistantStore:
             with self.library.connect() as current: return self.policy(project,current)
         row = db.execute('''select r.* from assistant_policy_heads h join assistant_policy_revisions r
             using(connection_id,project_code,revision) where h.connection_id=? and h.project_code=?''',(self.connection_id,project)).fetchone()
-        return {'revision':row['revision'],'policy':json.loads(row['policy']),'savedAt':row['created_at']} if row else {'revision':0,'policy':dict(DEFAULT),'savedAt':None}
+        return {'revision':row['revision'],'policy':validate_policy(json.loads(row['policy'])),'savedAt':row['created_at']} if row else {'revision':0,'policy':dict(DEFAULT),'savedAt':None}
 
     def history(self, project):
         with self.library.connect() as db:
             return [{'revision':r['revision'],'savedAt':r['created_at'],'operation':r['operation'],'restoredFrom':r['restored_from'],
-                     'policy':json.loads(r['policy'])} for r in db.execute('''select * from assistant_policy_revisions
+                     'policy':validate_policy(json.loads(r['policy']))} for r in db.execute('''select * from assistant_policy_revisions
                 where connection_id=? and project_code=? order by revision desc limit 50''',(self.connection_id,project))]
 
     def publish(self, project, actor, body, authorize):
@@ -108,7 +108,9 @@ class AssistantStore:
             prior=db.execute('''select fingerprint,result from assistant_policy_requests where connection_id=? and project_code=? and actor=? and request_id=?''',
                 (self.connection_id,project,actor,body['requestId'])).fetchone()
             if prior:
-                require(prior['fingerprint']==fingerprint,'ASSISTANT_REQUEST_CONFLICT',409);authorize();return json.loads(prior['result'])
+                require(prior['fingerprint']==fingerprint,'ASSISTANT_REQUEST_CONFLICT',409);authorize()
+                saved=json.loads(prior['result'])
+                return {**saved,'policy':validate_policy(saved['policy'])}
             current=self.policy(project,db);require(current['revision']==body['expectedRevision'],'ASSISTANT_POLICY_CHANGED',409)
             if rollback:
                 row=db.execute('''select policy from assistant_policy_revisions where connection_id=? and project_code=? and revision=?''',

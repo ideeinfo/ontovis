@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from .authority import PreviewError
 from .assistant_store import AssistantStore, ACTIVE, identifier, require, validate_policy
-from .assistant_summaries import summarize, redact, validate_answer
+from .assistant_summaries import summarize, redact, answer_batches
 from .assistant_graph import material_summary
 from .assistant_retrieval import plan as retrieval_plan, retrieve
 from .assistant_conversations import build_history
@@ -76,18 +76,16 @@ class AssistantRuntime:
             require(not job.cancelled.is_set(),job.stop_code,409)
             require(time.monotonic()<deadline,'ASSISTANT_TIMEOUT',504)
             current=self.store.policy(job.project)['policy']
-            require(current['enabled'] and current['reads']>=planned_operations
+            require(current['enabled']
                 and current['parallel']>=policy['policy']['parallel'] and current['seconds']>=policy['policy']['seconds']
                 and set(policy['policy']['allowedKinds'])<=set(current['allowedKinds']), 'ASSISTANT_POLICY_CHANGED',409)
             require(self.store.run(job.project,job.owner,run_id)['state']!='cancel_requested','ASSISTANT_CANCELLED',409)
             authorize(force)
-        planned_operations = len(body['evidenceRefIds'])
         try:
             guard(True)
             fixed,reader=prepare(guard)
             require(all(ref['sourceKind'] in policy['policy']['allowedKinds'] for ref,_ in fixed),'ASSISTANT_TOOL_NOT_ALLOWED',403)
-            plans = retrieval_plan(fixed, body['question'], policy['policy']['reads'],service.get('settings',{}).get('tools'))
-            planned_operations = sum(item['operations'] for item in plans)
+            plans = retrieval_plan(fixed, body['question'],service.get('settings',{}).get('tools'))
             def one(index,item):
                 ref,descriptor=item;guard()
                 try:
@@ -107,25 +105,38 @@ class AssistantRuntime:
                         guard();self.store.update(run_id,'reading',progress=progress,sources=sorted(summaries,key=lambda r:r['key']))
                 finally:
                     for future in futures:future.cancel()
-            guard(True);summaries.sort(key=lambda r:r['key'])
-            available=[{k:r[k] for k in ('key','kind','summary')} for r in summaries if r['availability']=='available']
+            guard(True);summaries.sort(key=lambda r:int(r['key'][1:]))
+            available=[r for r in summaries if r['availability']=='available']
             require(bool(available),'ASSISTANT_NO_EVIDENCE',409)
             records=[]
             if record.get('conversation_id'):
                 _,records=self.store.conversation(job.project,job.owner,record['conversation_id'],record['turn_no'])
-            history,skipped=build_history(records,summaries,service['serviceRevision'],job.private)
             self.store.update(run_id,'model',sources=summaries)
-            result=source_call({'operationId':run_id,'expectedServiceRevision':service['serviceRevision'],
-                'expectedAccessRevision':service['accessRevision'],'question':redact(body['question'],job.private),
-                'evidence':available,'history':history},job.cancelled,deadline)
+            usage={};calls=0;included=0;skipped=[]
+            def respond(evidence,aliases):
+                nonlocal calls,included,skipped
+                from uuid import uuid4
+                guard(True)
+                batch=[{**r,'key':aliases[r['key']]} for r in available if r['key'] in aliases]
+                history,excluded=build_history(records,batch,service['serviceRevision'],job.private)
+                if not calls or len(history)>included:
+                    included=len(history);skipped=excluded
+                value=source_call({'operationId':str(uuid4()) if calls else run_id,'expectedServiceRevision':service['serviceRevision'],
+                    'expectedAccessRevision':service['accessRevision'],'question':redact(body['question'],job.private),
+                    'evidence':evidence,'history':history},job.cancelled,deadline)
+                guard(True)
+                require(value.get('serviceRevision')==service['serviceRevision'] and value.get('purpose')=='ontovis_analysis'
+                        and value.get('modelCalls')==1 and value.get('engineeringConfirmation') is False,'ASSISTANT_OUTPUT_INVALID',502)
+                calls+=1
+                for key,count in value.get('usage',{}).items():
+                    if key in ('prompt_tokens','completion_tokens','total_tokens') and type(count) is int and 0<=count<=50000:
+                        usage[key]=usage.get(key,0)+count
+                return value.get('answer')
+            answer=answer_batches(available,respond)
             guard(True);self.store.update(run_id,'validating')
-            require(result.get('serviceRevision')==service['serviceRevision'] and result.get('purpose')=='ontovis_analysis'
-                    and result.get('modelCalls')==1 and result.get('engineeringConfirmation') is False,'ASSISTANT_OUTPUT_INVALID',502)
-            answer=validate_answer(result.get('answer'),{r['key'] for r in available})
-            result={'answer':answer,'usage':{k:v for k,v in result.get('usage',{}).items() if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and 0<=v<=50000},
-                'modelCalls':1,'engineeringConfirmation':False,'partial':len(available)!=len(summaries),
+            result={'answer':answer,'usage':usage,'modelCalls':calls,'engineeringConfirmation':False,'partial':len(available)!=len(summaries),
                 'model':{k:service.get(k) for k in ('taskId','execution','provider','modelId')},
-                'context':dict(includedTurns=len(history),skippedTurns=skipped)}
+                'context':dict(includedTurns=included,skippedTurns=skipped)}
             guard(True)
             self.store.update(run_id,'partial' if result['partial'] else 'complete',result=result)
         except (PreviewError,FutureTimeout) as error:
@@ -252,7 +263,7 @@ def request(sessions,sid,path,payload):
             body['expectedServiceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
         result=runtime.store.publish(project,actor,body,lambda:authorize(True))
         current=result['policy']
-        if not current['enabled'] or not set(previous['allowedKinds'])<=set(current['allowedKinds']) or any(current[k]<previous[k] for k in ('reads','parallel','seconds')):
+        if not current['enabled'] or not set(previous['allowedKinds'])<=set(current['allowedKinds']) or any(current[k]<previous[k] for k in ('parallel','seconds')):
             with runtime.lock:
                 for job in runtime.jobs.values():
                     if job.project==project:job.stop_code='ASSISTANT_POLICY_CHANGED';job.cancelled.set()
@@ -315,9 +326,9 @@ def request(sessions,sid,path,payload):
         allowed=(start,start|{'conversationId','expectedConversationVersion','parentRunId'})
         require(set(body) in ((common, common|{'question'},common|{'taskId'},common|{'question','taskId'}) if action == 'summary' else (common,) if action == 'graph' else (*allowed,*(fields|{'taskId'} for fields in allowed))))
         identifier(body['analysisSessionId']);require(type(body['expectedAnalysisRevision']) is int and 1<=body['expectedAnalysisRevision']<=1000)
-        ids=body['evidenceRefIds'];require(type(ids) is list and 1<=len(ids)<=8 and all(type(e) is str for e in ids) and len(set(ids))==len(ids))
+        ids=body['evidenceRefIds'];require(type(ids) is list and ids and all(type(e) is str for e in ids) and len(set(ids))==len(ids))
         for e in ids:identifier(e)
-        policy=runtime.store.policy(project);require(len(ids)<=policy['policy']['reads'],'ASSISTANT_READ_LIMIT',422)
+        policy=runtime.store.policy(project)
         if action=='graph':
             require(len(ids)==1)
             fixed,reader=prepare(authorize);ref,descriptor=fixed[0]
@@ -329,9 +340,9 @@ def request(sessions,sid,path,payload):
             require(type(body.get('question','')) is str and len(body.get('question',''))<=1000)
             fixed,reader=prepare(authorize)
             task_id=body.get('taskId','analysis');require(type(task_id) is str and task_id in runtime.models.public(runtime.models.read(project))['defaults'],'LLM_TASK_INVALID');settings=runtime.models.settings(runtime.models.read(project)['config'],task_id)
-            policy={'policy':{**policy['policy'],'reads':min(policy['policy']['reads'],settings['readLimit']),
+            policy={'policy':{**policy['policy'],
                 'parallel':min(policy['policy']['parallel'],settings['readParallel'])},'revision':policy['revision']}
-            plans=retrieval_plan(fixed,body.get('question',''),policy['policy']['reads'],settings['tools'])
+            plans=retrieval_plan(fixed,body.get('question',''),settings['tools'])
             def preview(item):
                 i,(ref,descriptor)=item
                 require(ref['sourceKind'] in policy['policy']['allowedKinds'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
@@ -344,9 +355,8 @@ def request(sessions,sid,path,payload):
         require(policy['policy']['enabled'],'ASSISTANT_POLICY_DISABLED',409)
         task_id=body.get('taskId','analysis');selected=service(task_id)
         settings=selected['settings']
-        policy={**policy,'policy':{**policy['policy'],'reads':min(policy['policy']['reads'],settings['readLimit']),
+        policy={**policy,'policy':{**policy['policy'],
             'parallel':min(policy['policy']['parallel'],settings['readParallel'])}}
-        require(len(ids)<=policy['policy']['reads'],'ASSISTANT_READ_LIMIT',422)
         require(selected.get('canRun') is True,selected.get('reason') or 'ASSISTANT_RUN_FORBIDDEN',409)
         require(type(body['expectedPolicyRevision']) is int and body['expectedPolicyRevision']==policy['revision'] and body['expectedAccessRevision']==access['accessRevision']
             and body['expectedServiceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
@@ -372,7 +382,7 @@ def request(sessions,sid,path,payload):
         return reply({'items':runtime.store.conversations(project,actor,body['analysisSessionId'],
             body['expectedAnalysisRevision'],body.get('mode'))})
 
-    validation_cache={};read_count=[0]
+    validation_cache={}
     def visible(record):
         nonlocal body
         if json.loads(record['input_json']).get('protocol')=='ontovis-engineering-tasks-v1':
@@ -397,17 +407,15 @@ def request(sessions,sid,path,payload):
         original=body;body=json.loads(record['input_json'])
         try:
             fixed,reader=prepare(authorize)
-            require(len(fixed)<=current['policy']['reads'] and all(ref['sourceKind'] in current['policy']['allowedKinds'] for ref,_ in fixed),
+            require(all(ref['sourceKind'] in current['policy']['allowedKinds'] for ref,_ in fixed),
                 'ASSISTANT_POLICY_CHANGED',409)
             from .assistant_store import digest
             previous={v['evidenceRefId']:v for v in json.loads(record['sources_json'])}
-            require(sum(previous.get(ref['evidenceRefId'],{}).get('retrieval',{}).get('plan',{}).get('operations',1) for ref,_ in fixed)<=current['policy']['reads'],'ASSISTANT_POLICY_CHANGED',409)
             for ref,descriptor in fixed:
                 old=previous.get(ref['evidenceRefId'],{})
                 selected_plan=old.get('retrieval',{}).get('plan')
                 key=digest([ref['sourceKind'],descriptor,selected_plan])
                 if key not in validation_cache:
-                    require(read_count[0]<8,'ASSISTANT_HISTORY_SCOPE_LIMIT',409);read_count[0]+=1
                     validation_cache[key]=(retrieve(reader,ref['sourceKind'],descriptor,selected_plan,(project,access.get('projectName'))) if selected_plan else material_summary(reader,ref['sourceKind'],descriptor,(project,access.get('projectName'))))
                 old=previous.get(ref['evidenceRefId'],{});value=validation_cache[key]
                 if old.get('summaryHash'):
@@ -472,7 +480,7 @@ def request(sessions,sid,path,payload):
     if action=='conversation':
         require(set(body) in ({'conversationId'},{'conversationId','beforeTurn'}))
         head,records=runtime.store.conversation(project,actor,body['conversationId'],body.get('beforeTurn'))
-        # Validate latest turns first; shared sources are read once within the eight-material budget.
+        # Validate latest turns first and reuse shared source reads.
         items=list(reversed([visible(r) for r in reversed(records)]))
         authorize(True)
         return reply({**head,'items':items,'hasEarlier':bool(records and records[0]['turn_no']>1)})

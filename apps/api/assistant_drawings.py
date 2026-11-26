@@ -26,10 +26,10 @@ def drawing_add_scope(question):
     return None
 
 
-def drawing_context(body, draft):
+def drawing_context(body, draft, *, kinds=('object','alarm','drawing')):
     # Restrict expansion to the owned draft's current object, alarm and drawing cards.
     ids = dict.fromkeys(card['source']['id'] for card in draft['cards']
-        if card.get('source') and not card.get('historical') and card['kind'] in ('object', 'alarm', 'drawing'))
+        if card.get('source') and not card.get('historical') and card['kind'] in kinds)
     return {**body, 'evidenceRefIds': list(ids)}
 
 
@@ -116,8 +116,6 @@ def drawing_answer(tools, fixed, draft, body, scope, plan):
             page = tools.read(lambda: _recorded_drawings(tools.reader, descriptor))
         except PreviewError as error:
             _record_gap(gaps, error)
-            if error.code == 'ASSISTANT_READ_LIMIT':
-                break
             continue
         truncated |= page['nextCursor'] is not None
         for row in page['items']:
@@ -136,7 +134,7 @@ def drawing_answer(tools, fixed, draft, body, scope, plan):
 
     count = len(pending)
     truncated |= count > len(tools.results)
-    state = 'budget_limited' if 'ASSISTANT_READ_LIMIT' in gaps else 'unavailable' if gaps else 'complete'
+    state = 'unavailable' if gaps else 'complete'
     trace = dict(tool='related_drawings', state=state, scope='画布工程对象的登记图纸', count=len(tools.results), truncated=truncated)
     if gaps:
         trace['reason'] = gaps[0]
