@@ -93,7 +93,7 @@ export function Workbench() {
     if(page==='scene'&&sceneWorkspace.current)sceneWorkspace.current.requestLeave(change);else leaveOrders(change);
   }
   function chooseCockpitProject(value:ProjectSummary){showCockpit(value,null);}
-  const [navExpanded, setNavExpanded] = useState(false);
+  const [navExpanded, setNavExpanded] = useState(true);
   const [layout, setLayout] = useState('balanced');
   const [modelVersionId,setModelVersionId] = useState<string|null>(null);
   const [modelReload,setModelReload] = useState(0);

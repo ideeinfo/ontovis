@@ -26,6 +26,16 @@ async (page, facts, phase) => {
     await button('登录',login).click();
     await page.getByRole('button',{name:/^Q-13 合成项目 Demo-PDS/}).click();
     await button('进入项目',page).click();
+    const navigation = page.getByRole('navigation',{name:'项目管理'});
+    const collapse = button('收起导航',navigation), expand = button('展开导航',navigation);
+    const analysisItem = button('分析画布',navigation);
+    check(await collapse.getAttribute('aria-expanded')==='true'&&await analysisItem.locator('span').isVisible(),
+      'The workbench did not open with navigation labels visible');
+    await collapse.click();
+    check(await expand.getAttribute('aria-expanded')==='false'&&!(await analysisItem.locator('span').isVisible()),
+      'The navigation did not fold when requested');
+    await expand.click();
+    check(await collapse.getAttribute('aria-expanded')==='true','The navigation did not reopen');
     await button('分析画布',page).click();
     await workspace.locator('.ad-list-items .ov-list-main').filter({hasText:facts.title}).click();
     check(await title.inputValue()===facts.title,'The isolated canvas was not opened');
@@ -33,7 +43,7 @@ async (page, facts, phase) => {
     await button('放大画布').click();
     check(await button('保存当前视图').isEnabled(),'A viewport-only edit could not be saved');
     await title.fill(busyTitle);
-    return {opened:true};
+    return {opened:true,navigationDefaultExpanded:true};
   }
   if (phase==='busy') {
     const response = await send('保存');
