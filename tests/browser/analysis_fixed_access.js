@@ -144,6 +144,21 @@ async (page, facts, phase) => {
       detail.snapshot.cards.find(row=>row.id===original.id).frameId===targetGroup.id,'Reopening lost the saved group');
 
     const materials=canvas.locator('.ac-material-panel');
+    const recommendationStyles={};
+    const candidateStyle=async candidate=>{
+      const styles={};
+      for(const theme of ['light','dark']){
+        await page.emulateMedia({colorScheme:theme});
+        await page.locator(`html[data-theme="${theme}"]`).waitFor({state:'attached'});
+        styles[theme]=await candidate.evaluate(row=>{
+          const header=row.querySelector('header');
+          const style=getComputedStyle(header);
+          return {background:style.backgroundColor,padding:style.padding,radius:getComputedStyle(row).borderRadius};
+        });
+      }
+      await page.emulateMedia({colorScheme:null});
+      return styles;
+    };
     const alarmMenu=button('更多操作： '+facts.cards.alarm.title,card('alarm'));
     await alarmMenu.click();
     await page.getByRole('menuitem',{name:'推荐相关资料',exact:true}).click();
@@ -155,6 +170,7 @@ async (page, facts, phase) => {
       'A shared object was listed more than once');
     check(await alarmGroup.getByRole('checkbox',{name:'选择资料 '+facts.cards.object.title,exact:true}).isDisabled(),
       'An existing object could still be selected from the recommendation');
+    recommendationStyles.object=await candidateStyle(alarmGroup.locator('.ac-material-result[data-card-kind="object"]').first());
     await alarmGroup.getByText(/也关联/).filter({hasText:facts.cards.drawing.title}).waitFor();
     await button('关闭资料库',materials).click();
     await button('展开查看',target).click();
@@ -167,6 +183,7 @@ async (page, facts, phase) => {
     await parentPhoto.getByText('所属设备照片',{exact:true}).waitFor();
     check(await parentPhoto.getByText(/所属设备.*共享照片.*整图/).count()===1,
       'The selected drawing object did not scope photos to its registered parent equipment');
+    recommendationStyles.photo=await candidateStyle(parentPhoto);
     await button('关闭资料库',materials).click();
     await button('加入资料',canvas).click();
     const firstCategory=materials.locator('.ac-material-category').first();
@@ -182,6 +199,7 @@ async (page, facts, phase) => {
     await drawingCategory().click();
     await drawingResult.first().waitFor();
     check(await drawingResult.count()===1,'Two registered positions returned duplicate drawing rows');
+    recommendationStyles.drawing=await candidateStyle(drawingResult);
     await button('加入画布：'+facts.memberDrawingTitle,materials).click();
     const descendantEdge=canvas.getByRole('button',{name:
       '下级对象图纸：'+facts.cards.object.title+' → '+facts.memberDrawingTitle,exact:true});
@@ -189,6 +207,15 @@ async (page, facts, phase) => {
     check(await descendantEdge.getAttribute('data-origin')==='source','The new drawing did not use the registered object relationship');
     await button('撤销修改',canvas).click();
     await descendantEdge.waitFor({state:'detached'});
+    await materials.locator('.ac-material-back').click();
+    await materials.getByRole('button',{name:/^相关资料/}).click();
+    const manual=materials.locator('.ac-material-result[data-card-kind="document"]').first();
+    await manual.getByText('文档',{exact:true}).waitFor();
+    recommendationStyles.document=await candidateStyle(manual);
+    for(const theme of ['light','dark']){
+      check(new Set(Object.values(recommendationStyles).map(style=>style[theme].background)).size===4,
+        'The recommendation list did not use distinct colors for the four material types');
+    }
     await materials.locator('.ac-material-back').click();
     await materials.getByRole('button',{name:/^工程对象/}).click();
     for(const title of facts.additionalObjectTitles)await materials.getByRole('checkbox',{name:'选择资料 '+title,exact:true}).check();
@@ -557,12 +584,14 @@ async (page, facts, phase) => {
     check(canvasBefore.width===canvasAfter.width&&canvasBefore.height===canvasAfter.height,'Resizing the assistant changed the canvas layout');
     await drag(grip,before.x-resized.x,before.y-resized.y);
     for(const [kind,name] of Object.entries(facts.candidateTitles)){
-      const candidate=floating.locator('.as-material-candidate[data-card-kind="'+kind+'"]').last();
+      const candidate=floating.locator('.ac-material-candidate[data-card-kind="'+kind+'"]').last();
       await candidate.getByText(name,{exact:true}).waitFor();
       check(await candidate.evaluate((node,kind)=>{
         const style=getComputedStyle(node),tint=style.getPropertyValue('--card-tint').trim();
         return !!tint&&tint===style.getPropertyValue('--card-'+kind).trim();
       },kind),'The candidate did not use the matching canvas card colour');
+      check(JSON.stringify(await candidateStyle(candidate))===JSON.stringify(recommendationStyles[kind]),
+        'The recommendation card differs from the assistant card in light or dark mode');
       const previewRequest=assistantResponse('task-source');
       await button('查看详情 · '+name,candidate).click();
       const preview=await previewRequest;
@@ -617,6 +646,7 @@ async (page, facts, phase) => {
       assistantLinkedObjectAndDrawing:true,assistantLinkedDedupAndUndo:true,assistantManualAddAfterZoom:true,assistantAddAll:true,
       drawingObjectParentPhotos:true,assistantWindowRestored:true,
       mixedDescendantDrawings:true,sharedPhotoLinkedAfterDrawing:true,toolbarTextSelectionPrevented:true,
+      recommendationCardStylesMatchAssistant:true,
       assistantFourTypes:true,assistantCandidatePreview:true,assistantFloatingWindow:true,assistantCanvasConversationScope:true,compactMaterialRows:true};
   }
   if(phase==='grouped-layout'){

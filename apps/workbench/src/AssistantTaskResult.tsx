@@ -1,4 +1,5 @@
 import {displayText} from './displayText';
+import {materialKindLabel} from './analysisMaterials';
 import type {AssistantRun} from './assistantApi';
 import {Btn} from './Primitives';
 import {adoptedModelTarget,equipmentConfigurationTarget,taskActionNames,taskMaterialName,taskResultReceipt,type AssistantModelTarget,type TaskCandidate} from './assistantTasks';
@@ -21,11 +22,6 @@ const processingLabels:Record<string,[string,string]>={
  superseded:['已被新版本替代','Superseded'],withdrawn:['已撤回','Withdrawn'],
 };
 
-const materialKinds:Record<string,[string,string]>={
- object:['工程对象','Engineering object'],drawing:['图纸','Drawing'],document:['文档','Document'],photo:['照片','Photo'],
- work_order:['工单','Work order'],alarm:['故障报警','Alarm'],trend:['趋势','Trend'],model:['三维模型','3D model'],
-};
-
 export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,onPage,onHandoff,onViewScene,onViewDevice,onViewDocument,onViewModel,onViewConfiguration,onViewCandidate,loadModelUsage,hasUnsaved=false,operationFailure,onRetryAddition}:{
  run:AssistantRun;en:boolean;locked:boolean;onExecute?:(keys:string[])=>void;onPage:(index:number)=>void;onHandoff?:()=>void;
  cards:CanvasCard[];onLocateCard:(card:CanvasCard)=>void;
@@ -39,7 +35,7 @@ export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,
  if(!onHandoff&&!task.results.length&&!task.plan.actions.length&&!task.receipts.length&&!task.trace.length&&!task.graphs.length)return null;
  const t=(zh:string,english:string)=>en?english:zh;
  const processingLabel=(key?:string)=>processingLabels[key??'']?.[en?1:0];
- const materialKind=(key?:string)=>materialKinds[key??'']?.[en?1:0]??t('资料','Material');
+ const materialKind=(key?:string)=>materialKindLabel(key,en);
  const linked=task.linkedAnchorRef!==undefined;
  const results=linked?task.results.filter(row=>!taskResultReceipt(task.receipts,row)):task.results;
  const pendingKeys=results.filter(row=>row.selector&&!taskResultReceipt(task.receipts,row)).map(row=>row.key);
@@ -60,9 +56,9 @@ export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,
     onClick={()=>onExecute([row.key])}>{applied?t('已处理','Applied'):t('加入画布','Add to canvas')}</Btn>;
    if(row.selector&&onViewCandidate&&['object','drawing','document','photo'].includes(row.kind)){
     const reason=displayText(row.reason);
-    return <article className="as-material-candidate" data-card-kind={row.kind} key={row.key}>
+    return <article className="ac-material-candidate" data-card-kind={row.kind} key={row.key}>
      <header><span>{materialKind(row.kind)}</span><strong>{name}</strong></header>
-     <div className="as-candidate-body">
+     <div className="ac-candidate-body">
       <span title={reason}>{reason}</span>
       <div className="as-result-actions">
        <Btn aria-haspopup="dialog" aria-label={t('查看详情','View details')+' · '+name} disabled={locked}

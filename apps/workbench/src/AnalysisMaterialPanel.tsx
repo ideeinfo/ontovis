@@ -1,7 +1,7 @@
 import {displayText} from './displayText';
 import {ArrowLeft,Box,FileImage,FileText,Image,Layers,Activity,Bell,ClipboardList,StickyNote,Plus,Search,X,RefreshCw} from 'lucide-react';
 import {Btn,IconBtn} from './Primitives';
-import {MATERIAL_CATEGORIES,groupMaterialRecommendations,materialCategories,recommendationRelevanceLabel} from './analysisMaterials';
+import {MATERIAL_CATEGORIES,groupMaterialRecommendations,materialCategories,materialKindLabel,recommendationRelevanceLabel} from './analysisMaterials';
 import type {Recommendation,Recommendations} from './analysisSources';
 
 const icons={object:Box,drawing:FileImage,document:FileText,photo:Image,model3d:Layers,trend:Activity,alarm:Bell,work_order:ClipboardList,analysis:StickyNote};
@@ -14,7 +14,7 @@ export function AnalysisMaterialPanel({section,query,en,loading,value,chosen,add
   const items=value?.items||[],continuing=!!value?.nextCursor||value?.nextOffset!=null;
   const {groups,ungrouped}=groupMaterialRecommendations(items,sourceTitles);
   function renderItem(item:Recommendation,groupRef?:string){
-    const kind=item.kind==='model'?'model3d':item.kind,Icon=icons[kind],alreadyAdded=added.has(item.key);
+    const kind=item.kind==='model'?'model3d':item.kind,alreadyAdded=added.has(item.key);
     const selectable=canAdd&&!alreadyAdded&&(!item.availability||item.availability==='available');
     const basis=recommendationRelevanceLabel(item,en);
     const otherCards=item.relatedSourceRefs?.filter(ref=>ref!==groupRef).map(ref=>sourceTitles.get(ref)).filter(Boolean).join(' · ');
@@ -26,19 +26,19 @@ export function AnalysisMaterialPanel({section,query,en,loading,value,chosen,add
       otherCards?displayText(t('也关联','Also related to')+' '+otherCards):undefined,
       item.availability&&item.availability!=='available'?(item.availability==='field_record'
         ?t('单台现场资料','Device field record'):t('来源暂不可用','Source unavailable')):undefined].filter(Boolean).join(' · ');
-    return <div className="ac-material-result" key={item.key} data-material-kind={kind} draggable={selectable}
+    return <article className="ac-material-candidate ac-material-result" key={item.key} data-card-kind={kind} draggable={selectable}
       onDragStart={selectable?event=>{event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData('application/x-ontovis-recommendation',item.key);}:undefined}>
-      <label><input type="checkbox" aria-label={displayText(t('选择资料 ','Select material ')+item.title)} checked={chosen.includes(item.key)} disabled={!selectable} onChange={()=>onToggle(item.key)}/><Icon size={18}/></label>
-      <div className="ac-material-copy">
-        <div className="ac-material-title"><strong>{displayText(item.title)}</strong>
-          {alreadyAdded&&<span>{t('已加入','Already added')}</span>}</div>
-        {(basis||metadata)&&<small className="ac-material-meta">
+      <header><span>{materialKindLabel(item.kind,en)}</span><strong>{displayText(item.title)}</strong></header>
+      <div className="ac-candidate-body">
+        <input type="checkbox" aria-label={displayText(t('选择资料 ','Select material ')+item.title)} checked={chosen.includes(item.key)} disabled={!selectable} onChange={()=>onToggle(item.key)}/>
+        <small className="ac-material-meta">
           {basis&&<span className="ac-match-type" data-match={item.matchType||item.relevance}>{basis}</span>}
           {metadata&&<span title={metadata}>{metadata}</span>}
-        </small>}
+        </small>
+        {alreadyAdded&&<small className="ac-material-status">{t('已加入','Already added')}</small>}
+        <IconBtn label={displayText(t('加入画布：','Add to canvas: ')+item.title)} disabled={!selectable} onClick={()=>onAdd(item)}><Plus size={17}/></IconBtn>
       </div>
-      <IconBtn label={displayText(t('加入画布：','Add to canvas: ')+item.title)} disabled={!selectable} onClick={()=>onAdd(item)}><Plus size={17}/></IconBtn>
-    </div>;
+    </article>;
   }
   return <aside className="ac-material-panel" data-canvas-inner aria-label={t('加入资料','Add materials')}>
     <header><strong>{t('加入资料','Add materials')}</strong><IconBtn label={t('关闭资料库','Close materials')} onClick={onClose}><X size={17}/></IconBtn></header>
