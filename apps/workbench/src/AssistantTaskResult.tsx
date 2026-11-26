@@ -29,7 +29,7 @@ export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,on
  const task=run.result?.task;if(!task)return null;
  const t=(zh:string,english:string)=>en?english:zh;
  const processingLabel=(key?:string)=>processingLabels[key??'']?.[en?1:0];
- const names:Record<string,string>={work_orders:t('项目工单','Project work orders'),objects:t('工程对象','Objects'),graph:t('工程关系','Engineering graph'),knowledge:t('文档知识图谱','Document knowledge'),materials:t('项目资料','Materials'),scenes:t('项目场景','Project scenes'),adopted_models:t('项目采用模型','Project model adoption'),equipment_materials:t('安装设备目录','Installed equipment'),equipment_applicable_materials:t('设备适用资料','Applicable materials'),processing_tasks:t('资料处理任务','Processing tasks'),fixed_manual_neighborhood:t('固定发布版知识邻域','Fixed publication neighborhood'),selected_material:t('画布补充资料','Canvas context')};
+ const names:Record<string,string>={work_orders:t('项目工单','Project work orders'),objects:t('工程对象','Objects'),graph:t('工程关系','Engineering graph'),knowledge:t('文档知识图谱','Document knowledge'),materials:t('项目资料','Materials'),related_drawings:t('登记关联图纸','Linked drawings'),scenes:t('项目场景','Project scenes'),adopted_models:t('项目采用模型','Project model adoption'),equipment_materials:t('安装设备目录','Installed equipment'),equipment_applicable_materials:t('设备适用资料','Applicable materials'),processing_tasks:t('资料处理任务','Processing tasks'),fixed_manual_neighborhood:t('固定发布版知识邻域','Fixed publication neighborhood'),selected_material:t('画布补充资料','Canvas context')};
  const states:Record<string,string>={complete:t('已读取','Read'),unavailable:t('读取失败','Unavailable'),budget_limited:t('预算已用尽 · 未读取','Budget reached · not read'),policy_excluded:t('项目策略未允许读取','Excluded by policy')};
  return <section className="as-task-result" aria-label={t('项目检索与操作','Project results and actions')}>
   {task.mode==='cockpit_query'&&onHandoff&&<Btn disabled={locked} onClick={onHandoff}>{t('转后台继续','Continue in workbench')}</Btn>}
@@ -51,6 +51,7 @@ export function AssistantTaskResult({run,en,locked,onExecute,onPage,onHandoff,on
       <p>{processingLabel(row.state)} · {processingLabel(row.resultState)}{row.totalUnits!==undefined?' · '+row.completedUnits+'/'+row.totalUnits:''}</p>
      </>:device?<small>{t('已登记安装设备','Registered installation')}</small>:
      row.kind==='material_unavailable'?<small>{t('固定版本','Fixed version')} v{version} · {t('原文暂不可查看','Preview unavailable')}</small>:
+     row.kind==='drawing'?<small title={version}>{displayText(row.reason)}</small>:
      row.documentPreview&&typeof row.version==='number'?<small>{t('设备适用资料','Applicable material')} · v{version}</small>:<>
      <small>{row.identifier} · r{row.version}{row.simulated?' · '+t('测试记录','Test record'):''}</small><p>{displayText(row.reason)}{row.state?' · '+row.state:''}</p></>}
     </div><div className="as-result-actions">

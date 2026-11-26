@@ -9,6 +9,7 @@ from .assistant_store import require, digest
 from .assistant_summaries import redact, summarize, work_order_summary, validate_answer
 from .authority import PreviewError
 from .assistant_canvas_tasks import ACTIONS
+from .assistant_drawings import drawing_add_scope, drawing_answer
 
 PROTOCOL='ontovis-engineering-tasks-v1'
 QUERY_TOOLS=('work_orders','objects','materials','graph','knowledge')
@@ -401,9 +402,11 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         explicit_equipment=equipment_query is not None
         question=body['question']
         related_scope=related_object_add_request(question)
+        drawing_scope=drawing_add_scope(question)
+        contextual_add=related_scope or drawing_scope
         replay=replay_equipment_context(draft['context'],fixed,question) if equipment_materials and 'alarm' in kinds else None
         replay_materials=replay is not None and re.fullmatch(r'(?:请问\s*)?(?:这台设备|这个(?:设备|柜体|柜))\s*有(?:哪些)?\s*(?:图纸|说明书|资料)(?:和(?:图纸|说明书|资料))?[？?。]?',question.strip())
-        if related_scope:
+        if contextual_add:
             proposed=dict(intent='edit' if body['mode']=='workbench' else 'query',queries=[],actions=[])
         elif replay_materials and not explicit_equipment:
             proposed=dict(intent='query',queries=[dict(tool='equipment_materials',query=replay['primaryRds'],faultCode='')],actions=[])
@@ -419,7 +422,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         require(all(q['tool']!='graph' or 'engineering_neighborhood' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         require(all(q['tool']!='knowledge' or 'manual_fault_lookup' in switches for q in plan['queries']), 'ASSISTANT_TOOL_NOT_ALLOWED',403)
         tools=ProjectTools(reader,guard,policy['policy']['reads'],policy['policy']['allowedKinds'],job.private)
-        prefer_selected=body.get('preferSelectedEvidence',False) and not explicit_equipment and not related_scope
+        prefer_selected=body.get('preferSelectedEvidence',False) and not explicit_equipment and not contextual_add
         selected_reads=read_selected_evidence(tools,fixed) if prefer_selected else []
         for q in plan['queries']:
             try:tools.query(q,replay=replay,drawings=bool(re.search(r'图纸|drawings?',question,re.I)))
@@ -427,9 +430,12 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
                 state='budget_limited' if error.code=='ASSISTANT_READ_LIMIT' else 'unavailable'
                 tools.trace.append(dict(tool=q['tool'],state=state,reason=error.code))
-        if not prefer_selected and not explicit_equipment and not related_scope:
+        if not prefer_selected and not explicit_equipment and not contextual_add:
             selected_reads=read_selected_evidence(tools,fixed)
-        related_answer=related_object_answer(tools,fixed,draft,related_scope,plan) if related_scope else None
+        if drawing_scope:
+            related_answer=drawing_answer(tools,fixed,draft,body,drawing_scope,plan)
+        else:
+            related_answer=related_object_answer(tools,fixed,draft,related_scope,plan) if related_scope else None
         trace=[dict(key=t['tool'],state=t['state']) for t in tools.trace]
         runtime.store.update(run_id,'reading',progress=trace,sources=tools.sources)
         evidence=[{k:s[k] for k in ('key','kind','summary')} for s in tools.sources]

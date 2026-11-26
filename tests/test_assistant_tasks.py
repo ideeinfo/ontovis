@@ -12,6 +12,7 @@ from apps.api.assistant_service import AssistantRuntime
 from apps.api.assistant_store import DEFAULT,digest
 from apps.api.assistant_tasks import PROTOCOL,ProjectTools,read_selected_evidence,related_object_add_request,related_object_answer,validate_plan,snapshot
 from apps.api.assistant_canvas_tasks import build,load,retain,acknowledge
+from apps.api.assistant_drawings import drawing_add_scope, drawing_answer, drawing_context, checked_drawing_results
 from apps.api.authority import PreviewError
 
 
@@ -21,6 +22,76 @@ def board():return dict(schemaVersion=2,ontobaseConnectionId='source',projectCod
 
 
 def action(kind,targets=None,text=''):return dict(kind=kind,targets=targets or [],text=text,x=None,y=None)
+
+
+class DrawingTaskTests(unittest.TestCase):
+    def setUp(self):
+        self.board = board()
+        self.board['context']['eventId'] = 'current-event'
+        sources = [('alarm', 'alarm'), ('object', 'target'), ('object', 'other'),
+                   ('drawing', 'retained'), ('document', 'manual'), ('object', 'past')]
+        self.board['cards'] = [dict(kind=kind, title=ref, source=dict(id=ref), historical=ref=='past') for kind, ref in sources]
+        self.body = dict(question='添加相关图纸', evidenceRefIds=['alarm'])
+        self.target = dict(entityUid='protector', expectedEntityRevision='r1', installationContextId=None,
+                           expectedHierarchyRevision=None)
+        self.other = {**self.target, 'entityUid': 'other'}
+        self.retained = dict(drawingUid='previous-evidence', expectedContentSha256='a'*64)
+        descriptors = dict(alarm={'eventId': 'current-event'}, target=self.target, other=self.other, retained=self.retained)
+        self.fixed = [(dict(evidenceRefId=ref, sourceKind=kind), descriptors[ref]) for kind, ref in sources if ref in descriptors]
+        self.reader = SimpleNamespace(read=Mock(return_value={'dataset': {'primaryRds': '=WEC+CN1-1U2'}}),
+            _rds=Mock(return_value={'item': {'entityUid': 'protector', 'entityRevision': 'r1'}, 'context': None}))
+        self.tools = ProjectTools(self.reader, lambda: None, 8, DEFAULT['allowedKinds'], ())
+        self.plan = dict(intent='edit', queries=[], actions=[])
+
+    def row(self, uid, page, content_hash='a'*64):
+        return dict(drawingUid=uid, title=uid, pageNumber=page, availability='available', contentSha256=content_hash,
+                    sourceRevision='b'*64, matchedObjects=[{'relation': 'self'}])
+
+    def test_drawing_requests_and_context_are_specific_to_the_current_canvas(self):
+        for question, scope in [('添加相关图纸', 'canvas'), ('请把本次报警相关的图纸加到画布', 'alarm'),
+                                ('Add the related drawings to the canvas.', 'canvas'),
+                                ('把图纸和照片都加上', None), ('列出与报警相关的图纸', None)]:
+            self.assertEqual(scope, drawing_add_scope(question), question)
+        self.assertEqual(['alarm', 'target', 'other', 'retained'], drawing_context(self.body, self.board)['evidenceRefIds'])
+        self.assertEqual(['alarm'], self.body['evidenceRefIds'])
+
+    def test_additions_use_the_alarm_object_and_deduplicate_fixed_pages(self):
+        first = self.row('previous-evidence', 89)
+        new = self.row('new-page', 90)
+        with patch('apps.api.assistant_drawings._recorded_drawings', return_value={
+                'items': [first, {**first, 'drawingUid': 'alias'}, new], 'nextCursor': None}) as read:
+            drawing_answer(self.tools, self.fixed, self.board, self.body, 'canvas', self.plan)
+            read.assert_called_once_with(self.reader, self.target)
+            candidate, = self.tools.results
+            self.assertEqual(('drawing', 'new-page', 'target'), (candidate['kind'], candidate['identifier'], candidate['drawingObjectRefId']))
+            self.assertEqual([action('add_results', ['R1'])], self.plan['actions'])
+            self.assertEqual([candidate], checked_drawing_results(self.reader, self.fixed, self.board, self.body,
+                'canvas', self.tools.allowed, self.plan, self.tools.results))
+            read.return_value = {'items': [first], 'nextCursor': None}
+            with self.assertRaises(PreviewError) as changed:
+                checked_drawing_results(self.reader, self.fixed, self.board, self.body,
+                    'canvas', self.tools.allowed, self.plan, self.tools.results)
+            self.assertEqual('ASSISTANT_DRAWING_REVIEW_REQUIRED', changed.exception.code)
+
+    def test_explicit_object_and_incomplete_drawings_offer_only_verified_choices(self):
+        body = {**self.body, 'preferSelectedEvidence': True, 'evidenceRefIds': ['other']}
+        with patch('apps.api.assistant_drawings._recorded_drawings', return_value={
+                'items': [self.row('other-drawing', 42, 'c'*64)], 'nextCursor': 'page-two'}) as read:
+            answer = drawing_answer(self.tools, self.fixed, self.board, body, 'canvas', self.plan)
+            read.assert_called_once_with(self.reader, self.other)
+        self.reader._rds.assert_not_called()
+        self.assertEqual([], self.plan['actions'])
+        self.assertEqual(['drawing'], [row['kind'] for row in self.tools.results])
+        self.assertTrue(answer['nextSteps'])
+
+    def test_missing_alarm_object_does_not_search_the_project_catalogue(self):
+        fixed = [row for row in self.fixed if row[0]['evidenceRefId']!='target']
+        with patch('apps.api.assistant_drawings._recorded_drawings') as read:
+            answer = drawing_answer(self.tools, fixed, self.board, self.body, 'canvas', self.plan)
+        read.assert_not_called()
+        self.assertIn('工程对象', answer['observations'][0]['text'])
+        self.assertEqual([], self.plan['actions'])
+        self.assertEqual([], self.tools.results)
 
 
 class TaskTests(unittest.TestCase):

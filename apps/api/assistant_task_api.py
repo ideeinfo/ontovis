@@ -4,6 +4,7 @@ import json
 from uuid import uuid4
 from .assistant_store import require,identifier,digest,encoded
 from .assistant_tasks import PROTOCOL,snapshot,draft_history,ProjectTools
+from .assistant_drawings import drawing_add_scope, drawing_context, checked_drawing_results
 from .assistant_transport import call_source
 
 
@@ -48,8 +49,9 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
             require(value.get('serviceRevision')==selected['sourceServiceRevision'] and value.get('purpose')=='ontovis_analysis','ASSISTANT_CONFIGURATION_CHANGED',409)
             authorize(True);require(service(body['taskId'])['serviceRevision']==selected['serviceRevision'],'ASSISTANT_CONFIGURATION_CHANGED',409)
             return value
+        lookup_body=drawing_context(body,board) if drawing_add_scope(body['question']) else body
         return runtime.start(dict(project=project,owner=actor,sid=sid,private=(project,access.get('projectName'))),body,policy,selected,
-                             lambda guard:prepare(guard,body),authorize,invoke)
+                             lambda guard:prepare(guard,lookup_body),authorize,invoke)
 
     record=runtime.store.run(project,actor,body.get('runId'));original=json.loads(record['input_json'])
     require(original.get('protocol')==PROTOCOL and record['state'] in ('complete','partial') and record['result_json'],
@@ -158,7 +160,11 @@ def handle(action,body,sessions,row,sid,project,actor,access,runtime,service,pre
         require(set(keys)<=set(r['key'] for r in choices),'ASSISTANT_TARGET_AMBIGUOUS',409)
         plan=dict(intent='edit',queries=[],actions=[dict(kind='add_results',targets=keys,text='',x=None,y=None)])
     require(plan['intent']=='edit' and plan['actions'],'ASSISTANT_TOOL_NOT_ALLOWED',403)
-    _,reader=prepare(authorize,original)
+    drawing_scope=drawing_add_scope(original['question'])
+    fixed,reader=prepare(authorize,drawing_context(original,board) if drawing_scope else original)
+    if drawing_scope:
+        allowed=set(runtime.store.policy(project)['policy']['allowedKinds'])
+        choices=checked_drawing_results(reader,fixed,board,original,drawing_scope,allowed,plan,choices)
     # A retained preparation is not a grant to use a now-stale source version.
     def checked_preparation(prior):
         prepared=json.loads(prior['prepared_json'])

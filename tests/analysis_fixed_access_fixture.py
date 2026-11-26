@@ -73,7 +73,8 @@ def browser_site(public: Path):
             if route in (f'/api/v1/drawings/{drawing}', f'/api/v1/drawings/{member_drawing}'):
                 uid = route.rsplit('/', 1)[-1]
                 return dict(project_code=PROJECT,drawing_uid=uid,
-                            drawing_name=member_title if uid==member_drawing else '合成接线图',source_page_number=89)
+                            drawing_name=member_title if uid==member_drawing else '合成接线图',
+                            source_page_number=90 if uid==member_drawing else 89)
             if route==project_prefix+'/objects':
                 items = [tags[tag] for tag in parse_qs(url.query).get('primaryIdentifier',[]) if tag in tags]
                 return dict(projectCode=PROJECT,items=items,total=len(items),nextCursor=None)
@@ -99,7 +100,7 @@ def browser_site(public: Path):
                             for idx in (1,2)] if main else []
                     return {**scope,'complete':True,'versionMode':'current_content_snapshot','items':rows}
                 def page(uid, title, match):
-                    return dict(drawingUid=uid,title=title,drawingNumber=None,pageNumber=89,sourceRevision='a'*64,
+                    return dict(drawingUid=uid,title=title,drawingNumber=None,pageNumber=90 if uid==member_drawing else 89,sourceRevision='a'*64,
                                 contentSha256=pdf['sha256'],availability='available',precision='page',region=None,
                                 matchedObjects=[{**match,'viaEntityUid':primary['entityUid'],'viaName':primary['displayName']}])
                 direct = {key:primary[key] for key in ('entityUid','entityRevision','displayName')} | {'relation':'self'}

@@ -222,6 +222,27 @@ async (page, facts, phase) => {
     const objectCards=canvas.locator('.ad-card[data-card-kind="object"]');
     for(const title of facts.additionalObjectTitles)await button(title,objectCards).waitFor({state:'attached'});
     check(await objectCards.count()===3,'The assistant draft lacked registered alarm objects');
+
+    const nonDrawings=canvas.locator('.ad-card[data-card-kind="document"],.ad-card[data-card-kind="photo"]');
+    const materialCount=await nonDrawings.count();
+    await assistant.getByRole('textbox',{name:'向分析助手提问',exact:true}).fill('添加相关图纸');
+    const [drawingAck]=await Promise.all([
+      page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/assistant/task-ack'),
+      button('发送',assistant).click(),
+    ]);
+    const drawingRun=await drawingAck.json();
+    const result=drawingRun.run.result;
+    check(drawingAck.ok()&&result.modelCalls===0&&result.task.results.length===1&&
+      result.task.results[0].kind==='drawing'&&result.task.results[0].title===facts.memberDrawingTitle,
+      'The drawing request used the project document catalogue or returned a duplicate drawing');
+    check(drawingRun.receipt.state==='applied_draft'&&drawingRun.receipt.items.length===1&&drawingRun.receipt.items[0].status==='added',
+      'The assistant did not add exactly the missing drawing to the draft');
+    await descendantEdge.waitFor({state:'attached'});
+    check(await descendantEdge.getAttribute('data-origin')==='source'&&await nonDrawings.count()===materialCount,
+      'The assistant added an unrelated material or lost the registered drawing link');
+    await button('撤销修改',canvas).click();
+    await descendantEdge.waitFor({state:'detached'});
+
     await button('撤销修改',canvas).click();
     check(await objectCards.count()===1,'Undo did not remove the assistant additions');
 
@@ -245,7 +266,7 @@ async (page, facts, phase) => {
       'The cockpit did not display the workbench relationships for the same saved revision');
     return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true,
       drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,
-      alarmCategoryFirst:true,unifiedRelatedMaterials:true};
+      alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

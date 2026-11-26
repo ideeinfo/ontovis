@@ -40,6 +40,28 @@ class TaskHttpTests(unittest.TestCase):
             snapshot=json.loads(self.body['snapshotJson']);snapshot['projectCode']='B'
             self.assertEqual(404,self.request('task-start',{**self.body,'snapshotJson':json.dumps(snapshot)})[0]);model.assert_not_called()
 
+    def test_an_old_drawing_turn_cannot_apply_unrelated_catalogue_results(self):
+        body = {**self.body, 'mode': 'workbench', 'question': '添加相关图纸'}
+        model_result = dict(plan=dict(intent='edit', queries=[dict(tool='materials', query='', faultCode='')],
+                                      actions=[action('add_results')]), usage={}, modelCalls=1,
+                            engineeringConfirmation=False, purpose='ontovis_analysis', serviceRevision='a'*64)
+        def directory(tools, *_args, **_options):
+            tools.results.append(dict(key='R1', kind='document', title='Project PDF', identifier='pdf', selector={'documentId': 'pdf'}))
+        with (patch('apps.api.assistant_tasks.drawing_add_scope', return_value=None),
+              patch('apps.api.assistant_tasks.ProjectTools.query', new=directory),
+              patch('apps.api.assistant_task_api.call_source', return_value=model_result)):
+            status, started = self.request('task-start', body)
+            self.assertEqual(200, status, started)
+            for _ in range(100):
+                _, run = self.request('status', {'runId': started['runId']})
+                if run['state'] not in ('reading', 'model', 'validating'):
+                    break
+                time.sleep(.01)
+        self.assertEqual('complete', run['state'], run)
+        for keys in ([], ['R1']):
+            status, blocked = self.request('task-prepare', dict(runId=run['runId'], selectedKeys=keys, snapshotJson=body['snapshotJson']))
+            self.assertEqual((409, 'ASSISTANT_DRAWING_REVIEW_REQUIRED'), (status, blocked['code']))
+
     def test_same_canvas_restores_only_the_current_mode_and_rejects_cross_mode_followups(self):
         body = {**self.body, 'analysisSessionId': self.fixture.analysis, 'expectedAnalysisRevision': 1}
         history = {k: body[k] for k in ('analysisSessionId', 'expectedAnalysisRevision')}
