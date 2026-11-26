@@ -7,7 +7,6 @@ from .analysis_evidence import SELECTION
 from .analysis_preview import document_preview, drawing_bytes
 from .analysis_recommendations import recommendation
 from .authority import PreviewError
-from .demo_faults import diagnosis
 
 
 def object_recommendation(item, reason, reason_en, *, identifier=None, relevance='object_association'):
@@ -18,25 +17,10 @@ def object_recommendation(item, reason, reason_en, *, identifier=None, relevance
 
 
 def alarm_object_recommendations(reader, dataset, *, read=None):
-    fault = dataset['faultCode']
-    primary = dataset['primaryRds']
-    tags = [(primary, f'由 {fault} 的报警配置指定', f'Specified by the alarm configuration for {fault}'),
-            ('=WEC+'+dataset['cabinet'], '本次报警涉及的柜体', 'Cabinet involved in this alarm')]
-    channel = sim.PROFILES[fault].get('channel')
-    for node in diagnosis(fault)['nodes']:
-        if node['kind'] != 'component':
-            continue
-        if channel and node['rds'] == channel['rds']:
-            address = channel['address']
-            tags.append((channel['moduleRds'], f'检查该模块的 {address} 通道', f'Check channel {address} on this module'))
-        else:
-            tags.append((node['rds'], f"{node['label']} · {fault} 排查清单", f'Listed in the {fault} troubleshooting checklist'))
+    primary = dataset.get('primaryRds')
     rows, gaps = [], []
-    seen_tags, seen_objects = set(), set()
-    for tag, reason, reason_en in tags:
-        if tag in seen_tags:
-            continue
-        seen_tags.add(tag)
+    seen_objects = set()
+    for tag, (reason, reason_en) in sim.alarm_object_targets(dataset).items():
         try:
             lookup = lambda: reader._rds(tag)
             item = (read(lookup) if read else lookup())['item']

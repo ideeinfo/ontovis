@@ -462,12 +462,12 @@ def related_object_answer(tools, fixed, draft, scope, plan):
             reason=row['reason'], simulated=False, selector=selector))
     count = len(candidates)
     if count:
-        message = f'根据所选卡片的登记关系，找到 {count} 个可加入的工程对象。'
+        message = f'根据所选卡片的关联依据，找到 {count} 个可加入的工程对象。'
     elif rows and not gaps:
         message = '所选卡片的关联工程对象均已加入当前画布。'
     else:
         message = '本轮暂无可加入的已登记工程对象。'
-    scope_label = '所选报警的登记关系' if scope == 'alarm' else '所选画布卡片的登记关系'
+    scope_label = '所选报警的对象关联与排查依据' if scope == 'alarm' else '所选画布卡片的关联依据'
     state = 'unavailable' if gaps else 'complete'
     tools.trace.append(dict(tool='objects', state=state, scope=scope_label, count=len(tools.results),
                             total=count, truncated=count>len(tools.results), **({'reason': gaps[0]} if gaps else {})))

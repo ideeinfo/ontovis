@@ -3,6 +3,7 @@ from unittest import TestCase
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
+from apps.api.analysis_preview import relationships
 from apps.api.analysis_queries import recommendations
 from apps.api.analysis_recommendations import registered_recommendation_revisions
 from apps.api import simulated_faults as sim
@@ -72,6 +73,68 @@ class MaterialRecommendationTests(TestCase):
                           'other': ['object-card']}, rows)
         self.assertEqual(3, reader._rds.call_count)
 
+    def test_alarm_graph_uses_the_same_candidates_as_recommendations_for_each_dataset(self):
+        project = 'Demo-PDS'
+        for dataset in sim.catalogue(project)['items']:
+            with self.subTest(dataset=dataset['datasetId']):
+                objects = {}
+
+                def resolve(tag):
+                    if '/' in tag:
+                        raise PreviewError(409, 'DIAGNOSTIC_OBJECT_UNRESOLVED')
+                    obj = {'item': dict(entityUid=tag, entityRevision='r1', identifiers=[dict(value=tag, scheme='RDS',
+                        role='primary', status='accepted', scopeType='project', scopeKey=project)])}
+                    objects[tag] = obj
+                    return obj
+
+                reader = self.reader()
+                reader._rds = Mock(side_effect=resolve)
+                reader.authorize = Mock()
+                reader.read = Mock(side_effect=lambda kind, desc: {'dataset': dataset} if kind == 'alarm' else objects[desc['entityUid']])
+                entry = {key: dataset[key] for key in ('datasetId', 'datasetRevision')}
+                rows = recommendations(reader, {'entry': entry, 'section': 'objects'})['items']
+                fixed = [(dict(evidenceRefId='alarm', sourceKind='alarm'), {})]
+                fixed.extend((dict(evidenceRefId=row['identifier'], sourceKind='object'), row['selector']) for row in rows)
+                reader._rds.reset_mock()
+                links = {edge['toRef']:edge for edge in relationships(reader, fixed, None)['items']}
+                self.assertEqual(set(links), set(objects))
+                self.assertGreater(len(links), 1)
+                reader._rds.assert_not_called()
+                for row in rows:
+                    edge = links[row['identifier']]
+                    direct = row['matchType'] == 'simulation_mapping'
+                    self.assertEqual(edge['fromRef'], 'alarm')
+                    self.assertEqual(edge['kind'], 'alarm_object_mapping' if direct else 'alarm_object_check')
+                    self.assertEqual(edge['origin'], 'source' if direct else 'candidate')
+                    if not direct:
+                        self.assertEqual(edge['label'], '排查参考')
+                        self.assertIn(row['reason'], edge['reason'])
+
+    def test_alarm_check_requires_readable_objects_with_exact_unambiguous_project_tags(self):
+        dataset = sim.identity('13033')
+        tag = dict(value='=WEC+CN1-80W1', role='primary', status='accepted', scheme='RDS', scopeType='project', scopeKey='Demo-PDS')
+        objects = {'exact': tag, 'alias': tag | {'role': 'alias'}, 'other-project': tag | {'scopeKey': 'OTHER'},
+                   'duplicate': tag, 'changed': tag}
+
+        def read(kind, desc):
+            if kind == 'alarm':
+                return {'dataset': dataset}
+            uid = desc['entityUid']
+            if uid == 'changed':
+                raise PreviewError(409, 'ENGINEERING_CHANGED')
+            return {'item': {'displayName': tag['value'], 'identifiers': [objects[uid]]}}
+
+        reader = self.reader()
+        reader.authorize = Mock()
+        reader.read = Mock(side_effect=read)
+        fixed = [(dict(evidenceRefId='alarm', sourceKind='alarm'), {})]
+        fixed.extend((dict(evidenceRefId=uid, sourceKind='object'), {'entityUid': uid}) for uid in objects if uid != 'duplicate')
+        result = relationships(reader, fixed, None)
+        self.assertEqual([(edge['toRef'], edge['origin']) for edge in result['items']], [('exact', 'candidate')])
+        self.assertEqual(result['gaps'], [{'evidenceRefId':'changed', 'reason':'ENGINEERING_CHANGED'}])
+        fixed.append((dict(evidenceRefId='duplicate', sourceKind='object'), {'entityUid':'duplicate'}))
+        self.assertEqual(relationships(reader, fixed, None)['items'], [])
+
     def test_alarm_search_accepts_displayed_title_with_the_same_fixed_revision(self):
         reader=self.reader()
         body={'entry':{'projectOnly':True},'section':'alarms'}
@@ -123,7 +186,7 @@ class MaterialRecommendationTests(TestCase):
         reader=self.reader();reader._rds=Mock(return_value={'item':{'entityUid':'object','entityRevision':'r1'},'context':None})
         reader.reader.prefix='/api/v1/projects/Demo-PDS';reader.reader._request=Mock(return_value={'projectCode':'Demo-PDS','items':[],'nextCursor':None})
         reader.photos=SimpleNamespace(resolve=Mock(return_value={'items':[{'title':'Photo','evidenceRef':'photo','selector':{'bbox':{} }}]}))
-        with patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing,patch('apps.api.related_drawings.RelatedDrawingsReader') as related:
+        with patch('apps.api.related_drawings.RelatedDrawingsReader') as related, patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing:
             related.return_value.resolve.return_value={'items':[],'nextCursor':None}
             drawing.return_value.resolve.return_value={'items':[{'title':'Drawing','evidenceRef':'drawing',
                 'availability':'available','contentSha256':'a'*64,'pageNumber':1}]}
@@ -144,8 +207,8 @@ class MaterialRecommendationTests(TestCase):
         material = dict(documentId=str(uuid4()), contentVersionId=str(uuid4()), kind='pdf',
                         title='Model manual', availability='available')
         body = {'entry': {'projectOnly': True}, 'entityUid': 'object', 'expectedEntityRevision': 'r1'}
-        with (patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing,
-              patch('apps.api.related_drawings.RelatedDrawingsReader') as descendants,
+        with (patch('apps.api.related_drawings.RelatedDrawingsReader') as descendants,
+              patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing,
               patch('apps.api.equipment_reader.EquipmentReader.material_devices',
                     return_value={'items': [material], 'nextCursor': None}) as applicable):
             drawing.return_value.resolve.return_value = {'items': []}
@@ -169,8 +232,8 @@ class MaterialRecommendationTests(TestCase):
         retained = dict(entityUid='object', expectedEntityRevision='r1', evidenceRef=second['evidenceRef'],
                         expectedSourceRevision=second['sourceRevision'], expectedContentSha256=second['contentSha256'])
         descendant = {**first, 'drawingUid': 'fixed-page', 'matchedObjects': [{'relation': 'definition_descendant'}]}
-        with patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing, \
-                patch('apps.api.related_drawings.RelatedDrawingsReader') as related:
+        with patch('apps.api.related_drawings.RelatedDrawingsReader') as related, \
+                patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing:
             drawing.return_value.resolve.return_value = {'items': [first, second, different_revision, different_page]}
             related.return_value.resolve.return_value = {'items': [descendant], 'nextCursor': None}
             registered = [('drawing', retained, 'retained-second'),

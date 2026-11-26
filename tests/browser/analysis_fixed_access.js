@@ -240,6 +240,20 @@ async (page, facts, phase) => {
     const objectCards=canvas.locator('.ad-card[data-card-kind="object"]');
     for(const title of facts.additionalObjectTitles)await button(title,objectCards).waitFor({state:'attached'});
     check(await objectCards.count()===3,'The assistant draft lacked registered alarm objects');
+    const objectEdge=(label,title)=>button(`${label}：${facts.cards.alarm.title} → ${title}`,canvas);
+    const mainEdge=objectEdge('报警对象',facts.cards.object.title);
+    await mainEdge.waitFor({state:'attached'});
+    check(await mainEdge.getAttribute('data-origin')==='source','The configured alarm object lost its source relationship');
+    for(const title of facts.additionalObjectTitles){
+      const checkEdge=objectEdge('排查参考',title);
+      await checkEdge.waitFor({state:'attached'});
+      const basis=applied.run.result.task.results.find(row=>row.title===title)?.reason;
+      check(!!basis&&(await checkEdge.locator('title').textContent()).includes(basis),
+        'A suggested object link did not explain the recommendation');
+      check(await checkEdge.getAttribute('data-origin')==='candidate'&&
+        await checkEdge.locator('path:not(.ac-link-hit)').evaluate(path=>getComputedStyle(path).strokeDasharray!=='none'),
+        'An object suggested for troubleshooting did not use a dashed reference link');
+    }
 
     const nonDrawings=canvas.locator('.ad-card[data-card-kind="document"],.ad-card[data-card-kind="photo"]');
     const materialCount=await nonDrawings.count();
@@ -276,6 +290,7 @@ async (page, facts, phase) => {
 
     await button('撤销修改',canvas).click();
     check(await objectCards.count()===1,'Undo did not remove the assistant additions');
+    for(const title of facts.additionalObjectTitles)await objectEdge('排查参考',title).waitFor({state:'detached'});
     await composer.fill('加入报警相关资料卡片，分析处置方案');
     const [mixedAck]=await Promise.all([
       page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/assistant/task-ack'),
@@ -528,7 +543,7 @@ async (page, facts, phase) => {
     check(JSON.stringify(await edgeIds(view.locator('.pa-links path[data-relation-id]')))===JSON.stringify(expected),
       'The cockpit did not display the workbench relationships for the same saved revision');
     return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true,
-      drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,
+      drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,assistantAlarmObjectCheckLinks:true,
       alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true,assistantCompoundEdit:true,
       recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true,assistantCardSelection:true,
       assistantLinkedObjectAndDrawing:true,assistantLinkedDedupAndUndo:true,assistantManualAddAfterZoom:true,

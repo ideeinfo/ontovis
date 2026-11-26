@@ -6,6 +6,7 @@ import json
 from urllib.parse import quote, urlencode
 
 from . import analysis_drafts as d
+from . import simulated_faults as sim
 from .analysis_evidence import SELECTION
 from .authority import PreviewError
 
@@ -497,6 +498,7 @@ def relationships(reader, fixed, scene_library):
             gaps.append({'evidenceRefId': identity, 'reason': reason})
     from .analysis_source_reader import matches_project_identifier
     alarm_tags = {}
+    objects = [(ref, target, obj['item']) for ref, (kind, target, obj) in values.items() if kind == 'object']
     for identity, (kind, descriptor, value) in values.items():
         dataset = value.get('dataset', {})
         if kind != 'alarm' or dataset.get('sourceKind') != 'simulated':
@@ -507,17 +509,29 @@ def relationships(reader, fixed, scene_library):
                 if target_kind == 'trend' and (target['datasetId'], target['datasetRevision']) == (dataset_id, revision):
                     add(identity, ref, 'alarm_trend', '同次报警趋势',
                         reason='报警和趋势来自同一次事件的数据版本')
-        tag = dataset.get('primaryRds')
-        if not tag:
-            continue
-        matches = [(ref, target) for ref, (target_kind, target, obj) in values.items()
-                   if target_kind == 'object' and matches_project_identifier(obj['item'], tag, reader.reader.project_code)]
-        if len({target['entityUid'] for _,target in matches}) > 1:
-            gap(identity,'ALARM_OBJECT_MAPPING_AMBIGUOUS'); continue
-        for ref, target in matches:
-            add(identity,ref,'alarm_object_mapping','报警对象',{'entityUid':target['entityUid']},
-                '报警配置指定了项目位号 '+tag+'。故障原因和现场安装身份仍待核实。')
-        alarm_tags[identity] = tag
+        linked = set()
+        primary = dataset.get('primaryRds')
+        for tag, (reason, _) in sim.alarm_object_targets(dataset).items():
+            direct = tag == primary
+            matches = [(ref, target) for ref, target, item in objects
+                       if matches_project_identifier(item, tag, reader.reader.project_code)]
+            if len({target['entityUid'] for _, target in matches}) > 1:
+                if direct:
+                    gap(identity, 'ALARM_OBJECT_MAPPING_AMBIGUOUS')
+                continue
+            if direct:
+                alarm_tags[identity] = tag
+            for ref, target in matches:
+                if ref in linked:
+                    continue
+                linked.add(ref)
+                if direct:
+                    add(identity, ref, 'alarm_object_mapping', '报警对象', {'entityUid': target['entityUid']},
+                        '报警配置指定了项目位号 '+tag+'。故障原因和现场安装身份仍待核实。')
+                else:
+                    basis = dataset.get('retainedEvidenceGap') or '现场适用性待核对'
+                    add(identity, ref, 'alarm_object_check', '排查参考',
+                        reason=f'演练排查依据 · {reason}。{basis.rstrip("。")}。', origin='candidate')
     drawings = {}
     for identity, (kind, descriptor, value) in values.items():
         photo_location_changed = kind == 'photo' and value.get('anchorUnavailableReason') == 'PHOTO_LOCATION_CHANGED'

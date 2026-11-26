@@ -85,6 +85,30 @@ def dataset(dataset_id, revision=None):
     return value
 
 
+def alarm_object_targets(value):
+    """Ordered project tags from the alarm configuration and its rehearsal checklist."""
+    primary = value.get('primaryRds')
+    if not primary:
+        return {}
+    code = value.get('faultCode')
+    profile = PROFILES.get(code)
+    if profile is None:
+        return {primary: ('由报警配置指定', 'Specified by the alarm configuration')}
+    targets = {primary: (f'由 {code} 的报警配置指定', f'Specified by the alarm configuration for {code}')}
+    if value.get('cabinet'):
+        targets.setdefault('=WEC+'+value['cabinet'], ('本次报警涉及的柜体', 'Cabinet involved in this alarm'))
+    channel = profile.get('channel')
+    for node in diagnosis(code)['nodes']:
+        if node['kind'] != 'component':
+            continue
+        if channel and node['rds'] == channel['rds']:
+            address = channel['address']
+            targets.setdefault(channel['moduleRds'], (f'检查该模块的 {address} 通道', f'Check channel {address} on this module'))
+        else:
+            targets.setdefault(node['rds'], (f"{node['label']} · {code} 排查清单", f'Listed in the {code} troubleshooting checklist'))
+    return targets
+
+
 def stamp(seconds, start=START):
     return (utc(start) + timedelta(seconds=seconds)).isoformat(timespec='seconds').replace('+00:00', 'Z')
 
