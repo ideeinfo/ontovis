@@ -41,6 +41,7 @@ const gapMessages:Record<string,[string,string]>={
   MODEL_BOUND_TO_DIFFERENT_OBJECT:['同名构件绑定的是另一个工程对象，不能据此认定对象相同。','The matching component is bound to a different engineering object.'],
   MODEL_BINDING_IN_RECYCLE_BIN:['绑定保存在回收站场景中，当前只作历史参考。','The binding belongs to a recycled scene and is historical reference only.'],
   MODEL_BINDINGS_TRUNCATED:['场景绑定超过首批范围，当前关系仅覆盖首批。','Only the first bounded set of scene bindings is shown.'],
+  DIAGNOSTIC_OBJECT_UNRESOLVED:['报警位号暂无法解析到唯一的工程对象。','The alarm tag could not be resolved to a unique project object.'],
   ALARM_OBJECT_MAPPING_AMBIGUOUS:['报警位号对应多个对象，目标待确认。','The alarm tag matches multiple objects. The target needs confirmation.']};
 export function SourceRelationDetails({selected,relations,loading,error,gaps,retry,onOpen,en}:{selected:CanvasCard;relations:CardSourceRelation[];loading:boolean;error:boolean;gaps:SourceRelationshipGap[];retry:()=>void;onOpen:(relation:CardSourceRelation)=>void;en:boolean}){
   const rows=relations.filter(r=>r.from.id===selected.id||r.to.id===selected.id);

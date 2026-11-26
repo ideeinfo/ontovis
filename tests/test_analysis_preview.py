@@ -305,6 +305,53 @@ class SourceViewerTests(TestCase):
                          [('alarm','sensor','alarm_trend','source',None),('alarm','reference','alarm_trend','source',None)])
         self.assertEqual(result['gaps'], [{'evidenceRefId':'stale','reason':'SIMULATION_DATASET_CHANGED'}])
 
+    def test_alarm_drawing_links_follow_unique_registered_objects_and_fixed_drawing_versions(self):
+        scope = dict(entityUid='sensor', expectedEntityRevision='r1',
+                     installationContextId=None, expectedHierarchyRevision=None)
+        other = {**scope, 'entityUid': 'unrelated'}
+        sensor_tag, other_tag, missing_tag = '=AREA+R1-T2', '=AREA+R2-F1', '=AREA+R3'
+        tag = dict(value=sensor_tag, role='primary', status='accepted', scheme='RDS', scopeType='project', scopeKey='P')
+        sensor = {'item': {'entityUid': 'sensor', 'entityRevision': 'r1', 'identifiers': [tag]}, 'context': None}
+        def rds(identifier):
+            if identifier == missing_tag:
+                raise PreviewError(409, 'DIAGNOSTIC_OBJECT_UNRESOLVED')
+            return sensor if identifier == sensor_tag else {'item': {'entityUid': 'unrelated', 'entityRevision': 'r1'}}
+
+        self.reader._rds = Mock(side_effect=rds)
+        self.reader.reader = Mock(spec=SceneEngineeringReader, project_code='P', authority=SimpleNamespace(image=Mock()))
+        self.reader.read.side_effect = lambda kind, desc: (
+            {'dataset': {'sourceKind': 'simulated', 'primaryRds': desc['tag']}} if kind == 'alarm'
+            else sensor if kind == 'object' else {})
+        located = {**scope, 'evidenceRef': 'location:region', 'expectedSourceRevision': 'b'*64,
+                   'expectedContentSha256': self.sha}
+        selector = dict(kind='image_bbox', bbox=self.location['bbox'])
+        other_scope = {**located, 'installationContextId': 'another-installation', 'expectedHierarchyRevision': 'another-hierarchy'}
+        whole_match = dict(availability='available', contentSha256=self.sha, matchedObjects=[{'relation': 'self'}])
+        fixed = [({'evidenceRefId': ref, 'sourceKind': kind}, desc) for ref, kind, desc in (
+            ('alarm', 'alarm', {'tag': sensor_tag}), ('recurrence', 'alarm', {'tag': sensor_tag}),
+            ('other-alarm', 'alarm', {'tag': other_tag}), ('ambiguous-alarm', 'alarm', {'tag': missing_tag}),
+            ('located', 'drawing', located), ('other-scope', 'drawing', other_scope), ('whole', 'drawing', self.drawing),
+            ('stale-page', 'drawing', {**self.drawing, 'expectedContentSha256': 'd'*64}),
+        )]
+        with patch('apps.api.analysis_preview.drawing_preview', return_value={'references': [], 'selector': selector}), \
+                patch('apps.api.related_drawings.RelatedDrawingsReader.matching_drawings', side_effect=lambda selection, _: (
+                    {self.drawing['drawingUid']: whole_match} if selection == scope else {})) as related:
+            result = relationships(self.reader, fixed, None)
+            self.assertEqual(related.call_count, 2)
+            self.assertCountEqual([call.args[0] for call in related.call_args_list], [scope, other])
+            self.assertEqual([call.args[0] for call in self.reader._rds.call_args_list], [sensor_tag, other_tag, missing_tag])
+            self.assertEqual({(row['fromRef'], row['toRef'], row['kind']) for row in result['items']}, {
+                (alarm, drawing, 'alarm_drawing') for alarm in ('alarm', 'recurrence') for drawing in ('located', 'whole')})
+            self.assertTrue(all(row['origin'] == 'source' for row in result['items']))
+            self.assertEqual(next(row['anchor'] for row in result['items'] if row['toRef']=='located'),
+                             {'entityUid': 'sensor', 'selector': selector})
+            self.assertEqual(result['gaps'], [{'evidenceRefId':'ambiguous-alarm','reason':'DIAGNOSTIC_OBJECT_UNRESOLVED'}])
+            with_object = fixed + [({'evidenceRefId':'sensor-card','sourceKind':'object'}, scope)]
+            rows = {(row['fromRef'], row['toRef'], row['kind']) for row in relationships(self.reader, with_object, None)['items']}
+            self.assertIn(('alarm', 'sensor-card', 'alarm_object_mapping'), rows)
+            self.assertIn(('sensor-card', 'located', 'drawing_location'), rows)
+            self.assertIn(('sensor-card', 'whole', 'drawing_association'), rows)
+
     def test_viewer_rejects_arbitrary_urls_unbounded_cursors_and_malformed_fixed_handles(self):
         validate_descriptor('document',self.document);validate_descriptor('drawing',self.drawing)
         for value in ({'url':'https://untrusted.invalid'},{'cursor':10001},{'cursor':True}):

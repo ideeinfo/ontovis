@@ -126,9 +126,22 @@ export function selectedInBox(snapshot:CanvasSnapshot,box:{x:number;y:number;wid
 export function removeCard(snapshot:CanvasSnapshot,id:string):CanvasSnapshot{
   return {...snapshot,cards:snapshot.cards.filter(c=>c.id!==id),relations:snapshot.relations.filter(r=>r.from!==id&&r.to!==id)};
 }
-export function visibleSourceRelations<T extends {from:CanvasCard;to:CanvasCard}>(relations:T[],availability:Record<string,string>):T[]{
+export function visibleSourceRelations<T extends {from:CanvasCard;to:CanvasCard;kind:string;origin:string}>(relations:T[],availability:Record<string,string>):T[]{
   const readable=(card:CanvasCard)=>!card.source||!availability[card.source.id]||availability[card.source.id]==='available';
-  return relations.filter(({from,to})=>!!from.historical===!!to.historical&&readable(from)&&readable(to));
+  const visible=relations.filter(({from,to})=>!!from.historical===!!to.historical&&readable(from)&&readable(to));
+  const drawingsByObject=new Map<string,string[]>();
+  for(const {from,to,origin} of visible){
+    if(origin==='source'&&from.kind==='object'&&to.kind==='drawing'){
+      drawingsByObject.set(from.id,[...(drawingsByObject.get(from.id)||[]),to.id]);
+    }
+  }
+  const connected=new Set<string>();
+  for(const {from,to,kind} of visible){
+    if(kind==='alarm_object_mapping'){
+      for(const drawing of drawingsByObject.get(to.id)||[])connected.add(`${from.id}\0${drawing}`);
+    }
+  }
+  return visible.filter(({from,to,kind})=>kind!=='alarm_drawing'||!connected.has(`${from.id}\0${to.id}`));
 }
 export function visibleSavedRelations(cards:CanvasCard[],relations:CanvasRelation[],availability:Record<string,string>){
   const available=new Map(cards.filter(card=>!card.source||availability[card.source.id]==='available').map(card=>[card.id,card]));

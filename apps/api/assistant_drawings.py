@@ -35,9 +35,10 @@ def drawing_context(body, draft, *, kinds=('object','alarm','drawing')):
 
 def _drawing_objects(reader, fixed, draft, body, scope, allowed, read):
     require({'object', 'drawing'} <= allowed, 'ASSISTANT_TOOL_NOT_ALLOWED', 403)
+    current_cards = [card for card in draft['cards'] if card.get('source') and not card.get('historical')]
+    current_refs = {card['source']['id'] for card in current_cards}
+    fixed = [(ref, descriptor) for ref, descriptor in fixed if ref['evidenceRefId'] in current_refs]
     objects = {ref['evidenceRefId']: descriptor for ref, descriptor in fixed if ref['sourceKind'] == 'object'}
-    if not objects:
-        return {}
     explicit = body.get('preferSelectedEvidence', False)
     chosen = set(body['evidenceRefIds'])
     if scope == 'canvas' and explicit:
@@ -45,19 +46,25 @@ def _drawing_objects(reader, fixed, draft, body, scope, allowed, read):
         if chosen_objects:
             return chosen_objects
 
-    alarms = [descriptor for ref, descriptor in fixed if ref['sourceKind'] == 'alarm'
+    alarms = [(ref['evidenceRefId'], descriptor) for ref, descriptor in fixed if ref['sourceKind'] == 'alarm'
               and (scope == 'alarm' or not explicit or ref['evidenceRefId'] in chosen)]
     if scope == 'alarm' or alarms:
         require('alarm' in allowed, 'ASSISTANT_TOOL_NOT_ALLOWED', 403)
         current_event = draft['context'].get('eventId')
-        current = next((descriptor for descriptor in alarms if descriptor['eventId'] == current_event), None)
-        if current is None and len(alarms) == 1 and (scope == 'canvas' or not current_event):
-            current = alarms[0]
-        if current is None:
+        focus = set(body.get('focusCardIds', ()))
+        focused = {card['source']['id'] for card in current_cards if card.get('id') in focus}
+        targets = [alarm for alarm in alarms if alarm[0] in focused]
+        if not targets:
+            targets = [alarm for alarm in alarms if alarm[1]['eventId'] == current_event] or alarms
+        if len(targets) != 1:
             return {}
-        dataset = read(lambda: reader.read('alarm', current))['dataset']
-        target = selected(read(lambda: reader._rds(dataset['primaryRds'])))
-        return {ref: descriptor for ref, descriptor in objects.items() if descriptor == target}
+        alarm_ref, alarm = targets[0]
+        dataset = read(lambda: reader.read('alarm', alarm))['dataset']
+        tag = dataset.get('primaryRds')
+        if not tag:
+            return {}
+        target = selected(read(lambda: reader._rds(tag)))
+        return {**{ref: descriptor for ref, descriptor in objects.items() if descriptor == target}, alarm_ref: target}
     return {} if explicit else objects
 
 
@@ -137,7 +144,7 @@ def drawing_answer(tools, fixed, draft, body, scope, plan):
     count = len(pending)
     truncated |= count > len(tools.results)
     state = 'unavailable' if gaps else 'complete'
-    trace = dict(tool='related_drawings', state=state, scope='画布工程对象的登记图纸', count=len(tools.results), truncated=truncated)
+    trace = dict(tool='related_drawings', state=state, scope='画布报警或工程对象的登记图纸', count=len(tools.results), truncated=truncated)
     if gaps:
         trace['reason'] = gaps[0]
     tools.trace.append(trace)
@@ -150,7 +157,7 @@ def drawing_answer(tools, fixed, draft, body, scope, plan):
     elif objects:
         message = '这些工程对象暂无可用的登记图纸。'
     else:
-        message = '请先加入当前报警的工程对象，或在画布资料中选择要查找图纸的工程对象。'
+        message = '请在画布上选择一张故障报警或工程对象卡片，以查找它的关联图纸。'
     summary = redact(json.dumps(dict(count=count,
         drawings=[dict(key=row['key'], title=row['title'], basis=row['reason']) for row in tools.results]),
         ensure_ascii=False), tools.private)[:1000]

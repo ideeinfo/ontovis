@@ -6,6 +6,7 @@ import json
 from urllib.parse import quote, urlencode
 
 from . import analysis_drafts as d
+from .analysis_evidence import SELECTION
 from .authority import PreviewError
 
 OB = 'urn:ontobase:document-knowledge:1:'
@@ -404,6 +405,78 @@ def preview(reader, kind, descriptor, options):
     return {'kind': kind, 'gaps': []}
 
 
+def _drawing_relationships(reader, values, previews, alarm_tags, add, gap):
+    def scope_key(descriptor):
+        return tuple(descriptor[key] for key in sorted(SELECTION))
+
+    located, whole = {}, {}
+    for identity, (kind, descriptor, _) in values.items():
+        if kind != 'drawing':
+            continue
+        if 'drawingUid' in descriptor:
+            whole.setdefault(descriptor['drawingUid'], []).append((identity, descriptor['expectedContentSha256']))
+        else:
+            located.setdefault(scope_key(descriptor), []).append(identity)
+    if not located and not whole:
+        return
+
+    from .analysis_source_reader import selected
+    from .related_drawings import RelatedDrawingsReader
+
+    def link(source, drawing, kind, label, anchor, reason):
+        if source in alarm_tags:
+            add(source, drawing, 'alarm_drawing', '报警关联图纸', anchor if anchor and anchor.get('selector') else None,
+                f'报警配置指向 {alarm_tags[source]}。{reason}')
+        else:
+            add(source, drawing, kind, label, anchor, reason)
+
+    scopes = {ref: descriptor for ref, (kind, descriptor, _) in values.items() if kind == 'object'}
+    lookups = {}
+    for ref, tag in alarm_tags.items():
+        if tag not in lookups:
+            try:
+                lookups[tag] = selected(reader._rds(tag))
+            except PreviewError as error:
+                if error.status in (401, 403):
+                    raise
+                lookups[tag] = error
+        target = lookups[tag]
+        if isinstance(target, PreviewError):
+            gap(ref, target.code)
+        else:
+            scopes[ref] = target
+
+    related = RelatedDrawingsReader(reader.reader) if whole and scopes else None
+    whole_matches = {}
+    for source, scope in scopes.items():
+        key = scope_key(scope)
+        for identity in located.get(key, ()):
+            link(source, identity, 'drawing_location', '图纸定位',
+                {'entityUid': scope['entityUid'], 'selector': previews.get(identity, {}).get('selector')},
+                '来源中已登记的对象关联')
+        if related is None:
+            continue
+        if key not in whole_matches:
+            try:
+                whole_matches[key] = related.matching_drawings(scope, whole)
+            except PreviewError as error:
+                if error.status in (401, 403):
+                    raise
+                whole_matches[key] = error
+        matches = whole_matches[key]
+        if isinstance(matches, PreviewError):
+            gap(source, matches.code)
+            continue
+        for uid, row in matches.items():
+            direct = any(match['relation'] in ('self', 'shared_definition') for match in row['matchedObjects'])
+            for identity, revision in whole[uid]:
+                if row['availability'] == 'available' and row['contentSha256'] == revision:
+                    link(source, identity, 'drawing_association' if direct else 'drawing_descendant',
+                        '关联图纸' if direct else '下级对象图纸', None,
+                        '此对象或其固定共享定义已登记这张图纸，打开整页' if direct
+                        else '此对象的下级对象已登记这张图纸，打开整页')
+
+
 def relationships(reader, fixed, scene_library):
     values, gaps = {}, []
     for reference, descriptor in fixed:
@@ -423,6 +496,7 @@ def relationships(reader, fixed, scene_library):
         if not any(row['evidenceRefId']==identity and row['reason']==reason for row in gaps):
             gaps.append({'evidenceRefId': identity, 'reason': reason})
     from .analysis_source_reader import matches_project_identifier
+    alarm_tags = {}
     for identity, (kind, descriptor, value) in values.items():
         dataset = value.get('dataset', {})
         if kind != 'alarm' or dataset.get('sourceKind') != 'simulated':
@@ -433,15 +507,17 @@ def relationships(reader, fixed, scene_library):
                 if target_kind == 'trend' and (target['datasetId'], target['datasetRevision']) == (dataset_id, revision):
                     add(identity, ref, 'alarm_trend', '同次报警趋势',
                         reason='报警和趋势来自同一次事件的数据版本')
-        if not dataset.get('primaryRds'):
+        tag = dataset.get('primaryRds')
+        if not tag:
             continue
         matches = [(ref, target) for ref, (target_kind, target, obj) in values.items()
-                   if target_kind == 'object' and matches_project_identifier(obj['item'],dataset['primaryRds'],reader.reader.project_code)]
+                   if target_kind == 'object' and matches_project_identifier(obj['item'], tag, reader.reader.project_code)]
         if len({target['entityUid'] for _,target in matches}) > 1:
             gap(identity,'ALARM_OBJECT_MAPPING_AMBIGUOUS'); continue
         for ref, target in matches:
             add(identity,ref,'alarm_object_mapping','报警对象',{'entityUid':target['entityUid']},
-                '报警配置指定了项目位号 '+dataset['primaryRds']+'。故障原因和现场安装身份仍待核实。')
+                '报警配置指定了项目位号 '+tag+'。故障原因和现场安装身份仍待核实。')
+        alarm_tags[identity] = tag
     drawings = {}
     for identity, (kind, descriptor, value) in values.items():
         photo_location_changed = kind == 'photo' and value.get('anchorUnavailableReason') == 'PHOTO_LOCATION_CHANGED'
@@ -455,15 +531,14 @@ def relationships(reader, fixed, scene_library):
         for object_id, (object_kind, target, obj) in values.items():
             if object_kind != 'object': continue
             uid = target['entityUid']
-            if kind in ('photo', 'drawing') and descriptor.get('entityUid') == uid:
+            if kind == 'photo' and descriptor.get('entityUid') == uid:
                 if photo_location_changed:
                     add(object_id, identity, 'photo_association',
                         '本机现场照片' if descriptor.get('photoPurpose') == 'field_record' else '关联照片',
                         reason='照片登记在此对象名下，原位置标注需核对')
                     continue
-                anchor = value.get('selector') if kind == 'photo' else drawings.get(identity, {}).get('selector')
-                add(object_id, identity, kind + '_location', ('本机现场照片' if descriptor.get('photoPurpose')=='field_record' else '照片定位') if kind == 'photo' else '图纸定位',
-                    {'entityUid': uid, 'selector': anchor}, '来源中已登记的对象关联')
+                add(object_id, identity, 'photo_location', '本机现场照片' if descriptor.get('photoPurpose')=='field_record' else '照片定位',
+                    {'entityUid': uid, 'selector': value.get('selector')}, '来源中已登记的对象关联')
             if kind == 'object' and obj['item'].get('definitionParentEntityUid') == descriptor['entityUid']:
                 add(object_id, identity, 'containment', '所属设备', reason='OntoBase 已登记定义层级')
     for source, drawing in drawings.items():
@@ -530,30 +605,7 @@ def relationships(reader, fixed, scene_library):
             if source_kind in ('alarm', 'work_order') and (value.get('dataset', {}).get('faultCode') or value.get('faultCode')) in codes:
                 matching = next(n for n in graph['nodes'] if n['faultCode'] == (value.get('dataset', {}).get('faultCode') or value.get('faultCode')))
                 add(alarm_id, doc_id, 'fault_manual', '故障代码手册', {'nodeId': matching['id'], 'pageNumber': descriptor['pageNumber']}, '已发布故障节点的代码与当前报警代码一致；适用范围见手册')
-    whole_drawings = {}
-    for identity, (kind, descriptor, _) in values.items():
-        if kind == 'drawing' and 'drawingUid' in descriptor:
-            whole_drawings.setdefault(descriptor['drawingUid'], []).append((identity, descriptor['expectedContentSha256']))
-    objects = {identity: descriptor for identity, (kind, descriptor, _) in values.items() if kind == 'object'}
-    if whole_drawings and objects:
-        from .related_drawings import RelatedDrawingsReader
-        related = RelatedDrawingsReader(reader.reader)
-        for object_id, descriptor in objects.items():
-            try:
-                matches = related.matching_drawings(descriptor, whole_drawings)
-            except PreviewError as error:
-                if error.status in (401, 403):
-                    raise
-                gap(object_id, error.code)
-                continue
-            for uid, row in matches.items():
-                direct = any(match['relation'] in ('self', 'shared_definition') for match in row['matchedObjects'])
-                for drawing_id, revision in whole_drawings[uid]:
-                    if row['availability'] == 'available' and row['contentSha256'] == revision:
-                        add(object_id, drawing_id, 'drawing_association' if direct else 'drawing_descendant',
-                            '关联图纸' if direct else '下级对象图纸',
-                            reason='此对象或其固定共享定义已登记这张图纸，打开整页' if direct
-                            else '此对象的下级对象已登记这张图纸，打开整页')
+    _drawing_relationships(reader, values, drawings, alarm_tags, add, gap)
     reader.authorize()
     unique = {edge['id']: edge for edge in edges}
     return {'items': sorted(unique.values(),key=lambda edge:edge['origin']!='source')[:200], 'gaps': gaps[:200]}

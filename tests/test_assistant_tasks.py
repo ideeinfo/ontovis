@@ -134,12 +134,27 @@ class DrawingTaskTests(unittest.TestCase):
         self.assertEqual(['drawing'], [row['kind'] for row in self.tools.results])
         self.assertTrue(answer['nextSteps'])
 
-    def test_missing_alarm_object_does_not_search_the_project_catalogue(self):
+    def test_alarm_without_an_object_card_uses_the_registered_drawing_scope(self):
+        fixed = [row for row in self.fixed if row[0]['sourceKind']=='alarm']
+        draft = {**self.board, 'cards': self.board['cards'][:1]}
+        with patch('apps.api.assistant_drawings._recorded_drawings', return_value={
+                'items': [self.row('fixed-drawing', 42)], 'nextCursor': None}) as read:
+            drawing_answer(self.tools, fixed, draft, self.body, 'canvas', self.plan)
+            read.assert_called_once_with(self.reader, self.target)
+            candidate, = self.tools.results
+            self.assertEqual(('drawing', 'alarm'), (candidate['kind'], candidate['drawingObjectRefId']))
+            self.assertEqual([action('add_results', ['R1'])], self.plan['actions'])
+            # Adding the target object before application leaves the alarm-based result valid.
+            self.assertEqual([candidate], checked_drawing_results(self.reader, self.fixed, self.board, self.body,
+                'canvas', self.tools.allowed, self.plan, self.tools.results))
+
+    def test_unresolved_alarm_object_does_not_search_the_project_catalogue(self):
         fixed = [row for row in self.fixed if row[0]['evidenceRefId']!='target']
+        self.reader._rds.side_effect = PreviewError(409, 'DIAGNOSTIC_OBJECT_UNRESOLVED')
         with patch('apps.api.assistant_drawings._recorded_drawings') as read:
             answer = drawing_answer(self.tools, fixed, self.board, self.body, 'canvas', self.plan)
         read.assert_not_called()
-        self.assertIn('工程对象', answer['observations'][0]['text'])
+        self.assertIn('暂未找到可加入的图纸', answer['observations'][0]['text'])
         self.assertEqual([], self.plan['actions'])
         self.assertEqual([], self.tools.results)
 

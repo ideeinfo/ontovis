@@ -8,38 +8,49 @@ type Box=Size&{x:number;y:number};
 type Handle='move'|'left'|'right';
 const arrows:Record<string,[number,number]>={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
 const clamp=(value:number,low:number,high:number)=>Math.min(Math.max(value,low),high);
-function fit(box:Box,area:Size):Box{
+function fit(box:Box,area:Box):Box{
  const width=clamp(box.width,Math.min(300,area.width),area.width);
  const height=clamp(box.height,Math.min(340,area.height),area.height);
- return {width,height,x:clamp(box.x,0,area.width-width),y:clamp(box.y,0,area.height-height)};
+ return {width,height,x:clamp(box.x,area.x,area.x+area.width-width),y:clamp(box.y,area.y,area.y+area.height-height)};
 }
 
 export function AnalysisAssistantWindow({title,en,onClose,children}:{title:string;en:boolean;onClose:()=>void;children:ReactNode}){
  const [box,setBox]=useState<Box|null>(null);
- const windowRef=useRef<HTMLElement>(null),area=useRef<Size>({width:0,height:0});
+ const windowRef=useRef<HTMLElement>(null),area=useRef<Box>({x:0,y:0,width:0,height:0});
  const drag=useRef<{pointer:number;handle:Handle;x:number;y:number;box:Box}|null>(null);
  const t=(zh:string,english:string)=>en?english:zh;
  useLayoutEffect(()=>{
-  const parent=windowRef.current?.parentElement;
-  if(!parent)return;
+  const initialArea=windowRef.current?.parentElement?.getBoundingClientRect();
+  const viewport=window.visualViewport;
   const update=()=>{
-   const width=parent.clientWidth,height=parent.clientHeight;
+   const width=viewport?.width??document.documentElement.clientWidth;
+   const height=viewport?.height??document.documentElement.clientHeight;
    if(!width||!height)return;
-   area.current={width,height};
-   setBox(previous=>fit(previous??{x:width-444,y:12,width:432,height:Math.min(height-68,640)},area.current));
+   const bounds={x:viewport?.offsetLeft??0,y:viewport?.offsetTop??0,width,height};
+   area.current=bounds;
+   setBox(previous=>fit(previous??{
+    x:(initialArea?.right||bounds.x+width)-444,y:(initialArea?.top??bounds.y)+12,
+    width:432,height:Math.min((initialArea?.height||height)-68,640),
+   },bounds));
   };
   update();
-  const observer=new ResizeObserver(update);
-  observer.observe(parent);
-  return()=>observer.disconnect();
+  window.addEventListener('resize',update);
+  viewport?.addEventListener('resize',update);
+  viewport?.addEventListener('scroll',update);
+  return()=>{
+   window.removeEventListener('resize',update);
+   viewport?.removeEventListener('resize',update);
+   viewport?.removeEventListener('scroll',update);
+  };
  },[]);
- function adjust(start:Box,handle:Handle,dx:number,dy:number){
+ function adjust(initial:Box,handle:Handle,dx:number,dy:number){
   const bounds=area.current;
+  const start=fit(initial,bounds);
   if(handle==='move'){setBox(fit({...start,x:start.x+dx,y:start.y+dy},bounds));return;}
   const right=start.x+start.width;
-  const maxWidth=handle==='left'?right:bounds.width-start.x;
+  const maxWidth=handle==='left'?right-bounds.x:bounds.x+bounds.width-start.x;
   const width=clamp(start.width+(handle==='left'?-dx:dx),Math.min(300,maxWidth),maxWidth);
-  const maxHeight=bounds.height-start.y;
+  const maxHeight=bounds.y+bounds.height-start.y;
   const height=clamp(start.height+dy,Math.min(340,maxHeight),maxHeight);
   setBox({...start,width,height,x:handle==='left'?right-width:start.x});
  }

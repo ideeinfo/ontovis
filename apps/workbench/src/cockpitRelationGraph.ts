@@ -14,7 +14,7 @@ export function cockpitRelationGraph(cards:CanvasCard[],visible:CanvasCard[],rel
  for(const link of visibleSavedRelations(visible,saved,availability))direct.push({...link,label:names[link.kind][en?1:0],anchor:null,via:[],steps:[]});
  if(visible.length===cards.length)return direct;
 
- const informational=new Set(['PHOTO_LOCATION_CHANGED','MODEL_NAME_CANDIDATE_ONLY','MODEL_BOUND_TO_DIFFERENT_OBJECT','MODEL_BINDING_IN_RECYCLE_BIN','MODEL_BINDINGS_TRUNCATED','ALARM_OBJECT_MAPPING_AMBIGUOUS']);
+ const informational=new Set(['PHOTO_LOCATION_CHANGED','MODEL_NAME_CANDIDATE_ONLY','MODEL_BOUND_TO_DIFFERENT_OBJECT','MODEL_BINDING_IN_RECYCLE_BIN','MODEL_BINDINGS_TRUNCATED','ALARM_OBJECT_MAPPING_AMBIGUOUS','DIAGNOSTIC_OBJECT_UNRESOLVED']);
  const blocked=new Set(gaps.filter(gap=>!informational.has(gap.reason)).map(gap=>gap.evidenceRefId));
  const supportsPath=(card:CanvasCard)=>!card.source||!blocked.has(card.source.id);
  const pathEndpoints=new Map(visible.filter(card=>supportsPath(card)&&(!card.source||availability[card.source.id]==='available')).map(card=>[card.id,card]));

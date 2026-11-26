@@ -1,10 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {validateSnapshot,moveCard,removeCard,addManualRelation,arrangeCards,fitViewport,zoomAt,visibleSource} from '../src/analysisCanvas.ts';
+import {validateSnapshot,moveCard,removeCard,addManualRelation,arrangeCards,fitViewport,zoomAt,visibleSource,visibleSourceRelations} from '../src/analysisCanvas.ts';
 import {documentVersionChoice,keepFixedDocumentCard} from '../src/analysisSources.ts';
 const scope={ontobaseConnectionId:'fixture-connection',projectCode:'Demo-PDS'};
 const card=(id,x=0,y=0,pinned=false)=>({id,kind:'object',title:'合成对象',x,y,width:300,height:200,pinned,source:{system:'ontobase',...scope,id:'fixture-'+id,revision:'fixture-r1'}});
 const initial=()=>({schemaVersion:1,...scope,title:'温度报警排查',status:'analyzing',context:{objectIds:['fixture-a'],eventId:'fixture-event',workOrderId:'fixture-order',timeFrom:'2026-10-25T00:00:00Z',timeTo:'2026-10-25T02:00:00Z',timezone:'Asia/Shanghai'},cards:[card('a'),card('b',350)],relations:[],viewport:{x:24,y:24,zoom:1}});
+test('an alarm shows a registered drawing link when its object path is not visible',()=>{
+  const alarm={...card('alarm'),kind:'alarm'},object=card('device'),drawing={...card('drawing'),kind:'drawing'};
+  const edge=(from,to,kind)=>({from,to,kind,origin:'source'});
+  const direct=edge(alarm,drawing,'alarm_drawing');
+  const mapping=edge(alarm,object,'alarm_object_mapping'),location=edge(object,drawing,'drawing_location');
+  const all=[mapping,location,direct];
+  assert.deepEqual(visibleSourceRelations(all,{}),[mapping,location]);
+  assert.deepEqual(visibleSourceRelations([mapping,direct],{}),[mapping,direct]);
+  assert.deepEqual(visibleSourceRelations(all,{[object.source.id]:'unavailable'}),[direct]);
+  assert.deepEqual(visibleSourceRelations(all,{[drawing.source.id]:'restricted'}),[mapping]);
+  const historical={...object,historical:true};
+  assert.deepEqual(visibleSourceRelations([edge(alarm,historical,mapping.kind),edge(historical,drawing,location.kind),direct],{}),[direct]);
+});
 test('adopting a compared document uses only its fixed document, exact version, digest and selected page',()=>{
   const source={documentId:'manual-a',contentVersionId:'v1',currentContentVersionId:'v2',newerVersionAvailable:true};
   const version={documentId:'manual-a',contentVersionId:'v2',kind:'pdf',sourceSha256:'b'.repeat(64),pageCount:4,title:'同名手册'};

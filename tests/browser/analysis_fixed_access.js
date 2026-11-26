@@ -357,6 +357,39 @@ async (page, facts, phase) => {
       await composer.press('Enter');
     };
     const assistantResponse=path=>page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/assistant/'+path);
+    const alarmDrawingEdges=canvas.locator('.ac-source-link').filter({hasText:'报警关联图纸'});
+    const [materialsAck]=await Promise.all([
+      assistantResponse('task-ack'),sendLinked('加入相关文档和图纸'),
+    ]);
+    const relatedMaterials=await materialsAck.json();
+    check(materialsAck.ok()&&relatedMaterials.receipt.items.map(item=>item.sourceKind).sort().join(',')==='document,drawing',
+      'Adding a manual and a located drawing did not respect the requested material types');
+    await alarmDrawingEdges.waitFor({state:'attached'});
+    check(await alarmDrawingEdges.getAttribute('data-origin')==='source'&&await objectCards.count()===0,
+      'A located drawing required an intermediate engineering object card');
+    const [objectAck]=await Promise.all([
+      assistantResponse('task-ack'),sendLinked('加入相关的工程对象'),
+    ]);
+    check(objectAck.ok(),'The registered object could not be added after its drawing');
+    await powerEdge.waitFor({state:'attached'});
+    await alarmDrawingEdges.waitFor({state:'detached'});
+    await button('撤销修改',canvas).click();
+    await alarmDrawingEdges.waitFor({state:'attached'});
+    await button('撤销修改',canvas).click();
+    await alarmDrawingEdges.waitFor({state:'detached'});
+
+    const [wholeDrawingAck]=await Promise.all([
+      assistantResponse('task-ack'),sendLinked('加入相关图纸'),
+    ]);
+    const wholeDrawings=await wholeDrawingAck.json();
+    check(wholeDrawingAck.ok()&&wholeDrawings.receipt.items.length===2&&
+      wholeDrawings.receipt.items.every(item=>item.sourceKind==='drawing'&&item.status==='added')&&await objectCards.count()===0,
+      'A drawing-only request from an alarm card did not add its registered whole pages');
+    await alarmDrawingEdges.nth(1).waitFor({state:'attached'});
+    check(await alarmDrawingEdges.count()===2,'A whole drawing page was left disconnected');
+    await button('撤销修改',canvas).click();
+    await alarmDrawingEdges.first().waitFor({state:'detached'});
+
     const [linkedStart,linkedResponse]=await Promise.all([
       assistantResponse('task-start'),assistantResponse('task-ack'),sendLinked('添加工程对象和图纸'),
     ]);
@@ -433,11 +466,21 @@ async (page, facts, phase) => {
     await drag(button('移动助手窗口',floating),-90,40);
     const moved=await floating.boundingBox();
     check(moved.x<before.x-65&&moved.y>before.y+20,'The floating assistant did not move with its header');
+    const grip=button('移动助手窗口',floating);
+    await drag(grip,8-moved.x,8-moved.y);
+    const overNavigation=await floating.boundingBox();
+    check(overNavigation.x<=10&&overNavigation.y<=10&&overNavigation.x<canvasBefore.x&&overNavigation.y<canvasBefore.y,
+      'The assistant could not leave the canvas in both directions');
+    check(await grip.evaluate(node=>{
+      const rect=node.getBoundingClientRect();
+      return node.contains(document.elementFromPoint(rect.left+10,rect.top+rect.height/2));
+    }),'The assistant stopped receiving input over the workbench navigation');
     await drag(button('向右缩放助手窗口',floating),65,-40);
     const resized=await floating.boundingBox();
-    check(resized.width>moved.width+40&&resized.height<moved.height-20,'The floating assistant did not resize from its corner');
+    check(resized.width>overNavigation.width+40&&resized.height<overNavigation.height-20,'The assistant did not resize outside the canvas');
     const canvasAfter=await canvas.locator('.ad-canvas').boundingBox();
     check(canvasBefore.width===canvasAfter.width&&canvasBefore.height===canvasAfter.height,'Resizing the assistant changed the canvas layout');
+    await drag(grip,before.x-resized.x,before.y-resized.y);
     for(const [kind,name] of Object.entries(facts.candidateTitles)){
       const candidate=floating.locator('.as-material-candidate[data-card-kind="'+kind+'"]').last();
       await candidate.getByText(name,{exact:true}).waitFor();
