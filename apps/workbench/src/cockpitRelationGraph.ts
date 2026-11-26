@@ -1,4 +1,4 @@
-import type {CanvasCard,CanvasRelation} from './analysisCanvas.ts';
+import {visibleSavedRelations,visibleSourceRelations,type CanvasCard,type CanvasRelation} from './analysisCanvas.ts';
 import type {SourceAnchor,SourceRelationship} from './analysisSources.ts';
 import type {CockpitCanvasBounds} from './cockpitAnalysisCanvas.ts';
 
@@ -7,26 +7,28 @@ export type CockpitRelation={id:string;from:CanvasCard;to:CanvasCard;label:strin
 
 /** Only existing readable source paths through off-page objects may be collapsed. */
 export function cockpitRelationGraph(cards:CanvasCard[],visible:CanvasCard[],relations:SourceLink[],saved:CanvasRelation[],availability:Record<string,string>,gaps:{evidenceRefId:string;reason:string}[],en=false){
- const informational=new Set(['MODEL_NAME_CANDIDATE_ONLY','MODEL_BOUND_TO_DIFFERENT_OBJECT','MODEL_BINDING_IN_RECYCLE_BIN','MODEL_BINDINGS_TRUNCATED','ALARM_OBJECT_MAPPING_AMBIGUOUS']);
- const blocked=new Set(gaps.filter(gap=>!informational.has(gap.reason)).map(gap=>gap.evidenceRefId)),known=new Set(cards.map(card=>card.id));
- const readable=(card:CanvasCard)=>!card.source||!blocked.has(card.source.id)&&(!availability[card.source.id]||availability[card.source.id]==='available');
- const placed=new Map(visible.filter(card=>readable(card)&&(!card.source||availability[card.source.id]==='available')).map(card=>[card.id,card]));
- const edges=relations.filter(link=>known.has(link.from.id)&&known.has(link.to.id)&&readable(link.from)&&readable(link.to)
-  &&link.from.frameId===link.to.frameId&&!!link.from.historical===!!link.to.historical);
+ const known=new Set(cards.map(card=>card.id)),placed=new Map(visible.map(card=>[card.id,card]));
+ const edges=visibleSourceRelations(relations,availability).filter(link=>known.has(link.from.id)&&known.has(link.to.id));
  const direct:CockpitRelation[]=edges.flatMap(link=>placed.has(link.from.id)&&placed.has(link.to.id)?[{...link,from:placed.get(link.from.id)!,to:placed.get(link.to.id)!,via:[],steps:[link]}]:[]);
  const names={engineering:['工程关系','Engineering relation'],reference:['资料关联','Reference'],hypothesis:['人工假设','Manual hypothesis'],supports:['支持依据','Supporting evidence'],contradicts:['反证','Contradicting evidence']};
- for(const link of saved){const from=placed.get(link.from),to=placed.get(link.to);if(from&&to&&!!from.historical===!!to.historical)direct.push({...link,from,to,label:names[link.kind][en?1:0],anchor:null,via:[],steps:[]});}
+ for(const link of visibleSavedRelations(visible,saved,availability))direct.push({...link,label:names[link.kind][en?1:0],anchor:null,via:[],steps:[]});
+ if(visible.length===cards.length)return direct;
+
+ const informational=new Set(['PHOTO_LOCATION_CHANGED','MODEL_NAME_CANDIDATE_ONLY','MODEL_BOUND_TO_DIFFERENT_OBJECT','MODEL_BINDING_IN_RECYCLE_BIN','MODEL_BINDINGS_TRUNCATED','ALARM_OBJECT_MAPPING_AMBIGUOUS']);
+ const blocked=new Set(gaps.filter(gap=>!informational.has(gap.reason)).map(gap=>gap.evidenceRefId));
+ const supportsPath=(card:CanvasCard)=>!card.source||!blocked.has(card.source.id);
+ const pathEndpoints=new Map(visible.filter(card=>supportsPath(card)&&(!card.source||availability[card.source.id]==='available')).map(card=>[card.id,card]));
  const adjacent=new Map<string,SourceLink[]>();
- for(const link of edges)for(const id of [link.from.id,link.to.id])adjacent.set(id,[...(adjacent.get(id)||[]),link]);
+ for(const link of edges.filter(link=>supportsPath(link.from)&&supportsPath(link.to)))for(const id of [link.from.id,link.to.id])adjacent.set(id,[...(adjacent.get(id)||[]),link]);
  const center=visible.find(card=>card.kind==='alarm')?.id;
- const starts=[...placed.values()].sort((a,b)=>Number(b.id===center)-Number(a.id===center));
+ const starts=[...pathEndpoints.values()].sort((a,b)=>Number(b.id===center)-Number(a.id===center));
  const candidates:CockpitRelation[]=[],pairs=new Set<string>();
  for(const start of starts){
   const queue=[{node:start,via:[] as CanvasCard[],steps:[] as SourceLink[]}],seen=new Set([start.id]);
   while(queue.length){const current=queue.shift()!;
    for(const edge of adjacent.get(current.node.id)||[]){
     const next=edge.from.id===current.node.id?edge.to:edge.from;if(seen.has(next.id))continue;seen.add(next.id);
-    const steps=[...current.steps,edge],target=placed.get(next.id);
+    const steps=[...current.steps,edge],target=pathEndpoints.get(next.id);
     if(target){
      if(!current.via.length)continue;
      const pair=[start.id,target.id].sort().join('\0');if(pairs.has(pair))continue;pairs.add(pair);

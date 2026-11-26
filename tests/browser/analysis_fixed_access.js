@@ -90,11 +90,21 @@ async (page, facts, phase) => {
 
     const target=card('drawing'),original=facts.cards.drawing;
     const targetGroup=facts.frames.find(group=>group.id!==original.frameId);
+    const groupDialog=page.getByRole('dialog',{name:'设置分组',exact:true});
+    const group=groupDialog.getByLabel('所属分组',{exact:true});
+    const setGroup=page.getByRole('menuitem',{name:'设置分组',exact:true});
+    await button('平移工具',canvas).click();
     await target.getByRole('button',{name:'更多操作： '+original.title,exact:true}).click();
-    await page.getByRole('menuitem',{name:'设置分组',exact:true}).click();
-    const group=canvas.getByLabel('所属分组',{exact:true});
-    check(await group.inputValue()===original.frameId,'The inspector reported the wrong starting group');
+    await setGroup.click();
+    check(await group.inputValue()===original.frameId,'The dialog reported the wrong starting group');
     await group.selectOption({label:targetGroup.title});
+    await button('取消',groupDialog).click();
+    check(await target.getAttribute('data-frame-id')===original.frameId,'Cancelling applied a different group');
+    await button('选择工具',canvas).click();
+    await target.locator('header .ac-card-title').click({button:'right'});
+    await setGroup.click();
+    await group.selectOption({label:targetGroup.title});
+    await button('应用',groupDialog).click();
     check(await target.getAttribute('data-frame-id')===targetGroup.id,'The card did not join the chosen group');
     await button('撤销修改',canvas).click();
     check(await target.getAttribute('data-frame-id')===original.frameId,'Undo did not restore group membership');
@@ -117,7 +127,23 @@ async (page, facts, phase) => {
     const detail=await reopened.json();
     check(reopened.ok()&&detail.analysisRevision===3&&
       detail.snapshot.cards.find(row=>row.id===original.id).frameId===targetGroup.id,'Reopening lost the saved group');
-    return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3};
+    const workbenchEdges=canvas.locator('.ad-links [data-relation-id]');
+    const edgeIds=locator=>locator.evaluateAll(nodes=>nodes.map(node=>node.dataset.relationId).sort());
+    await workbenchEdges.filter({hasText:'同次报警趋势'}).waitFor({state:'attached'});
+    await canvas.locator('.ad-links [data-origin="manual"]').waitFor({state:'attached'});
+    const expected=await edgeIds(workbenchEdges);
+    await button('驾驶舱').click();
+    const cockpit=page.getByRole('region',{name:'项目驾驶舱'});
+    await button('分析工作台',cockpit).click();
+    const view=cockpit.getByRole('region',{name:'故障分析展示'});
+    await view.getByLabel('当前故障',{exact:true}).selectOption(JSON.stringify([facts.datasetId,facts.datasetRevision]));
+    await view.getByLabel('推荐分析画布',{exact:true}).selectOption(facts.analysisId);
+    await view.locator('.pa-canvas-caption').getByText(/ · r3 · /).waitFor();
+    await view.locator('.pa-relation-label').filter({hasText:'同次报警趋势'}).waitFor({state:'attached'});
+    await view.locator('.pa-links path[data-origin="manual"]').waitFor({state:'attached'});
+    check(JSON.stringify(await edgeIds(view.locator('.pa-links path[data-relation-id]')))===JSON.stringify(expected),
+      'The cockpit did not display the workbench relationships for the same saved revision');
+    return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

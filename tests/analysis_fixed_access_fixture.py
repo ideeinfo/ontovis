@@ -107,13 +107,14 @@ def browser_site(public: Path):
                 ('drawing','Q-26 合成固定图纸',dict(drawingUid=drawing,expectedContentSha256=pdf['sha256'])),
                 ('work_order','Q-26 合成固定工单',dict(orderId=order['orderId'],expectedOrderRevision=order['orderRevision'])),
                 ('alarm','13001 合成报警',{key:board['context'][key] for key in ('eventId','datasetId','datasetRevision')}),
+                ('trend','合成传感器温度',{key:sample[key] for key in ('datasetId','datasetRevision','timeFrom','timeTo')} | {'metricId':'sensor_temperature'}),
             ]
             frames = [dict(id='current',title='本次调查',x=-560,y=-500,width=1040,height=275),
-                      dict(id='history',title='历史参考 · 合成处置',x=-560,y=60,width=700,height=275)]
+                      dict(id='history',title='历史参考 · 合成处置',x=-560,y=60,width=700,height=550)]
             board['frames'] = frames
             board['cards'][0].update(x=180,y=103)
             positions = [(-540,-457,'current'),(-200,-457,'current'),(-540,103,'history'),
-                         (-200,103,'history'),(140,-457,'current')]
+                         (-200,103,'history'),(140,-457,'current'),(-540,380,'history')]
             cards = {}
             for (kind,name,selector),(x,y,frame_id) in zip(entries,positions,strict=True):
                 ref = fixture.ok(ANALYSIS+'/evidence/register',dict(analysisSessionId=analysis_id,
@@ -121,7 +122,7 @@ def browser_site(public: Path):
                 cards[kind] = dict(title=name,id='fixed-'+kind,ref=ref['evidenceRefId'],x=x,y=y,width=320,height=205,frameId=frame_id)
                 board['cards'].append(dict(kind=kind,title=name,id=cards[kind]['id'],x=x,y=y,
                     width=320,height=205,frameId=frame_id,pinned=False,source=dict(id=ref['evidenceRefId'],revision=ref['sourceRevision'],
-                    system='ontovis' if kind in ('work_order','alarm') else 'ontobase',projectCode=PROJECT,ontobaseConnectionId='ontobase-primary')))
+                    system='ontovis' if kind in ('work_order','alarm','trend') else 'ontobase',projectCode=PROJECT,ontobaseConnectionId='ontobase-primary')))
             board['relations'].append({'id':'grouped-reference','from':cards['document']['id'],'to':cards['photo']['id'],
                                        'kind':'reference','origin':'manual','reason':'合成分组连线'})
             saved = fixture.ok(ANALYSIS+'/save',dict(analysisSessionId=analysis_id,expectedAnalysisRevision=1,

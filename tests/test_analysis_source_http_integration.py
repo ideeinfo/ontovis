@@ -355,7 +355,9 @@ class AnalysisSourceHttpTests(unittest.TestCase):
     def test_rehearsal_catalogue_is_project_scoped_and_extra_paths_are_closed(self):
         project,created,orders=self.demo()
         value=self.request(ROOT+'/simulation/catalogue',{'projectRef':project});self.assertEqual(value[0],200,value[1])
-        self.assertEqual(value[1]['sourceKind'],'simulated');self.assertEqual(len(value[1]['items']),5)
+        self.assertEqual(value[1]['sourceKind'],'simulated')
+        cases = ('13001','13002','13003','13004','13033','13035','13058','13001-recurrence-1')
+        self.assertCountEqual([item['datasetId'] for item in value[1]['items']], ['SIM-PDS-'+case for case in cases])
         self.assertEqual(self.request(ROOT+'/simulation/catalogue',self.body())[0],404)
         for suffix in ('evidence/register/extra','simulation/qualify/','simulation/reset','evidence/delete','confirm'):
             self.assertEqual(self.request(ROOT+'/'+suffix,self.body())[0],404)

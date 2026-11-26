@@ -195,7 +195,8 @@ class SourceContractTests(unittest.TestCase):
         fixed = [({'evidenceRefId':'device', 'sourceKind':'object'}, selection),
                  ({'evidenceRefId':'photo', 'sourceKind':'photo'}, descriptor)]
         value = relationships(source, fixed, None)
-        self.assertEqual(value['items'], [])
+        self.assertEqual([(row['fromRef'],row['toRef'],row['kind'],row['anchor']) for row in value['items']],
+                         [('device','photo','photo_association',None)])
         self.assertEqual(value['gaps'], [{'evidenceRefId':'photo', 'reason':'PHOTO_LOCATION_CHANGED'}])
 
         for changed in ({'evidenceRef':'photo:another'}, {'contentVersionId':str(uuid4())},
@@ -205,6 +206,7 @@ class SourceContractTests(unittest.TestCase):
                 source.photos.content.reset_mock()
                 with self.assertRaises(PreviewError):
                     source.read('photo', descriptor)
+                self.assertEqual(relationships(source, fixed, None)['items'], [])
                 with self.assertRaises(PreviewError):
                     source.content('photo', descriptor)
                 source.photos.content.assert_called_once_with(descriptor)

@@ -126,6 +126,17 @@ export function selectedInBox(snapshot:CanvasSnapshot,box:{x:number;y:number;wid
 export function removeCard(snapshot:CanvasSnapshot,id:string):CanvasSnapshot{
   return {...snapshot,cards:snapshot.cards.filter(c=>c.id!==id),relations:snapshot.relations.filter(r=>r.from!==id&&r.to!==id)};
 }
+export function visibleSourceRelations<T extends {from:CanvasCard;to:CanvasCard}>(relations:T[],availability:Record<string,string>):T[]{
+  const readable=(card:CanvasCard)=>!card.source||!availability[card.source.id]||availability[card.source.id]==='available';
+  return relations.filter(({from,to})=>!!from.historical===!!to.historical&&readable(from)&&readable(to));
+}
+export function visibleSavedRelations(cards:CanvasCard[],relations:CanvasRelation[],availability:Record<string,string>){
+  const available=new Map(cards.filter(card=>!card.source||availability[card.source.id]==='available').map(card=>[card.id,card]));
+  return relations.flatMap(link=>{
+    const from=available.get(link.from),to=available.get(link.to);
+    return from&&to?[{...link,from,to}]:[];
+  });
+}
 export function addManualRelation(snapshot:CanvasSnapshot,relation:CanvasRelation):CanvasSnapshot{
   if(relation.origin!=='manual'||relation.kind==='engineering')throw new Error('人工编辑不能创建工程事实');
   const next={...snapshot,relations:[...snapshot.relations,relation]};

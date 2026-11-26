@@ -13,6 +13,7 @@ from apps.api.authority import PreviewError
 from apps.api.analysis_evidence import validate_descriptor
 from apps.api.analysis_preview import drawing_preview, drawing_bytes, document_preview, fault_documents, relationships, preview
 from apps.api import analysis_media
+from apps.api import simulated_faults as simulated
 
 
 class SourceViewerTests(TestCase):
@@ -231,6 +232,32 @@ class SourceViewerTests(TestCase):
         photo['entityUid']='other';self.assertEqual(relationships(self.reader,fixed,None)['items'],[])
         self.reader.read.side_effect=PreviewError(403,'FORBIDDEN')
         with self.assertRaises(PreviewError):relationships(self.reader,fixed,None)
+
+    def test_alarm_links_only_to_trends_from_its_fixed_simulation_dataset(self):
+        current = simulated.identity('13001')
+        recurrence = simulated.identity('13001', recurrence=True)
+        def trend(sample, metric_id):
+            return {key:sample[key] for key in ('datasetId','datasetRevision','timeFrom','timeTo')} | {'metricId':metric_id}
+
+        def read(kind, descriptor):
+            dataset_id, revision = descriptor['datasetId'], descriptor['datasetRevision']
+            if kind == 'alarm':
+                return simulated.alarms(dataset_id, revision)
+            return simulated.trend(dataset_id, descriptor['metricId'], descriptor['timeFrom'], descriptor['timeTo'], revision)
+
+        self.reader.read.side_effect = read
+        alarm = {key:current[key] for key in ('datasetId','datasetRevision')}
+        fixed = [
+            ({'evidenceRefId':'alarm','sourceKind':'alarm'}, alarm),
+            ({'evidenceRefId':'sensor','sourceKind':'trend'}, trend(current,'sensor_temperature')),
+            ({'evidenceRefId':'reference','sourceKind':'trend'}, trend(current,'reference_temperature')),
+            ({'evidenceRefId':'other-event','sourceKind':'trend'}, trend(recurrence,'sensor_temperature')),
+            ({'evidenceRefId':'stale','sourceKind':'trend'}, trend(current,'sensor_temperature') | {'datasetRevision':'0'*64}),
+        ]
+        result = relationships(self.reader, fixed, None)
+        self.assertEqual([(row['fromRef'],row['toRef'],row['kind'],row['origin'],row['anchor']) for row in result['items']],
+                         [('alarm','sensor','alarm_trend','source',None),('alarm','reference','alarm_trend','source',None)])
+        self.assertEqual(result['gaps'], [{'evidenceRefId':'stale','reason':'SIMULATION_DATASET_CHANGED'}])
 
     def test_viewer_rejects_arbitrary_urls_unbounded_cursors_and_malformed_fixed_handles(self):
         validate_descriptor('document',self.document);validate_descriptor('drawing',self.drawing)

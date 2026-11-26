@@ -158,14 +158,18 @@ test('projection never crosses a historical boundary or treats unregistered comm
  assert.deepEqual(cockpitRelationGraph(cards,[alarm,photo,trend],edges,[],ready(cards),[]),[]);
  assert.deepEqual(cockpitRelationGraph(cards,[alarm,trend],[],[],ready(cards),[]),[]);
 });
-test('source matches between different saved groups cannot produce direct or indirect cross-group links',()=>{
+test('readable relationships remain visible across saved layout groups',()=>{
  const alarm={...card('alarm','alarm'),frameId:'group-a'},object={...card('object','object'),frameId:'group-a'};
- const otherAlarm={...alarm,id:'other-alarm',frameId:'group-b'},drawing={...card('drawing','drawing'),frameId:'group-b'};
- const cards=[alarm,object,otherAlarm,drawing];
- const edges=[sourceLink(alarm,object),sourceLink(otherAlarm,object),sourceLink(object,drawing),sourceLink(otherAlarm,drawing)];
- assert.deepEqual(cockpitRelationGraph(cards,[alarm,otherAlarm,drawing],edges,[],ready(cards),[]).map(link=>link.id),['other-alarm-drawing']);
+ const drawing={...card('drawing','drawing'),frameId:'group-b'},photo=card('photo','photo');
+ const cards=[alarm,object,drawing,photo];
+ const edges=[sourceLink(alarm,object),sourceLink(object,drawing),{...sourceLink(object,photo,'Photo association'),anchor:null}];
+ const gaps=[{evidenceRefId:photo.source.id,reason:'PHOTO_LOCATION_CHANGED'}];
  const saved=[{id:'authored',from:alarm.id,to:drawing.id,kind:'supports',origin:'manual',reason:'Explicit comparison'}];
- assert.deepEqual(cockpitRelationGraph(cards,cards,edges,saved,ready(cards),[]).map(link=>link.id),['alarm-object','other-alarm-drawing','authored']);
+ assert.deepEqual(cockpitRelationGraph(cards,cards,edges,saved,ready(cards),gaps).map(link=>link.id),['alarm-object','object-drawing','object-photo','authored']);
+ assert.deepEqual(cockpitRelationGraph(cards,cards,edges,saved,{...ready(cards),[drawing.source.id]:'restricted'},gaps).map(link=>link.id),['alarm-object','object-photo']);
+ const hidden=cockpitRelationGraph(cards,[alarm,drawing,photo],edges,[],ready(cards),gaps);
+ assert.ok(hidden.some(link=>link.from.id===alarm.id&&link.to.id===drawing.id&&link.via[0].id===object.id));
+ assert.ok(hidden.some(link=>link.to.id===photo.id&&link.anchor===null));
 });
 test('saved manual support and contradiction labels retain their exact meaning without source promotion',()=>{
  const a=card('a'),b=card('b'),saved=[{id:'manual',from:a.id,to:b.id,kind:'contradicts',origin:'manual',reason:'Saved counter-evidence'}];

@@ -425,7 +425,15 @@ def relationships(reader, fixed, scene_library):
     from .analysis_source_reader import matches_project_identifier
     for identity, (kind, descriptor, value) in values.items():
         dataset = value.get('dataset', {})
-        if kind != 'alarm' or dataset.get('sourceKind') != 'simulated' or not dataset.get('primaryRds'):
+        if kind != 'alarm' or dataset.get('sourceKind') != 'simulated':
+            continue
+        dataset_id, revision = descriptor.get('datasetId'), descriptor.get('datasetRevision')
+        if dataset_id and revision:
+            for ref, (target_kind, target, _) in values.items():
+                if target_kind == 'trend' and (target['datasetId'], target['datasetRevision']) == (dataset_id, revision):
+                    add(identity, ref, 'alarm_trend', '同次报警趋势',
+                        reason='报警和趋势来自同一次模拟演练的数据版本')
+        if not dataset.get('primaryRds'):
             continue
         matches = [(ref, target) for ref, (target_kind, target, obj) in values.items()
                    if target_kind == 'object' and matches_project_identifier(obj['item'],dataset['primaryRds'],reader.reader.project_code)]
@@ -436,9 +444,9 @@ def relationships(reader, fixed, scene_library):
                 '固定模拟报警配置按项目主位号 '+dataset['primaryRds']+' 显式映射；不表示已确认故障原因或现场安装身份')
     drawings = {}
     for identity, (kind, descriptor, value) in values.items():
-        if kind == 'photo' and value.get('anchorUnavailableReason') == 'PHOTO_LOCATION_CHANGED':
+        photo_location_changed = kind == 'photo' and value.get('anchorUnavailableReason') == 'PHOTO_LOCATION_CHANGED'
+        if photo_location_changed:
             gap(identity, 'PHOTO_LOCATION_CHANGED')
-            continue
         if kind == 'drawing':
             try: drawings[identity] = drawing_preview(reader, descriptor, {'section': 'references'})
             except PreviewError as error:
@@ -448,6 +456,11 @@ def relationships(reader, fixed, scene_library):
             if object_kind != 'object': continue
             uid = target['entityUid']
             if kind in ('photo', 'drawing') and descriptor.get('entityUid') == uid:
+                if photo_location_changed:
+                    add(object_id, identity, 'photo_association',
+                        '本机现场照片' if descriptor.get('photoPurpose') == 'field_record' else '关联照片',
+                        reason='照片登记在此对象名下，原位置标注需核对')
+                    continue
                 anchor = value.get('selector') if kind == 'photo' else drawings.get(identity, {}).get('selector')
                 add(object_id, identity, kind + '_location', ('本机现场照片' if descriptor.get('photoPurpose')=='field_record' else '照片定位') if kind == 'photo' else '图纸定位',
                     {'entityUid': uid, 'selector': anchor}, '来源中已登记的对象关联')

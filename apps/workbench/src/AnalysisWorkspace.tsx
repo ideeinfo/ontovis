@@ -1,7 +1,7 @@
 import {useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type PointerEvent as ReactPointerEvent} from 'react';
 import {GitBranch,Hand,History,LayoutGrid,Maximize,MousePointer2,Pin,Plus,Save,Search,StickyNote,Trash2,Undo2,Redo2,X,ZoomIn,ZoomOut,PanelLeft,PanelRight,Copy,Group,RotateCcw,RefreshCw,Sparkles,TriangleAlert} from 'lucide-react';
 import {Btn,ConfirmationDialog,IconBtn,Modal} from './Primitives';
-import {addManualRelation,frameBounds,setCardFrame,selectedInBox,arrangeCards,fitViewport,moveCard,removeCard,resizeCard,RESIZE_HANDLES,zoomAt,type ResizeHandle,type CanvasSnapshot,type ProjectScope,type RelationKind,type CanvasCard,type CardView} from './analysisCanvas';
+import {addManualRelation,frameBounds,setCardFrame,selectedInBox,arrangeCards,fitViewport,moveCard,removeCard,resizeCard,RESIZE_HANDLES,visibleSavedRelations,visibleSourceRelations,zoomAt,type ResizeHandle,type CanvasSnapshot,type ProjectScope,type RelationKind,type CanvasCard,type CardView} from './analysisCanvas';
 import {blankAnalysisDraft,draftChanged,draftProblems,pendingDraft,pendingLifecycle,sameDraftSnapshot,stepDraftHistory,assistantHistory,type AnalysisListItem,type DraftReceipt,type PendingDraft} from './analysisDraftState';
 import {RowActions,RowContext,type ListAction} from './ListMenus';
 import {AnalysisMaterialPanel} from './AnalysisMaterialPanel';
@@ -79,6 +79,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   const [startAttempt,setStartAttempt]=useState(0),[fixed,setFixed]=useState(false),[referenceState,setReferenceState]=useState<Record<string,string>>({});
   const [recommendQuery,setRecommendQuery]=useState(''),[recommendFilter,setRecommendFilter]=useState<string|undefined>(),[chosen,setChosen]=useState<string[]>([]);
   const [frameDialog,setFrameDialog]=useState<{id:string;title:string}|null>(null),[editingRelation,setEditingRelation]=useState('');
+  const [groupDialog,setGroupDialog]=useState<{cardId:string;frameId:string}|null>(null);
   const [compareIds,setCompareIds]=useState<string[]>([]),[trendCursor,setTrendCursor]=useState<number|null>(null);
   const [historyCandidates,setHistoryCandidates]=useState<{analysisSessionId:string;analysisRevision:number;title:string;reason:string;eventId?:string}[]|null>(null);
   const [windowDialog,setWindowDialog]=useState<{from:string;to:string}|null>(null);
@@ -126,7 +127,8 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     const next=new Set([...closed].filter(id=>ids.has(id)));return next.size===closed.size?closed:next;
   }),[previewCardIds]);
   const sourceRelations=useSourceRelations(sources,draft?.cards||[]);
-  const visibleRelations=sourceRelations.relations.filter(link=>[link.from,link.to].every(card=>!referenceState[card.source!.id]||referenceState[card.source!.id]==='available'));
+  const visibleRelations=visibleSourceRelations(sourceRelations.relations,referenceState);
+  const savedRelations=visibleSavedRelations(draft?.cards||[],draft?.relations||[],referenceState);
   const analysisEntry=useMemo<AnalysisEntry|null>(()=>draft?(draft.workflowOrderId?{orderId:draft.workflowOrderId}:draft.context.datasetId&&draft.context.datasetRevision?{datasetId:draft.context.datasetId,datasetRevision:draft.context.datasetRevision}:{projectOnly:true}):initialEntry&& !('analysisSessionId' in initialEntry)&&!('entityUid' in initialEntry)?initialEntry:null,[draft?.workflowOrderId,draft?.context.datasetId,draft?.context.datasetRevision,!!draft,initialEntry]);
   const objectContextSection=section==='types'||OBJECT_MATERIAL_SECTIONS.includes(section)&&!(section==='objects'&&recommendFilter?.trim());
   const scopeTarget=objectContextSection?relatedTarget:undefined;
@@ -390,9 +392,11 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
     }finally{setBusy(false);}
   }
   function pointerDown(event:ReactPointerEvent,id?:string,handle?:ResizeHandle){
-    if(!draft||![0,1].includes(event.button)||busy||uncertain||(event.target as Element).closest('.ac-material-panel'))return;
+    const target=event.target as Element;
+    if(!draft||![0,1].includes(event.button)||busy||uncertain||target.closest('.ac-material-panel'))return;
     // Portaled context menus bubble through the card in React, but are not a drag surface.
     if(!event.currentTarget.contains(event.target as Node))return;
+    if(event.button===0&&target.closest('.ov-row-more'))return;
     if(event.button===1||!handle&&(tool==='hand'||space.current)){
       event.preventDefault();event.stopPropagation();wasDragged.current=false;
       canvas.current?.setPointerCapture(event.pointerId);
@@ -431,9 +435,16 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
   const saveBusy=uncertain&&code(error)==='ANALYSIS_BUSY';
   const statuses=[['analyzing','分析中','Analyzing'],['awaiting_field_check','待现场核查','Awaiting field check'],['awaiting_expert_review','待复核','Awaiting review']];
   const expandedCard=draft?.cards.find(c=>c.id===expanded);
+  const groupingCard=groupDialog&&draft?.cards.find(card=>card.id===groupDialog.cardId);
+  const groupOptions=<><option value="">{t('未分组','Ungrouped')}</option>{draft?.frames?.map(group=><option key={group.id} value={group.id}>{group.title}</option>)}</>;
+  function changeCardGroup(cardId:string,frameId:string){
+    if(!draft||!editable)return;
+    const next=setCardFrame(draft,cardId,frameId||undefined);
+    if(next!==draft)apply(next);
+  }
   function openSource(card:CanvasCard,anchor?:SourceAnchor|null){
-    const relation=sourceRelations.relations.find(link=>link.to.id===card.id&&link.anchor);
-    setExpandedAnchor(anchor??relation?.anchor??null);setExpanded(card.id);
+    const defaultAnchor=visibleRelations.find(link=>link.to.id===card.id&&link.anchor)?.anchor;
+    setExpandedAnchor(anchor===undefined?defaultAnchor??null:anchor);setExpanded(card.id);
   }
   function openRelation(link:CardSourceRelation){setSelected(link.to.id);openSource(link.to,link.anchor);}
   async function addAndOpen(item:Recommendation){const id=await addSource(item);if(id){setExpandedAnchor(null);setExpanded(id);}}
@@ -510,11 +521,19 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           <div className="ad-world" style={{transform:`translate(${draft.viewport.x}px,${draft.viewport.y}px) scale(${draft.viewport.zoom})`}}>
             {selectionBox&&<div className="ac-selection-box" style={{left:selectionBox.x,top:selectionBox.y,width:selectionBox.width,height:selectionBox.height}}/>}
             {draft.frames?.map(group=><div className="ac-frame" key={group.id} style={{left:group.x,top:group.y,width:group.width,height:group.height}}><button type="button" data-frame-id={group.id} disabled={!editable} onClick={()=>setFrameDialog({id:group.id,title:group.title})}>{group.title}</button></div>)}
-            <svg className="ad-links" aria-label={t('资料关系','Source relationships')}><defs><marker id="ad-source-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor"/></marker><marker id="ad-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor"/></marker></defs><SourceRelationLines relations={visibleRelations} onOpen={openRelation}/>{draft.relations.map(link=>{const a=draft.cards.find(c=>c.id===link.from),b=draft.cards.find(c=>c.id===link.to);if(!a||!b||[a,b].some(c=>c.source&&referenceState[c.source.id]!=='available'))return null;const x=a.x+a.width,y=a.y+a.height/2,x2=b.x,y2=b.y+b.height/2;return <path key={link.id} d={`M${x},${y} C${x+60},${y} ${x2-60},${y2} ${x2},${y2}`} markerEnd="url(#ad-arrow)"/>;})}</svg>
+            <svg className="ad-links" aria-label={t('资料关系','Source relationships')}>
+              <defs><marker id="ad-source-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor"/></marker><marker id="ad-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor"/></marker></defs>
+              <SourceRelationLines relations={visibleRelations} onOpen={openRelation}/>
+              {savedRelations.map(link=>{
+                const {from,to}=link,x=from.x+from.width,y=from.y+from.height/2,x2=to.x,y2=to.y+to.height/2;
+                return <path key={link.id} data-relation-id={link.id} data-origin={link.origin}
+                  d={`M${x},${y} C${x+60},${y} ${x2-60},${y2} ${x2},${y2}`} markerEnd="url(#ad-arrow)"/>;
+              })}
+            </svg>
             {draft.cards.map(card=>{const actions=[{id:'open',label:t('展开查看','Expand'),icon:<Maximize/>,onSelect:()=>card.kind==='analysis'?(setSelected(card.id),setRight(true),setMaterialsOpen(false)):openSource(card)},
               {id:'pin',label:card.pinned?t('取消固定','Unpin'):t('固定','Pin'),icon:<Pin/>,disabled:!editable,onSelect:()=>pin(card)},
-              ...(draft.frames?.length?[{id:'group',label:t('设置分组','Set group'),icon:<Group/>,disabled:!editable,
-                onSelect:()=>{setSelected(card.id);setMulti([card.id]);setRight(true);setAssistantOpen(false);setMaterialsOpen(false);}}]:[]),
+              ...(draft.frames?.length?[{id:'group',label:t('设置分组','Set group'),icon:<Group/>,disabled:!editable,opensDialog:true,
+                onSelect:()=>setGroupDialog({cardId:card.id,frameId:card.frameId||''})}]:[]),
               ...(card.kind!=='analysis'?[{id:'copy-view',label:t('复制视图','Copy view'),icon:<Copy/>,disabled:!editable||draft.cards.length>=50,onSelect:()=>copyView(card)}]:[]),
               ...(card.kind==='analysis'?[{id:'copy',label:t('复制为本次记录','Copy as current note'),icon:<Copy/>,disabled:!editable,onSelect:()=>copyNote(card)}]:[]),
               {id:'remove',label:t('从画布移除','Remove from canvas'),icon:<Trash2/>,disabled:!editable,onSelect:()=>remove(card)}];
@@ -540,9 +559,7 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
         {right&&<aside className="ad-inspector"><header><strong>{t(selectedCard?'卡片详情':'分析范围',selectedCard?'Card details':'Analysis context')}</strong><IconBtn label={t('关闭详情','Close details')} onClick={()=>setRight(false)}><X size={16}/></IconBtn></header>{selectedCard?<>
           <label>{t('卡片名称','Card title')}<input maxLength={120} disabled={!editable||selectedCard.historical||!!selectedCard.source&&referenceState[selectedCard.source.id]!=='available'} value={label(selectedCard)} onChange={event=>apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,title:event.target.value}:card)})}/></label>
           {!!draft.frames?.length&&<label>{t('所属分组','Group')}<select aria-label={t('所属分组','Group')} disabled={!editable} value={selectedCard.frameId||''}
-            onChange={event=>{const next=setCardFrame(draft,selectedCard.id,event.target.value||undefined);if(next!==draft)apply(next);}}>
-            <option value="">{t('未分组','Ungrouped')}</option>{draft.frames.map(group=><option key={group.id} value={group.id}>{group.title}</option>)}
-          </select></label>}
+            onChange={event=>changeCardGroup(selectedCard.id,event.target.value)}>{groupOptions}</select></label>}
           {selectedCard.kind==='analysis'?<>{noteSections.map(([key,eng])=><label key={key}>{t(key,eng)}<textarea className="ac-note-section" maxLength={4000} disabled={!editable||selectedCard.historical} value={readNote(selectedCard.note||'')[key]} onChange={event=>{const note=writeNote({...readNote(selectedCard.note||''),[key]:event.target.value});if(note.length<=4000)apply({...draft,cards:draft.cards.map(card=>card.id===selected?{...card,note}:card)});}}/></label>)}<small>{(selectedCard.note||'').length} / 4000</small>
             <label>{t('检查进度','Check status')}<select disabled={!editable||selectedCard.historical} value={selectedCard.checkState||'not_started'} onChange={event=>apply({...draft,schemaVersion:2,cards:draft.cards.map(card=>card.id===selected?{...card,checkState:event.target.value as CanvasCard['checkState']}:card)})}>{[['not_started','未执行'],['checking','排查中'],['done','已记录结果'],['blocked','待补充依据']].map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label>
             {selectedCard.historical&&<Btn onClick={()=>copyNote(selectedCard)}>{t('复制为本次记录','Copy to current investigation')}</Btn>}</>:<><p>{materialNames[selectedCard.kind]} · {selectedCard.historical?t('历史参考','Historical reference'):t('固定资料版本','Fixed source')}</p><Btn onClick={()=>openSource(selectedCard)}>{t('展开查看资料','Expand source')}</Btn>{selectedCard.source&&referenceState[selectedCard.source.id]==='available'&&<p className="ov-mono">{selectedCard.source.revision.slice(0,12)}</p>}</>}
@@ -550,12 +567,33 @@ function CanvasWorkspace({api,locale='zh',onDirtyChange,initialEntry,onOpenWorkO
           {selectedCard.kind==='analysis'&&<p>{t('人工笔记不代表已确认的工程事实。','Notes do not constitute confirmed engineering facts.')}</p>}
           <SourceRelationDetails selected={selectedCard} {...sourceRelations} relations={visibleRelations} onOpen={openRelation} en={en}/>
           <div className="ad-inline"><strong>{t('分析关系','Analysis relationships')}</strong><IconBtn label={t('添加关系','Add relationship')} disabled={!editable||draft.cards.length<2} onClick={()=>{setTarget(draft.cards.find(card=>card.id!==selected)?.id||'');setReason('');setEditingRelation('');setLinkOpen(true);}}><Plus size={15}/></IconBtn></div>
-          {draft.relations.filter(link=>(link.from===selected||link.to===selected)&&[link.from,link.to].every(id=>{const c=draft.cards.find(c=>c.id===id);return c&&!c.source||c?.source&&referenceState[c.source.id]==='available';})).map(link=><div className="ad-relation" key={link.id}><GitBranch size={13}/><div><strong>{label(draft.cards.find(card=>card.id===(link.from===selected?link.to:link.from))!)}</strong><p>{link.reason}</p><Btn disabled={!editable} onClick={()=>{setEditingRelation(link.id);setSelected(link.from);setTarget(link.to);setRelationKind(link.kind);setReason(link.reason);setLinkOpen(true);}}>{t('编辑关系','Edit relation')}</Btn><Btn onClick={()=>focusCard(draft.cards.find(c=>c.id===(link.from===selected?link.to:link.from))!)}>{t('定位资料','Focus material')}</Btn></div><IconBtn label={t('移除关系','Remove relationship')} disabled={!editable} onClick={()=>apply({...draft,relations:draft.relations.filter(item=>item.id!==link.id)})}><X size={13}/></IconBtn></div>)}
+          {savedRelations.filter(link=>link.from.id===selected||link.to.id===selected).map(link=>{
+            const other=link.from.id===selected?link.to:link.from;
+            return <div className="ad-relation" key={link.id}><GitBranch size={13}/><div><strong>{label(other)}</strong><p>{link.reason}</p>
+              <Btn disabled={!editable} onClick={()=>{setEditingRelation(link.id);setSelected(link.from.id);setTarget(link.to.id);setRelationKind(link.kind);setReason(link.reason);setLinkOpen(true);}}>{t('编辑关系','Edit relation')}</Btn>
+              <Btn onClick={()=>focusCard(other)}>{t('定位资料','Focus material')}</Btn></div>
+              <IconBtn label={t('移除关系','Remove relationship')} disabled={!editable} onClick={()=>apply({...draft,relations:draft.relations.filter(item=>item.id!==link.id)})}><X size={13}/></IconBtn></div>;
+          })}
         </>:<><p>{t('当前项目','Current project')}<strong>{api.project?.projectCode}</strong></p><section className="ac-scope-time"><span>{t('已有时间范围','Existing time interval')}</span><time dateTime={draft.context.timeFrom}>{timeWindowLabel(draft.context.timeFrom,draft.context.timezone)}</time><time dateTime={draft.context.timeTo}>{timeWindowLabel(draft.context.timeTo,draft.context.timezone)}</time><small>{timeZoneLabel(draft.context.timezone,en)}</small><p>{t('助手直接沿用此时间范围，无需另行选择。','The assistant uses this interval without a separate selection.')}</p>{!!currentTrends.length&&<Btn disabled={!editable} onClick={openTimeWindow}>{t('调整趋势时间','Adjust trend interval')}</Btn>}</section></>}</aside>}</div>
       </>:<div className="ad-empty"><GitBranch size={32}/><h2>{busy?t('正在准备本次分析…','Preparing analysis…'):t('整理你的分析思路','Organize your investigation')}</h2><p>{t('新建或继续一项分析，保留笔记、人工关系与修订历史。','Create or continue an analysis with notes, relationships and version history.')}</p><Btn primary disabled={!writable||busy} onClick={fresh}><Plus size={14}/>{t('新建分析','New analysis')}</Btn></div>}
     </div>
     {historyCandidates&&<Modal title={t('同码历史分析','Analyses with the same fault code')} description={t('仅列出本人当前可读的分析；加载为独立历史参考，可撤销','Readable owned analyses only; imports a separate, undoable reference')} onClose={()=>!busy&&setHistoryCandidates(null)}>{!historyCandidates.length&&<p>{t('尚无其他可复用分析','No other analyses to reuse')}</p>}{historyCandidates.map(item=><div className="ac-history-candidate" key={item.analysisSessionId}><strong>{item.title} · r{item.analysisRevision}</strong><p>{item.reason}</p><Btn disabled={busy||!editable} onClick={()=>void importHistory(item)}>{t('载入参考','Load reference')}</Btn></div>)}</Modal>}
     {windowDialog&&draft&&<Modal className="ac-time-window-dialog" title={t('趋势查看区间','Trend viewing interval')} description={t('只在主动调整趋势时使用；助手沿用已有时间','Optional trend adjustment; the assistant uses the existing interval')} onClose={()=>!busy&&setWindowDialog(null)}><AnalysisTimeWindowForm initial={windowDialog} zone={draft.context.timezone} currentCount={currentTrends.length} historicalCount={historicalTrends.length} limits={windowLimits} busy={busy} error={error?errorText:''} unavailable={currentTrends.some(card=>!trendData[card.id])} en={en} onCancel={()=>setWindowDialog(null)} onApply={window=>void changeWindow(window).catch(failure)}/></Modal>}
+    {groupDialog&&groupingCard&&<Modal title={t('设置分组','Set group')} description={label(groupingCard)} onClose={()=>setGroupDialog(null)}>
+      <form className="ad-link-form" onSubmit={event=>{
+        event.preventDefault();
+        changeCardGroup(groupingCard.id,groupDialog.frameId);
+        setSelected(groupingCard.id);setMulti([groupingCard.id]);setGroupDialog(null);
+      }}>
+        <p className="ov-confirm-subject">{label(groupingCard)}</p>
+        <label>{t('所属分组','Group')}<select aria-label={t('所属分组','Group')} disabled={!editable} value={groupDialog.frameId}
+          onChange={event=>setGroupDialog({...groupDialog,frameId:event.target.value})}>{groupOptions}</select></label>
+        <footer className="ov-confirm-actions">
+          <Btn onClick={()=>setGroupDialog(null)}>{t('取消','Cancel')}</Btn>
+          <Btn primary type="submit" disabled={!editable||groupDialog.frameId===(groupingCard.frameId||'')}>{t('应用','Apply')}</Btn>
+        </footer>
+      </form>
+    </Modal>}
     {frameDialog&&draft&&<Modal title={t('资料分区','Material group')} description={t('分区只组织布局，不改变工程关系','Groups organize layout only')} onClose={()=>setFrameDialog(null)}><input aria-label={t('分区名称','Group name')} maxLength={120} value={frameDialog.title} onChange={event=>setFrameDialog({...frameDialog,title:event.target.value})}/><Btn primary disabled={!frameDialog.title.trim()} onClick={()=>{apply({...draft,frames:draft.frames?.map(f=>f.id===frameDialog.id?{...f,title:frameDialog.title.trim()}:f)});setFrameDialog(null);}}>{t('保存名称','Save name')}</Btn><Btn onClick={()=>{apply({...draft,cards:draft.cards.map(c=>{if(c.frameId!==frameDialog.id)return c;const {frameId,...rest}=c;return rest;}),frames:draft.frames?.filter(f=>f.id!==frameDialog.id)});setFrameDialog(null);}}>{t('解除分区','Ungroup')}</Btn><Btn onClick={()=>{const ids=new Set(draft.cards.filter(c=>c.frameId===frameDialog.id).map(c=>c.id));apply({...draft,cards:draft.cards.filter(c=>!ids.has(c.id)),relations:draft.relations.filter(r=>!ids.has(r.from)&&!ids.has(r.to)),frames:draft.frames?.filter(f=>f.id!==frameDialog.id)});setFrameDialog(null);}}>{t('移除整组资料','Remove group and cards')}</Btn></Modal>}
     {expandedCard&&sources&&<Modal className="ac-source-modal" title={label(expandedCard)} description={t('固定来源资料；浏览操作不改变源文件','Fixed source; viewing does not change the original')} onClose={()=>{setExpanded('');setExpandedAnchor(null);}}><div className="ac-expanded">{sourceContent(expandedCard,true)}</div></Modal>}
     {compare&&draft&&<Modal className="ac-compare-modal" title={t('趋势对比','Trend comparison')} description={t('最多四条曲线，按窗口起点对齐；不同单位分开显示','Up to four trends; separate axes for different units')} onClose={()=>setCompare(false)}><div className="ac-compare-choice">{draft.cards.filter(c=>c.kind==='trend'&&trendData[c.id]).map(c=><label key={c.id}><input type="checkbox" checked={compareIds.includes(c.id)} disabled={!compareIds.includes(c.id)&&compareIds.length>=4} onChange={event=>setCompareIds(ids=>event.target.checked?[...ids,c.id]:ids.filter(id=>id!==c.id))}/>{label(c)} · {trendData[c.id].unit}</label>)}</div><div className="ac-comparison">{[...new Set(compareIds.map(id=>trendData[id]?.unit).filter(Boolean))].map(unit=><AnalysisTrend key={unit} en={en} cursor={trendCursor} onCursor={setTrendCursor} trends={compareIds.map(id=>trendData[id]).filter(row=>row?.unit===unit)}/>)}</div></Modal>}
