@@ -45,9 +45,11 @@ def registered_recommendation_revisions(item, sources):
              'expectedOrderRevision': 'orderRevision'}
     qualifiers = {'document': ('knowledgeReleaseId', 'knowledgeNodeId'),
                   'photo': ('sourceType', 'photoPurpose')}.get(kind, ())
+    drawing_digest = (item.get('preview') or {}).get('contentSha256') if kind == 'drawing' else None
     # Selectors omit some fields that are filled in when the source is fixed.
     return sorted({revision for source_kind, descriptor, revision in sources
                    if source_kind == kind and all(selector.get(key) == descriptor.get(key) for key in qualifiers)
+                   and (drawing_digest is None or drawing_digest == descriptor.get('expectedContentSha256'))
                    and all(descriptor.get(names.get(key, key)) == value for key, value in selector.items())})
 
 
@@ -95,6 +97,10 @@ def decode_cursor(token, key, scope):
 
 def _matches(item, query):
     return matches_display_text(' '.join(str(item.get(k,'')) for k in ('title','identifier','reason','reasonEn')),query)
+
+
+def _drawing_page_key(row):
+    return f"drawing:{row['pageNumber']}:{row['contentSha256']}"
 
 
 def _document(item, reason, reason_en, relevance):
@@ -153,7 +159,8 @@ def _source_page(reader, chosen, dataset, section, name, cursor, query, memo):
             if row.get('sourceRevision'):selector['expectedSourceRevision']=row['sourceRevision']
             basis='shared_definition' if row.get('sourceRelation')=='template_definition' else 'object_association'
             result.append(recommendation('drawing',row['title'],selector,'当前对象已有的图纸关联',
-                relevance=basis,reasonEn='Drawing linked to this object or its retained shared definition.',preview=row))
+                relevance=basis,reasonEn='Drawing linked to this object or its retained shared definition.',
+                asset_key=_drawing_page_key(row),preview=row))
         return result,None
     if name=='child_drawings':
         if not chosen:return [],None
@@ -166,7 +173,7 @@ def _source_page(reader, chosen, dataset, section, name, cursor, query, memo):
             selector={'drawingUid':row['drawingUid'],'expectedContentSha256':row['contentSha256']}
             result.append(recommendation('drawing',row['title'],selector,'已登记下级对象关联的图纸 · 整页',
                 reasonEn='Drawing linked to registered descendants; whole page.',relevance='descendant',
-                asset_key='drawing:'+row['drawingUid']+':'+row['contentSha256']))
+                asset_key=_drawing_page_key(row)))
         return result,value['nextCursor']
     if name=='shared_photos':
         if not chosen:return [],None
@@ -213,7 +220,7 @@ def _source_page(reader, chosen, dataset, section, name, cursor, query, memo):
     raise PreviewError(422,'INVALID_REQUEST')
 
 
-def related_recommendations(reader, body, dataset, chosen, *, cursor_key=None, session_revision=''):
+def related_recommendations(reader, body, dataset, chosen, *, cursor_key=None, session_revision='', registered_sources=()):
     section=body['section'];groups=PLANS[section];names={n for g in groups for n in g}
     query=body.get('q','');d.require(type(query) is str and len(query)<=200)
     if section=='device_materials' and (not chosen or selected(chosen)['installationContextId'] is None):
@@ -229,6 +236,7 @@ def related_recommendations(reader, body, dataset, chosen, *, cursor_key=None, s
         and 0<=state['phase']<=len(groups) and type(state['turn']) is int and 0<=state['turn']<3
         and type(state['positions']) is dict and set(state['positions'])<=names,'ANALYSIS_RECOMMENDATIONS_CHANGED',409)
     positions=state['positions'];rows=[];seen={};gaps=[];cache={};memo={};reads=0;counts={}
+    drawing_revisions = {}
     authorize=getattr(reader,'authorize',lambda:None);authorize()
 
     def head(name):
@@ -256,6 +264,11 @@ def related_recommendations(reader, body, dataset, chosen, *, cursor_key=None, s
                 digest=d.digest([items,bool(following)])
                 d.require(position['digest'] is None or position['digest']==digest,'ANALYSIS_RECOMMENDATIONS_CHANGED',409)
                 if position['digest'] is None:position.update(digest=digest,next=following)
+                if registered_sources and name in ('drawings', 'child_drawings'):
+                    for item in items:
+                        revisions = registered_recommendation_revisions(item, registered_sources)
+                        if revisions:
+                            drawing_revisions.setdefault(item['assetKey'], set()).update(revisions)
                 cache[name]=items
             items=cache[name]
             d.require(position['index']<=len(items),'ANALYSIS_RECOMMENDATIONS_CHANGED',409)
@@ -280,5 +293,8 @@ def related_recommendations(reader, body, dataset, chosen, *, cursor_key=None, s
             else:break
     authorize()
     following=encode_cursor(key,scope,state,expires) if state['phase']<len(groups) else None
+    for row in rows:
+        if revisions := drawing_revisions.get(row.get('assetKey')):
+            row['registeredSourceRevisions'] = sorted(revisions)
     return {'items':sorted(rows,key=lambda row:row['relevancePriority']),'nextOffset':None,'nextCursor':following,'gaps':list(dict.fromkeys(gaps)),
         'dataset':dataset,'order':'relevance'}

@@ -641,8 +641,10 @@ class ProjectSessions(UserSessions):
                         registered = sources.registered_sources(actor, body.pop('analysisSessionId'), guard)
                     release_store()
                     value = recommendations(reader, body, service.library,
-                        cursor_key=self.cursor_key, session_revision=row.revision)
+                        cursor_key=self.cursor_key, session_revision=row.revision, registered_sources=registered)
                     for item in value['items']:
+                        if 'registeredSourceRevisions' in item:
+                            continue
                         revisions = registered_recommendation_revisions(item, registered)
                         if revisions:
                             item['registeredSourceRevisions'] = revisions

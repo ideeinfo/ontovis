@@ -35,15 +35,22 @@ def browser_site(public: Path):
         photo_id, photo_version = str(uuid4()), str(uuid4())
         photo.document.update(id=photo_id, kind='photo', name='Q-23 合成固定照片', current_version_id=photo_version)
         photo.version.update(id=photo_version, document_id=photo_id, preview_kind='image')
-        sample = identity('13001')
-        primary = dict(entityUid='fixture-13001-primary',entityRevision='object:1',lifecycle='active',
-                       objectScope='definition',displayName='合成测温对象',objectKind='device',reviewStatus='accepted',
-                       hasChildren=False,identifiers=[dict(scheme='RDS',value=sample['primaryRds'],role='primary',
-                                                          scopeType='project',scopeKey=PROJECT,status='accepted')])
+        sample = identity('13003')
+        def project_object(uid, title, tag, kind):
+            return dict(entityUid=uid,entityRevision='object:1',lifecycle='active',objectScope='definition',
+                        displayName=title,objectKind=kind,reviewStatus='accepted',hasChildren=False,
+                        identifiers=[dict(scheme='RDS',value=tag,role='primary',scopeType='project',
+                                          scopeKey=PROJECT,status='accepted')])
+        primary = project_object('fixture-surge-protector','合成浪涌保护器',sample['primaryRds'],'device')
+        cabinet = project_object('fixture-cabinet','合成机舱动力柜','=WEC+CN1','cabinet')
+        module = project_object('fixture-feedback-module','合成反馈输入模块','=WEC+CN1-105A3','device')
+        objects = {item['entityUid']:item for item in (primary,cabinet,module)}
+        tags = {item['identifiers'][0]['value']:item for item in objects.values()}
         project_prefix = f'/api/v1/projects/{PROJECT}'
-        drawing = 'fixture-13001-wiring'
-        member_drawing = 'fixture-13001-member-wiring'
+        drawing = 'fixture-13003-wiring'
+        member_drawing = 'fixture-13003-member-wiring'
         member_title = 'Q-26 合成柜内接线图'
+        power_title = 'Q-26 合成动力柜供电图'
         img = dict(content=PNG,mediaType='image/png',sha256=sha256(PNG).hexdigest())
         pdf = dict(content=PDF,mediaType='application/pdf',sha256=sha256(PDF).hexdigest())
 
@@ -62,25 +69,35 @@ def browser_site(public: Path):
                 uid = route.rsplit('/', 1)[-1]
                 return dict(project_code=PROJECT,drawing_uid=uid,
                             drawing_name=member_title if uid==member_drawing else '合成接线图',source_page_number=89)
-            if route==project_prefix+'/objects' and parse_qs(url.query).get('primaryIdentifier')==[sample['primaryRds']]:
-                return dict(projectCode=PROJECT,items=[primary],total=1,nextCursor=None)
-            if route==project_prefix+'/objects/resolve' and body['entityUids']==[primary['entityUid']]:
+            if route==project_prefix+'/objects':
+                items = [tags[tag] for tag in parse_qs(url.query).get('primaryIdentifier',[]) if tag in tags]
+                return dict(projectCode=PROJECT,items=items,total=len(items),nextCursor=None)
+            if route==project_prefix+'/objects/resolve':
                 return dict(projectCode=PROJECT,resolutionMode='live',items=[dict(resolution='exact',
-                    requestedEntityUid=primary['entityUid'],canonicalEntityUid=primary['entityUid'],object=primary,canonicalObject=primary)])
+                    requestedEntityUid=uid,canonicalEntityUid=uid,object=objects[uid],canonicalObject=objects[uid])
+                    for uid in body['entityUids']])
             if route in (project_prefix+'/object-evidence/resolve', project_prefix+'/object-evidence/related'):
-                assert body['entityUid']==primary['entityUid']
+                subject = objects[body['entityUid']]
+                main = subject==primary
                 scope = dict(entityUid=body['entityUid'],entityRevision=body['expectedEntityRevision'],
                              installationContextId=None,hierarchyRevision=None)
                 if route.endswith('/resolve'):
-                    return {**scope,'complete':True,'versionMode':'current_content_snapshot','items':[]}
+                    rows = [dict(title=power_title,evidenceRef=f'location:supply-{idx}',sourceRelation='direct',
+                                 sourceEntityUid=primary['entityUid'],sourceEntityRevision=primary['entityRevision'],
+                                 sourceTemplateRevision=None,sourceRevision=str(idx)*64,recordDigest=str(idx)*64,
+                                 contentSha256=pdf['sha256'],availability='available',precision='page',region=None,
+                                 pageNumber=88,mediaType='application/pdf',versionMode='current_content_snapshot')
+                            for idx in (1,2)] if main else []
+                    return {**scope,'complete':True,'versionMode':'current_content_snapshot','items':rows}
                 def page(uid, title, match):
                     return dict(drawingUid=uid,title=title,drawingNumber=None,pageNumber=89,sourceRevision='a'*64,
                                 contentSha256=pdf['sha256'],availability='available',precision='page',region=None,
                                 matchedObjects=[{**match,'viaEntityUid':primary['entityUid'],'viaName':primary['displayName']}])
                 direct = {key:primary[key] for key in ('entityUid','entityRevision','displayName')} | {'relation':'self'}
                 member = dict(entityUid='fixture-terminal',entityRevision='object:1',displayName='合成端子',relation='definition_descendant')
-                return {**scope,'includeDescendants':True,'scopeComplete':True,'nextCursor':None,'snapshotRevision':'b'*64,'total':2,
-                        'items':[page(drawing,'合成接线图',direct),page(member_drawing,member_title,member)]}
+                items = [page(drawing,'合成接线图',direct),page(member_drawing,member_title,member)] if main else []
+                return {**scope,'includeDescendants':True,'scopeComplete':True,'nextCursor':None,'snapshotRevision':'b'*64,
+                        'total':len(items),'items':items}
             if route.endswith(('/object-locations','/installations','/objects','/result-relation-imports')):
                 return {'items':[],'total':0,'nextCursor':None}
             return original(account,method,path,body)
@@ -112,7 +129,7 @@ def browser_site(public: Path):
             order = fixture.update(order,'record',text=record)
             order = fixture.ok('workflow-detail',dict(orderId=order['orderId']))
             board = snapshot()
-            title = '13001 · 隔离固定资料权限验收'
+            title = '13003 · 隔离固定资料权限验收'
             board.update(schemaVersion=2,projectCode=PROJECT,ontobaseConnectionId='ontobase-primary',title=title,
                 reuse=dict(faultCode=sample['faultCode'],faultSystem=sample['sourceConnectionId'],equipment=sample['primaryRds'],
                            simulated=True,summary='固定手册、图纸和处置记录的隔离验收。',advice='核对权限变化后的固定来源。'))
@@ -125,8 +142,8 @@ def browser_site(public: Path):
                 ('photo',photo.document['name'],dict(sourceType='project_document',documentId=photo_id,contentVersionId=photo_version)),
                 ('drawing','Q-26 合成固定图纸',dict(drawingUid=drawing,expectedContentSha256=pdf['sha256'])),
                 ('work_order','Q-26 合成固定工单',dict(orderId=order['orderId'],expectedOrderRevision=order['orderRevision'])),
-                ('alarm','13001 合成报警',{key:board['context'][key] for key in ('eventId','datasetId','datasetRevision')}),
-                ('trend','合成传感器温度',{key:sample[key] for key in ('datasetId','datasetRevision','timeFrom','timeTo')} | {'metricId':'sensor_temperature'}),
+                ('alarm','13003 合成报警',{key:board['context'][key] for key in ('eventId','datasetId','datasetRevision')}),
+                ('trend','合成接点状态',{key:sample[key] for key in ('datasetId','datasetRevision','timeFrom','timeTo')} | {'metricId':'device_feedback'}),
                 ('object',primary['displayName'],dict(entityUid=primary['entityUid'],expectedEntityRevision=primary['entityRevision'])),
             ]
             frames = [dict(id='current',title='本次调查',x=-560,y=-500,width=1040,height=275),
@@ -160,7 +177,9 @@ def browser_site(public: Path):
 
             with serve_workbench(public.resolve(strict=True),fixture.sessions,commands) as origin:
                 yield dict(origin=origin,analysisId=analysis_id,title=title,cards=cards,frames=frames,record=record,
-                           memberDrawingTitle=member_title,datasetId=sample['datasetId'],datasetRevision=sample['datasetRevision']),restore,verify
+                           memberDrawingTitle=member_title,powerDrawingTitle=power_title,
+                           additionalObjectTitles=[cabinet['displayName'],module['displayName']],
+                           datasetId=sample['datasetId'],datasetRevision=sample['datasetRevision']),restore,verify
     finally:
         fixture.doCleanups()
         fixture.tearDownClass()

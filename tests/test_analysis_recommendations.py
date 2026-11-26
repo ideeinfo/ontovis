@@ -105,12 +105,38 @@ class MaterialRecommendationTests(TestCase):
         reader.photos=SimpleNamespace(resolve=Mock(return_value={'items':[{'title':'Photo','evidenceRef':'photo','selector':{'bbox':{} }}]}))
         with patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing,patch('apps.api.related_drawings.RelatedDrawingsReader') as related:
             related.return_value.resolve.return_value={'items':[],'nextCursor':None}
-            drawing.return_value.resolve.return_value={'items':[{'title':'Drawing','evidenceRef':'drawing','availability':'available'}]}
+            drawing.return_value.resolve.return_value={'items':[{'title':'Drawing','evidenceRef':'drawing',
+                'availability':'available','contentSha256':'a'*64,'pageNumber':1}]}
             rows=recommendations(reader,{'entry':self.entry(),'section':'drawings'})['items']
             self.assertEqual([row['kind'] for row in rows],['drawing']);reader.photos.resolve.assert_not_called()
             drawing.reset_mock();related.reset_mock()
             rows=recommendations(reader,{'entry':self.entry(),'section':'photos'})['items']
             self.assertEqual([row['kind'] for row in rows],['photo']);drawing.assert_not_called();related.assert_not_called()
+
+    def test_drawing_recommendations_merge_one_fixed_page_and_keep_all_registered_positions(self):
+        reader = self.reader()
+        reader._rds = Mock(return_value={'item': {'entityUid': 'object', 'entityRevision': 'r1'}, 'context': None})
+        first = dict(title='Power supply', evidenceRef='location:one', availability='available',
+                     contentSha256='a'*64, pageNumber=89, sourceRevision='b'*64)
+        second = {**first, 'evidenceRef': 'location:two', 'sourceRevision': 'c'*64}
+        different_revision = {**first, 'evidenceRef': 'location:three', 'contentSha256': 'd'*64}
+        different_page = {**first, 'evidenceRef': 'location:four', 'pageNumber': 90}
+        retained = dict(entityUid='object', expectedEntityRevision='r1', evidenceRef=second['evidenceRef'],
+                        expectedSourceRevision=second['sourceRevision'], expectedContentSha256=second['contentSha256'])
+        descendant = {**first, 'drawingUid': 'fixed-page', 'matchedObjects': [{'relation': 'definition_descendant'}]}
+        with patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing, \
+                patch('apps.api.related_drawings.RelatedDrawingsReader') as related:
+            drawing.return_value.resolve.return_value = {'items': [first, second, different_revision, different_page]}
+            related.return_value.resolve.return_value = {'items': [descendant], 'nextCursor': None}
+            registered = [('drawing', retained, 'retained-second'),
+                          ('drawing', {**retained, 'expectedContentSha256': 'f'*64}, 'stale-page')]
+            rows = recommendations(reader, {'entry': self.entry('13003'), 'section': 'drawings'},
+                                   registered_sources=registered)['items']
+        self.assertEqual([row['selector']['evidenceRef'] for row in rows],
+                         ['location:one', 'location:three', 'location:four'])
+        self.assertEqual(rows[0]['registeredSourceRevisions'], ['retained-second'])
+        self.assertEqual(rows[0]['relevance'], 'object_association')
+        self.assertTrue(all('registeredSourceRevisions' not in row for row in rows[1:]))
 
     def cabinet_reader(self):
         from apps.api.scene_engineering import SceneEngineeringReader

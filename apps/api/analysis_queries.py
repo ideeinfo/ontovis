@@ -58,7 +58,7 @@ def matching_history(store, actor, dataset, object_id, authorize):
     return [{'analysisSessionId': r[0], 'analysisRevision': r[1], 'snapshot': json.loads(r[2]), 'contentSha256': r[3]} for r in rows]
 
 
-def recommendations(reader, body, scene_library=None, *, cursor_key=None, session_revision=''):
+def recommendations(reader, body, scene_library=None, *, cursor_key=None, session_revision='', registered_sources=()):
     from .analysis_recommendations import (RELATED_SECTIONS, recommendation, related_recommendations,
         cursor_secret, scope_digest, encode_cursor, decode_cursor)
     d.require(type(body) is dict and 'entry' in body and set(body) <= {'entry','section','offset','cursor','entityUid','expectedEntityRevision','q'})
@@ -84,7 +84,7 @@ def recommendations(reader, body, scene_library=None, *, cursor_key=None, sessio
                 if error.status in (401,403,409):raise
                 gaps.append(error.code)
         value=related_recommendations(reader,{**body,'section':section},dataset,chosen,
-            cursor_key=cursor_key,session_revision=session_revision)
+            cursor_key=cursor_key,session_revision=session_revision,registered_sources=registered_sources)
         return {**value,'gaps':list(dict.fromkeys(gaps+value['gaps']))}
     if section=='project_documents':
         from .analysis_recommendations import _document

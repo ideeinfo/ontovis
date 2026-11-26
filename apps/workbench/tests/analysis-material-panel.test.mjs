@@ -49,6 +49,11 @@ test('an added material needs a current card with the matching fixed reference',
  assert.equal(addedMaterialCard(cards,'model',['model-version']),model);
  assert.equal(addedMaterialCard(cards,'document',['model-version']),undefined);
 });
+test('merging paged drawing recommendations keeps registered references for both representations',()=>{
+ const direct={key:'location',assetKey:'drawing:89:digest',kind:'drawing',relevancePriority:10,registeredSourceRevisions:['located']};
+ const whole={...direct,key:'page',relevancePriority:30,registeredSourceRevisions:['whole-page']};
+ assert.deepEqual(mergeRecommendations([direct],[whole]),[{...direct,registeredSourceRevisions:['located','whole-page']}]);
+});
 test('drops resolve to canvas coordinates at different pan and zoom without leaving layout limits',()=>{
  const point={x:725,y:420};for(const zoom of [.25,.43,1,1.5]){
   const view={x:-120,y:50,zoom},location=materialPosition(view,point);

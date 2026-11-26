@@ -130,7 +130,11 @@ async (page, facts, phase) => {
 
     await button('加入资料',canvas).click();
     const materials=canvas.locator('.ac-material-panel');
-    await materials.getByRole('button',{name:/^图纸/}).click();
+    const drawingCategory=()=>materials.getByRole('button',{name:/^图纸/});
+    const drawingResult=materials.locator('.ac-material-result').filter({has:page.getByText(facts.powerDrawingTitle,{exact:true})});
+    await drawingCategory().click();
+    await drawingResult.first().waitFor();
+    check(await drawingResult.count()===1,'Two registered positions returned duplicate drawing rows');
     await button('加入画布：'+facts.memberDrawingTitle,materials).click();
     const descendantEdge=canvas.getByRole('button',{name:
       '下级对象图纸：'+facts.cards.object.title+' → '+facts.memberDrawingTitle,exact:true});
@@ -138,6 +142,25 @@ async (page, facts, phase) => {
     check(await descendantEdge.getAttribute('data-origin')==='source','The new drawing did not use the registered object relationship');
     await button('撤销修改',canvas).click();
     await descendantEdge.waitFor({state:'detached'});
+    await materials.locator('.ac-material-back').click();
+    await materials.getByRole('button',{name:/^工程对象/}).click();
+    for(const title of facts.additionalObjectTitles)await materials.getByRole('checkbox',{name:'选择资料 '+title,exact:true}).check();
+    await button('加入所选资料 (2)',materials).click();
+    const selectedObject=canvas.locator('.ad-card.selected[data-card-kind="object"]')
+      .getByRole('button',{name:facts.additionalObjectTitles.at(-1),exact:true});
+    await selectedObject.waitFor({state:'attached'});
+    check(await canvas.locator('.ad-card[data-card-kind="object"]').count()===3,'The three alarm objects were not added');
+    await materials.locator('.ac-material-back').click();
+    await drawingCategory().click();
+    await drawingResult.first().waitFor();
+    check(await drawingResult.count()===1,'Adding objects changed the original alarm drawing recommendation');
+    await button('关闭资料库',materials).click();
+    await button('加入资料',canvas).click();
+    await drawingCategory().click();
+    await drawingResult.first().waitFor();
+    check(await drawingResult.count()===1,'Reopening materials switched to the newly selected object');
+    await button('撤销修改',canvas).click();
+    await selectedObject.waitFor({state:'detached'});
     await materials.locator('.ac-material-back').click();
     await materials.getByRole('button',{name:/^故障报警/}).click();
     const row=materials.locator('.ac-material-result');
@@ -176,7 +199,8 @@ async (page, facts, phase) => {
     await view.locator('.pa-links path[data-origin="manual"]').waitFor({state:'attached'});
     check(JSON.stringify(await edgeIds(view.locator('.pa-links path[data-relation-id]')))===JSON.stringify(expected),
       'The cockpit did not display the workbench relationships for the same saved revision');
-    return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true};
+    return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true,
+      drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});
@@ -340,7 +364,7 @@ async (page, facts, phase) => {
         'The revoked preview still has content');
       const revoked = await page.evaluate(async url=>{try{await fetch(url);return false;}catch{return true;}},oldUrl);
       check(revoked,'The former image can still be accessed from the workspace cache');
-      await restricted.screenshot({path:'isolated-13001-document-revoked.png'});
+      await restricted.screenshot({path:'isolated-13003-document-revoked.png'});
       return {revoked:true,oldImageRevoked:true,latePageDiscarded:true};
     }finally{await held.close();}
   }

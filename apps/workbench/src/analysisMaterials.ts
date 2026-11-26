@@ -37,7 +37,9 @@ export function mergeRecommendations(previous:Recommendation[],incoming:Recommen
     const identity=item.assetKey||item.key,index=positions.get(identity);
     if(index===undefined){positions.set(identity,result.length);result.push(item);continue;}
     const old=result[index],usable=!item.availability||item.availability==='available',oldUsable=!old.availability||old.availability==='available';
-    if(usable&&!oldUsable||usable===oldUsable&&(item.relevancePriority??90)<(old.relevancePriority??90))result[index]=item;
+    const preferred=usable&&!oldUsable||usable===oldUsable&&(item.relevancePriority??90)<(old.relevancePriority??90)?item:old;
+    const revisions=[...new Set([...(old.registeredSourceRevisions||[]),...(item.registeredSourceRevisions||[])])];
+    result[index]=revisions.length?{...preferred,registeredSourceRevisions:revisions}:preferred;
   }
   return result.sort((a,b)=>(a.relevancePriority??90)-(b.relevancePriority??90));
 }
