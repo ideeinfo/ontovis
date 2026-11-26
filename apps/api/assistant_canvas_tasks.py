@@ -69,9 +69,11 @@ def result_targets(results, keys):
     return rows
 
 
-def validate_draft_plan(snapshot, plan, results, fixed, history, revision, run_id, connection, project):
+def validate_draft_plan(snapshot, plan, results, fixed, history, revision, run_id, connection, project, *, present=None):
     """Run the same canvas checks before offering a plan, without writing a draft or evidence."""
     def register(row, _index):
+        if present and row['key'] in present:
+            return present[row['key']]
         for ref, descriptor in fixed:
             if ref['sourceKind']==row['kind'] and all(descriptor.get(k)==v for k,v in row['selector'].items()):
                 return ref
@@ -139,7 +141,8 @@ def build(snapshot,plan,results,register,run_id,connection,project,special=None)
                             ontobaseConnectionId=connection,projectCode=project,id=ref['evidenceRefId'],revision=ref['sourceRevision'])))
                     status='added'
                 receipts.append(dict(operationId=operation_id(run_id,'source:'+row['key']),kind='add_results',status=status,
-                    cardId=card_id,identifier=row['identifier'],sourceRevision=ref['sourceRevision'],sourceVersion=row['version'],simulated=row.get('simulated',False)))
+                    cardId=card_id,resultKey=row['key'],label=row['title'],sourceKind=row['kind'],
+                    identifier=row['identifier'],sourceRevision=ref['sourceRevision'],sourceVersion=row['version'],simulated=row.get('simulated',False)))
             continue
         elif kind=='remove_cards':
             ids={c['id'] for c in targets(action)}

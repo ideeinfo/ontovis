@@ -11,11 +11,11 @@ import {AssistantDeviceMaterials,type DeviceMaterialsTarget} from './AssistantDe
 import {FixedDocumentPreview,type FixedDocumentTarget} from './FixedDocumentPreview';
 import type {AssistantSceneEditTarget,AssistantSceneTarget} from './assistantScene';
 import type {ModelInfoReceipt,ModelInfoTarget} from './resourceTypes';
-import {snapshotDigest,canApplyFreshTask,assistantEditReview,TASK_PROTOCOL,type AssistantModelTarget,type PreparedTask} from './assistantTasks';
+import {snapshotDigest,isTaskAddition,canApplyFreshTask,assistantEditReview,TASK_PROTOCOL,type AssistantModelTarget,type PreparedTask} from './assistantTasks';
 import {AssistantRetrieval} from './AssistantRetrieval';
 import type {SourceAnchor} from './analysisSources';
 import {Btn} from './Primitives';
-import {cancelled,type WorkbenchApi} from './api';
+import {ApiError,cancelled,type WorkbenchApi} from './api';
 import type {CanvasCard,CanvasSnapshot} from './analysisCanvas';
 import type {DraftReceipt} from './analysisDraftState';
 import {defaultAssistantEvidence,AssistantApi,ASSISTANT_ROOT,mergeConversationTurns,assistantConversationMatches,assistantEvidenceKey,assistantMessage,assistantSendBlocker,assistantRunActivity,assistantActivityLabel,running,sourceLabels,materialRoles,watchAssistantRun,type AssistantConversation,type AssistantMode,type AssistantPolicyView,type AssistantPollState,type AssistantRun,type AssistantSource} from './assistantApi';
@@ -64,6 +64,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const automatic=useRef<{runId:string;context:string}|null>(null),applying=useRef(false),applyTaskRef=useRef(onApplyTask);applyTaskRef.current=onApplyTask;
  const draftId=useRef(crypto.randomUUID()),execution=useRef<{runId:string;keys:string[];prepared:PreparedTask;savedRevision:number|null}|null>(null);
  const [executionPending,setExecutionPending]=useState(false);
+ const [operationFailure,setOperationFailure]=useState<{runId:string;context:string;error:unknown}|null>(null);
  const latest=useRef<AssistantRun|null>(null);latest.current=run;
  const context=`${api.epoch}:${api.revision}:${receipt?.analysisSessionId}:${receipt?.analysisRevision}:${mode}`;
  const current=useRef(context);current.current=context;
@@ -107,7 +108,7 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  }
  function newConversation(){autoScroll.current=true;setContextOpen(false);setHistoryOpen(false);setCardPickerOpen(false);historyGeneration.current++;setConversation(null);setTurns([]);setRun(null);setPending(null);setError(null);setQuestion('');setShowPrompts(true);setHasEarlier(false);setLoadingHistory(false);}
  const transcript=mergeConversationTurns(turns,run);
- useEffect(()=>{if(autoScroll.current&&scrollArea.current)scrollArea.current.scrollTop=scrollArea.current.scrollHeight;},[run?.runId,run?.state,loadingHistory]);
+ useEffect(()=>{if(autoScroll.current&&scrollArea.current)scrollArea.current.scrollTop=scrollArea.current.scrollHeight;},[run?.runId,run?.state,run?.version,loadingHistory]);
  useEffect(()=>{if(cardPickerOpen&&scrollArea.current){autoScroll.current=false;scrollArea.current.scrollTop=0;}},[cardPickerOpen]);
  const selection=()=>({analysisSessionId:receipt!.analysisSessionId,expectedAnalysisRevision:receipt!.analysisRevision,evidenceRefIds:selected});
  async function start(){if((!receipt&&!snapshot)||!view||sendBlocker||composing.current||submitting.current===context)return;
@@ -156,8 +157,23 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
  const cardPicker=canSelectCards&&onSelectCardTargets?<AssistantCardPicker cards={targetCards} selected={focusCardIds} en={en} locked={locked}
   groups={Object.fromEntries((snapshot?.frames??[]).map(frame=>[frame.id,frame.title]))}
   label={card=>cardTargetLabel?.(card)??card.title} onSelect={onSelectCardTargets}/>:null;
- async function acknowledgeExecution(){const pending=execution.current;if(!pending)return;setBusy(true);setError(null);try{const value=await api.request<{run:AssistantRun}>(ASSISTANT_ROOT+'/task-ack',{runId:pending.runId,selectedKeys:pending.keys,snapshotJson:JSON.stringify(pending.prepared.snapshot),savedRevision:pending.savedRevision});setTurns(previous=>mergeConversationTurns(previous,value.run));setRun(value.run);execution.current=null;setExecutionPending(false);}catch(e){setError(e);}finally{setBusy(false);}}
- async function executeTask(item:AssistantRun,keys:string[]){if(!snapshot||!applyTaskRef.current||queryOnly||locked||execution.current||applying.current)return;const baseJson=JSON.stringify(snapshot),key=context,fixed=scope.current?.api??api;applying.current=true;setBusy(true);setError(null);try{if(await snapshotDigest(baseJson)!==item.result?.task?.baseDigest)throw new Error(t('画布已变化，请重新发送操作指令；修改已保留。','The draft changed. Send a new instruction; current edits are retained.'));const prepared=await fixed.request<PreparedTask>(ASSISTANT_ROOT+'/task-prepare',{runId:item.runId,selectedKeys:keys,snapshotJson:baseJson});if(!alive.current||current.current!==key||!applyTaskRef.current)return;const savedRevision=await applyTaskRef.current(prepared,baseJson);execution.current={runId:item.runId,keys,prepared,savedRevision};setExecutionPending(true);await acknowledgeExecution();}catch(e){if(alive.current)setError(e);}finally{applying.current=false;if(alive.current)setBusy(false);}}
+ async function acknowledgeExecution(){const pending=execution.current;if(!pending)return;setBusy(true);setError(null);try{const value=await api.request<{run:AssistantRun}>(ASSISTANT_ROOT+'/task-ack',{runId:pending.runId,selectedKeys:pending.keys,snapshotJson:JSON.stringify(pending.prepared.snapshot),savedRevision:pending.savedRevision});setTurns(previous=>mergeConversationTurns(previous,value.run));setRun(currentRun=>!currentRun||currentRun.runId===value.run.runId?value.run:currentRun);execution.current=null;setExecutionPending(false);}catch(e){setError(e);}finally{setBusy(false);}}
+ async function executeTask(item:AssistantRun,keys:string[]){
+  if(!snapshot||!applyTaskRef.current||queryOnly||locked||execution.current||applying.current)return;
+  const baseJson=JSON.stringify(snapshot),key=context,fixed=scope.current?.api??api;
+  applying.current=true;setBusy(true);setError(null);setOperationFailure(null);
+  try{
+   const addition=isTaskAddition(item.result?.task,keys);
+   if(!addition&&await snapshotDigest(baseJson)!==item.result?.task?.baseDigest)throw new ApiError(409,'ASSISTANT_DRAFT_CHANGED');
+   const prepared=await fixed.request<PreparedTask>(ASSISTANT_ROOT+'/task-prepare',{runId:item.runId,selectedKeys:keys,snapshotJson:baseJson,
+    ...(addition?{analysisSessionId:receipt?.analysisSessionId??draftId.current,expectedAnalysisRevision:receipt?.analysisRevision??0}:{})});
+   if(!alive.current||current.current!==key||!applyTaskRef.current)return;
+   if(prepared.alreadyApplied){await checkTurn(item);return;}
+   const savedRevision=await applyTaskRef.current(prepared,baseJson);
+   execution.current={runId:item.runId,keys,prepared,savedRevision};setExecutionPending(true);await acknowledgeExecution();
+  }catch(e){if(alive.current&&current.current===key)setOperationFailure({runId:item.runId,context:key,error:e});}
+  finally{applying.current=false;if(alive.current)setBusy(false);}
+ }
  useEffect(()=>{const fresh=automatic.current;if(!fresh||!run||fresh.runId!==run.runId||fresh.context!==context||locked||queryOnly||!applyTaskRef.current||!['complete','partial'].includes(run.state))return;automatic.current=null;if(canApplyFreshTask(run.result?.task,true,hasUnsaved))void executeTask(run,[]);},[run?.runId,run?.state,busy,loadingHistory,executionPending]);
  async function taskPage(item:AssistantRun,index:number){setBusy(true);setError(null);try{const value=await api.request<AssistantRun>(ASSISTANT_ROOT+'/task-page',{runId:item.runId,traceIndex:index});setTurns(previous=>mergeConversationTurns(previous,value));if(run?.runId===item.runId)setRun(value);}catch(e){setError(e);}finally{setBusy(false);}}
  const metadataCount=available.filter(card=>selected.includes(card.source!.id)&&['drawing','photo','model3d'].includes(card.kind)).length;
@@ -221,7 +237,11 @@ export function AssistantPanel({api,cards,receipt,en,canAddNote,onFocus,onAddNot
   </section>}
   <div className="as-transcript">{hasEarlier&&conversation&&<Btn disabled={locked} onClick={()=>void openConversation(conversation.conversationId,true)}>{t('载入更早对话','Load earlier turns')}</Btn>}{transcript.map(item=><div key={item.runId}><AssistantTurn onOpenSource={key=>{const reference=item.sources.find(s=>s.key===key);if(reference)setSourceView({runId:item.runId,reference});}} queryOnly={queryOnly} run={item} cards={cards}
     cardPicker={item.runId===run?.runId&&inlineCardPicker?cardPicker:undefined}
-    onContinueEdit={item.runId===run?.runId&&canSelectCards&&!locked?()=>retryQuestion(item):undefined} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/><AssistantTaskResult hasUnsaved={hasUnsaved} run={item} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined} onPage={index=>void taskPage(item,index)} loadModelUsage={(query,signal)=>api.assistantScope().request<ModelUsagePage>(ASSISTANT_ROOT+'/task-page',{runId:item.runId,modelUsage:query},signal)} onViewScene={(target,trigger)=>setSceneView({target,trigger,workbench:item.result?.task?.mode==='workbench'})} onViewDevice={setDeviceView} onViewDocument={setDocumentView} onViewModel={(target,trigger)=>setModelView({target,trigger,context,workbench:item.result?.task?.mode==='workbench'})} onViewConfiguration={(target,title)=>setConfigurationView({target,title,context,workbench:item.result?.task?.mode==='workbench'})}/></div>)}</div>
+    onContinueEdit={canSelectCards&&!locked&&(item.runId===run?.runId||item.result?.task?.editReview?.target==='refresh')?()=>retryQuestion(item):undefined} en={en} canAddNote={!queryOnly&&!locked&&canAddNote} canCheck={!locked} onRetry={!locked&&!focusedEarlier?()=>retryQuestion(item):undefined} canTransfer={!locked&&canTransfer&&!snapshot?.workflowOrderId} onTransfer={queryOnly||item.result?.task?undefined:()=>setTransferRun(item)} onCheck={()=>void checkTurn(item)} onFocus={onFocus} onAddNote={text=>{try{onAddNote(text);}catch(e){setError(e);}}}/>
+   <AssistantTaskResult hasUnsaved={hasUnsaved} run={item} cards={cards} onLocateCard={onFocus} onHandoff={onHandoff?()=>onHandoff(item):undefined} en={en} locked={locked||executionPending}
+    operationFailure={operationFailure?.runId===item.runId&&operationFailure.context===context?assistantMessage(operationFailure.error,en):undefined}
+    onRetryAddition={()=>retryQuestion(item)} onExecute={!queryOnly&&onApplyTask?keys=>void executeTask(item,keys):undefined}
+    onPage={index=>void taskPage(item,index)} loadModelUsage={(query,signal)=>api.assistantScope().request<ModelUsagePage>(ASSISTANT_ROOT+'/task-page',{runId:item.runId,modelUsage:query},signal)} onViewScene={(target,trigger)=>setSceneView({target,trigger,workbench:item.result?.task?.mode==='workbench'})} onViewDevice={setDeviceView} onViewDocument={setDocumentView} onViewModel={(target,trigger)=>setModelView({target,trigger,context,workbench:item.result?.task?.mode==='workbench'})} onViewConfiguration={(target,title)=>setConfigurationView({target,title,context,workbench:item.result?.task?.mode==='workbench'})}/></div>)}</div>
   {deviceView&&<AssistantDeviceMaterials api={api} target={deviceView} en={en} onClose={()=>setDeviceView(null)}/>}
   {!modelInfoEditing&&modelView?.context===context&&<AssistantModelViewer key={context+':'+modelView.target.modelVersionId}
     api={api} target={modelView.target} en={en} infoReceipt={modelInfoReceipt} onClose={()=>setModelView(null)}

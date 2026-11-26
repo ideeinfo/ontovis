@@ -124,6 +124,79 @@ class TaskHttpTests(unittest.TestCase):
             status, blocked = self.request('task-prepare', dict(runId=run['runId'], selectedKeys=keys, snapshotJson=body['snapshotJson']))
             self.assertEqual((409, 'ASSISTANT_DRAWING_REVIEW_REQUIRED'), (status, blocked['code']))
 
+    def test_linked_objects_and_drawings_use_the_alarm_and_recheck_before_adding(self):
+        base=json.loads(self.body['snapshotJson'])
+        base['cards']=[dict(id='alarm',kind='alarm',title='浪涌保护报警',x=0,y=0,width=300,height=200,pinned=False,
+            source=dict(system='ontovis',ontobaseConnectionId=base['ontobaseConnectionId'],projectCode=base['projectCode'],
+                        id=self.fixture.evidence,revision='a'*64))]
+        body={**self.body,'mode':'workbench','taskId':'analysis','question':'添加工程对象和图纸',
+              'analysisSessionId':self.fixture.analysis,'expectedAnalysisRevision':1,
+              'focusCardIds':['alarm'],'snapshotJson':json.dumps(base)}
+        body['expectedServiceRevision']=self.request('policy')[1]['services']['analysis']['serviceRevision']
+        obj=dict(item=dict(entityUid='fixture-object',entityRevision='rev-1',displayName='浪涌保护器'),context=None)
+        page=dict(availability='available',evidenceRef='location:position-1',sourceRevision='f'*64,
+                  pageNumber=88,title='机舱动力柜供电',contentSha256='c'*64,sourceRelation='direct')
+        pages=[page,{**page,'evidenceRef':'location:position-2','sourceRevision':'e'*64}]
+        def register(_evidence,_actor,payload,*_):
+            return dict(evidenceRefId=str(uuid4()),sourceRevision={'object':'d'*64,'drawing':'f'*64}[payload['sourceKind']])
+        with (patch('apps.api.assistant_task_api.call_source') as model,
+              patch('apps.api.assistant_task_api.analysis_store') as open_store,
+              patch('apps.api.analysis_canvas.validate_handles'),
+              patch('apps.api.analysis_source_reader.AnalysisSourceReader._rds',return_value=obj),
+              patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing_reader,
+              patch('apps.api.analysis_evidence.AnalysisEvidence.register',new=register),
+              patch('apps.api.analysis_preview.fault_documents') as documents):
+            store=open_store.return_value.__enter__.return_value
+            store.detail.return_value=dict(analysisSessionId=self.fixture.analysis,analysisRevision=1,lifecycle='active')
+            drawing_reader.return_value.resolve.return_value={'items':pages}
+            status,started=self.request('task-start',body)
+            self.assertEqual(200,status,started)
+            for _ in range(100):
+                _,turn=self.request('status',dict(runId=started['runId']))
+                if turn['state'] not in ('reading','model','validating'):
+                    break
+                time.sleep(.01)
+            self.assertEqual('complete',turn['state'],turn)
+            model.assert_not_called()
+            documents.assert_not_called()
+            result=turn['result']['task']
+            self.assertEqual(['object','drawing'],[row['kind'] for row in result['results']])
+            self.assertIn('第 88 页',result['results'][1]['reason'])
+            self.assertEqual([action('add_results',['R1','R2'])],result['plan']['actions'])
+
+            operation=dict(runId=started['runId'],selectedKeys=[],analysisSessionId=self.fixture.analysis,
+                           expectedAnalysisRevision=1,snapshotJson=json.dumps({**base,'viewport':{'x':40,'y':0,'zoom':1.2}}))
+            without_anchor={**operation,'snapshotJson':json.dumps({**base,'cards':[]})}
+            status,blocked=self.request('task-prepare',without_anchor)
+            self.assertEqual((409,'ASSISTANT_LINKED_MATERIALS_CHANGED'),(status,blocked['code']))
+            drawing_reader.return_value.resolve.return_value={'items':[]}
+            status,blocked=self.request('task-prepare',operation)
+            self.assertEqual((409,'ASSISTANT_LINKED_MATERIALS_CHANGED'),(status,blocked['code']))
+            drawing_reader.return_value.resolve.return_value={'items':pages}
+            status,prepared=self.request('task-prepare',operation)
+            self.assertEqual(200,status,prepared)
+            self.assertEqual(['alarm','object','drawing'],[card['kind'] for card in prepared['snapshot']['cards']])
+            self.assertEqual(1.2,prepared['snapshot']['viewport']['zoom'])
+            self.assertEqual(['浪涌保护器','机舱动力柜供电'],[item['label'] for item in prepared['receipts']])
+            ack=dict(runId=started['runId'],selectedKeys=[],snapshotJson=json.dumps(prepared['snapshot']),savedRevision=None)
+            status,applied=self.request('task-ack',ack)
+            self.assertEqual(200,status,applied)
+            self.assertEqual('applied_draft',applied['receipt']['state'])
+
+    def test_combined_request_on_an_empty_canvas_explains_how_to_start(self):
+        with patch('apps.api.assistant_task_api.call_source') as model:
+            status,started=self.request('task-start',{**self.body,'mode':'workbench','question':'添加工程对象和图纸'})
+            self.assertEqual(200,status,started)
+            for _ in range(100):
+                _,turn=self.request('status',dict(runId=started['runId']))
+                if turn['state'] not in ('reading','model','validating'):
+                    break
+                time.sleep(.01)
+        self.assertEqual('complete',turn['state'],turn)
+        model.assert_not_called()
+        self.assertIn('「加入资料」',turn['result']['task']['editReview']['message'])
+        self.assertEqual([],turn['result']['task']['results'])
+
     def test_add_alarm_materials_and_analyze_in_the_same_turn(self):
         base=json.loads(self.body['snapshotJson'])
         base['cards']=[dict(id='alarm',kind='alarm',title='浪涌保护报警',x=0,y=0,width=300,height=200,pinned=False,

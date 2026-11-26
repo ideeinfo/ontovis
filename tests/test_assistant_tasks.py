@@ -14,6 +14,7 @@ from apps.api.assistant_tasks import (PROTOCOL,ProjectTools,read_selected_eviden
     related_object_answer,contextual_addition,canonical_additions,disposition_request,turn_requests,validate_plan,snapshot)
 from apps.api.assistant_canvas_tasks import build,load,retain,acknowledge,validate_draft_plan
 from apps.api.assistant_drawings import drawing_add_scope, drawing_answer, drawing_context, checked_drawing_results
+from apps.api.assistant_alarm_materials import linked_add_scope, linked_anchor
 from apps.api.authority import PreviewError
 
 
@@ -23,6 +24,41 @@ def board():return dict(schemaVersion=2,ontobaseConnectionId='source',projectCod
 
 
 def action(kind,targets=None,text=''):return dict(kind=kind,targets=targets or [],text=text,x=None,y=None)
+
+
+class LinkedMaterialIntentTests(unittest.TestCase):
+    def test_combined_requests_keep_both_material_types_and_the_canvas_scope(self):
+        for question,scope in (
+            ('添加工程对象和图纸','canvas'),
+            ('请将与这条报警直接相关的工程对象及对应电气图纸一起加到当前画布','alarm'),
+            ('把图纸、工程对象一并加入画布。','canvas'),
+            ('加入工程对象，图纸','canvas'),
+            ('Add the related engineering objects and their drawings for this alarm to the canvas.','alarm'),
+            ('列出工程对象和图纸',None),
+            ('不要添加工程对象和图纸',None),
+            ('添加工程对象、图纸和照片',None),
+            ('添加工程对象 +CN1-1U2 和图纸',None),
+        ):
+            with self.subTest(question=question):
+                self.assertEqual(scope,linked_add_scope(question))
+        self.assertEqual((None,None,'canvas',True),contextual_addition('先加上工程对象和图纸，然后整理布局'))
+        edit,advice=turn_requests('加入工程对象和图纸，再给出处置方案')
+        self.assertTrue(advice)
+        self.assertEqual((None,None,'canvas',False),contextual_addition(edit))
+
+    def test_operation_card_takes_priority_and_ambiguous_alarms_need_a_selection(self):
+        draft=board()
+        draft['cards']=[dict(id=name,kind=kind,source=dict(id=name)) for name,kind in (
+            ('first','alarm'),('second','alarm'),('selected','object'))]
+        fixed=[(dict(evidenceRefId=name,sourceKind=kind),dict(eventId=name)) for name,kind in (
+            ('first','alarm'),('second','alarm'),('selected','object'))]
+        self.assertIsNone(linked_anchor(fixed,draft,{},'canvas'))
+        draft['context']['eventId']='first'
+        self.assertEqual(fixed[0],linked_anchor(fixed,draft,{},'canvas'))
+        choice=dict(focusCardIds=['selected'],preferSelectedEvidence=True,evidenceRefIds=['first'])
+        self.assertEqual(fixed[2],linked_anchor(fixed,draft,choice,'canvas'))
+        self.assertEqual(fixed[0],linked_anchor(fixed,draft,choice,'alarm'))
+        self.assertIsNone(linked_anchor(fixed,draft,{'focusCardIds':['first','second']},'canvas'))
 
 
 class DrawingTaskTests(unittest.TestCase):
@@ -55,9 +91,9 @@ class DrawingTaskTests(unittest.TestCase):
             self.assertEqual(scope, drawing_add_scope(question), question)
         self.assertEqual(['alarm', 'target', 'other', 'retained'], drawing_context(self.body, self.board)['evidenceRefIds'])
         self.assertEqual(['alarm'], self.body['evidenceRefIds'])
-        self.assertEqual(('canvas', None, True),contextual_addition('先添加相关图纸，再整理画布布局'))
-        self.assertEqual((None, 'alarm', True),contextual_addition('加入本次报警的工程对象并整理布局'))
-        self.assertEqual((None, None, False),contextual_addition('添加笔记，正文是“添加相关图纸”'))
+        self.assertEqual(('canvas', None, None, True),contextual_addition('先添加相关图纸，再整理画布布局'))
+        self.assertEqual((None, 'alarm', None, True),contextual_addition('加入本次报警的工程对象并整理布局'))
+        self.assertEqual((None, None, None, False),contextual_addition('添加笔记，正文是“添加相关图纸”'))
 
     def test_additions_use_the_alarm_object_and_deduplicate_fixed_pages(self):
         first = self.row('previous-evidence', 89)

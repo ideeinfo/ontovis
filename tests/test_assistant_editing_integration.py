@@ -6,6 +6,7 @@ import time
 from threading import BoundedSemaphore
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from apps.api.assistant_service import AssistantRuntime
@@ -43,20 +44,21 @@ class AssistantEditingIntegrationTests(unittest.TestCase):
         body=dict(protocol=PROTOCOL,mode='workbench',analysisSessionId=self.created['analysisSessionId'],expectedAnalysisRevision=self.created['analysisRevision'],
             evidenceRefIds=[],requestId=str(uuid4()),question='synthetic explicit edit',snapshotJson=json.dumps(self.board),
             taskId='analysis',historyJson=json.dumps(history or {}))
-        first=self.runtime.start(dict(project=PROJECT,owner=OWNER,sid='synthetic'),body,self.runtime.store.policy(PROJECT),self.service,
-            self.prepare,lambda *_:None,lambda *_:dict(plan=dict(intent='edit',queries=[],actions=actions),modelCalls=1,engineeringConfirmation=False,usage={}))
-        for _ in range(100):
-            record=self.runtime.store.run(PROJECT,OWNER,first['runId'])
-            if record['state'] not in ('reading','model','validating'):break
-            time.sleep(.01)
+        def query(tools,*_args,**_kwargs):
+            tools.results.extend(copy.deepcopy(results or []))
+        queries=[dict(tool='work_orders',query='synthetic',faultCode='')] if results else []
+        with patch('apps.api.assistant_tasks.ProjectTools.query',new=query):
+            first=self.runtime.start(dict(project=PROJECT,owner=OWNER,sid='synthetic'),body,self.runtime.store.policy(PROJECT),self.service,
+                self.prepare,lambda *_:None,lambda *_:dict(plan=dict(intent='edit',queries=queries,actions=actions),modelCalls=1,engineeringConfirmation=False,usage={}))
+            for _ in range(100):
+                record=self.runtime.store.run(PROJECT,OWNER,first['runId'])
+                if record['state'] not in ('reading','model','validating'):break
+                time.sleep(.01)
         self.assertEqual('complete',record['state'],record)
-        if results is not None:
-            value=json.loads(record['result_json']);value['task']['results']=results
-            self.runtime.store.update(record['id'],'complete',result=value)
         return dict(runId=record['id'],selectedKeys=[],snapshotJson=body['snapshotJson'])
     def call(self,operation,body):
         return handle(operation,body,self.sessions,None,'synthetic',PROJECT,OWNER,dict(role='admin'),self.runtime,
-            lambda *_:self.service,self.prepare,lambda *_:None,'unused')
+            lambda *_:self.service,self.prepare,lambda *_:self.reader,lambda *_:None,'unused')
     def test_multi_edit_save_reopen_undo_and_exact_receipt(self):
         request=self.completed([action('rename_card',['C1'],'核对记录'),action('append_note',['C1'],'\n新增待核验事项'),action('copy_card',['C1']),
             action('group_cards',['C1','C2'],'同一事件'),action('add_support',['C1','C2'],'人工判断，待核验'),action('pin_cards',['C1']),action('save')])
@@ -77,6 +79,40 @@ class AssistantEditingIntegrationTests(unittest.TestCase):
         self.write('save',dict(requestId=str(uuid4()),analysisSessionId=self.created['analysisSessionId'],expectedAnalysisRevision=1,snapshot={**self.board,'title':'concurrent change'}))
         with self.assertRaises(PreviewError) as error:self.call('task-prepare',request)
         self.assertEqual('ANALYSIS_CHANGED',error.exception.code)
+
+    def test_selecting_multiple_candidates_in_sequence_preserves_current_draft_and_both_receipts(self):
+        rows=[dict(key=f'R{i}',kind='work_order',identifier=f'SYNTHETIC-WO-{i}',version=i,title=f'工单 {i}',
+                   selector=dict(orderId=f'SYNTHETIC-WO-{i}',expectedOrderRevision=i)) for i in (1,2)]
+        request=self.completed([],results=rows)
+        moved=copy.deepcopy(self.board)
+        moved['viewport']['x']=80
+        moved['title']='本地修改保留'
+        scope=dict(analysisSessionId=self.created['analysisSessionId'],expectedAnalysisRevision=1)
+        first={**request,**scope,'selectedKeys':['R1'],'snapshotJson':json.dumps(moved)}
+        for bound in ({'analysisSessionId':str(uuid4())},{'expectedAnalysisRevision':2}):
+            with self.subTest(bound=bound):
+                with self.assertRaises(PreviewError) as error:
+                    self.call('task-prepare',{**first,**bound})
+                self.assertEqual('ASSISTANT_DRAFT_CHANGED',error.exception.code)
+        prepared=self.call('task-prepare',first)
+        self.assertEqual(moved['viewport'],prepared['snapshot']['viewport'])
+        self.assertEqual(moved['title'],prepared['snapshot']['title'])
+        self.assertEqual(('R1','工单 1','work_order'),tuple(prepared['receipts'][0][k] for k in ('resultKey','label','sourceKind')))
+        self.call('task-ack',{**request,'selectedKeys':['R1'],'snapshotJson':json.dumps(prepared['snapshot']),'savedRevision':None})
+        second={**first,'selectedKeys':['R2'],'snapshotJson':json.dumps(prepared['snapshot'])}
+        next_board=self.call('task-prepare',second)['snapshot']
+        self.assertEqual(['工单 1','工单 2'],[card['title'] for card in next_board['cards'] if card['kind']=='work_order'])
+        response=self.call('task-ack',{**request,'selectedKeys':['R2'],'snapshotJson':json.dumps(next_board),'savedRevision':None})
+        self.assertEqual(2,len(response['run']['result']['task']['receipts']))
+        self.assertTrue(self.call('task-prepare',first)['alreadyApplied'])
+
+    def test_rebasing_an_addition_does_not_rebase_a_rename(self):
+        request=self.completed([action('rename',text='old intent')])
+        new_snapshot={**self.board,'title':'new title'}
+        with self.assertRaises(PreviewError) as error:
+            self.call('task-prepare',{**request,'snapshotJson':json.dumps(new_snapshot),
+                'analysisSessionId':self.created['analysisSessionId'],'expectedAnalysisRevision':1})
+        self.assertEqual('ASSISTANT_DRAFT_CHANGED',error.exception.code)
     def test_source_replacement_preserves_card_and_rechecks_on_retry(self):
         evidence=AnalysisEvidence(self.store)
         reference=evidence.register(OWNER,dict(analysisSessionId=self.created['analysisSessionId'],expectedAnalysisRevision=1,requestId=str(uuid4()),

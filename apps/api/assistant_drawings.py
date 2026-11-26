@@ -72,29 +72,31 @@ def _record_gap(gaps, error):
     gaps.append(error.code)
 
 
-def _already_on_canvas(tools, fixed, candidates, gaps):
+def drawings_on_canvas(reader, fixed, candidates, read, gaps):
     by_hash = {row['contentSha256'] for _, row in candidates.values()}
-    identifiable = {(row['drawingUid'], row['contentSha256']): key for key, (_, row) in candidates.items()}
-    present = set()
+    identifiable = {(row['drawingUid'], row['contentSha256']): key for key, (_, row) in candidates.items() if row.get('drawingUid')}
+    present = {}
     for ref, descriptor in fixed:
         if ref['sourceKind'] != 'drawing' or descriptor['expectedContentSha256'] not in by_hash:
             continue
         digest = descriptor['expectedContentSha256']
         match = identifiable.get((descriptor.get('drawingUid'), digest))
         if match:
-            present.add(match)
+            present[match] = ref
             continue
         try:
             def source_page():
-                drawing, _ = drawing_identity(tools.reader, descriptor)
+                drawing, _ = drawing_identity(reader, descriptor)
                 if drawing is not None:
                     return drawing.get('source_page_number')
-                return tools.reader.read('drawing', descriptor).get('pageNumber')
-            page = tools.read(source_page)
+                return reader.read('drawing', descriptor).get('pageNumber')
+            page = read(source_page)
         except PreviewError as error:
             _record_gap(gaps, error)
             continue
-        present.add(_drawing_page_key({'pageNumber': page, 'contentSha256': digest}))
+        key = _drawing_page_key({'pageNumber': page, 'contentSha256': digest})
+        if key in candidates:
+            present[key] = ref
     return present
 
 
@@ -121,7 +123,7 @@ def drawing_answer(tools, fixed, draft, body, scope, plan):
         for row in page['items']:
             if row['availability'] == 'available':
                 candidates.setdefault(_drawing_page_key(row), (ref, row))
-    present = _already_on_canvas(tools, fixed, candidates, gaps)
+    present = drawings_on_canvas(tools.reader, fixed, candidates, tools.read, gaps)
     pending = [candidate for key, candidate in candidates.items() if key not in present]
     card_titles = {card['source']['id']: card['title'] for card in draft['cards'] if card.get('source')}
     for ref, row in pending[:PAGE_SIZE]:

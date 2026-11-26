@@ -268,10 +268,22 @@ class AssistantStore:
     @staticmethod
     def public(row, *, hide=False):
         body=json.loads(row['input_json'])
+        result=None if hide or row['result_json'] is None else json.loads(row['result_json'])
+        task=result.get('task') if result else None
+        if (task and task['mode']=='workbench' and task['results'] and not task['receipts']
+                and 'linkedAnchorRef' not in task):
+            from .assistant_tasks import contextual_addition, turn_requests
+            edit,disposition=turn_requests(body['question'])
+            if contextual_addition(edit)[2]:
+                task['results']=[]
+                task['plan'].update(intent='edit',actions=[])
+                task['editReview']=dict(target='refresh',message='请重新发送原指令，按当前卡片的登记关系查找关联资料。')
+                if not disposition:
+                    result['answer']={key:[] for key in result['answer']}
         return {'runId':row['id'],'state':row['state'],'version':row['version'],'createdAt':row['created_at'],'updatedAt':row['updated_at'],
             'taskId':body.get('taskId','analysis'),'mode':body.get('mode'),
             'question':body.get('question',''),
             'conversationId':row.get('conversation_id'),'conversationVersion':row.get('turn_no',0),'parentRunId':row.get('parent_run_id'),
             'analysisSessionId':row['analysis_id'],'analysisRevision':row['analysis_revision'],'policyRevision':row['policy_revision'],
             'progress':[] if hide else json.loads(row['progress_json']),'sources':[] if hide else json.loads(row['sources_json']),
-            'result':None if hide or row['result_json'] is None else json.loads(row['result_json']),'error':row['error_code']}
+            'result':result,'error':row['error_code']}

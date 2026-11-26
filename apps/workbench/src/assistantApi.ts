@@ -166,6 +166,7 @@ export function assistantMessage(error:unknown,en=false){
   ASSISTANT_HISTORY_EXCLUSIVE:['撤销、重做或恢复历史需单独执行，可同时明确保存。','Run undo, redo or restoration separately; an explicit save may follow.'],
   ASSISTANT_SOURCE_MISMATCH:['检索结果不是这张卡片的同一来源，未替换资料。','The result is a different source. The card was not replaced.'],
   ASSISTANT_DRAWING_REVIEW_REQUIRED:['请重新发送添加图纸的指令，以重新核对图纸关联。','Send the add-drawings request again to check the drawing links.'],
+  ASSISTANT_LINKED_MATERIALS_CHANGED:['关联资料需要重新核对。请按当前报警或工程对象重新发送指令。','The material links need to be checked again. Resend the request for the current alarm or engineering object.'],
   ASSISTANT_SOURCE_RELATION_READ_ONLY:['来源工程关系只能查看，助手可编辑手工分析关联。','Source engineering relations are read-only. Manual analysis relations can be edited.'],
   ASSISTANT_TARGET_AMBIGUOUS:['未找到唯一操作目标，请从检索结果选择资料，或明确资料卡名称。','The target is ambiguous. Select a result or specify the card.'],
   ASSISTANT_FIXED_TREND_WINDOW:['已有趋势使用固定版本；请通过趋势时间工具重新读取，不能只改时间标记。','Existing trends are fixed evidence. Use the trend interval tool to read a new window.'],

@@ -90,9 +90,10 @@ def canonical_additions(plan, results, question):
         text = ' '.join(text.casefold().split())
         return len(text) >= 2 and re.search(r'(?<![a-z0-9])'+re.escape(text)+r'(?![a-z0-9])',normalized)
 
-    drawing_only = re.search(r'图纸|\bdrawings?\b', question, re.I) and not re.search(
-        r'文档|手册|照片|\b(?:documents?|manuals?|photos?)\b', question, re.I)
-    candidates = [row for row in results if row.get('selector') and (not drawing_only or row['kind']=='drawing')]
+    material_types = {'drawing':r'图纸|\bdrawings?\b','object':r'工程对象|\bengineering objects?\b',
+                      'document':r'文档|手册|\b(?:documents?|manuals?)\b','photo':r'照片|\bphotos?\b'}
+    requested = {kind for kind, pattern in material_types.items() if re.search(pattern, question, re.I)}
+    candidates = [row for row in results if row.get('selector') and (not requested or row['kind'] in requested)]
     exact = [row for row in candidates if mentioned(row['title']) or mentioned(row['identifier'])]
     for action in plan['actions']:
         if action['kind'] != 'add_results':
@@ -155,13 +156,16 @@ def related_object_add_request(question):
 
 
 def contextual_addition(question):
-    drawing, objects = drawing_add_scope(question), related_object_add_request(question)
-    if drawing or objects:
-        return drawing, objects, False
-    clauses = re.split(r'[，,；;\n]|然后|并且|并|再', question.strip().removeprefix('先'), maxsplit=1)
+    def scope(text):
+        return drawing_add_scope(text), related_object_add_request(text), assistant_alarm_materials.linked_add_scope(text)
+    text = question.strip().removeprefix('先').strip()
+    scopes = scope(text)
+    if any(scopes):
+        return (*scopes, False)
+    clauses = re.split(r'[，,；;\n]|然后|并且|(?<!一)并|再', text, maxsplit=1)
     if len(clauses) == 2:
-        drawing, objects = drawing_add_scope(clauses[0]), related_object_add_request(clauses[0])
-    return drawing, objects, bool(drawing or objects)
+        scopes = scope(clauses[0])
+    return (*scopes, any(scopes))
 
 
 def replay_equipment_context(context, fixed, question):
@@ -546,11 +550,12 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         question=body['question']
         edit_question,disposition=turn_requests(question)
         switches=set(service.get('settings',{}).get('tools',('selected_sources','engineering_neighborhood','manual_fault_lookup')))
-        drawing_scope,related_scope,compound_add=contextual_addition(edit_question)
+        drawing_scope,related_scope,linked_scope,compound_add=contextual_addition(edit_question)
         alarm_materials=assistant_alarm_materials.alarm_material_add(edit_question)
-        contextual_add=related_scope or drawing_scope or alarm_materials
+        contextual_add=linked_scope or related_scope or drawing_scope or alarm_materials
         if compound_add:
-            context['relatedAddition']=dict(kind='drawing' if drawing_scope else 'object',scope=contextual_add)
+            kind='object_and_drawing' if linked_scope else 'drawing' if drawing_scope else 'object'
+            context['relatedAddition']=dict(kind=kind,scope=contextual_add)
         replay=replay_equipment_context(draft['context'],fixed,question) if equipment_materials and 'alarm' in kinds else None
         replay_materials=replay is not None and re.fullmatch(r'(?:请问\s*)?(?:这台设备|这个(?:设备|柜体|柜))\s*有(?:哪些)?\s*(?:图纸|说明书|资料)(?:和(?:图纸|说明书|资料))?[？?。]?',question.strip())
         if disposition and not edit_question:
@@ -577,7 +582,11 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         tools=ProjectTools(reader,guard,policy['policy']['allowedKinds'],job.private)
         if compound_add:
             plan['queries']=[]
-        anchor=assistant_alarm_materials.alarm_anchor(fixed,draft,body) if alarm_materials else None
+        anchor=None
+        if linked_scope:
+            anchor=assistant_alarm_materials.linked_anchor(fixed,draft,body,linked_scope)
+        elif alarm_materials:
+            anchor=assistant_alarm_materials.alarm_anchor(fixed,draft,body)
         chosen=[item for item in fixed if item[0]['evidenceRefId'] in body['evidenceRefIds']]
         if anchor:
             chosen=[anchor]+[item for item in chosen if item!=anchor]
@@ -586,6 +595,9 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         prefer_selected=needs_evidence and (disposition or body.get('preferSelectedEvidence',False))
         selected_reads=read_selected_evidence(tools,chosen) if prefer_selected else []
         for q in plan['queries']:
+            if (plan['intent']=='edit' and q['tool'] in ('objects','graph') and not q['query'].strip()
+                    and any(action['kind']=='add_results' for action in plan['actions'])):
+                continue
             try:tools.query(q,replay=replay,drawings=bool(re.search(r'图纸|drawings?',question,re.I)))
             except PreviewError as error:
                 if error.status in (401,403) or error.code in ('ASSISTANT_CANCELLED','ACCESS_CHANGED','SESSION_CHANGED','ASSISTANT_TIMEOUT'):raise
@@ -593,20 +605,32 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
         if needs_evidence and not prefer_selected:
             selected_reads=read_selected_evidence(tools,chosen)
         addition_plan=dict(intent=plan['intent'],actions=[]) if compound_add else plan
-        if alarm_materials:
+        review=None
+        if linked_scope:
+            if anchor:
+                related_answer=assistant_alarm_materials.plan_addition(tools,fixed,draft,anchor,addition_plan,switches,linked=True)
+            else:
+                relation='故障报警' if linked_scope=='alarm' else '故障报警或工程对象'
+                has_source=any(card['kind'] in ('alarm','object') and not card.get('historical') for card in draft['cards'])
+                if plan['intent']=='edit':
+                    review=dict(target='card' if has_source else 'instruction',message=(
+                        f'请选择一张{relation}卡片，再继续这条指令。' if has_source else
+                        '请先在「加入资料」中添加一张故障报警或工程对象卡片。'))
+                    plan['actions']=[]
+                related_answer=tools.catalogue_answer()
+        elif alarm_materials:
             related_answer=assistant_alarm_materials.plan_addition(tools,fixed,draft,anchor,plan,switches,analyze=disposition)
         elif drawing_scope:
             related_answer=drawing_answer(tools,fixed,draft,body,drawing_scope,addition_plan)
         else:
             related_answer=related_object_answer(tools,fixed,draft,related_scope,addition_plan) if related_scope else None
-        if compound_add and plan['intent']=='edit':
+        if compound_add and plan['intent']=='edit' and not review:
             additions=[index for index,action in enumerate(plan['actions']) if action['kind']=='add_results']
             if len(additions)==1 and addition_plan['actions']:
                 plan['actions'][additions[0]]=addition_plan['actions'][0]
             else:
                 plan['actions']=[]
                 related_answer['nextSteps'].append(dict(text='请先选定要加入的资料，再提交其余画布操作。',refs=[]))
-        review = None
         if plan['actions']:
             try:
                 if not contextual_add:
@@ -672,6 +696,7 @@ def run(runtime,record,job,body,policy,service,prepare,authorize,source_call):
                 reads=tools.reads,selectedReads=selected_reads,receipts=[],
                 execution='query_only' if body['mode']=='cockpit_query' else 'ready' if plan['actions'] else 'query',
                 **({'editReview':review} if review else {}),
+                **({'linkedAnchorRef':anchor[0]['evidenceRefId'] if anchor else None} if linked_scope else {}),
                 **({'disposition':True} if disposition else {})))
         require(runtime.store.finish(run_id,'partial' if result['partial'] else 'complete',result,trace,tools.sources),
                 'ASSISTANT_CANCELLED',409)

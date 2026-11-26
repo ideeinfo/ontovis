@@ -335,7 +335,81 @@ async (page, facts, phase) => {
     await workbenchEdges.filter({hasText:'关联图纸'}).waitFor({state:'attached'});
     await canvas.locator('.ad-links [data-origin="manual"]').waitFor({state:'attached'});
     const expected=await edgeIds(workbenchEdges);
+
+    await button('关闭助手',canvas).click();
+    await button('新建分析',canvas).click();
+    const discard=page.getByRole('button',{name:'放弃并离开',exact:true});
+    if(await discard.isVisible())await discard.click();
+    await canvas.locator('.ad-card').first().waitFor({state:'detached'});
+    await canvas.locator('.ac-add-materials').click();
+    await materials.getByRole('button',{name:/^故障报警/}).click();
+    const alarmSource=materials.locator('.ac-material-result').filter({hasText:'13003'}).first();
+    await alarmSource.getByRole('button',{name:/^加入画布：/}).click();
+    const onlyAlarm=canvas.locator('.ad-card[data-card-kind="alarm"]');
+    await onlyAlarm.waitFor({state:'attached'});
+    await button('关闭资料库',materials).click();
+    await button('分析助手',canvas).click();
+    const sendLinked=async phrase=>{
+      await composer.fill(phrase);
+      await button('发送',assistant).and(page.locator(':enabled')).waitFor();
+      await composer.press('Enter');
+    };
+    const assistantResponse=path=>page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workbench/assistant/'+path);
+    const [linkedStart,linkedResponse]=await Promise.all([
+      assistantResponse('task-start'),assistantResponse('task-ack'),sendLinked('添加工程对象和图纸'),
+    ]);
+    const linkedRequest=linkedStart.request().postDataJSON();
+    check(JSON.parse(linkedRequest.snapshotJson).cards.map(item=>item.kind).join(',')==='alarm',
+      'The screenshot case must start with only the alarm card');
+    const linkedResult=await linkedResponse.json();
+    const linkedItems=linkedResult.receipt.items;
+    check(linkedResponse.ok()&&linkedResult.run.result.modelCalls===0&&
+      linkedItems.map(item=>item.sourceKind).join(',')==='object,drawing'&&linkedItems.every(item=>item.status==='added'),
+      'The assistant did not automatically apply exactly the directly related object and unique drawing');
+    await powerEdge.waitFor({state:'attached'});
+    check(await nonDrawings.count()===0&&await objectCards.count()===1&&await onlyAlarm.count()===1,
+      'The assistant added an unrelated object, document or photo');
+    const receipt=assistant.locator('.as-execution-receipt').last();
+    const locate=name=>assistant.getByRole('button',{name:'在画布中定位 · '+name,exact:true}).last();
+    await receipt.getByRole('button',{name:'在画布中定位 · '+facts.cards.object.title,exact:true}).waitFor();
+    await locate(facts.powerDrawingTitle).click();
+    const located=canvas.locator('.ad-card.selected[data-card-kind="drawing"]');
+    await located.getByRole('button',{name:facts.powerDrawingTitle,exact:true}).waitFor();
+    await located.locator('.ac-photo-view img').waitFor();
+    check((await receipt.innerText()).includes('工程对象 · '+facts.cards.object.title+' · 已加入')&&
+      (await receipt.innerText()).includes('图纸 · '+facts.powerDrawingTitle+' · 已加入'),
+      'The receipt did not show the name, type and completion state of both cards');
+    check(!/fixture-|location:supply-|回执编号|\bR[12]\b/.test(await receipt.innerText()),
+      'The execution receipt exposed internal source or operation keys');
+    await sendLinked('把图纸和工程对象一并加入画布');
+    await assistant.locator('.as-turn').last().getByText('查到的关联资料已在画布上。',{exact:false}).waitFor();
+    check(await canvas.locator('.ad-card').count()===3,'Repeating the request created a duplicate');
+    await button('撤销修改',canvas).click();
+    check(await canvas.locator('.ad-card').count()===1,'The two linked additions were not undone together');
+
+    await sendLinked('查找名称含合成的工程对象');
+    const directory=assistant.locator('.as-project-results').last();
+    const choice=name=>directory.getByRole('button',{name:'加入画布 · 工程对象 · '+name,exact:true});
+    const [firstObject,secondObject]=facts.additionalObjectTitles;
+    await choice(firstObject).waitFor();
+    check(!/fixture-|object:1/.test(await directory.innerText()),'Candidate displayed the raw UID or revision');
+    await button('放大画布',canvas).click();
+    const firstAck=assistantResponse('task-ack');
+    await choice(firstObject).click();
+    check((await firstAck).ok(),'A candidate could not be added after zooming the same canvas');
+    const firstResult=directory.locator('article').filter({hasText:firstObject});
+    await firstResult.getByRole('button',{name:'已处理',exact:true}).waitFor();
+    check(await firstResult.getByRole('button',{name:'已处理',exact:true}).isDisabled(),'The completed candidate could be re-added');
+    const secondAck=assistantResponse('task-ack');
+    await choice(secondObject).click();
+    check((await secondAck).ok(),'Adding the first candidate disabled another valid candidate');
+    await locate(secondObject).click();
+    await button(secondObject,objectCards).waitFor({state:'attached'});
+    await button('适应全部',canvas).click();
+    check(await objectCards.count()===2,'Manual add lost an earlier result');
+
     await button('驾驶舱').click();
+    await button('放弃并离开',page.getByRole('dialog',{name:'分析修改尚未保存'})).click();
     const cockpit=page.getByRole('region',{name:'项目驾驶舱'});
     await button('分析工作台',cockpit).click();
     const view=cockpit.getByRole('region',{name:'故障分析展示'});
@@ -350,7 +424,8 @@ async (page, facts, phase) => {
     return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true,
       drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,
       alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true,assistantCompoundEdit:true,
-      recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true,assistantCardSelection:true};
+      recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true,assistantCardSelection:true,
+      assistantLinkedObjectAndDrawing:true,assistantLinkedDedupAndUndo:true,assistantManualAddAfterZoom:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

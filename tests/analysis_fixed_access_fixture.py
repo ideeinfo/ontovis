@@ -80,7 +80,10 @@ def browser_site(public: Path):
                 title,page = {drawing:('合成接线图',89),member_drawing:(member_title,90),power_drawing:(power_title,88)}[uid]
                 return dict(project_code=PROJECT,drawing_uid=uid,drawing_name=title,source_page_number=page)
             if route==project_prefix+'/objects':
-                items = [tags[tag] for tag in parse_qs(url.query).get('primaryIdentifier',[]) if tag in tags]
+                filters=parse_qs(url.query)
+                items = [tags[tag] for tag in filters.get('primaryIdentifier',[]) if tag in tags]
+                if filters.get('q')==['合成']:
+                    items=list(objects.values())
                 return dict(projectCode=PROJECT,items=items,total=len(items),nextCursor=None)
             if route==project_prefix+'/objects/resolve':
                 return dict(projectCode=PROJECT,resolutionMode='live',items=[dict(resolution='exact',
@@ -133,9 +136,15 @@ def browser_site(public: Path):
             photo_blocked.clear()
             source.permissions['writer'][PROJECT] = 'admin'
 
+        def drawing_preview(path,payload):
+            assert path==project_prefix+'/object-evidence/content'
+            assert payload['entityUid']==primary['entityUid'] and payload['expectedContentSha256']==pdf['sha256']
+            assert payload['evidenceRef'] in ('location:supply-1','location:supply-2')
+            return PNG
+
         with patch.object(source,'document_page',lambda *_args,**_kw:img,create=True), \
                 patch.object(source,'source_bytes',lambda *_args,**_kw:pdf,create=True), \
-                patch.object(source,'image',side_effect=AssertionError('Only drawing metadata is needed'),create=True), \
+                patch.object(source,'image',side_effect=drawing_preview,create=True), \
                 patch('apps.api.analysis_media.drawing_image',return_value=img):
             record = '本单已记录合成处置结果，用于固定资料权限验收。'
             order = fixture.new('Q-26 合成历史工单')
@@ -194,6 +203,12 @@ def browser_site(public: Path):
                 assert [(item['analysisSessionId'],item['relevance']) for item in available['items']]==[(analysis_id,'same_event')]
 
             def plan(_authority, _path, body, _cancelled, _deadline):
+                if body['question']=='查找名称含合成的工程对象':
+                    output=dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,
+                                engineeringConfirmation=False,usage={})
+                    if body['workflow']['phase']=='plan':
+                        return {**output,'plan':dict(intent='query',queries=[dict(tool='objects',query='合成',faultCode='')],actions=[])}
+                    return {**output,'answer':dict(observations=[],hypotheses=[],gaps=[],nextSteps=[])}
                 if body['workflow']['phase']=='answer' and '加入报警相关资料卡片，分析处置方案' in body['question']:
                     assert body['evidence'][0]['kind']=='alarm'
                     return dict(purpose='ontovis_analysis',serviceRevision='a'*64,modelCalls=1,

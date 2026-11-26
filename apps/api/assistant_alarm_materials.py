@@ -5,6 +5,7 @@ import re
 from .analysis_object_recommendations import object_recommendation
 from .analysis_recommendations import _source_page, registered_recommendation_revisions
 from .assistant_canvas_tasks import result_targets
+from .assistant_drawings import drawings_on_canvas
 from .assistant_graph import material_summary
 from .assistant_store import require
 from .assistant_summaries import redact
@@ -18,6 +19,32 @@ def alarm_material_add(question):
     place = r'(?:(?:到|至)(?:当前)?画布[上中]?)?'
     return bool(re.fullmatch(rf'(?:请帮我|帮我|请)?\s*(?:{verb}\s*{subject}|(?:把|将)\s*{subject}\s*{verb})\s*{place}',
                              question.strip().removeprefix('先').strip().rstrip('。！？!?')))
+
+
+def linked_add_scope(question):
+    """Resolve requests for both source types without turning them into a project search."""
+    text = ' '.join(question.strip().rstrip('。.!！?？').split())
+    alarm = r'(?P<alarm>(?:当前|本次|这次|这条|该|选中(?:的)?)?(?:故障)?报警)'
+    scope = rf'(?:(?:与)?{alarm}的?|(?:当前|本次)?画布(?:中|上)?的?|(?:选中|所选)(?:的)?卡片的?)?'
+    related = r'(?:直接)?(?:(?:相关|关联|涉及|对应)的?)?'
+    objects, drawings = r'工程对象', r'(?:工程|电气)?图纸'
+    join = r'(?:和|以及|及|与|跟|、|，|,)(?:其)?'
+    pair = rf'{scope}{related}(?:{objects}{join}{related}{drawings}|{drawings}{join}{related}{objects})(?:卡片)?'
+    verb = r'(?:加入|添加|加上|补上|放入|加|放)'
+    together = r'(?:一起|同时|一并)?'
+    place = r'(?:(?:到|至)?(?:当前)?画布[上中]?)?'
+    prefix = rf'(?:请帮我|帮我|请|能否|能不能|可以)?(?:自动)?{together}'
+    compact = text.replace(' ', '')
+    request = (re.fullmatch(rf'{prefix}{verb}{pair}{place}', compact) or
+               re.fullmatch(rf'{prefix}(?:把|将){pair}{together}{verb}{place}', compact))
+    if request:
+        return 'alarm' if request['alarm'] else 'canvas'
+    request = re.fullmatch(
+        r'(?:please )?add (?:the )?(?:directly )?(?:related |associated )?'
+        r'(?:engineering objects and (?:their )?drawings|drawings and (?:their )?engineering objects)'
+        r'(?: for (?P<alarm>(?:the current|this|the selected) alarm))?(?: to (?:the )?canvas)?',
+        text, re.I)
+    return ('alarm' if request['alarm'] else 'canvas') if request else None
 
 
 def alarm_anchor(fixed, draft, body):
@@ -35,7 +62,25 @@ def alarm_anchor(fixed, draft, body):
     return matching[0] if len(matching)==1 else alarms[0] if len(alarms)==1 else None
 
 
-def candidates(reader, dataset, kinds, read, *, trace=None):
+def linked_anchor(fixed, draft, body, scope):
+    kinds = {'alarm'} if scope == 'alarm' else {'alarm','object'}
+    current = {card['id']: card['source']['id'] for card in draft['cards']
+               if card['kind'] in kinds and not card.get('historical')}
+    focused = {current[key] for key in body.get('focusCardIds',[]) if key in current}
+    sources = [item for item in fixed if item[0]['sourceKind'] in kinds
+               and item[0]['evidenceRefId'] in current.values()]
+    if focused:
+        matches = [item for item in sources if item[0]['evidenceRefId'] in focused]
+        return matches[0] if len(matches)==1 else None
+    alarms = [item for item in sources if item[0]['sourceKind']=='alarm']
+    matching = [item for item in alarms if item[1]['eventId']==draft['context'].get('eventId')]
+    if len(matching)==1:
+        return matching[0]
+    candidates = alarms or sources
+    return candidates[0] if len(candidates)==1 else None
+
+
+def candidates(reader, dataset, kinds, read, *, trace=None, object_source=None):
     """Only use the configured alarm object and the material picker's fixed associations."""
     def lookup(tool, operation):
         try:
@@ -51,13 +96,24 @@ def candidates(reader, dataset, kinds, read, *, trace=None):
         return rows
 
     rows = []
-    target = lookup('alarm_object',lambda:reader._rds(dataset['primaryRds'])) \
-        if dataset.get('primaryRds') and kinds.intersection(('object','drawing')) else None
+    primary = (dataset or {}).get('primaryRds')
+    target = None
+    if kinds.intersection(('object','drawing')):
+        if object_source is not None:
+            target = lookup('objects',lambda:reader.read('object',object_source))
+        elif primary:
+            target = lookup('alarm_object',lambda:reader._rds(primary))
     if target and 'object' in kinds:
-        rows.append(object_recommendation(target['item'],'报警配置指定的工程对象',
-            'Engineering object registered for this alarm.',identifier=dataset['primaryRds']))
+        reason = '报警配置指定的工程对象' if primary else '当前选中的工程对象'
+        reason_en = 'Engineering object registered for this alarm.' if primary else 'Selected engineering object.'
+        rows.append(object_recommendation(target['item'],reason,reason_en,identifier=primary))
     if target and 'drawing' in kinds:
-        rows.extend(lookup('related_drawings',lambda:_source_page(reader,target,dataset,'drawings','drawings',None,'',{})[0]) or [])
+        drawings = lookup('related_drawings',lambda:_source_page(reader,target,dataset,'drawings','drawings',None,'',{})[0]) or []
+        name = target['item'].get('displayName') or primary
+        for row in drawings:
+            page = row['preview'].get('pageNumber')
+            row['reason'] = (f'「{name}」的登记图纸' if name else '对象的登记图纸') + (f' · 第 {page} 页' if page is not None else '')
+        rows.extend(drawings)
     if 'document' in kinds:
         rows.extend(lookup('alarm_manuals',lambda:_source_page(reader,None,dataset,'documents','fault',None,'',{})[0]) or [])
     return [row for row in rows if row.get('availability','available')=='available']
@@ -67,40 +123,52 @@ def allowed_kinds(kinds, switches):
     return kinds.intersection(('object','drawing','document') if 'manual_fault_lookup' in switches else ('object','drawing'))
 
 
-def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False):
+def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False, linked=False):
     if anchor is None:
         answer=tools.catalogue_answer()
         answer['gaps'].append(dict(text='请选中要分析的报警卡片，再查找它的关联资料。',refs=[]))
         return answer
-    _, descriptor=anchor
-    if 'alarm' not in tools.allowed:
+    ref, descriptor=anchor
+    anchor_kind=ref['sourceKind']
+    if anchor_kind not in tools.allowed:
         answer=tools.catalogue_answer()
-        answer['gaps'].append(dict(text='当前项目策略未允许读取报警。',refs=[]))
+        answer['gaps'].append(dict(text='当前项目策略未允许读取所选卡片的来源。',refs=[]))
         return answer
-    wanted=allowed_kinds(tools.allowed,switches)
+    wanted=tools.allowed & {'object','drawing'} if linked else allowed_kinds(tools.allowed,switches)
     try:
-        dataset=tools.alarm(descriptor)['dataset']
+        dataset=tools.alarm(descriptor)['dataset'] if anchor_kind=='alarm' else None
     except PreviewError as error:
         if error.status in (401,403,504) or error.code in ('ACCESS_CHANGED','SESSION_CHANGED') or error.code.startswith('ASSISTANT_'):
             raise
         tools.trace.append(dict(tool='alarm_object',state='unavailable',reason=error.code))
         return tools.catalogue_answer()
-    rows=candidates(tools.reader,dataset,wanted,tools.read,trace=tools.trace)
+    rows=candidates(tools.reader,dataset,wanted,tools.read,trace=tools.trace,
+                    object_source=descriptor if anchor_kind=='object' else None)
     current={card['source']['id'] for card in draft['cards'] if card.get('source') and not card.get('historical')}
-    registered=[(ref['sourceKind'],value,ref['sourceRevision']) for ref,value in fixed if ref['evidenceRefId'] in current]
+    current_fixed=[(ref,value) for ref,value in fixed if ref['evidenceRefId'] in current]
+    registered=[(ref['sourceKind'],value,ref['sourceRevision']) for ref,value in current_fixed]
     unique, existing = {}, set()
     for row in rows:
         identity = row.get('assetKey',row['key'])
         unique.setdefault(identity,row)
         if registered_recommendation_revisions(row,registered):
             existing.add(identity)
+    unverified=set()
+    if linked:
+        drawing_pages={key:(None,row['preview']) for key,row in unique.items()
+                       if row['kind']=='drawing' and key not in existing}
+        gaps=[]
+        existing.update(drawings_on_canvas(tools.reader,current_fixed,drawing_pages,tools.read,gaps))
+        if gaps:
+            tools.trace.append(dict(tool='related_drawings',state='unavailable',reason=gaps[0]))
+            unverified.update(drawing_pages)
     sources=[]
     for identity,row in unique.items():
         selector=row['selector']
         kind=row['kind']
         version=selector.get('expectedEntityRevision') or selector.get('expectedSourceRevision') or selector.get('contentVersionId')
         summary=redact(json.dumps(dict(title=row['title'],reason=row['reason'],
-            scope='已核对的报警关联登记与固定出处。图纸和手册仅含此处列出的元数据。'),
+            scope='已核对的关联登记与固定出处。图纸和手册仅含此处列出的元数据。'),
             ensure_ascii=False),tools.private)[:1000]
         detail={'descriptor':selector} if kind=='document' else {}
         if kind=='document' and analyze:
@@ -114,31 +182,61 @@ def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False)
                     raise
                 tools.trace.append(dict(tool='fixed_manual_neighborhood',state='unavailable',reason=error.code))
         sources.append(tools.source(kind,summary,**detail)['key'])
-        if identity not in existing:
+        if identity not in existing and identity not in unverified:
             tools.results.append(dict(key=f'R{len(tools.results)+1}',kind=kind,title=row['title'],
                 identifier=row.get('identifier') or row.get('assetKey',row['key']),version=version,
                 reason=row['reason'],selector=selector,simulated=False))
     answer=tools.catalogue_answer()
     if sources:
-        answer['observations'].append(dict(text=f'按本次报警核对了 {len(sources)} 项登记资料。',refs=sources[:8]))
+        scope='所选卡片' if linked else '本次报警'
+        answer['observations'].append(dict(text=f'按{scope}核对了 {len(sources)} 项登记资料。',refs=sources[:8]))
     room=min(12,50-len(draft['cards']))
     if plan['intent']=='edit' and 0<len(tools.results)<=room:
         plan['actions']=[dict(kind='add_results',targets=[r['key'] for r in tools.results],text='',x=None,y=None)]
-    if not tools.results:
+    if linked:
+        labels={'object':'工程对象','drawing':'图纸'}
+        found={row['kind'] for row in rows}
+        for kind,label in labels.items():
+            if kind not in wanted:
+                answer['gaps'].append(dict(text=f'当前项目策略未启用{label}读取。',refs=[]))
+            elif kind not in found:
+                answer['gaps'].append(dict(text=f'本轮没有找到可加入的登记{label}。',refs=[]))
+        if rows and not tools.results and not unverified:
+            answer['observations'].append(dict(text='查到的关联资料已在画布上。',refs=[]))
+    elif not tools.results:
         answer['gaps'].append(dict(text='关联资料已在画布上，或本轮没有读到新的登记资料。',refs=[]))
-    elif len(tools.results)>room:
-        answer['nextSteps'].append(dict(text='可从已核对的候选中选择本次要加入的资料。',refs=[]))
+    if len(tools.results)>room:
+        answer['nextSteps'].append(dict(text='可从已核对的候选中选择本次要加入的资料。' if room else '画布已达卡片数量上限。',refs=[]))
     return answer
 
 
-def checked_additions(reader, fixed, draft, body, allowed, switches, plan, results):
-    anchor=alarm_anchor(fixed,draft,body)
-    require(anchor and 'alarm' in allowed,'ASSISTANT_TARGET_AMBIGUOUS',409)
+def checked_additions(reader, fixed, draft, body, allowed, switches, plan, results, *, scope=None, anchor_ref=None):
+    anchor=linked_anchor(fixed,draft,body,scope) if scope else alarm_anchor(fixed,draft,body)
+    if scope:
+        require(anchor and anchor[0]['evidenceRefId']==anchor_ref,'ASSISTANT_LINKED_MATERIALS_CHANGED',409)
+    require(anchor and anchor[0]['sourceKind'] in allowed,'ASSISTANT_TARGET_AMBIGUOUS',409)
     chosen=[row for action in plan['actions'] if action['kind']=='add_results'
             for row in result_targets(results,action['targets'])]
     require(chosen,'ASSISTANT_TARGET_AMBIGUOUS',409)
     kinds={row['kind'] for row in chosen}
-    require(kinds<=allowed_kinds(allowed,switches),'ASSISTANT_TOOL_NOT_ALLOWED',403)
-    live=candidates(reader,reader.read('alarm',anchor[1])['dataset'],kinds,lambda operation:operation())
-    require(all(any(row['kind']==item['kind'] and row['selector']==item['selector'] for item in live) for row in chosen),
-            'SOURCE_CHANGED',409)
+    permitted=allowed & {'object','drawing'} if scope else allowed_kinds(allowed,switches)
+    require(kinds<=permitted,'ASSISTANT_TOOL_NOT_ALLOWED',403)
+    ref,descriptor=anchor
+    dataset=reader.read('alarm',descriptor)['dataset'] if ref['sourceKind']=='alarm' else None
+    def read(operation):
+        return operation()
+    live=candidates(reader,dataset,kinds,read,
+                    object_source=descriptor if ref['sourceKind']=='object' else None)
+    matches=[next((row for row in live if row['kind']==item['kind'] and row['selector']==item['selector']),None)
+             for item in chosen]
+    require(all(matches),'ASSISTANT_LINKED_MATERIALS_CHANGED' if scope else 'SOURCE_CHANGED',409)
+    if not scope:
+        return {}
+    drawing_pages={row['assetKey']:(None,row['preview']) for row in matches if row['kind']=='drawing'}
+    current={card['source']['id'] for card in draft['cards'] if card.get('source') and not card.get('historical')}
+    gaps=[]
+    present=drawings_on_canvas(reader,[(ref,value) for ref,value in fixed if ref['evidenceRefId'] in current],
+                               drawing_pages,read,gaps)
+    require(not gaps,'ASSISTANT_LINKED_MATERIALS_CHANGED',409)
+    return {item['key']:present[row['assetKey']] for item,row in zip(chosen,matches)
+            if row['kind']=='drawing' and row['assetKey'] in present}

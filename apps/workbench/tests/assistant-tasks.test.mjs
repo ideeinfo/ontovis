@@ -1,10 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adoptedModelTarget,equipmentConfigurationTarget,checkedTaskSnapshot,snapshotDigest,canApplyFreshTask,assistantEditReview} from '../src/assistantTasks.ts';
+import {adoptedModelTarget,equipmentConfigurationTarget,checkedTaskSnapshot,snapshotDigest,canApplyFreshTask,assistantEditReview,isTaskAddition,taskMaterialName,taskResultReceipt} from '../src/assistantTasks.ts';
 import {assistantSendBlocker} from '../src/assistantApi.ts';
 import {blankAnalysisDraft} from '../src/analysisDraftState.ts';
 import {assistantEntrySeed} from '../src/analysisSources.ts';
 const scope={ontobaseConnectionId:'source',projectCode:'Demo-PDS'};
+test('source operations display engineering names and track completion for the selected result',()=>{
+ assert.equal(taskMaterialName('Demo-PDS:OBJ:00e3efa4c0e8',false),'名称未登记');
+ assert.equal(taskMaterialName('r8b13aea4-1ef5-4cf3-9aff-0d6fd03c2952:1',true),'Name not recorded');
+ assert.equal(taskMaterialName('+CN1-1U2',false),'+CN1-1U2');
+ assert.equal(taskMaterialName('机舱动力柜供电',false),'机舱动力柜供电');
+ const receipt={kind:'add_results',resultKey:'R1',label:'工程对象 A'};
+ assert.equal(taskResultReceipt([{items:[receipt]}],{key:'R1'}),receipt);
+ assert.equal(taskResultReceipt([{items:[receipt]}],{key:'R2'}),undefined);
+ const apply=[{kind:'add_results'}];
+ assert.equal(isTaskAddition({plan:{actions:apply}},[]),true);
+ assert.equal(isTaskAddition({plan:{actions:[...apply,{kind:'arrange'}]}},[]),false);
+ assert.equal(isTaskAddition({plan:{actions:[]}},['R1']),true);
+});
 test('target prompts remain operable in old turns while actual evidence needs remain in the answer',()=>{
  const task={plan:{intent:'edit',actions:[]},receipts:[]};
  const legacyText='请选中目标卡片，或补充卡片、分组或连线的准确名称。';

@@ -26,10 +26,11 @@ export function AssistantTurn({run,cards,en,canAddNote,canCheck,onFocus,onAddNot
  const review=assistantEditReview(run.result?.task,answer?.gaps);
  const reviewTitle={card:t('选择要操作的卡片','Choose cards to edit'),group:t('指定要修改的分组','Identify the group to edit'),
   relation:t('指定要修改的连线','Identify the connection to edit'),result:t('选择要加入的资料','Choose materials to add'),
-  instruction:t('补充要做的修改','Describe the edit')};
+  instruction:t('补充要做的修改','Describe the edit'),refresh:t('重新核对关联资料','Check linked materials again')};
  const reviewText={card:'Select the cards to edit, then continue with the original instruction.',
   group:'Enter the name of the group to change.',relation:'Enter the names of the cards at both ends of the connection.',
-  result:'Choose from the results below or enter a material name or equipment tag.',instruction:'Describe the specific change to make.'};
+  result:'Choose from the results below or enter a material name or equipment tag.',instruction:'Describe the specific change to make.',
+  refresh:'Send the original request again to find materials with a recorded link to the current card.'};
  const groups=answer?[
   {title:t('已知情况','Known information'),rows:answer.observations},
   {title:t('待验证假设','Hypotheses to check'),rows:answer.hypotheses},
@@ -45,7 +46,7 @@ export function AssistantTurn({run,cards,en,canAddNote,canCheck,onFocus,onAddNot
     <h4>{reviewTitle[review.target]}</h4>
     {(review.message||!cardPicker)&&<p>{displayText(en?reviewText[review.target]:review.message||'请在画布上选择需要修改的卡片。')}</p>}
     {cardPicker}
-    {onContinueEdit&&<Btn onClick={onContinueEdit}>{t('继续原指令','Continue with original instruction')}</Btn>}
+    {onContinueEdit&&<Btn onClick={onContinueEdit}>{review.target==='refresh'?t('重新填写原指令','Fill in the original request'):t('继续原指令','Continue with original instruction')}</Btn>}
    </section>}
    {execution&&<div className="as-run-outcome" role="status"><strong>{execution.state==='saved'?t(`本轮操作已保存 · r${execution.analysisRevision}`,`Saved · r${execution.analysisRevision}`):existingOnly?t('资料已在画布中，未重复添加','Already on the canvas; no duplicate added'):t('本轮画布操作已应用到草稿','Canvas actions applied to draft')}</strong><small>{disposition?t('处置分析见下方。','See the response analysis below.'):t('以下保留执行前的检索回答，实际操作以回执和当前画布状态为准。','The search answer below predates execution. Check the receipt and current canvas for the outcome.')}</small></div>}
    {!!groups.length&&<details className={execution&&!disposition?'as-executed-answer':'as-live-answer'} open={!execution||disposition}>

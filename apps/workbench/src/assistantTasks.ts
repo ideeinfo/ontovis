@@ -21,15 +21,15 @@ export function equipmentConfigurationTarget(row:TaskCandidate):EquipmentConfigu
  return {configurationId:row.configurationId,configurationRevision:row.configurationRevision,
    ...(row.kind==='equipment_configuration'?{device:{entityUid:row.identifier,entityRevision:String(row.version)}}:{})};
 }
-export type TaskReceipt={operationId:string;state:'applied_draft'|'saved';saveRequested?:boolean;analysisSessionId:string;analysisRevision:number;snapshotSha256:string;items:{kind:string;status:string;identifier?:string;cardId?:string;label?:string;historyDirection?:'undo'|'redo';restoredFrom?:string;simulated?:boolean}[]};
+export type TaskReceipt={operationId:string;state:'applied_draft'|'saved';saveRequested?:boolean;analysisSessionId:string;analysisRevision:number;snapshotSha256:string;items:{kind:string;status:string;identifier?:string;cardId?:string;label?:string;sourceKind?:string;resultKey?:string;sourceVersion?:string|number;historyDirection?:'undo'|'redo';restoredFrom?:string;simulated?:boolean}[]};
 export type SelectedEvidenceRead={evidenceRefId:string;kind:string}&(
  {state:'complete';sourceKey:string;metadataOnly:boolean}|
  {state:'budget_limited'|'policy_excluded'|'unavailable';reason:string}
 );
-export type EditReview={target:'card'|'group'|'relation'|'result'|'instruction';message:string;legacyGap?:string};
+export type EditReview={target:'card'|'group'|'relation'|'result'|'instruction'|'refresh';message:string;legacyGap?:string};
 export type EngineeringTask={mode:'workbench'|'cockpit_query';baseDigest:string;plan:{intent:'query'|'edit';queries:{tool:string;query:string;faultCode:string}[];actions:{kind:string;targets:string[];text:string;x:number|null;y:number|null}[]};
  results:TaskCandidate[];graphs:{kind:'engineering'|'knowledge';graph:Record<string,unknown>}[];trace:{tool:string;state:string;count?:number;total?:number;nextCursor?:number|string|null;reason?:string;truncated?:boolean;scope?:string}[];
- reads:number;selectedReads?:SelectedEvidenceRead[];receipts:TaskReceipt[];execution:string;disposition?:boolean;editReview?:EditReview};
+ reads:number;selectedReads?:SelectedEvidenceRead[];receipts:TaskReceipt[];execution:string;disposition?:boolean;editReview?:EditReview;linkedAnchorRef?:string|null};
 
 export function assistantEditReview(task:EngineeringTask|undefined,gaps:{text:string;refs:string[]}[]=[]):EditReview|undefined{
  if(!task||task.plan.intent!=='edit'||task.plan.actions.length||task.receipts.length)return;
@@ -58,4 +58,19 @@ export function canApplyFreshTask(task:EngineeringTask|undefined,fresh:boolean,h
  if(task.plan.actions.some(a=>['restore_revision','replace_source'].includes(a.kind)))return false;
  if(task.plan.actions.some(a=>a.kind==='add_results'&&!a.targets.length))return false;
  return true;
+}
+
+export function isTaskAddition(task:EngineeringTask|undefined,keys:string[]){
+ return keys.length>0||task?.plan.actions.length===1&&task.plan.actions[0].kind==='add_results';
+}
+
+const internalNames=/^(?:[\w.-]+:OBJ:[\w.-]+|(?:r)?[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}(?::\d+)?|[a-f\d]{32,64})$/i;
+export function taskMaterialName(title:string|undefined,en:boolean){
+ const name=title?.trim();
+ return name&&!internalNames.test(name)?name:en?'Name not recorded':'名称未登记';
+}
+
+export function taskResultReceipt(receipts:TaskReceipt[],row:TaskCandidate){
+ return receipts.flatMap(receipt=>receipt.items).find(item=>item.kind==='add_results'&&
+  (item.resultKey?item.resultKey===row.key:item.identifier===row.identifier&&item.sourceVersion===row.version));
 }
