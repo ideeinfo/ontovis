@@ -33,6 +33,7 @@ def browser_site(public: Path):
         fixture.admin = fixture.login('writer')
         blocked = Event()
         photo_blocked = Event()
+        descendant_only = Event()
         original = source.request
         fixed = DocumentReader()
         photo = DocumentReader()
@@ -104,7 +105,8 @@ def browser_site(public: Path):
                             versionMode='fixed_content_version',scope='stored_object_photo_locations',items=[])
             if route==project_prefix+'/equipment/shared-photos/query':
                 items=[dict(documentId=photo_id,contentVersionId=photo_version,title=photo.document['name'],
-                            availability='available')] if body['entityUid']==cabinet['entityUid'] else []
+                            availability='available')] if (body['entityUid']==cabinet['entityUid'] or
+                                descendant_only.is_set() and body['entityUid']==primary['entityUid']) else []
                 return dict(projectCode=PROJECT,items=items,nextCursor=None)
             if route in (project_prefix+'/object-evidence/resolve', project_prefix+'/object-evidence/related'):
                 subject = objects[body['entityUid']]
@@ -117,7 +119,7 @@ def browser_site(public: Path):
                                  sourceTemplateRevision=None,sourceRevision=str(idx)*64,recordDigest=str(idx)*64,
                                  contentSha256=pdf['sha256'],availability='available',precision='page',region=None,
                                  pageNumber=88,mediaType='application/pdf',versionMode='current_content_snapshot')
-                            for idx in (1,2)] if main else []
+                            for idx in (1,2)] if main and not descendant_only.is_set() else []
                     return {**scope,'complete':True,'versionMode':'current_content_snapshot','items':rows}
                 def page(uid, title, match):
                     return dict(drawingUid=uid,title=title,drawingNumber=None,pageNumber=90 if uid==member_drawing else 89,sourceRevision='a'*64,
@@ -126,6 +128,8 @@ def browser_site(public: Path):
                 direct = {key:primary[key] for key in ('entityUid','entityRevision','displayName')} | {'relation':'self'}
                 member = dict(entityUid='fixture-terminal',entityRevision='object:1',displayName='合成端子',relation='definition_descendant')
                 items = [page(drawing,'合成接线图',direct),page(member_drawing,member_title,member)] if main else []
+                if main and descendant_only.is_set():
+                    items = [page(member_drawing,member_title,member)]
                 return {**scope,'includeDescendants':True,'scopeComplete':True,'nextCursor':None,'snapshotRevision':'b'*64,
                         'total':len(items),'items':items}
             if route.endswith(('/object-locations','/installations','/objects','/result-relation-imports')):
@@ -142,11 +146,14 @@ def browser_site(public: Path):
 
         commands = {'/test-evidence/withdraw-document':blocked.set,
                     '/test-evidence/withdraw-photo':photo_blocked.set,
+                    '/test-evidence/descendant-drawings':descendant_only.set,
+                    '/test-evidence/restore-drawing-locations':descendant_only.clear,
                     '/test-evidence/expire-session':expire_browser_sessions,
                     '/test-evidence/withdraw-project':lambda:source.permissions['writer'].pop(PROJECT,None)}
         def restore():
             blocked.clear()
             photo_blocked.clear()
+            descendant_only.clear()
             source.permissions['writer'][PROJECT] = 'admin'
 
         def drawing_preview(path,payload):
@@ -255,7 +262,7 @@ def browser_site(public: Path):
             photo_row=recommendation('photo',photo_title,photo_selector,'登记对象照片')
             manual_row=dict(title=manual_title,reason='故障码手册 · 第 2 页',selector=manual_selector)
             def related_sources(reader,chosen,dataset,section,name,*options):
-                if name=='photos' and chosen and chosen['item']['entityUid']==primary['entityUid']:
+                if name=='photos' and chosen and chosen['item']['entityUid']==primary['entityUid'] and not descendant_only.is_set():
                     return [photo_row],None
                 return _source_page(reader,chosen,dataset,section,name,*options)
 

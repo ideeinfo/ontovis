@@ -406,9 +406,32 @@ def preview(reader, kind, descriptor, options):
     return {'kind': kind, 'gaps': []}
 
 
+def _shared_photo_matches(reader, selected_object, pending):
+    from .analysis_recommendations import _source_page
+
+    found = {}
+    memo = {}
+    for source in ('shared_photos', 'parent_photos'):
+        cursor, seen = None, set()
+        while pending - found.keys():
+            rows, cursor = _source_page(reader, selected_object, None, 'photos', source, cursor, '', memo)
+            for row in rows:
+                selector = row['selector']
+                key = (selector['documentId'], selector['contentVersionId'])
+                if key in pending and row['availability'] == 'available':
+                    found.setdefault(key, row['reason'])
+            if cursor is None:
+                break
+            d.require(cursor not in seen, 'SOURCE_CHANGED', 409)
+            seen.add(cursor)
+    return found
+
+
 def _drawing_relationships(reader, values, previews, alarm_tags, add, gap):
+    selection_fields = sorted(SELECTION)
+
     def scope_key(descriptor):
-        return tuple(descriptor[key] for key in sorted(SELECTION))
+        return tuple(descriptor[key] for key in selection_fields)
 
     located, whole = {}, {}
     for identity, (kind, descriptor, _) in values.items():
@@ -432,11 +455,12 @@ def _drawing_relationships(reader, values, previews, alarm_tags, add, gap):
             add(source, drawing, kind, label, anchor, reason)
 
     scopes = {ref: descriptor for ref, (kind, descriptor, _) in values.items() if kind == 'object'}
+    records = {scope_key(scope): values[ref][2] for ref, scope in scopes.items()}
     lookups = {}
     for ref, tag in alarm_tags.items():
         if tag not in lookups:
             try:
-                lookups[tag] = selected(reader._rds(tag))
+                lookups[tag] = reader._rds(tag)
             except PreviewError as error:
                 if error.status in (401, 403):
                     raise
@@ -445,37 +469,79 @@ def _drawing_relationships(reader, values, previews, alarm_tags, add, gap):
         if isinstance(target, PreviewError):
             gap(ref, target.code)
         else:
-            scopes[ref] = target
+            scope = selected(target)
+            scopes[ref] = scope
+            records[scope_key(scope)] = target
 
-    related = RelatedDrawingsReader(reader.reader) if whole and scopes else None
-    whole_matches = {}
+    sources, scoped_photos, photo_documents = {}, {}, {}
     for source, scope in scopes.items():
-        key = scope_key(scope)
-        for identity in located.get(key, ()):
-            link(source, identity, 'drawing_location', '图纸定位',
-                {'entityUid': scope['entityUid'], 'selector': previews.get(identity, {}).get('selector')},
-                '来源中已登记的对象关联')
-        if related is None:
+        sources.setdefault(scope_key(scope), []).append(source)
+    for ref, (kind, descriptor, _) in values.items():
+        if kind != 'photo':
             continue
-        if key not in whole_matches:
+        if descriptor.get('sourceType') == 'project_document':
+            key = (descriptor['documentId'], descriptor['contentVersionId'])
+            photo_documents.setdefault(key, []).append(ref)
+        else:
+            scoped_photos.setdefault(scope_key(descriptor), []).append(ref)
+
+    related = RelatedDrawingsReader(reader.reader) if whole and (sources or scoped_photos) else None
+    for key in dict.fromkeys([*sources, *scoped_photos, *(located if photo_documents else ())]):
+        scope = dict(zip(selection_fields, key))
+        source_refs = sources.get(key, ())
+        matches = {ref: True for ref in located.get(key, ())}
+        for source in source_refs:
+            for ref in matches:
+                link(source, ref, 'drawing_location', '图纸定位',
+                    {'entityUid': scope['entityUid'], 'selector': previews.get(ref, {}).get('selector')},
+                    '来源中已登记的对象关联')
+        if related and (source_refs or key in scoped_photos):
             try:
-                whole_matches[key] = related.matching_drawings(scope, whole)
+                whole_matches = related.matching_drawings(scope, whole)
             except PreviewError as error:
                 if error.status in (401, 403):
                     raise
-                whole_matches[key] = error
-        matches = whole_matches[key]
-        if isinstance(matches, PreviewError):
-            gap(source, matches.code)
+                for ref in source_refs or scoped_photos.get(key, ()):
+                    gap(ref, error.code)
+                whole_matches = {}
+            for uid, row in whole_matches.items():
+                direct = any(match['relation'] in ('self', 'shared_definition') for match in row['matchedObjects'])
+                for identity, revision in whole[uid]:
+                    if row['availability'] != 'available' or row['contentSha256'] != revision:
+                        continue
+                    matches[identity] = direct
+                    for source in source_refs:
+                        link(source, identity, 'drawing_association' if direct else 'drawing_descendant',
+                            '关联图纸' if direct else '下级对象图纸', None,
+                            '此对象或其固定共享定义已登记这张图纸，打开整页' if direct
+                            else '此对象的下级对象已登记这张图纸，打开整页')
+
+        for ref in scoped_photos.get(key, ()):
+            selector = values[ref][2].get('selector')
+            for drawing, direct in matches.items():
+                if direct:
+                    add(drawing, ref, 'drawing_photo_location', '同对象照片',
+                        {'entityUid': scope['entityUid'], 'selector': selector} if selector else None,
+                        '图纸与照片登记在同一工程对象名下')
+                else:
+                    add(drawing, ref, 'drawing_photo_reference', '设备参考照片',
+                        reason='图纸关联设备下级对象，照片提供设备范围参考', origin='candidate')
+        if not matches or not photo_documents:
             continue
-        for uid, row in matches.items():
-            direct = any(match['relation'] in ('self', 'shared_definition') for match in row['matchedObjects'])
-            for identity, revision in whole[uid]:
-                if row['availability'] == 'available' and row['contentSha256'] == revision:
-                    link(source, identity, 'drawing_association' if direct else 'drawing_descendant',
-                        '关联图纸' if direct else '下级对象图纸', None,
-                        '此对象或其固定共享定义已登记这张图纸，打开整页' if direct
-                        else '此对象的下级对象已登记这张图纸，打开整页')
+        try:
+            obj = records.get(key) or reader.read('object', scope)
+            linked_photos = _shared_photo_matches(reader, obj, set(photo_documents))
+        except PreviewError as error:
+            if error.status in (401, 403):
+                raise
+            for ref in matches:
+                gap(ref, error.code)
+            continue
+        for target, reason in linked_photos.items():
+            for drawing in matches:
+                for ref in photo_documents[target]:
+                    add(drawing, ref, 'drawing_photo_reference', '设备参考照片',
+                        reason=reason, origin='candidate')
 
 
 def relationships(reader, fixed, scene_library):

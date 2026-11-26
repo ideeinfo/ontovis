@@ -352,6 +352,52 @@ class SourceViewerTests(TestCase):
             self.assertIn(('sensor-card', 'located', 'drawing_location'), rows)
             self.assertIn(('sensor-card', 'whole', 'drawing_association'), rows)
 
+    def test_drawing_photo_edges_require_registered_scope_and_fixed_photo_version(self):
+        cabinet = dict(entityUid='cabinet', expectedEntityRevision='r1', installationContextId=None,
+                       expectedHierarchyRevision=None)
+        cabinet_value = dict(item=dict(entityUid='cabinet', entityRevision='r1', displayName='合成柜体'))
+        drawing = {**cabinet, 'expectedContentSha256':self.sha, 'evidenceRef':'location:part'}
+        photo_box = dict(kind='image_bbox', bbox=self.location['bbox'])
+        doc, version, earlier = (str(uuid4()) for _ in range(3))
+        shared = dict(documentId=doc, contentVersionId=version, title='合成柜体全景', availability='available')
+        whole = dict(sourceType='project_document', documentId=doc, contentVersionId=version)
+        scoped = [
+            ('part','drawing',drawing), ('whole','drawing',self.drawing),
+            ('located','photo',cabinet), ('other-installation','photo',{**cabinet,'installationContextId':'another',
+                                                                       'expectedHierarchyRevision':'r2'}),
+            ('shared','photo',whole), ('old','photo',{**whole,'contentVersionId':earlier}),
+            ('unrelated','photo',{**whole,'documentId':str(uuid4())}),
+        ]
+        fixed = [(dict(evidenceRefId=ref, sourceKind=kind), desc) for ref,kind,desc in scoped]
+        self.reader.read.side_effect = lambda kind, desc: (
+            cabinet_value if kind=='object' else {'selector':photo_box} if kind=='photo' and 'entityUid' in desc else {})
+        wrapper = Mock(spec=SceneEngineeringReader, project_code='P', prefix='/api/v1/projects/P',
+                       authority=SimpleNamespace(image=Mock()))
+        self.reader.reader = wrapper
+        wrapper._request.side_effect = lambda method, path, body: (
+            dict(projectCode='P', items=[shared], nextCursor=None) if body['entityUid']=='cabinet' else {})
+        matches = {self.drawing['drawingUid']:dict(contentSha256=self.sha, availability='available',
+                                                     matchedObjects=[dict(relation='definition_descendant')])}
+        with (patch('apps.api.analysis_preview.drawing_preview', return_value={'references':[]}),
+              patch('apps.api.related_drawings.RelatedDrawingsReader.matching_drawings',
+                    side_effect=lambda scope, _: matches if scope==cabinet else {}) as lookup):
+            for sources in (fixed, list(reversed(fixed))):
+                items = relationships(self.reader, sources, None)['items']
+                self.assertCountEqual([(r['fromRef'],r['toRef'],r['kind'],r['origin']) for r in items], [
+                    ('part','located','drawing_photo_location','source'),
+                    ('whole','located','drawing_photo_reference','candidate'),
+                    ('part','shared','drawing_photo_reference','candidate'),
+                    ('whole','shared','drawing_photo_reference','candidate'),
+                ])
+                self.assertEqual(dict(entityUid='cabinet', selector=photo_box),items[0]['anchor'])
+                self.assertTrue(all(item['anchor'] is None for item in items[1:]))
+            self.assertEqual(4, lookup.call_count)
+            self.assertEqual(2, wrapper._request.call_count)
+            wrapper._request.side_effect = PreviewError(403,'NOT_FOUND_OR_FORBIDDEN')
+            with self.assertRaises(PreviewError) as error:
+                relationships(self.reader, fixed, None)
+            self.assertEqual(403, error.exception.status)
+
     def test_viewer_rejects_arbitrary_urls_unbounded_cursors_and_malformed_fixed_handles(self):
         validate_descriptor('document',self.document);validate_descriptor('drawing',self.drawing)
         for value in ({'url':'https://untrusted.invalid'},{'cursor':10001},{'cursor':True}):

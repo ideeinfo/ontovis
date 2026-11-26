@@ -111,8 +111,8 @@ def _material_object_source(reader, kind, descriptor, allowed, read):
     return descriptor if kind=='object' else None
 
 
-def candidates(reader, dataset, kinds, read, *, trace=None, object_source=None):
-    """Only use the configured alarm object and the material picker's fixed associations."""
+def candidates(reader, dataset, kinds, read, *, trace=None, object_source=None, allow_drawing_fallback=True):
+    """Read the registered material associations of the selected or alarm object."""
     def lookup(tool, operation):
         try:
             rows = read(operation)
@@ -145,6 +145,15 @@ def candidates(reader, dataset, kinds, read, *, trace=None, object_source=None):
         for row in drawings:
             page = row['preview'].get('pageNumber')
             row['reason'] = (f'「{name}」的登记图纸' if name else '对象的登记图纸') + (f' · 第 {page} 页' if page is not None else '')
+        if not drawings and allow_drawing_fallback:
+            related = lookup('related_drawings',lambda:_source_page(reader,target,dataset,'drawings','related_drawings',None,'',{}))
+            if related:
+                drawings, cursor = related
+                if cursor and trace is not None:
+                    trace[-1]['truncated'] = True
+                for row in drawings:
+                    page = row['preview']['pageNumber']
+                    row['reason'] = (f'「{name}」' if name else '') + row['reason'] + (f' · 第 {page} 页' if page is not None else '')
         rows.extend(drawings)
     if 'document' in kinds:
         rows.extend(lookup('alarm_manuals',lambda:_source_page(reader,None,dataset,'documents','fault',None,'',{})[0]) or [])
@@ -235,7 +244,8 @@ def plan_addition(tools, fixed, draft, anchor, plan, switches, *, analyze=False,
     for identity,row in unique.items():
         selector=row['selector']
         kind=row['kind']
-        version=selector.get('expectedEntityRevision') or selector.get('expectedSourceRevision') or selector.get('contentVersionId')
+        version=(selector.get('expectedEntityRevision') or selector.get('expectedSourceRevision') or
+                 selector.get('contentVersionId') or (row.get('preview') or {}).get('sourceRevision'))
         summary=redact(json.dumps(dict(title=row['title'],reason=row['reason'],
             scope='已核对的资料登记关系。'),
             ensure_ascii=False),tools.private)[:1000]
@@ -294,8 +304,10 @@ def checked_additions(reader, fixed, draft, body, allowed, switches, plan, resul
     def read(operation):
         return operation()
     object_source=_material_object_source(reader,ref['sourceKind'],descriptor,allowed,read)
-    live=candidates(reader,dataset,kinds,read,object_source=object_source)
-    matches=[next((row for row in live if row['kind']==item['kind'] and row['selector']==item['selector']),None)
+    whole_drawings=any(row['kind']=='drawing' and 'drawingUid' in row['selector'] for row in chosen)
+    live=candidates(reader,dataset,kinds,read,object_source=object_source,allow_drawing_fallback=whole_drawings)
+    matches=[next((row for row in live if row['kind']==item['kind'] and row['selector']==item['selector']
+                   and ('drawingUid' not in item['selector'] or row['preview']['sourceRevision']==item['version'])),None)
              for item in chosen]
     require(all(matches),'ASSISTANT_LINKED_MATERIALS_CHANGED' if linked else 'SOURCE_CHANGED',409)
     if not linked:

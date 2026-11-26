@@ -181,18 +181,20 @@ def _source_page(reader, chosen, dataset, section, name, cursor, query, memo):
                 relevance=basis,reasonEn='Drawing linked to this object or its retained shared definition.',
                 asset_key=_drawing_page_key(row),preview=row))
         return result,None
-    if name=='child_drawings':
+    if name in ('child_drawings','related_drawings'):
         if not chosen:return [],None
         from .related_drawings import RelatedDrawingsReader
-        value=RelatedDrawingsReader(reader.reader).resolve({**selection,'includeDescendants':True,'limit':12,'cursor':cursor})
+        value=RelatedDrawingsReader(reader.reader).resolve({**selection,'includeDescendants':True,'limit':PAGE_SIZE,'cursor':cursor})
         result=[]
         for row in value['items']:
-            if any(x['relation'] in ('self','shared_definition') for x in row['matchedObjects']):continue
-            if row['availability']!='available':continue
+            direct=any(match['relation'] in ('self','shared_definition') for match in row['matchedObjects'])
+            if (direct and name=='child_drawings') or row['availability']!='available':continue
             selector={'drawingUid':row['drawingUid'],'expectedContentSha256':row['contentSha256']}
-            result.append(recommendation('drawing',row['title'],selector,'已登记下级对象关联的图纸 · 整页',
-                reasonEn='Drawing linked to registered descendants; whole page.',relevance='descendant',
-                asset_key=_drawing_page_key(row)))
+            result.append(recommendation('drawing',row['title'],selector,
+                '本对象登记图纸 · 整页' if direct else '已登记下级对象关联的图纸 · 整页',
+                reasonEn='Registered drawing; whole page.' if direct else 'Drawing linked to registered descendants; whole page.',
+                relevance='object_association' if direct else 'descendant',asset_key=_drawing_page_key(row),
+                preview={key:row[key] for key in ('drawingUid','pageNumber','sourceRevision','contentSha256')}))
         return result,value['nextCursor']
     if name in ('shared_photos','parent_photos'):
         if not chosen:return [],None

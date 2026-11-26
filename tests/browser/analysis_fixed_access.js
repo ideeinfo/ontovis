@@ -63,6 +63,21 @@ async (page, facts, phase) => {
     await button('适应全部',canvas).click();
   }
   if(phase==='workbench-defaults-and-group'){
+    const tools=canvas.locator('.ad-tools');
+    const addBox=await button('加入资料',tools).boundingBox();
+    const arrangeBox=await button('整理布局',tools).boundingBox();
+    check(await tools.locator('button').evaluateAll(nodes=>
+      nodes.length>2&&nodes.every(node=>getComputedStyle(node).userSelect==='none')),
+      'Canvas toolbar buttons allow text selection');
+    await page.evaluate(()=>window.getSelection().removeAllRanges());
+    await page.mouse.move(addBox.x+addBox.width*.58,addBox.y+addBox.height/2);
+    await page.mouse.down();
+    await page.mouse.move(arrangeBox.x+arrangeBox.width*.8,arrangeBox.y+arrangeBox.height/2,{steps:10});
+    await page.mouse.up();
+    check(await page.evaluate(()=>window.getSelection().toString()===''),'Dragging across toolbar buttons selected their text');
+    check(await canvas.getByRole('textbox',{name:'分析名称'}).evaluate(node=>getComputedStyle(node).userSelect==='text'),
+      'The canvas name can no longer be selected independently');
+
     const card=kind=>canvas.locator('.ad-card[data-card-id="'+facts.cards[kind].id+'"]');
     const previews=['document','photo','drawing'];
     const image=kind=>card(kind).locator('.ac-photo-view img');
@@ -457,6 +472,34 @@ async (page, facts, phase) => {
       'The four requested types fell back to unrelated catalogue rows');
     await button('撤销修改',canvas).click();
 
+    await change('descendant-drawings');
+    const referencePhotos=canvas.locator('.ac-source-link').filter({hasText:'设备参考照片'});
+    const [cabinetResponse]=await Promise.all([
+      assistantResponse('task-ack'),sendLinked('加入工程对象、图纸、照片'),
+    ]);
+    const cabinetAdditions=await cabinetResponse.json();
+    check(cabinetResponse.ok()&&cabinetAdditions.receipt.items.map(item=>item.sourceKind).join(',')==='object,drawing,photo'&&
+      cabinetAdditions.receipt.items.some(item=>item.label===facts.memberDrawingTitle),
+      'Mixed addition lost the descendant drawing when the alarm object had no direct drawing');
+    await referencePhotos.waitFor({state:'attached'});
+    check(await referencePhotos.getAttribute('data-origin')==='candidate',
+      'A shared cabinet photo was presented as a localized diagram match');
+    await button('撤销修改',canvas).click();
+    await referencePhotos.waitFor({state:'detached'});
+
+    const [photoFirst]=await Promise.all([assistantResponse('task-ack'),sendLinked('加入照片')]);
+    check(photoFirst.ok()&&await canvas.locator('.ad-card[data-card-kind="drawing"]').count()===0,
+      'Adding a shared photo also changed unrelated cards');
+    const [drawingLater]=await Promise.all([assistantResponse('task-ack'),sendLinked('加入图纸')]);
+    check(drawingLater.ok(),'The assistant did not add the drawing after the photo');
+    await referencePhotos.waitFor({state:'attached'});
+    check(await referencePhotos.count()===1,'The drawing added later did not connect to the existing photo once');
+    await button('撤销修改',canvas).click();
+    await referencePhotos.waitFor({state:'detached'});
+    check(await canvas.locator('.ad-card[data-card-kind="photo"]').count()===1,'Undo removed the pre-existing photo');
+    await button('撤销修改',canvas).click();
+    await change('restore-drawing-locations');
+
     await sendLinked('查找名称含合成的工程对象');
     const directory=assistant.locator('.as-project-results').last();
     const choice=name=>directory.getByRole('button',{name:'加入画布 · 工程对象 · '+name,exact:true});
@@ -573,6 +616,7 @@ async (page, facts, phase) => {
       recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true,assistantCardSelection:true,
       assistantLinkedObjectAndDrawing:true,assistantLinkedDedupAndUndo:true,assistantManualAddAfterZoom:true,assistantAddAll:true,
       drawingObjectParentPhotos:true,assistantWindowRestored:true,
+      mixedDescendantDrawings:true,sharedPhotoLinkedAfterDrawing:true,toolbarTextSelectionPrevented:true,
       assistantFourTypes:true,assistantCandidatePreview:true,assistantFloatingWindow:true,assistantCanvasConversationScope:true,compactMaterialRows:true};
   }
   if(phase==='grouped-layout'){

@@ -14,8 +14,9 @@ from apps.api.assistant_tasks import (PROTOCOL,ProjectTools,read_selected_eviden
     related_object_answer,contextual_addition,canonical_additions,disposition_request,turn_requests,validate_plan,snapshot)
 from apps.api.assistant_canvas_tasks import build,load,retain,acknowledge,validate_draft_plan
 from apps.api.assistant_drawings import drawing_add_scope, drawing_answer, drawing_context, checked_drawing_results
-from apps.api.assistant_alarm_materials import LinkedMaterials, linked_add_scope, linked_anchor
+from apps.api.assistant_alarm_materials import LinkedMaterials, checked_additions, linked_add_scope, linked_anchor, plan_addition
 from apps.api.authority import PreviewError
+from apps.api.scene_engineering import SceneEngineeringReader
 
 
 def board():return dict(schemaVersion=2,ontobaseConnectionId='source',projectCode='Demo-PDS',title='Synthetic acceptance',status='analyzing',
@@ -27,6 +28,47 @@ def action(kind,targets=None,text=''):return dict(kind=kind,targets=targets or [
 
 
 class LinkedMaterialIntentTests(unittest.TestCase):
+    def test_mixed_add_finds_registered_descendant_drawings_and_checks_revision_on_apply(self):
+        alarm = {'eventId':'event'}
+        anchor = (dict(evidenceRefId='alarm', sourceKind='alarm', sourceRevision=digest(alarm)), alarm)
+        draft = board()
+        draft['cards'] = [dict(id='alarm', kind='alarm', source=dict(id='alarm'))]
+        draft['context']['eventId'] = 'event'
+        body = dict(focusCardIds=['alarm'])
+        record = dict(item=dict(entityUid='cabinet', entityRevision='r1', displayName='合成柜体'))
+        engineering = Mock(spec=SceneEngineeringReader, project_code='Demo-PDS', authority=SimpleNamespace(image=Mock()))
+        reader = SimpleNamespace(read=Mock(return_value=dict(dataset={'primaryRds':'=TEST+CAB'})),
+                                 _rds=Mock(return_value=record), reader=engineering)
+        tools = ProjectTools(reader, lambda:None, {'alarm','object','drawing','photo'}, ())
+        scope = linked_add_scope('加入工程对象、图纸、照片')
+        plan = dict(intent='edit', actions=[])
+        row = dict(drawingUid='child-page', title='下级接线图', availability='available', pageNumber=6,
+                   sourceRevision='a'*64, contentSha256='b'*64, matchedObjects=[dict(relation='definition_descendant')])
+        shared = dict(documentId=str(uuid4()), contentVersionId=str(uuid4()), title='柜体侧面', availability='available')
+        reader.photos = SimpleNamespace(resolve=Mock(return_value={'items':[]}))
+        reader.reader.prefix = '/api/v1/projects/Demo-PDS'
+        reader.reader._request = Mock(return_value=dict(projectCode='Demo-PDS', items=[shared], nextCursor=None))
+        with (patch('apps.api.scene_evidence.SceneEvidenceReader.resolve', return_value={'items':[]}),
+              patch('apps.api.related_drawings.RelatedDrawingsReader.resolve',
+                    return_value=dict(items=[row], nextCursor='more')) as related):
+            plan_addition(tools, [anchor], draft, anchor, plan, set(), linked=scope)
+            self.assertEqual(['object','drawing','photo'], [item['kind'] for item in tools.results])
+            drawing = tools.results[1]
+            self.assertEqual({'drawingUid':'child-page','expectedContentSha256':'b'*64}, drawing['selector'])
+            self.assertIn('下级对象关联的图纸 · 整页', drawing['reason'])
+            self.assertEqual('a'*64, drawing['version'])
+            self.assertEqual([], plan['actions'])
+            self.assertTrue(any(entry.get('truncated') for entry in tools.trace))
+            requested = dict(actions=[action('add_results',[drawing['key']])])
+            self.assertEqual({}, checked_additions(reader, [anchor], draft, body, tools.allowed, set(),
+                requested, tools.results, linked=scope, anchor_ref='alarm'))
+            self.assertTrue(all(call.args[0]['includeDescendants'] for call in related.call_args_list))
+            row['sourceRevision'] = 'c'*64
+            with self.assertRaises(PreviewError) as error:
+                checked_additions(reader, [anchor], draft, body, tools.allowed, set(),
+                                  requested, tools.results, linked=scope, anchor_ref='alarm')
+            self.assertEqual('ASSISTANT_LINKED_MATERIALS_CHANGED', error.exception.code)
+
     def test_verified_batch_rule_is_independent_of_material_type(self):
         from apps.api.assistant_canvas_tasks import plan_candidate_additions
         for kind, count, complete, automatic in (
