@@ -133,6 +133,31 @@ class MaterialRecommendationTests(TestCase):
             rows=recommendations(reader,{'entry':self.entry(),'section':'photos'})['items']
             self.assertEqual([row['kind'] for row in rows],['photo']);drawing.assert_not_called();related.assert_not_called()
 
+    def test_related_materials_include_the_same_model_applicable_documents(self):
+        reader = self.reader()
+        reader.reader.prefix = '/api/v1/projects/Demo-PDS'
+        reader.reader._request = Mock(return_value={'projectCode': 'Demo-PDS', 'items': [], 'nextCursor': None})
+        reader.photos = SimpleNamespace(resolve=Mock(return_value={'items': []}))
+        item = {'entityUid': 'object', 'entityRevision': 'r1'}
+        reader.reader.context_for_object = Mock(return_value={'item': item,
+            'context': {'installationContextId': 'installation', 'hierarchyRevision': 'h1'}})
+        material = dict(documentId=str(uuid4()), contentVersionId=str(uuid4()), kind='pdf',
+                        title='Model manual', availability='available')
+        body = {'entry': {'projectOnly': True}, 'entityUid': 'object', 'expectedEntityRevision': 'r1'}
+        with (patch('apps.api.scene_evidence.SceneEvidenceReader') as drawing,
+              patch('apps.api.related_drawings.RelatedDrawingsReader') as descendants,
+              patch('apps.api.equipment_reader.EquipmentReader.material_devices',
+                    return_value={'items': [material], 'nextCursor': None}) as applicable):
+            drawing.return_value.resolve.return_value = {'items': []}
+            descendants.return_value.resolve.return_value = {'items': [], 'nextCursor': None}
+            related = recommendations(reader, {**body, 'section': 'materials'})['items']
+            self.assertEqual(['model_applicable'], [row['relevance'] for row in related])
+            self.assertEqual(related, recommendations(reader, {**body, 'section': 'device_materials'})['items'])
+            self.assertEqual('installation', applicable.call_args.args[0]['installationContextId'])
+            reader.reader.context_for_object.return_value = {'item': item, 'context': None}
+            self.assertEqual([], recommendations(reader, {**body, 'section': 'materials'})['items'])
+            self.assertEqual(2, applicable.call_count)
+
     def test_drawing_recommendations_merge_one_fixed_page_and_keep_all_registered_positions(self):
         reader = self.reader()
         reader._rds = Mock(return_value={'item': {'entityUid': 'object', 'entityRevision': 'r1'}, 'context': None})

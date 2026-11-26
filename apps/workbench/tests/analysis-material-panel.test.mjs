@@ -5,15 +5,16 @@ import {validateSnapshot} from '../src/analysisCanvas.ts';
 
 test('all nine material types are reachable and type search stays local',()=>{
  assert.equal(new Set(MATERIAL_CATEGORIES.map(row=>row.kind)).size,9);
- assert.deepEqual(materialCategories('当前设备适用资料').map(row=>row.id),['device_materials']);
  assert.deepEqual(materialCategories('本项目文档库').map(row=>row.id),['project_documents']);
  assert.deepEqual(materialCategories('报警事件').map(row=>row.id),['alarms']);
  assert.deepEqual(materialCategories('fault alarms').map(row=>row.id),['alarms']);
  assert.deepEqual(materialCategories('不存在'),[]);
 });
-test('installed equipment and definitions enter the same related material picker',()=>{
+test('fault alarms come first and model applicability is included in related materials',()=>{
+ assert.equal(materialCategories('')[0].id,'alarms');
+ assert.equal(MATERIAL_CATEGORIES.some(row=>row.id==='device_materials'),false);
+ assert.deepEqual(materialCategories('型号适用资料').map(row=>row.id),['materials']);
  for(const scope of ['installation','definition','unclassified',undefined])assert.equal(relatedMaterialSection(scope),'materials');
- assert.equal(MATERIAL_CATEGORIES[0].id,'materials');
 });
 test('alarm recommendations distinguish the target from suggested checks',()=>{
  const target={relevance:'simulation_mapping'},check={relevance:'simulation_rule'};

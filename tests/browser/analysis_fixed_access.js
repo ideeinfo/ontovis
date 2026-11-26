@@ -143,6 +143,12 @@ async (page, facts, phase) => {
     await alarmGroup.getByText(/也关联/).filter({hasText:facts.cards.drawing.title}).waitFor();
     await button('关闭资料库',materials).click();
     await button('加入资料',canvas).click();
+    const firstCategory=materials.locator('.ac-material-category').first();
+    check(await firstCategory.locator('strong').innerText()==='故障报警','Fault alarms were not the first material type');
+    check(await materials.getByRole('button',{name:/^当前设备适用资料/}).count()===0,'Equipment material applicability had a second entry');
+    await firstCategory.click();
+    await materials.locator('.ac-material-result').filter({hasText:'已加入'}).waitFor();
+    await materials.locator('.ac-material-back').click();
     const drawingCategory=()=>materials.getByRole('button',{name:/^图纸/});
     const drawingResult=materials.locator('.ac-material-result').filter({has:page.getByText(facts.powerDrawingTitle,{exact:true})});
     await drawingCategory().click();
@@ -238,7 +244,8 @@ async (page, facts, phase) => {
     check(JSON.stringify(await edgeIds(view.locator('.pa-links path[data-relation-id]')))===JSON.stringify(expected),
       'The cockpit did not display the workbench relationships for the same saved revision');
     return {inlinePreviews:previews,previewThemes:['light','dark'],independentCollapse:true,assignedGroup:true,undoRedo:true,savedRevision:3,groupMenuInPanMode:true,relationshipParity:true,duplicateMaterialsDisabled:true,newDrawingLinkedBeforeSave:true,
-      drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true};
+      drawingRecommendationsMerged:true,alarmDrawingAfterThreeObjects:true,groupedObjectRecommendations:true,assistantAlarmObjectDraft:true,
+      alarmCategoryFirst:true,unifiedRelatedMaterials:true};
   }
   if(phase==='grouped-layout'){
     const plot=canvas.getByRole('region',{name:'可视化分析画布'});

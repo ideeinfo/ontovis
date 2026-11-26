@@ -30,7 +30,7 @@ type Detail=DraftReceipt&{snapshot:CanvasSnapshot;capabilities?:{canEditAssigned
 type Listing={items:AnalysisListItem[];total:number;nextCursor:string|null;capabilities:{canWrite:boolean;canManageLifecycle?:boolean}};
 type Versions={items:{revision:number;createdAt:string;operation:string}[];nextBeforeRevision:number|null};
 const ROOT='/api/workbench/analysis-sessions';
-const OBJECT_MATERIAL_SECTIONS=['materials','drawings','photos','documents','device_materials','models','objects'];
+const OBJECT_MATERIAL_SECTIONS=['materials','drawings','photos','documents','models','objects'];
 const code=(error:unknown)=>error&&typeof error==='object'&&'code'in error?String(error.code):'';
 const status=(error:unknown)=>error&&typeof error==='object'&&'status'in error?Number(error.status):0;
 const zhError:Record<string,string>={ANALYSIS_BUSY:'分析读取较忙，请稍后重试；本地修改仍保留。',ANALYSIS_DATABASE_UNAVAILABLE:'分析存储暂时无法连接，请重试；本地修改仍保留。',ANALYSIS_CHANGED:'分析已有新修订。你当前的修改仍保留，可另存副本或重新读取。',
