@@ -1,8 +1,8 @@
 import {ApiError,failureMessage} from './api.ts';
 export interface WeatherPoint {sceneId?:string;latitude:number;longitude:number}
 export interface WeatherConfig {enabled:boolean;provider:'met_no';contact:string;refreshMinutes:180|360|720}
-export interface WeatherConfigView {revision:number;config:WeatherConfig;savedAt:string|null;accessRevision:string;canManage:boolean;endpoint:string;legacySceneIds?:string[]}
-export interface WeatherView {status:'available'|'unavailable'|'unconfigured'|'disabled'|'stale';error?:string|null;point?:WeatherPoint;revision:number;preview:boolean;fetchedAt?:string|null;nextFetchAt?:string;
+export interface WeatherConfigView {configToken:string|null;config:WeatherConfig;savedAt:string|null;accessRevision:string;canManage:boolean;endpoint:string;legacySceneIds?:string[]}
+export interface WeatherView {status:'available'|'unavailable'|'unconfigured'|'disabled'|'stale';error?:string|null;point?:WeatherPoint;preview:boolean;fetchedAt?:string|null;nextFetchAt?:string;
  forecast?:{validFrom:string;validTo:string;updatedAt:string;intervalHours:number;symbol:string|null;condition:'clear'|'cloud'|'rain'|'snow'|'sleet'|'fog'|'unknown';temperatureC:number|null;windSpeedMs:number|null;windFromDeg:number|null;cloudPercent:number|null;precipitationMm:number|null;usable:boolean}|null;
  source:{provider:'met_no';name:string;url:string;license:string;licenseUrl:string;kind:'forecast'};}
 export const WEATHER_ROOT='/api/workbench/weather/';

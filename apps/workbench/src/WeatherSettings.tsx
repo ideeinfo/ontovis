@@ -9,7 +9,7 @@ export function WeatherSettings({api,en=false,active=true,onDirtyChange}:{api:Wo
  const t=(zh:string,eng:string)=>en?eng:zh;
  const [view,setView]=useState<WeatherConfigView|null>(null),[draft,setDraft]=useState<WeatherConfig|null>(null),[preview,setPreview]=useState<WeatherView|null>(null);
  const [error,setError]=useState<unknown>(null),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[reload,setReload]=useState(0);
- const abort=useRef<AbortController|null>(null),intent=useRef(0),request=useRef<{fingerprint:string;id:string}|null>(null);
+ const abort=useRef<AbortController|null>(null),intent=useRef(0);
  const dirty=!!view&&!!draft&&JSON.stringify(view.config)!==JSON.stringify(draft),valid=!!draft&&!weatherProblems(draft).length;
  useEffect(()=>{onDirtyChange(dirty);},[dirty,onDirtyChange]);useEffect(()=>()=>onDirtyChange(false),[onDirtyChange]);
  useEffect(()=>{if(!active)return;const controller=new AbortController();abort.current?.abort();abort.current=controller;const serial=++intent.current;setBusy(true);setError(null);setPreview(null);
@@ -20,13 +20,12 @@ export function WeatherSettings({api,en=false,active=true,onDirtyChange}:{api:Wo
  function change(value:WeatherConfig){setDraft(value);setPreview(null);setNotice('');setError(null);}
  async function action(kind:'save'|'test'){
   if(!draft||!view||!valid||busy)return;const controller=new AbortController();abort.current?.abort();abort.current=controller;const serial=++intent.current;setBusy(true);setError(null);setNotice('');
-  const fingerprint=JSON.stringify([view.revision,draft]);if(request.current?.fingerprint!==fingerprint)request.current={fingerprint,id:crypto.randomUUID()};
   try{if(kind==='test'){
    const result=await api.request<WeatherView>(WEATHER_ROOT+'test',{config:draft,expectedAccessRevision:view.accessRevision},controller.signal);
    if(!controller.signal.aborted&&serial===intent.current){setPreview(result);setNotice(t('查询完成，未修改已保存配置。','Query completed; saved settings are unchanged.'));}
   }else{
-   const result=await api.request<WeatherConfigView>(WEATHER_ROOT+'save',{config:draft,expectedRevision:view.revision,expectedAccessRevision:view.accessRevision,requestId:request.current.id},controller.signal);
-   if(!controller.signal.aborted&&serial===intent.current){setView(result);setDraft(structuredClone(result.config));setPreview(null);setNotice(t('配置已保存','Settings saved')+' · r'+result.revision);}
+   const result=await api.request<WeatherConfigView>(WEATHER_ROOT+'save',{config:draft,expectedConfigToken:view.configToken,expectedAccessRevision:view.accessRevision},controller.signal);
+   if(!controller.signal.aborted&&serial===intent.current){setView(result);setDraft(structuredClone(result.config));setPreview(null);setNotice(t('配置已保存','Settings saved'));}
   }}catch(e){if(!controller.signal.aborted&&!cancelled(e))setError(e);}finally{if(!controller.signal.aborted&&serial===intent.current)setBusy(false);}
  }
  return <section className="wx-settings" aria-label={t('天气接口','Weather API')}><header><div><h2><CloudSun size={18}/>{t('天气接口','Weather API')}</h2><p>{t('配置项目天气接口，自动使用场景地理锚点提供有来源的预报。','Configure project weather API to provide sourced forecasts from scene geographic anchors.')}</p></div><Btn disabled={busy||dirty} onClick={()=>setReload(v=>v+1)}><RefreshCw size={14}/>{t('重新读取','Reload')}</Btn></header>
@@ -35,7 +34,7 @@ export function WeatherSettings({api,en=false,active=true,onDirtyChange}:{api:Wo
    <p className="wx-caption">{t('已定位场景自动使用自身地理锚点查询天气（截断至四位小数），只向天气来源发送坐标和联系标识。','Geolocated scenes automatically query weather using their own geographic anchor (truncated to four decimals); only coordinates and contact identification are sent.')}</p>
    {view.legacySceneIds!==undefined&&<p className="wx-caption">{t('旧配置仍仅对原有场景生效。点击“启用项目范围并保存”后，才会使用本项目全部已定位场景的坐标查询。','Legacy settings retain their original scene scope. Save project scope explicitly to query all geolocated scenes in this project.')}</p>}
    {!valid&&<p role="status">{t('请填写有效的联系链接（https://）或业务邮箱。','Enter a valid HTTPS contact link or business email.')}</p>}
-   <div className="wx-actions"><Btn disabled={busy||!view.canManage||!valid} onClick={()=>void action('test')}>{t('测试查询','Test query')}</Btn><Btn primary disabled={busy||!view.canManage||!valid||(!dirty&&view.legacySceneIds===undefined)} onClick={()=>void action('save')}>{view.legacySceneIds!==undefined?t('启用项目范围并保存','Save project scope'):t('保存配置','Save settings')}</Btn><Btn disabled={busy||!dirty} onClick={()=>change(structuredClone(view.config))}>{t('放弃修改','Discard changes')}</Btn><span>r{view.revision}{dirty?' · '+t('有未保存修改','Unsaved changes'):''}</span></div>{!view.canManage&&<p>{t('当前账号只读；保存与测试查询需要项目管理员。','Read only; saving and test queries require a project administrator.')}</p>}
+   <div className="wx-actions"><Btn disabled={busy||!view.canManage||!valid} onClick={()=>void action('test')}>{t('测试查询','Test query')}</Btn><Btn primary disabled={busy||!view.canManage||!valid||(!dirty&&view.legacySceneIds===undefined)} onClick={()=>void action('save')}>{view.legacySceneIds!==undefined?t('启用项目范围并保存','Save project scope'):t('保存配置','Save settings')}</Btn><Btn disabled={busy||!dirty} onClick={()=>change(structuredClone(view.config))}>{t('放弃修改','Discard changes')}</Btn>{dirty&&<span>{t('有未保存修改','Unsaved changes')}</span>}</div>{!view.canManage&&<p>{t('当前账号只读；保存与测试查询需要项目管理员。','Read only; saving and test queries require a project administrator.')}</p>}
   </main><aside><h3>{t('草稿查询预览','Draft query preview')}</h3>{preview?<WeatherCard value={preview} en={en}/>:<p>{t('点击“测试查询”验证当前接口配置。测试不会保存或启用项目配置。','Click "Test query" to verify API settings. Testing does not save or enable settings.')}</p>}<p className="wx-caption">{t('全球模式预报不能代替现场观测或设备遥测。风速为地面以上 10 m，不用于推算风机转速、偏航或变桨。','Global model forecasts do not replace site observations or equipment telemetry. The 10 m wind cannot determine rotor speed, yaw or pitch.')}</p></aside></div>}
  </section>;
 }

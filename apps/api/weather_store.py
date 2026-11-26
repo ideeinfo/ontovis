@@ -6,6 +6,7 @@ import re
 import time
 from threading import Lock
 from urllib.parse import urlsplit
+from uuid import uuid4
 from .assistant_store import require, identifier, encoded, digest
 from . import weather_source as source
 
@@ -48,51 +49,63 @@ class WeatherStore:
         self.fetcher = fetcher or source.fetch
         self.lock, self.last_attempt = Lock(), float('-inf')
         with library.connect() as db:
-            db.executescript('''
-            create table if not exists weather_config_revisions (
-                connection_id text not null, project_code text not null, revision integer not null,
-                config text not null, actor text not null, saved_at text not null,
-                primary key(connection_id,project_code,revision));
-            create table if not exists weather_config_requests (
-                connection_id text not null, project_code text not null, actor text not null,
-                request_id text not null, fingerprint text not null, result text not null,
-                primary key(connection_id,project_code,actor,request_id));
-            create table if not exists weather_cache (
+            db.execute('''create table if not exists weather_cache (
                 cache_key text primary key, payload text, fetched_at real, checked_at real not null,
-                retry_at real not null, modified text, error text);
-            ''')
+                retry_at real not null, modified text, error text)''')
 
-    def config(self, project, db=None):
-        if db is None:
-            with self.library.connect() as current: return self.config(project, current)
-        row = db.execute('''select * from weather_config_revisions where connection_id=? and project_code=?
-                            order by revision desc limit 1''', (self.connection_id, project)).fetchone()
-        if not row: return dict(revision=0, config=dict(DEFAULT), savedAt=None)
+    def _record(self, db, project):
+        scope = (self.connection_id, project)
+        tables = {row[0] for row in db.execute("""select name from sqlite_master where type='table'
+            and name in ('weather_settings','weather_config_revisions')""")}
+        if 'weather_settings' in tables:
+            row = db.execute('''select config,config_token,saved_at from weather_settings
+                where connection_id=? and project_code=?''', scope).fetchone()
+            if row is not None:
+                return dict(row)
+        if 'weather_config_revisions' in tables:
+            # Adopt the last legacy settings at the next authorized save. Reads leave the database as found.
+            row = db.execute('''select config,revision,saved_at from weather_config_revisions
+                where connection_id=? and project_code=? order by revision desc limit 1''', scope).fetchone()
+            if row is not None:
+                return dict(config=row['config'], saved_at=row['saved_at'], legacy=True,
+                            config_token=digest([*scope, row['revision'], row['config'], row['saved_at']]))
+        return None
+
+    @staticmethod
+    def _view(row):
+        if row is None: return dict(configToken=None, config=dict(DEFAULT), savedAt=None)
         saved = json.loads(row['config'])
         legacy = None if 'points' not in saved else [point['sceneId'] for point in validate_config(saved)['points']]
-        return dict(revision=row['revision'], config={**DEFAULT, **{k: saved[k] for k in DEFAULT if k in saved}},
+        return dict(configToken=row['config_token'], config={**DEFAULT, **{k: saved[k] for k in DEFAULT if k in saved}},
                     savedAt=row['saved_at'], **({'legacySceneIds': legacy} if legacy is not None else {}))
 
-    def save(self, project, actor, body, authorize):
-        identifier(body['requestId']); require(type(body['expectedRevision']) is int and 0 <= body['expectedRevision'] < 1000)
-        config = validate_config(body['config']); fingerprint = digest(body); authorize()
+    def config(self, project):
+        with self.library.connect() as db:
+            return self._view(self._record(db, project))
+
+    def save(self, project, body, authorize):
+        expected = body['expectedConfigToken']
+        require(expected is None or type(expected) is str and re.fullmatch(r'(?:[0-9a-f]{32}|[0-9a-f]{64})', expected))
+        config = encoded(validate_config(body['config']))
+        authorize()
         with self.library.connect() as db:
             db.execute('begin immediate')
-            prior = db.execute('''select * from weather_config_requests where connection_id=? and project_code=?
-                                and actor=? and request_id=?''', (self.connection_id, project, actor, body['requestId'])).fetchone()
-            if prior:
-                require(prior['fingerprint'] == fingerprint, 'REQUEST_ID_REUSED', 409); authorize()
-                return json.loads(prior['result'])
-            current = self.config(project, db)
-            require(current['revision'] == body['expectedRevision'], 'WEATHER_CONFIG_CHANGED', 409)
-            result = dict(revision=current['revision'] + 1, config=config, savedAt=source.iso(self.clock()))
+            current = self._record(db, project)
+            if current and not current.get('legacy') and current['config'] == config:
+                authorize()
+                return self._view(current)
+            require((current['config_token'] if current else None) == expected, 'WEATHER_CONFIG_CHANGED', 409)
+            result = dict(config=config, config_token=uuid4().hex, saved_at=source.iso(self.clock()))
             authorize()
-            db.execute('insert into weather_config_revisions values(?,?,?,?,?,?)',
-                       (self.connection_id, project, result['revision'], encoded(config), actor, result['savedAt']))
-            db.execute('insert into weather_config_requests values(?,?,?,?,?,?)',
-                       (self.connection_id, project, actor, body['requestId'], fingerprint, encoded(result)))
+            db.execute('''create table if not exists weather_settings (
+                connection_id text not null, project_code text not null, config text not null,
+                config_token text not null, saved_at text not null, primary key(connection_id,project_code))''')
+            db.execute('''insert into weather_settings(connection_id,project_code,config,config_token,saved_at)
+                values(?,?,?,?,?) on conflict(connection_id,project_code) do update set
+                config=excluded.config, config_token=excluded.config_token, saved_at=excluded.saved_at''',
+                (self.connection_id, project, config, result['config_token'], result['saved_at']))
             authorize()
-            return result
+            return self._view(result)
 
     def current(self, config, point, authorize):
         key = digest([point['latitude'], point['longitude']])

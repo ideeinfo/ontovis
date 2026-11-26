@@ -73,20 +73,35 @@ class WeatherStoreTests(unittest.TestCase):
             return self.result
         self.store=WeatherStore(self.library,'source',clock=lambda:self.now,fetcher=fetch)
         self.config={**DEFAULT,'enabled':True}
-    def body(self,revision=0):return dict(config=self.config,requestId=str(uuid4()),expectedRevision=revision)
-    def test_config_isolated_cas_idempotency_and_actor(self):
-        body=self.body();first=self.store.save('P','admin',body,lambda:None)
-        self.assertEqual(first,self.store.save('P','admin',body,lambda:None));self.assertEqual(first['revision'],1)
-        self.assertEqual(self.store.config('Q')['revision'],0)
-        for other in [self.body(),{**body,'config':{**self.config,'enabled':False}}]:
-            with self.assertRaises(PreviewError):self.store.save('P','admin',other,lambda:None)
+    def body(self, token=None):
+        return dict(config=self.config, expectedConfigToken=token)
+
+    def test_config_keeps_one_row_and_checks_conflicting_saves(self):
+        allow = lambda: None
+        body = self.body()
+        first = self.store.save('P', body, allow)
+        self.assertTrue(first['configToken'])
+        self.assertEqual(first, self.store.save('P', body, allow))
+        self.assertIsNone(self.store.config('Q')['configToken'])
+
+        updated_config = {**self.config, 'refreshMinutes': 360}
+        updated = self.store.save('P', {**self.body(first['configToken']), 'config': updated_config}, allow)
+        self.assertNotEqual(updated['configToken'], first['configToken'])
+        self.assertEqual(updated, self.store.config('P'))
+        self.assertEqual(updated['config'], updated_config)
+        with self.assertRaises(PreviewError):
+            self.store.save('P', self.body(first['configToken']), allow)
+        with self.library.connect() as db:
+            self.assertEqual(db.execute('select count(*) from weather_settings').fetchone()[0], 1)
+            self.assertEqual(db.execute("select name from sqlite_master where name glob 'weather_config_*'").fetchall(), [])
+
     def test_denial_rolls_back_config(self):
         count=[0]
         def guard():
             count[0]+=1
             if count[0]>2:raise PreviewError(403,'FORBIDDEN')
-        with self.assertRaises(PreviewError):self.store.save('P','admin',self.body(),guard)
-        self.assertEqual(self.store.config('P')['revision'],0)
+        with self.assertRaises(PreviewError):self.store.save('P',self.body(),guard)
+        self.assertIsNone(self.store.config('P')['configToken'])
     def test_validation_rejects_bad_contact_endpoint_refresh_and_retains_legacy_scope(self):
         for change in [dict(endpoint='http://localhost'),dict(contact='x\r\nInjected:1'),dict(contact='http://example.com'),dict(refreshMinutes=1)]:
             with self.assertRaises(PreviewError):validate_config({**self.config,**change})
@@ -120,13 +135,15 @@ class WeatherStoreTests(unittest.TestCase):
         with self.assertRaises(PreviewError):self.store.current(self.config,POINT,guard)
         with self.library.connect() as db:self.assertEqual(db.execute('select count(*) from weather_cache').fetchone()[0],0)
     def test_backup_library_copy_preserves_config_and_cache(self):
-        self.store.save('P','admin',self.body(),lambda:None);self.store.current(self.config,POINT,lambda:None)
+        first=self.store.save('P',self.body(),lambda:None);self.store.current(self.config,POINT,lambda:None)
         target=self.library.root.parent/'restored'
         shutil.copytree(self.library.root,target)
         restored=WeatherStore(ModelLibrary(target,'P',None),'source',clock=lambda:self.now,fetcher=lambda *_:self.fail('unexpected fetch'))
         self.assertEqual(restored.config('P'),self.store.config('P'))
         self.assertEqual(restored.current(self.config,POINT,lambda:None)['status'],'available')
-        self.assertEqual(restored.save('P','admin',self.body(1),lambda:None)['revision'],2)
+        updated=restored.save('P',{**self.body(first['configToken']),'config':{**self.config,'enabled':False}},lambda:None)
+        self.assertFalse(updated['config']['enabled'])
+        self.assertEqual(restored.config('P'),updated)
 
 
 if __name__=='__main__':unittest.main()

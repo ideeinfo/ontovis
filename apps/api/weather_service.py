@@ -30,7 +30,7 @@ def request(sessions, sid, path, payload):
     if action == 'test':
         require(set(body) in ({'config', 'expectedAccessRevision'}, {'config', 'sceneId', 'expectedAccessRevision'}))
     else:
-        expected = {'config': set(), 'save': {'config', 'expectedRevision', 'expectedAccessRevision', 'requestId'},
+        expected = {'config': set(), 'save': {'config', 'expectedConfigToken', 'expectedAccessRevision'},
                     'current': {'sceneId'}}[action]
         require(set(body) == expected)
 
@@ -82,7 +82,7 @@ def request(sessions, sid, path, payload):
 
     if action == 'config': value = store.config(project)
     elif action == 'save':
-        value = store.save(project, row.authority.username, body, authorize)
+        value = store.save(project, body, authorize)
     else:
         saved = store.config(project)
         allowed = saved.get('legacySceneIds')
@@ -96,14 +96,14 @@ def request(sessions, sid, path, payload):
         else:
             point = check_scene(body['sceneId'])
             config = saved['config']
-            if saved['revision'] == 0: value = dict(status='unconfigured', source=SOURCE)
+            if saved['configToken'] is None: value = dict(status='unconfigured', source=SOURCE)
             elif not config['enabled']: value = dict(status='disabled', source=SOURCE)
             elif allowed is not None and body['sceneId'] not in allowed:
                 value = dict(status='unconfigured', error='WEATHER_SCENE_NOT_ENABLED', source=SOURCE)
             elif not point: value = dict(status='unconfigured', source=SOURCE)
             else: value = store.current(config, point, authorize)
-            require(store.config(project)['revision'] == saved['revision'], 'WEATHER_CONFIG_CHANGED', 409)
-        value.update(revision=saved['revision'], preview=action == 'test')
+            require(store.config(project)['configToken'] == saved['configToken'], 'WEATHER_CONFIG_CHANGED', 409)
+        value['preview'] = action == 'test'
     for scene_id, revision in list(scene_states.items()):
         check_scene(scene_id)
         require(scene_states[scene_id] == revision, 'SCENE_CHANGED', 409)

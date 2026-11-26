@@ -40,7 +40,9 @@ class WeatherHttpTests(unittest.TestCase):
         if origin:headers['Origin']='http://127.0.0.1:4180'
         conn=HTTPConnection(*self.server.server_address,timeout=10);conn.request('POST','/api/workbench/weather/'+action,json.dumps(data),headers)
         r=conn.getresponse();value=json.loads(r.read());conn.close();return r.status,value
-    def save(self,config=None,revision=0):return self.request('save',dict(config=config or self.config,expectedRevision=revision,expectedAccessRevision='A:admin',requestId=str(uuid4())))
+    def save(self, config=None, token=None):
+        return self.request('save', dict(config=config if config is not None else self.config,
+                                         expectedConfigToken=token, expectedAccessRevision='A:admin'))
     def test_origin_session_scope_and_admin_checks(self):
         self.assertEqual(self.request('config',origin=False)[0],403)
         self.assertEqual(self.request('config',project=None)[0],422)
@@ -52,28 +54,49 @@ class WeatherHttpTests(unittest.TestCase):
         self.assertEqual(self.request('current',dict(sceneId=self.point['sceneId']))[1]['status'],'unconfigured');self.assertEqual(self.calls,[])
         status,value=self.request('test',dict(config=self.config,expectedAccessRevision='A:admin'))
         self.assertEqual(status,200,value);self.assertTrue(value['preview']);self.assertEqual(value['source']['kind'],'forecast')
-        self.assertEqual(self.request('config')[1]['revision'],0)
+        self.assertNotIn('revision', value)
+        self.assertIsNone(self.request('config')[1]['configToken'])
     def test_save_read_disable_and_configuration_cas(self):
-        self.assertEqual(self.save()[0],200);self.assertEqual(self.save()[0],409)
-        self.assertEqual(self.request('current',dict(sceneId=self.point['sceneId']))[1]['status'],'available')
+        status, saved = self.save()
+        self.assertEqual(status, 200)
+        self.assertNotIn('revision', saved)
+        self.assertEqual(self.save(), (200, saved))
+        stale_status, conflict = self.save({**self.config, 'enabled': False})
+        self.assertEqual((stale_status, conflict['code']), (409, 'WEATHER_CONFIG_CHANGED'))
+        current = self.request('current', dict(sceneId=self.point['sceneId']))[1]
+        self.assertEqual(current['status'], 'available')
+        self.assertNotIn('revision', current)
         self.assertEqual(self.request('current',dict(sceneId=self.local_scene['sceneId']))[1]['status'],'unconfigured')
-        self.assertEqual(self.save({**self.config,'enabled':False},1)[0],200)
+        self.assertEqual(self.save({**self.config,'enabled':False},saved['configToken'])[0],200)
         self.assertEqual(self.request('current',dict(sceneId=self.point['sceneId']))[1]['status'],'disabled');self.assertEqual(len(self.calls),1)
     def test_scene_cross_project_deleted_and_unknown_rejected(self):
         self.assertEqual(self.request('current',dict(sceneId=self.point['sceneId']),project='B')[0],404)
         self.assertEqual(self.request('current',dict(sceneId=str(uuid4())))[0],404)
         self.fixture.call('scenes/delete','A',sceneId=self.scene['sceneId'],expectedSceneRevision=self.scene['sceneRevision'],expectedLifecycleRevision=0,clientRequestId=str(uuid4()))
         self.assertEqual(self.request('current',dict(sceneId=self.point['sceneId']))[0],404)
-    def test_revocation_and_configuration_changes_after_fetch_discard_response(self):
+    def test_revocation_after_fetch_discards_response(self):
         self.assertEqual(self.save()[0],200)
         def fetch(*args):
             del projects.ProjectsAuthority.permissions['member']['A'];return 200,document(),{}
         self.sessions.weather.fetcher=fetch
         self.assertEqual(self.request('current',dict(sceneId=self.point['sceneId']))[0],403)
+
+    def test_configuration_change_during_fetch_discards_response(self):
+        status, saved = self.save()
+        self.assertEqual(status, 200)
+
+        def fetch(*args):
+            self.assertEqual(self.save({**self.config, 'enabled': False}, saved['configToken'])[0], 200)
+            return 200, document(), {}
+
+        self.sessions.weather.fetcher = fetch
+        status, value = self.request('current', dict(sceneId=self.point['sceneId']))
+        self.assertEqual((status, value['code']), (409, 'WEATHER_CONFIG_CHANGED'))
+
     def test_client_cannot_set_upstream_url_or_cross_project_config(self):
         self.assertEqual(self.save({**self.config,'endpoint':'http://127.0.0.1'})[0],422)
         self.assertEqual(self.save()[0],200)
-        self.assertEqual(self.request('config',project='B')[1]['revision'],0)
+        self.assertIsNone(self.request('config',project='B')[1]['configToken'])
         self.assertEqual(self.request('current',dict(sceneId=self.point['sceneId'],endpoint='https://other'))[0],422)
 
     def test_scene_anchor_changed_during_provider_fetch_discards_old_forecast(self):
@@ -100,9 +123,18 @@ class WeatherHttpTests(unittest.TestCase):
     def test_legacy_scope_does_not_expand_external_coordinate_disclosure_without_explicit_save(self):
         legacy = {**self.config, 'points':[{'sceneId':self.local_scene['sceneId'], 'label':'Legacy scene',
                                           'latitude':39.9, 'longitude':116.4}]}
-        self.assertEqual(self.save(legacy)[0], 200)
+        with self.sessions.shared.library.connect() as db:
+            db.execute('''create table weather_config_revisions (
+                connection_id text not null, project_code text not null, revision integer not null,
+                config text not null, actor text not null, saved_at text not null,
+                primary key(connection_id,project_code,revision))''')
+            db.executemany('insert into weather_config_revisions values(?,?,?,?,?,?)', [
+                (self.sessions.connection_id, 'A', 1, json.dumps(DEFAULT), 'admin', '2026-10-29T00:00:00Z'),
+                (self.sessions.connection_id, 'A', 2, json.dumps(legacy), 'admin', '2026-10-30T00:00:00Z'),
+            ])
         config = self.request('config')[1]
         self.assertEqual(config['legacySceneIds'], [self.local_scene['sceneId']])
+        self.assertEqual(config['config'], self.config)
         self.assertNotIn('points', config['config'])
         status, value = self.request('current', dict(sceneId=self.scene['sceneId']))
         self.assertEqual((status, value['status']), (200, 'unconfigured'))
@@ -110,8 +142,10 @@ class WeatherHttpTests(unittest.TestCase):
         self.assertEqual(self.request('test', dict(config=self.config, expectedAccessRevision='A:admin'))[0], 422)
         self.assertEqual(self.calls, [])
         # A new administrator save explicitly adopts the project-wide anchor scope.
-        self.assertEqual(self.save(self.config, revision=1)[0], 200)
-        self.assertNotIn('legacySceneIds', self.request('config')[1])
+        status, saved = self.save(self.config, config['configToken'])
+        self.assertEqual(status, 200)
+        self.assertNotIn('legacySceneIds', saved)
+        self.assertEqual(self.request('config')[1], saved)
         self.assertEqual(self.request('current', dict(sceneId=self.scene['sceneId']))[1]['status'], 'available')
         self.assertEqual(len(self.calls), 1)
 
