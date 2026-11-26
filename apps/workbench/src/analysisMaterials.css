@@ -18,6 +18,8 @@
 :root[data-theme=dark] .ad-workspace,.ov-compact[data-theme=dark] .ad-workspace{--card-fill:32%}
 .ac-preview-controls{display:flex;align-items:center;gap:5px;flex-shrink:0}
 .ad-card .ac-photo-view .wo-photo-scroll{background-color:var(--background)}
+.ad-card .ac-source-photo .ac-photo-view{min-height:64px}
+.ad-card .ac-source-photo .wo-photo-scroll{min-height:0}
 .ad-canvas{user-select:none;-webkit-user-select:none}.ad-canvas input,.ad-canvas textarea{user-select:text;-webkit-user-select:text}.ad-canvas img{pointer-events:none;-webkit-user-drag:none}
 .ad-card{border-color:color-mix(in srgb,var(--textSecondary) 28%,var(--surface));border-radius:10px;box-shadow:0 3px 12px #263b3510}
 .ad-card>header{padding:11px 13px;gap:9px;min-height:54px;border-radius:9px 9px 0 0;background:color-mix(in srgb,var(--card-tint,var(--surfaceRaised)) var(--card-fill),var(--surface));border-bottom:1px solid color-mix(in srgb,var(--textSecondary) 12%,transparent)}

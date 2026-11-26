@@ -54,6 +54,7 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
   const authorizationKey=refKey(card)+':'+active+':'+retry;
   const ref=card.source!;
   const fullPhoto=full&&card.kind==='photo';
+  const inlinePhoto=!full&&card.kind==='photo';
   const checkFixedAccess=full&&['document','drawing','work_order'].includes(card.kind)
     &&detail?.availability==='available'&&authorized===authorizationKey;
   useEffect(()=>sources.observeUnavailable(ref,value=>{
@@ -152,9 +153,10 @@ export const AnalysisSourceCard=memo(function AnalysisSourceCard({card,sources,e
     {viewOnly&&card.kind==='document'&&<small>{en?'Page ':'第'}{value.pageNumber||1}{en?'':'页'} / {value.pageCount||1}</small>}
     {!viewOnly&&card.kind==='document'&&<label className="ac-page">{en?'Page':'页码'}<input type="number" min={1} max={value.pageCount||1} aria-label={en?'Document page':'文档页码'} value={value.pageNumber||1} onChange={event=>{const page=Number(event.target.value);if(page>=1&&page<=(value.pageCount||1))onPage?.(page,value);}}/><span>/ {value.pageCount}</span>{value.newerVersionAvailable&&<small>{en?'Newer version available; this card retains its selected version.':'已有新版，此卡保持所选版本。'}</small>}</label>}
     {!viewOnly&&card.kind==='document'&&!!value.outline?.length&&<select aria-label={en?'Document section':'文档章节'} value={value.outline.find(row=>row.page===value.pageNumber)?.page||''} onChange={event=>onPage?.(Number(event.target.value),value)}><option value="" disabled>{en?'Go to section':'定位章节'}</option>{value.outline.map((row,i)=><option key={i} value={row.page}>{displayText(row.title)}</option>)}</select>}
-    {!active&&card.kind==='drawing'&&<small>{en?'Objects, ports and drawing references':'展开查看对象、端口与图纸引用'}</small>}{!active&&card.kind==='document'&&<small>{value.knowledgeNodeId?(en?'Published knowledge graph and source evidence':'已发布知识图谱与对应原文'):(en?'Document pages and knowledge graph':'展开查看全文、目录与知识图谱')}</small>}{asset&&active&&!value.selector&&card.kind==='photo'&&!photoLocationChanged&&<small>{en?'Whole image; no object region provided':'显示整图；来源未提供对象区域'}</small>}
+    {!active&&card.kind==='drawing'&&<small>{en?'Objects, ports and drawing references':'展开查看对象、端口与图纸引用'}</small>}{!active&&card.kind==='document'&&<small>{value.knowledgeNodeId?(en?'Published knowledge graph and source evidence':'已发布知识图谱与对应原文'):(en?'Document pages and knowledge graph':'展开查看全文、目录与知识图谱')}</small>}
+    {card.kind==='photo'&&active&&!value.selector&&!photoLocationChanged&&(!inlinePhoto||value.sourceType!=='project_document')&&<small>{en?'Whole image; no object region provided':'显示整图；来源未提供对象区域'}</small>}
     {asset&&(active?(image?<div className="ac-photo-view"><WorkOrderPhotoViewport embedded key={ref.id+':'+image.original}
-      focusZoom={card.kind==='photo'?undefined:null} focusFraction={full ? .35 : .2}
+      showControls={!inlinePhoto} focusZoom={card.kind==='photo'?undefined:null} focusFraction={full ? .35 : .2}
       initialView={anchor||viewOnly&&!full?undefined:card.view as ImageView|undefined} onViewChange={viewOnly?undefined:onView}
       image={image.url} decodedImage={sources.decodedImage(image.url)}
       selector={selector} label={displayText(card.title)}

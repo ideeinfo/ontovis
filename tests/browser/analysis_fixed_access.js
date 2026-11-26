@@ -86,6 +86,24 @@ async (page, facts, phase) => {
       check(await image(kind).evaluate(async node=>{await node.decode();return node.naturalWidth>0;}),
         'The '+kind+' preview did not render automatically');
     }));
+    const inlinePhoto=card('photo');
+    check(await inlinePhoto.locator('.wo-photo-tools,.wo-photo-hint').count()===0,
+      'The inline photo mounted its toolbar or gesture hint');
+    check(await inlinePhoto.locator('.wo-photo-scroll').evaluate(view=>{
+      const rect=view.getBoundingClientRect();
+      const body=view.closest('.ac-source').getBoundingClientRect();
+      return rect.height>0 && Math.min(rect.bottom,body.bottom)-rect.top>=rect.height*.85;
+    }),'The default photo viewport was mostly clipped by the card body');
+    await button('展开查看',inlinePhoto).click();
+    const photoDialog=page.getByRole('dialog',{name:facts.cards.photo.title,exact:true});
+    await photoDialog.locator('.ac-photo-view img').waitFor();
+    await button('照片放大',photoDialog).waitFor();
+    await button('适应窗口',photoDialog).waitFor();
+    await photoDialog.locator('.wo-photo-hint').waitFor();
+    await button('关闭',photoDialog).click();
+    await photoDialog.waitFor({state:'hidden'});
+    check(await inlinePhoto.locator('.wo-photo-tools,.wo-photo-hint').count()===0,
+      'Closing expanded view added tools to the inline photo');
     for(const colorScheme of ['light','dark']){
       await page.emulateMedia({colorScheme});
       await page.locator(`html[data-theme="${colorScheme}"]`).waitFor({state:'attached'});
@@ -647,6 +665,7 @@ async (page, facts, phase) => {
       drawingObjectParentPhotos:true,assistantWindowRestored:true,
       mixedDescendantDrawings:true,sharedPhotoLinkedAfterDrawing:true,toolbarTextSelectionPrevented:true,
       recommendationCardStylesMatchAssistant:true,
+      inlinePhotoWithoutControls:true,expandedPhotoControls:true,
       assistantFourTypes:true,assistantCandidatePreview:true,assistantFloatingWindow:true,assistantCanvasConversationScope:true,compactMaterialRows:true};
   }
   if(phase==='grouped-layout'){
