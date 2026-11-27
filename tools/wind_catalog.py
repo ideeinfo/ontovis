@@ -137,7 +137,7 @@ def emodnet_record(layer, feature):
     return dict(source='emodnet', layer=layer, source_id=str(feature['id']), name=p.get('name') or '', country=p.get('country'), status=p.get('status'), installation=p.get('type_inst'), capacity_mw=numeric(p.get('power_mw'), issues, 'capacity'), turbine_count=numeric(p.get('n_turbines'), issues, 'turbine_count', True), source_updated=str(p.get('updateyear') or ''), coordinate_quality='source_site_point' if layer == 'windfarms' else 'source_site_boundary', geometry=geometry, bounds=bounds, raw=p, issues=issues)
 
 
-def repd_records(raw):
+def repd_records(raw, *, identical_duplicates=None):
     try:
         text = raw.decode('utf-8-sig')
     except UnicodeDecodeError:
@@ -146,15 +146,21 @@ def repd_records(raw):
     required = {'Ref ID', 'Site Name', 'Technology Type', 'Country', 'X-coordinate', 'Y-coordinate', 'Installed Capacity (MWelec)', 'Development Status', 'No. of Turbines'}
     if not required.issubset(reader.fieldnames or []):
         raise ValueError('REPD schema changed: missing ' + ', '.join(sorted(required - set(reader.fieldnames or []))))
-    seen = set()
+    seen = {}
     for row in reader:
         tech = row['Technology Type'].strip()
         if tech not in ('Wind Onshore', 'Wind Offshore'):
             continue
         fid = row['Ref ID'].strip()
-        if not fid or fid in seen:
-            raise ValueError('Missing/duplicate REPD identity')
-        seen.add(fid)
+        if not fid:
+            raise ValueError('Missing REPD identity')
+        if fid in seen:
+            if row != seen[fid]:
+                raise ValueError('Conflicting duplicate REPD identity')
+            if identical_duplicates is not None:
+                identical_duplicates.append(fid)
+            continue
+        seen[fid] = row
         issues = ['grid_crs_unverified']
         if not row['Site Name'].strip():
             issues.append('missing_name')
@@ -206,7 +212,9 @@ def collect(destination: Path, getter=fetch):
         csv_url = discover_repd(page)
         raw = getter(csv_url)
         save('repd.csv', csv_url, raw)
-        records.extend(repd_records(raw))
+        identical_duplicates = []
+        records.extend(repd_records(raw, identical_duplicates=identical_duplicates))
+        manifest['repd_identical_duplicates'] = identical_duplicates
         counts = write_database(destination / 'catalog.sqlite', records, manifest)
         manifest.update(state='complete', observations=len(records), counts=[dict(source=s,layer=l,count=n) for s,l,n in counts], issue_records=sum(bool(r['issues']) for r in records), mapped_geometries=sum(bool(r['geometry']) for r in records), repd_release=csv_url.rsplit('/',1)[-1])
         # Public normalized export retains provenance and quality. No inferred turbine positions.

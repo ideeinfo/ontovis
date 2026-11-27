@@ -1,0 +1,18 @@
+[Unit]
+Description=ONTOVis protected photo QUIC tunnel
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+DynamicUser=yes
+EnvironmentFile=/etc/cloudflared-vis-media/tunnel-id.env
+LoadCredential=tunnel.json:/etc/cloudflared-vis-media/tunnel.json
+ExecStart=/usr/local/bin/cloudflared tunnel --config /etc/cloudflared-vis-media/config.yml --credentials-file %d/tunnel.json run ${ONTOVIS_MEDIA_TUNNEL_ID}
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target

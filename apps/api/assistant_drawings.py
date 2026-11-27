@@ -1,0 +1,189 @@
+"""Add fixed drawings using the same registered relations as the canvas."""
+import json
+import re
+
+from .analysis_preview import drawing_identity
+from .analysis_recommendations import PAGE_SIZE, _drawing_page_key
+from .analysis_source_reader import selected
+from .assistant_canvas_tasks import plan_candidate_additions
+from .assistant_store import require
+from .assistant_summaries import redact
+from .authority import PreviewError
+from .related_drawings import RelatedDrawingsReader
+
+
+def drawing_add_scope(question):
+    alarm = r'(?P<alarm>(?:当前|本次|这条|这个)?(?:故障)?报警)'
+    target = rf'(?:(?:与)?{alarm}的?(?:相关|关联|涉及)?的?|(?:当前画布的?)?(?:相关|关联)?的?)\s*(?:工程|电气)?图纸'
+    verb = r'(?:加入|添加|加上|加)'
+    text = question.strip().rstrip('。！？!?')
+    request = re.fullmatch(rf'(?:请帮我|帮我|请)?\s*{verb}\s*{target}\s*(?:(?:到|至)(?:当前)?画布[上中]?)?', text)
+    if request is None:
+        request = re.fullmatch(rf'(?:请帮我|帮我|请)?\s*(?:把|将)\s*{target}\s*{verb}(?:(?:到|至)(?:当前)?画布[上中]?)?', text)
+    if request:
+        return 'alarm' if request['alarm'] else 'canvas'
+    if re.fullmatch(r'(?:please )?add (?:the )?(?:(?:related|associated|engineering) )?drawings?(?: to (?:the )?canvas)?\.?', text, re.I):
+        return 'canvas'
+    return None
+
+
+def drawing_context(body, draft, *, kinds=('object','alarm','drawing')):
+    # Restrict expansion to the owned draft's current object, alarm and drawing cards.
+    ids = dict.fromkeys(card['source']['id'] for card in draft['cards']
+        if card.get('source') and not card.get('historical') and card['kind'] in kinds)
+    return {**body, 'evidenceRefIds': list(ids)}
+
+
+def _drawing_objects(reader, fixed, draft, body, scope, allowed, read):
+    require({'object', 'drawing'} <= allowed, 'ASSISTANT_TOOL_NOT_ALLOWED', 403)
+    current_cards = [card for card in draft['cards'] if card.get('source') and not card.get('historical')]
+    current_refs = {card['source']['id'] for card in current_cards}
+    fixed = [(ref, descriptor) for ref, descriptor in fixed if ref['evidenceRefId'] in current_refs]
+    objects = {ref['evidenceRefId']: descriptor for ref, descriptor in fixed if ref['sourceKind'] == 'object'}
+    explicit = body.get('preferSelectedEvidence', False)
+    chosen = set(body['evidenceRefIds'])
+    if scope == 'canvas' and explicit:
+        chosen_objects = {ref: descriptor for ref, descriptor in objects.items() if ref in chosen}
+        if chosen_objects:
+            return chosen_objects
+
+    alarms = [(ref['evidenceRefId'], descriptor) for ref, descriptor in fixed if ref['sourceKind'] == 'alarm'
+              and (scope == 'alarm' or not explicit or ref['evidenceRefId'] in chosen)]
+    if scope == 'alarm' or alarms:
+        require('alarm' in allowed, 'ASSISTANT_TOOL_NOT_ALLOWED', 403)
+        current_event = draft['context'].get('eventId')
+        focus = set(body.get('focusCardIds', ()))
+        focused = {card['source']['id'] for card in current_cards if card.get('id') in focus}
+        targets = [alarm for alarm in alarms if alarm[0] in focused]
+        if not targets:
+            targets = [alarm for alarm in alarms if alarm[1]['eventId'] == current_event] or alarms
+        if len(targets) != 1:
+            return {}
+        alarm_ref, alarm = targets[0]
+        dataset = read(lambda: reader.read('alarm', alarm))['dataset']
+        tag = dataset.get('primaryRds')
+        if not tag:
+            return {}
+        target = selected(read(lambda: reader._rds(tag)))
+        return {**{ref: descriptor for ref, descriptor in objects.items() if descriptor == target}, alarm_ref: target}
+    return {} if explicit else objects
+
+
+def _recorded_drawings(reader, descriptor):
+    return RelatedDrawingsReader(reader.reader).resolve({**descriptor, 'includeDescendants': True, 'limit': PAGE_SIZE})
+
+
+def _record_gap(gaps, error):
+    if error.status in (401, 403) or error.code in ('ASSISTANT_CANCELLED', 'ASSISTANT_POLICY_CHANGED',
+            'ACCESS_CHANGED', 'SESSION_CHANGED', 'ASSISTANT_TIMEOUT'):
+        raise error
+    gaps.append(error.code)
+
+
+def drawings_on_canvas(reader, fixed, candidates, read, gaps):
+    by_hash = {row['contentSha256'] for _, row in candidates.values()}
+    identifiable = {(row['drawingUid'], row['contentSha256']): key for key, (_, row) in candidates.items() if row.get('drawingUid')}
+    present = {}
+    for ref, descriptor in fixed:
+        if ref['sourceKind'] != 'drawing' or descriptor['expectedContentSha256'] not in by_hash:
+            continue
+        digest = descriptor['expectedContentSha256']
+        match = identifiable.get((descriptor.get('drawingUid'), digest))
+        if match:
+            present[match] = ref
+            continue
+        try:
+            def source_page():
+                drawing, _ = drawing_identity(reader, descriptor)
+                if drawing is not None:
+                    return drawing.get('source_page_number')
+                return reader.read('drawing', descriptor).get('pageNumber')
+            page = read(source_page)
+        except PreviewError as error:
+            _record_gap(gaps, error)
+            continue
+        key = _drawing_page_key({'pageNumber': page, 'contentSha256': digest})
+        if key in candidates:
+            present[key] = ref
+    return present
+
+
+def drawing_answer(tools, fixed, draft, body, scope, plan):
+    gaps, candidates = [], {}
+    truncated = False
+    try:
+        objects = _drawing_objects(tools.reader, fixed, draft, body, scope, tools.allowed, tools.read)
+    except PreviewError as error:
+        _record_gap(gaps, error)
+        objects = {}
+    visited = set()
+    for ref, descriptor in objects.items():
+        identity = tuple(descriptor[key] for key in ('entityUid', 'expectedEntityRevision', 'installationContextId', 'expectedHierarchyRevision'))
+        if identity in visited:
+            continue
+        visited.add(identity)
+        try:
+            page = tools.read(lambda: _recorded_drawings(tools.reader, descriptor))
+        except PreviewError as error:
+            _record_gap(gaps, error)
+            continue
+        truncated |= page['nextCursor'] is not None
+        for row in page['items']:
+            if row['availability'] == 'available':
+                candidates.setdefault(_drawing_page_key(row), (ref, row))
+    present = drawings_on_canvas(tools.reader, fixed, candidates, tools.read, gaps)
+    pending = [candidate for key, candidate in candidates.items() if key not in present]
+    card_titles = {card['source']['id']: card['title'] for card in draft['cards'] if card.get('source')}
+    for ref, row in pending[:PAGE_SIZE]:
+        direct = any(match['relation'] in ('self', 'shared_definition') for match in row['matchedObjects'])
+        basis = '登记关联' if direct else '下级对象图纸'
+        reason = f'「{card_titles[ref]}」的{basis}' + (f' · 源页 {row["pageNumber"]}' if row['pageNumber'] is not None else '')
+        tools.results.append(dict(key=f'R{len(tools.results)+1}', kind='drawing', title=row['title'][:120],
+            identifier=row['drawingUid'], version=row['sourceRevision'], reason=reason, simulated=False,
+            drawingObjectRefId=ref, selector=dict(drawingUid=row['drawingUid'], expectedContentSha256=row['contentSha256'])))
+
+    count = len(pending)
+    truncated |= count > len(tools.results)
+    state = 'unavailable' if gaps else 'complete'
+    trace = dict(tool='related_drawings', state=state, scope='画布报警或工程对象的登记图纸', count=len(tools.results), truncated=truncated)
+    if gaps:
+        trace['reason'] = gaps[0]
+    tools.trace.append(trace)
+    if count:
+        message = f'找到 {count} 张可加入的关联图纸。'
+    elif gaps or truncated:
+        message = '已读取的范围内暂未找到可加入的图纸。'
+    elif candidates:
+        message = '当前范围内的关联图纸已在画布上。'
+    elif objects:
+        message = '这些工程对象暂无可用的登记图纸。'
+    else:
+        message = '请在画布上选择一张故障报警或工程对象卡片，以查找它的关联图纸。'
+    summary = redact(json.dumps(dict(count=count,
+        drawings=[dict(key=row['key'], title=row['title'], basis=row['reason']) for row in tools.results]),
+        ensure_ascii=False), tools.private)[:1000]
+    tools.catalogue_source('drawing', summary, message)
+    answer = tools.catalogue_answer()
+    plan_candidate_additions(draft, plan, tools.results, answer, complete=not gaps and not truncated)
+    return answer
+
+
+def checked_drawing_results(reader, fixed, draft, body, scope, allowed, plan, results, *, compound=False):
+    """Recheck the registered relation before a fresh or retried draft application."""
+    error = 'ASSISTANT_DRAWING_REVIEW_REQUIRED'
+    actions = [action for action in plan['actions'] if action['kind']=='add_results'] if compound else plan['actions']
+    require(len(actions) == 1 and actions[0]['kind'] == 'add_results' and actions[0]['targets'], error, 409)
+    choices = {row['key']: row for row in results}
+    rows = [choices.get(key) for key in actions[0]['targets']]
+    require(all(row and row['kind'] == 'drawing' and row.get('drawingObjectRefId') for row in rows), error, 409)
+    objects = _drawing_objects(reader, fixed, draft, body, scope, allowed, lambda operation: operation())
+    pages = {}
+    for row in rows:
+        ref = row['drawingObjectRefId']
+        require(ref in objects, error, 409)
+        if ref not in pages:
+            pages[ref] = {(item['drawingUid'], item['contentSha256'], item['sourceRevision'])
+                          for item in _recorded_drawings(reader, objects[ref])['items'] if item['availability'] == 'available'}
+        selector = row['selector']
+        require((selector['drawingUid'], selector['expectedContentSha256'], row['version']) in pages[ref], error, 409)
+    return rows

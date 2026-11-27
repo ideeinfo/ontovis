@@ -41,6 +41,14 @@ class CatalogTests(unittest.TestCase):
         self.assertIsNone(row['geometry'])
         self.assertEqual(row['raw']['X-coordinate'],'300000')
         self.assertIn('grid_crs_unverified',row['issues'])
+    def test_repd_equal_duplicates_are_recorded_and_conflicts_are_rejected(self):
+        header=b'Ref ID,Site Name,Technology Type,Country,X-coordinate,Y-coordinate,Installed Capacity (MWelec),Development Status,No. of Turbines\n'
+        row=b'1,Farm,Wind Onshore,England,300000,400000,10,Operational,4\n'
+        duplicates=[]
+        self.assertEqual(len(list(c.repd_records(header+row+row,identical_duplicates=duplicates))),1)
+        self.assertEqual(duplicates,['1'])
+        with self.assertRaisesRegex(ValueError,'Conflicting duplicate'):
+            list(c.repd_records(header+row+row.replace(b'Operational',b'Planning')))
     def test_discovery_rejects_ambiguous_or_untrusted(self):
         with self.assertRaises(ValueError):
             c.discover_repd(b'<a href="https://example.com/REPD.csv">Download</a>')

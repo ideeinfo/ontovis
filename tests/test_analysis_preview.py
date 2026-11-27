@@ -1,0 +1,460 @@
+from copy import deepcopy
+from io import BytesIO
+from types import SimpleNamespace
+from unittest import TestCase
+from unittest.mock import Mock, patch
+from urllib.parse import urlsplit, parse_qs
+from uuid import uuid4
+import hashlib
+import json
+import sqlite3
+
+from apps.api.authority import PreviewError
+from apps.api.analysis_evidence import validate_descriptor
+from apps.api.analysis_preview import drawing_preview, drawing_bytes, document_preview, fault_documents, relationships, preview
+from apps.api.scene_engineering import SceneEngineeringReader
+from apps.api import analysis_media
+from apps.api import simulated_faults as simulated
+
+
+class SourceViewerTests(TestCase):
+    def setUp(self):
+        self.sha='a'*64
+        self.drawing={'drawingUid':'project:drawing-1','expectedContentSha256':self.sha}
+        self.document={'documentId':str(uuid4()),'contentVersionId':str(uuid4()),'sourceSha256':self.sha,'pageNumber':48,
+                       'knowledgeReleaseId':str(uuid4()),'knowledgeNodeId':'fault-13001'}
+        self.location={'id':'region','project_code':'P','drawing_uid':'project:drawing-1','entity_uid':'sensor',
+            'row_version':2,'entity_properties':{'result_import':{'drawing_revision':self.sha}},
+            'bbox':{'x':.2,'y':.3,'width':.1,'height':.1},'display_name':'Temperature sensor'}
+        self.location.update(object_type='unknown',text_span={'source_instance_id':'instance-1'})
+        self.location['entity_properties']['result_import']['classification']={'standard':{'code':'BTA','revision_id':'catalogue-v1','name_zh':'温度变送器','name_en':'Temperature transmitter','review_state':'unreviewed'}}
+        self.extra_locations=[];self.owner_resolution='resolved';self.import_batches={};self.import_error=None
+        self.wrapper=SimpleNamespace(project_code='P',connection_id='source',prefix='/api/v1/projects/P',
+                                    _request=Mock(side_effect=self.request),authority=SimpleNamespace(source_bytes=Mock(return_value={'content':b'pdf','sha256':self.sha})))
+        self.reader=SimpleNamespace(reader=self.wrapper,read=Mock(return_value={}),authorize=Mock())
+        self.current=True;self.published=True;self.project='P';self.mapping=True
+        self.graph_nodes=[{'local_id':'fault-13001','kind':'FaultDefinition','payload':{'properties':{
+            'urn:ontobase:document-knowledge:1:title':[{'value':'Cabinet temperature high'}],
+            'urn:ontobase:document-knowledge:1:fault_code':[{'value':'13001'}]}}}]
+
+    def request(self,method,path,*args):
+        self.assertEqual(method,'GET')
+        url=urlsplit(path);q=parse_qs(url.query)
+        if url.path.endswith('/document-knowledge/graph'):
+            node=deepcopy(self.graph_nodes[0]);node['source']={'document':{'id':self.document['documentId'],'name':'Fault manual'},
+                'version':{'id':self.document['contentVersionId']},'release_id':self.document['knowledgeReleaseId'],'local_id':node['local_id']}
+            return {'nodes':[node]}
+        if '/versions/' in path:return {'item':{'id':self.document['contentVersionId'],'source_sha256':self.sha}}
+        if url.path.endswith('/neighborhood'):
+            return {'format':'ontobase-document-neighborhood-v1','scope':'published_document_knowledge',
+                'projectCode':'P','releaseId':self.document['knowledgeReleaseId'],'documentId':self.document['documentId'],
+                'contentVersionId':self.document['contentVersionId'],'root':'fault-13001','depth':2,
+                'engineeringConfirmation':False,'availableForAnalysis':self.published,
+                'state':'published' if self.published else 'withdrawn',
+                'nodes':[{'id':'fault-13001','kind':'FaultDefinition','title':'Cabinet temperature high',
+                    'statement':'13001: temperature above threshold','faultCode':'13001','evidenceIds':['ev'],'evidenceComplete':True}],
+                'relations':[],'evidence':[{'id':'ev','page':48,'text':'13001: temperature above threshold','bbox':self.location['bbox']}],
+                'truncated':False,'missingEvidenceCount':0}
+        if url.path.endswith('/evidence'):return {'document_id':self.document['documentId'],'content_version_id':self.document['contentVersionId'],
+            'items':[{'local_id':'ev','raw_text':'13001: temperature above threshold','selector':{'page':48,'bbox':self.location['bbox'],'rendition_id':'page48'}}]}
+        if url.path.endswith('/graph'):return {'document_id':self.document['documentId'],'content_version_id':self.document['contentVersionId'],
+            'state':'published' if self.published else 'withdrawn','available_for_analysis':self.published,'nodes':self.graph_nodes,'relations':[],
+            'next_cursor':100 if q.get('cursor')==['0'] else None,'scope':{}}
+        if '/knowledge/releases/' in path:return {'item':{'payload':{'mappings':[{'state':'confirmed','local_id':'fault-13001','target':{'kind':'formal','id':'region','row_version':2}}] if self.mapping else []}}}
+        if url.path.endswith('/knowledge/releases'):
+            self.assertEqual(q['version_id'],[self.document['contentVersionId']])
+            return {'items':[{'id':self.document['knowledgeReleaseId'],'content_version_id':self.document['contentVersionId'],'state':'published'}]}
+        if '/result-imports/' in path:
+            if self.import_error:raise self.import_error
+            return deepcopy(self.import_batches[url.path.rsplit('/',1)[-1]])
+        if '/object-locations/' in path:return {**deepcopy(self.location),'project_code':self.project}
+        if url.path.endswith('/object-locations'):return {'items':[self.location,*self.extra_locations]}
+        if url.path.endswith('/result-relation-imports'):return {'items':[{'id':'batch'}]}
+        if url.path.endswith('/records'):
+            kind=q['kind'][0]
+            row={'source_reference_id':'cross-page','target_label':'/22.4','normalized_bbox':self.location['bbox'],
+                'target':{'status':'bound','drawing_uid':'project:next','drawing_revision':self.sha,'drawing_name':'Next drawing','basis':'printed page reference'},'relationship_semantics':'document_reference'}
+            if kind=='ports':row={'source_port_id':'P1','source_instance_id':'instance-1','owner_resolution':{'state':self.owner_resolution},'position':{'state':'located','normalized':{'x':.4,'y':.5}},'label':'1'}
+            if kind=='connections':
+                row={'source_connection_id':'doc/CONN-0001','endpoint_a':{'kind':'port','source_id':'P1'},'endpoint_b':{'kind':'port','source_id':'P2'},'relationship_type_text':'导线连接','path':{'state':'located','points':[{'x':.2,'y':.3},{'x':.4,'y':.5}]}}
+            return {'source_state':'current' if self.current else 'stale','drawing_revision':self.sha,'next_after':None,'items':[{'document':row}]}
+        if '/drawings/' in path:return {'drawing_uid':'project:drawing-1','project_code':self.project,'drawing_name':'Source drawing'}
+        raise AssertionError(path)
+
+    def test_drawing_objects_and_ports_locate_only_on_the_fixed_revision(self):
+        result=drawing_preview(self.reader,self.drawing,{})
+        self.assertEqual(result['objects'][0]['bbox'],self.location['bbox'])
+        self.assertIsNotNone(drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]['bbox'])
+        self.location['entity_properties']['result_import']['drawing_revision']='b'*64
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{})['objects'][0]['bbox'])
+        self.current=False
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]['bbox'])
+
+    def test_drawing_connections_resolve_labels_and_compute_bbox(self):
+        result = drawing_preview(self.reader, self.drawing, {'section': 'connections'})
+        conns = result['connections']
+        self.assertEqual(len(conns), 1)
+        c = conns[0]
+        self.assertEqual(c['id'], 'doc/CONN-0001')
+        self.assertIn('↔', c['title'])
+        self.assertEqual(c['identifier'], 'CONN-0001 · 导线连接')
+        self.assertIsNotNone(c['bbox'])
+        self.assertAlmostEqual(c['bbox']['x'], 0.18, places=3)
+        self.assertAlmostEqual(c['bbox']['y'], 0.28, places=3)
+        self.assertEqual(len(c['pathPoints']), 2)
+        self.assertEqual(c['properties']['连接编号'], 'CONN-0001')
+
+    def test_cross_page_reference_is_document_reference_not_electrical_connectivity(self):
+        row=drawing_preview(self.reader,self.drawing,{'section':'references'})['references'][0]
+        self.assertEqual(row['semantics'],'document_reference');self.assertEqual(row['selector']['drawingUid'],'project:next')
+        self.current=False;row=drawing_preview(self.reader,self.drawing,{'section':'references'})['references'][0]
+        self.assertNotIn('selector',row);self.assertIsNone(row['bbox'])
+
+    def occurrence_import(self):
+        self.location['source_run_id']='page-import'
+        self.location['text_span']['source']='result_template_import'
+        self.location['entity_properties']['result_import']['drawing_revision']='b'*64
+        self.import_batches['page-import']={'id':'page-import','drawing_uid':'project:drawing-1',
+            'plugin_id':'result_template_import','result_summary':{'result_import':{'drawing_revision':self.sha}}}
+
+    def test_shared_entity_geometry_uses_its_drawing_occurrence_and_reuses_the_scoped_import_read(self):
+        self.occurrence_import()
+        other=deepcopy(self.location);other.update(id='second-symbol',bbox={'x':.6,'y':.6,'width':.1,'height':.1})
+        self.extra_locations=[other]
+        descriptor={'evidenceRef':'location:region','entityUid':'sensor','expectedContentSha256':self.sha}
+        value=drawing_preview(self.reader,descriptor,{})
+        self.assertEqual(value['selector']['bbox'],self.location['bbox'])
+        self.assertEqual([row['bbox'] for row in value['objects']],[self.location['bbox'],other['bbox']])
+        imports=[call for call in self.wrapper._request.call_args_list if '/result-imports/' in call.args[1]]
+        self.assertEqual(len(imports),1)
+        self.assertIn('/drawings/project%3Adrawing-1/result-imports/page-import',imports[0].args[1])
+
+    def test_an_old_occurrence_revision_cannot_borrow_a_current_revision_from_the_shared_entity(self):
+        self.occurrence_import()
+        self.location['entity_properties']['result_import']['drawing_revision']=self.sha
+        self.import_batches['page-import']['result_summary']['result_import']['drawing_revision']='b'*64
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{})['objects'][0]['bbox'])
+
+    def test_occurrence_import_must_match_drawing_run_and_importer(self):
+        for field,value in [('drawing_uid','project:another-drawing'),('id','another-run'),('plugin_id','another-importer')]:
+            with self.subTest(field=field):
+                self.occurrence_import();self.import_batches['page-import'][field]=value
+                with self.assertRaises(PreviewError) as error:drawing_preview(self.reader,self.drawing,{})
+                self.assertEqual(error.exception.code,'SOURCE_CHANGED')
+
+    def test_missing_occurrence_proof_has_no_overlay_and_auth_or_transport_failure_is_not_no_region(self):
+        self.occurrence_import()
+        self.location['entity_properties']['result_import']['drawing_revision']=self.sha
+        self.import_error=PreviewError(404,'NOT_FOUND_OR_FORBIDDEN')
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{})['objects'][0]['bbox'])
+        for status in (401,403,503):
+            with self.subTest(status=status):
+                self.import_error=PreviewError(status,'SOURCE_UNAVAILABLE')
+                with self.assertRaises(PreviewError) as error:drawing_preview(self.reader,self.drawing,{})
+                self.assertEqual(error.exception.status,status)
+
+    def test_current_page_port_owner_survives_another_page_import_of_the_same_entity(self):
+        self.occurrence_import()
+        port=drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]
+        self.assertEqual(port['owner'],'Temperature sensor')
+        self.assertEqual(port['classification']['code'],'BTA')
+        self.import_batches['page-import']['result_summary']['result_import']['drawing_revision']='b'*64
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]['classification'])
+
+    def test_object_and_port_groups_preserve_the_source_standard_and_owner_identity(self):
+        obj=drawing_preview(self.reader,self.drawing,{})['objects'][0]
+        port=drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]
+        self.assertEqual(obj['objectType'],'unknown')
+        self.assertEqual(obj['classification']['code'],'BTA')
+        self.assertEqual(obj['classification']['reviewState'],'unreviewed')
+        self.assertEqual(port['classification'],obj['classification'])
+        self.assertEqual(port['ownerId'],'instance-1')
+        self.assertEqual(port['owner'],'Temperature sensor')
+
+    def test_stale_unresolved_or_ambiguous_ports_do_not_borrow_current_object_types(self):
+        self.current=False
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]['classification'])
+        self.current=True;self.owner_resolution='unresolved'
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]['classification'])
+        self.owner_resolution='resolved';other=deepcopy(self.location);other['id']='another-location';self.extra_locations=[other]
+        port=drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]
+        self.assertIsNone(port['classification']);self.assertEqual(port['owner'],'instance-1')
+
+    def test_generic_type_without_standard_stays_available_for_grouping(self):
+        self.location['entity_properties']['result_import'].pop('classification');self.location['object_type']='terminal'
+        self.assertEqual(drawing_preview(self.reader,self.drawing,{})['objects'][0]['objectType'],'terminal')
+        port=drawing_preview(self.reader,self.drawing,{'section':'ports'})['ports'][0]
+        self.assertEqual(port['objectType'],'terminal');self.assertIsNone(port['classification'])
+        self.location['entity_properties']['result_import']['classification']=None
+        self.assertIsNone(drawing_preview(self.reader,self.drawing,{})['objects'][0]['classification'])
+
+    def test_referenced_pdf_cannot_change_or_cross_project(self):
+        self.assertEqual(drawing_bytes(self.reader,self.drawing)['content'],b'pdf')
+        self.wrapper.authority.source_bytes.return_value['sha256']='b'*64
+        with self.assertRaises(PreviewError) as error:drawing_bytes(self.reader,self.drawing)
+        self.assertEqual(error.exception.status,409)
+        self.project='OTHER'
+        with self.assertRaises(PreviewError):drawing_bytes(self.reader,self.drawing)
+
+    def test_manual_discovery_uses_exact_published_code_and_evidence_page(self):
+        rows=fault_documents(self.reader,'13001');self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['selector'],self.document)
+        self.assertEqual(fault_documents(self.reader,'130010'),[])
+
+    def test_document_graph_preserves_version_page_and_current_mapping(self):
+        result=document_preview(self.reader,self.document,{'cursor':0})
+        self.assertEqual(result['focusId'],'fault-13001');self.assertEqual(result['evidence'][0]['page'],48)
+        self.assertEqual(result['objectMappings'][0]['entityUid'],'sensor');self.assertIsNone(result['nextCursor'])
+        self.assertFalse(any('/graph?' in call.args[1] or call.args[1].endswith('/evidence')
+                             for call in self.wrapper._request.call_args_list))
+        self.location['row_version']=3
+        self.assertEqual(document_preview(self.reader,self.document,{})['objectMappings'],[])
+        self.project='OTHER';self.location['row_version']=2
+        self.assertEqual(document_preview(self.reader,self.document,{})['objectMappings'],[])
+
+    def test_unpublished_graph_is_not_replayed_and_discovery_is_version_scoped(self):
+        descriptor={k:v for k,v in self.document.items() if not k.startswith('knowledge')}
+        self.assertEqual(document_preview(self.reader,descriptor,{})['releaseId'],self.document['knowledgeReleaseId'])
+        self.published=False
+        with self.assertRaises(PreviewError):document_preview(self.reader,self.document,{})
+
+    def test_full_graph_keeps_bounded_pagination_without_alarm_root_filter(self):
+        preview(self.reader,'document',self.document,{'graphScope':'all','cursor':100})
+        graph_paths=[call.args[1] for call in self.wrapper._request.call_args_list if '/graph?' in call.args[1]]
+        query=parse_qs(urlsplit(graph_paths[-1]).query)
+        self.assertNotIn('root',query);self.assertEqual(query['limit'],['100']);self.assertEqual(query['cursor'],['100'])
+        with self.assertRaises(PreviewError):preview(self.reader,'document',self.document,{'graphScope':'unbounded'})
+
+    def test_relations_are_sourced_do_not_guess_same_name_and_keep_other_available_links(self):
+        photo={'entityUid':'sensor'};obj={'entityUid':'sensor'}
+        self.reader.read.side_effect=lambda kind,value:{'item':{'displayName':'same name'}} if kind=='object' else {'selector':{'bbox':self.location['bbox']}}
+        fixed=[({'evidenceRefId':'object','sourceKind':'object'},obj),({'evidenceRefId':'photo','sourceKind':'photo'},photo)]
+        found=relationships(self.reader,fixed,None)['items'];self.assertEqual(found[0]['kind'],'photo_location');self.assertEqual(found[0]['origin'],'source')
+        photo['entityUid']='other';self.assertEqual(relationships(self.reader,fixed,None)['items'],[])
+        self.reader.read.side_effect=PreviewError(403,'FORBIDDEN')
+        with self.assertRaises(PreviewError):relationships(self.reader,fixed,None)
+
+    def test_whole_drawing_links_to_its_registered_object_and_cabinet_at_the_fixed_revision(self):
+        object_rows = {
+            'sensor': {'entityUid': 'sensor', 'entityRevision': 'r1', 'definitionParentEntityUid': 'cabinet'},
+            'cabinet': {'entityUid': 'cabinet', 'entityRevision': 'r2', 'displayName': 'Cabinet'},
+            'same-name': {'entityUid': 'same-name', 'entityRevision': 'r3', 'displayName': 'Cabinet'},
+        }
+        object_values = {uid: {'item': item, 'context': None} for uid, item in object_rows.items()}
+        self.reader.read.side_effect = lambda kind, descriptor: object_values[descriptor['entityUid']] if kind == 'object' else {}
+
+        def request(method, path, payload=None):
+            if not path.endswith('/object-evidence/related'):
+                return self.request(method, path)
+            self.assertEqual(method, 'POST')
+            uid = payload['entityUid']
+            matches = [{'entityUid': 'sensor', 'entityRevision': 'r1', 'displayName': 'Sensor',
+                        'relation': 'self' if uid == 'sensor' else 'definition_descendant',
+                        'viaEntityUid': uid, 'viaName': 'Selected object'}]
+            row = {'drawingUid': self.drawing['drawingUid'], 'title': 'Wiring', 'drawingNumber': '1',
+                   'pageNumber': 1, 'sourceRevision': 'b'*64, 'contentSha256': self.sha,
+                   'availability': 'available', 'precision': 'page', 'region': None, 'matchedObjects': matches}
+            items = [] if uid == 'same-name' else [row]
+            return {'entityUid': uid, 'entityRevision': payload['expectedEntityRevision'],
+                    'installationContextId': None, 'hierarchyRevision': None, 'includeDescendants': True,
+                    'items': items, 'total': len(items), 'nextCursor': None, 'snapshotRevision': 'c'*64, 'scopeComplete': True}
+
+        self.reader.reader = Mock(spec=SceneEngineeringReader, project_code='P', prefix=self.wrapper.prefix,
+                                  authorize=Mock(), authority=SimpleNamespace(image=Mock()), _request=Mock(side_effect=request),
+                                  detail=Mock(side_effect=lambda _context, uid, _revision, **_: object_values[uid]))
+        fixed = [
+            ({'evidenceRefId': uid, 'sourceKind': 'object'}, {'entityUid': uid, 'expectedEntityRevision': item['entityRevision'],
+             'installationContextId': None, 'expectedHierarchyRevision': None})
+            for uid, item in object_rows.items()
+        ] + [
+            ({'evidenceRefId': 'drawing', 'sourceKind': 'drawing'}, self.drawing),
+            ({'evidenceRefId': 'old-drawing', 'sourceKind': 'drawing'}, {**self.drawing, 'expectedContentSha256': 'd'*64}),
+        ]
+        result = relationships(self.reader, fixed, None)
+        self.assertEqual({(edge['fromRef'], edge['toRef'], edge['kind'], edge['origin'], edge['anchor'])
+                          for edge in result['items']}, {
+            ('sensor', 'cabinet', 'containment', 'source', None),
+            ('sensor', 'drawing', 'drawing_association', 'source', None),
+            ('cabinet', 'drawing', 'drawing_descendant', 'source', None),
+        })
+        self.assertEqual(result['gaps'], [])
+
+    def test_alarm_links_only_to_trends_from_its_fixed_simulation_dataset(self):
+        current = simulated.identity('13001')
+        recurrence = simulated.identity('13001', recurrence=True)
+        def trend(sample, metric_id):
+            return {key:sample[key] for key in ('datasetId','datasetRevision','timeFrom','timeTo')} | {'metricId':metric_id}
+
+        def read(kind, descriptor):
+            dataset_id, revision = descriptor['datasetId'], descriptor['datasetRevision']
+            if kind == 'alarm':
+                return simulated.alarms(dataset_id, revision)
+            return simulated.trend(dataset_id, descriptor['metricId'], descriptor['timeFrom'], descriptor['timeTo'], revision)
+
+        self.reader.read.side_effect = read
+        alarm = {key:current[key] for key in ('datasetId','datasetRevision')}
+        fixed = [
+            ({'evidenceRefId':'alarm','sourceKind':'alarm'}, alarm),
+            ({'evidenceRefId':'sensor','sourceKind':'trend'}, trend(current,'sensor_temperature')),
+            ({'evidenceRefId':'reference','sourceKind':'trend'}, trend(current,'reference_temperature')),
+            ({'evidenceRefId':'other-event','sourceKind':'trend'}, trend(recurrence,'sensor_temperature')),
+            ({'evidenceRefId':'stale','sourceKind':'trend'}, trend(current,'sensor_temperature') | {'datasetRevision':'0'*64}),
+        ]
+        result = relationships(self.reader, fixed, None)
+        self.assertEqual([(row['fromRef'],row['toRef'],row['kind'],row['origin'],row['anchor']) for row in result['items']],
+                         [('alarm','sensor','alarm_trend','source',None),('alarm','reference','alarm_trend','source',None)])
+        self.assertEqual(result['gaps'], [{'evidenceRefId':'stale','reason':'SIMULATION_DATASET_CHANGED'}])
+
+    def test_alarm_drawing_links_follow_unique_registered_objects_and_fixed_drawing_versions(self):
+        scope = dict(entityUid='sensor', expectedEntityRevision='r1',
+                     installationContextId=None, expectedHierarchyRevision=None)
+        other = {**scope, 'entityUid': 'unrelated'}
+        sensor_tag, other_tag, missing_tag = '=AREA+R1-T2', '=AREA+R2-F1', '=AREA+R3'
+        tag = dict(value=sensor_tag, role='primary', status='accepted', scheme='RDS', scopeType='project', scopeKey='P')
+        sensor = {'item': {'entityUid': 'sensor', 'entityRevision': 'r1', 'identifiers': [tag]}, 'context': None}
+        def rds(identifier):
+            if identifier == missing_tag:
+                raise PreviewError(409, 'DIAGNOSTIC_OBJECT_UNRESOLVED')
+            return sensor if identifier == sensor_tag else {'item': {'entityUid': 'unrelated', 'entityRevision': 'r1'}}
+
+        self.reader._rds = Mock(side_effect=rds)
+        self.reader.reader = Mock(spec=SceneEngineeringReader, project_code='P', authority=SimpleNamespace(image=Mock()))
+        self.reader.read.side_effect = lambda kind, desc: (
+            {'dataset': {'sourceKind': 'simulated', 'primaryRds': desc['tag']}} if kind == 'alarm'
+            else sensor if kind == 'object' else {})
+        located = {**scope, 'evidenceRef': 'location:region', 'expectedSourceRevision': 'b'*64,
+                   'expectedContentSha256': self.sha}
+        selector = dict(kind='image_bbox', bbox=self.location['bbox'])
+        other_scope = {**located, 'installationContextId': 'another-installation', 'expectedHierarchyRevision': 'another-hierarchy'}
+        whole_match = dict(availability='available', contentSha256=self.sha, matchedObjects=[{'relation': 'self'}])
+        fixed = [({'evidenceRefId': ref, 'sourceKind': kind}, desc) for ref, kind, desc in (
+            ('alarm', 'alarm', {'tag': sensor_tag}), ('recurrence', 'alarm', {'tag': sensor_tag}),
+            ('other-alarm', 'alarm', {'tag': other_tag}), ('ambiguous-alarm', 'alarm', {'tag': missing_tag}),
+            ('located', 'drawing', located), ('other-scope', 'drawing', other_scope), ('whole', 'drawing', self.drawing),
+            ('stale-page', 'drawing', {**self.drawing, 'expectedContentSha256': 'd'*64}),
+        )]
+        with patch('apps.api.analysis_preview.drawing_preview', return_value={'references': [], 'selector': selector}), \
+                patch('apps.api.related_drawings.RelatedDrawingsReader.matching_drawings', side_effect=lambda selection, _: (
+                    {self.drawing['drawingUid']: whole_match} if selection == scope else {})) as related:
+            result = relationships(self.reader, fixed, None)
+            self.assertEqual(related.call_count, 2)
+            self.assertCountEqual([call.args[0] for call in related.call_args_list], [scope, other])
+            self.assertEqual([call.args[0] for call in self.reader._rds.call_args_list], [sensor_tag, other_tag, missing_tag])
+            self.assertEqual({(row['fromRef'], row['toRef'], row['kind']) for row in result['items']}, {
+                (alarm, drawing, 'alarm_drawing') for alarm in ('alarm', 'recurrence') for drawing in ('located', 'whole')})
+            self.assertTrue(all(row['origin'] == 'source' for row in result['items']))
+            self.assertEqual(next(row['anchor'] for row in result['items'] if row['toRef']=='located'),
+                             {'entityUid': 'sensor', 'selector': selector})
+            self.assertEqual(result['gaps'], [{'evidenceRefId':'ambiguous-alarm','reason':'DIAGNOSTIC_OBJECT_UNRESOLVED'}])
+            with_object = fixed + [({'evidenceRefId':'sensor-card','sourceKind':'object'}, scope)]
+            rows = {(row['fromRef'], row['toRef'], row['kind']) for row in relationships(self.reader, with_object, None)['items']}
+            self.assertIn(('alarm', 'sensor-card', 'alarm_object_mapping'), rows)
+            self.assertIn(('sensor-card', 'located', 'drawing_location'), rows)
+            self.assertIn(('sensor-card', 'whole', 'drawing_association'), rows)
+
+    def test_drawing_photo_edges_require_registered_scope_and_fixed_photo_version(self):
+        cabinet = dict(entityUid='cabinet', expectedEntityRevision='r1', installationContextId=None,
+                       expectedHierarchyRevision=None)
+        cabinet_value = dict(item=dict(entityUid='cabinet', entityRevision='r1', displayName='合成柜体'))
+        drawing = {**cabinet, 'expectedContentSha256':self.sha, 'evidenceRef':'location:part'}
+        photo_box = dict(kind='image_bbox', bbox=self.location['bbox'])
+        doc, version, earlier = (str(uuid4()) for _ in range(3))
+        shared = dict(documentId=doc, contentVersionId=version, title='合成柜体全景', availability='available')
+        whole = dict(sourceType='project_document', documentId=doc, contentVersionId=version)
+        scoped = [
+            ('part','drawing',drawing), ('whole','drawing',self.drawing),
+            ('located','photo',cabinet), ('other-installation','photo',{**cabinet,'installationContextId':'another',
+                                                                       'expectedHierarchyRevision':'r2'}),
+            ('shared','photo',whole), ('old','photo',{**whole,'contentVersionId':earlier}),
+            ('unrelated','photo',{**whole,'documentId':str(uuid4())}),
+        ]
+        fixed = [(dict(evidenceRefId=ref, sourceKind=kind), desc) for ref,kind,desc in scoped]
+        self.reader.read.side_effect = lambda kind, desc: (
+            cabinet_value if kind=='object' else {'selector':photo_box} if kind=='photo' and 'entityUid' in desc else {})
+        wrapper = Mock(spec=SceneEngineeringReader, project_code='P', prefix='/api/v1/projects/P',
+                       authority=SimpleNamespace(image=Mock()))
+        self.reader.reader = wrapper
+        wrapper._request.side_effect = lambda method, path, body: (
+            dict(projectCode='P', items=[shared], nextCursor=None) if body['entityUid']=='cabinet' else {})
+        matches = {self.drawing['drawingUid']:dict(contentSha256=self.sha, availability='available',
+                                                     matchedObjects=[dict(relation='definition_descendant')])}
+        with (patch('apps.api.analysis_preview.drawing_preview', return_value={'references':[]}),
+              patch('apps.api.related_drawings.RelatedDrawingsReader.matching_drawings',
+                    side_effect=lambda scope, _: matches if scope==cabinet else {}) as lookup):
+            for sources in (fixed, list(reversed(fixed))):
+                items = relationships(self.reader, sources, None)['items']
+                self.assertCountEqual([(r['fromRef'],r['toRef'],r['kind'],r['origin']) for r in items], [
+                    ('part','located','drawing_photo_location','source'),
+                    ('whole','located','drawing_photo_reference','candidate'),
+                    ('part','shared','drawing_photo_reference','candidate'),
+                    ('whole','shared','drawing_photo_reference','candidate'),
+                ])
+                self.assertEqual(dict(entityUid='cabinet', selector=photo_box),items[0]['anchor'])
+                self.assertTrue(all(item['anchor'] is None for item in items[1:]))
+            self.assertEqual(4, lookup.call_count)
+            self.assertEqual(2, wrapper._request.call_count)
+            wrapper._request.side_effect = PreviewError(403,'NOT_FOUND_OR_FORBIDDEN')
+            with self.assertRaises(PreviewError) as error:
+                relationships(self.reader, fixed, None)
+            self.assertEqual(403, error.exception.status)
+
+    def test_viewer_rejects_arbitrary_urls_unbounded_cursors_and_malformed_fixed_handles(self):
+        validate_descriptor('document',self.document);validate_descriptor('drawing',self.drawing)
+        for value in ({'url':'https://untrusted.invalid'},{'cursor':10001},{'cursor':True}):
+            with self.assertRaises(PreviewError):preview(self.reader,'drawing',self.drawing,value)
+        for value in ({**self.document,'knowledgeReleaseId':'not-uuid'},{**self.document,'url':'https://untrusted.invalid'}):
+            with self.assertRaises(PreviewError):validate_descriptor('document',value)
+
+    def test_model_location_requires_saved_scope_version_and_component_binding(self):
+        db=sqlite3.connect(':memory:')
+        self.addCleanup(db.close)
+        db.executescript('''create table scenes(id text,head_revision text,project_code text);
+            create table scene_revisions(revision text,snapshot text);
+            create table scene_spatial_validations(revision text,validation text);
+            create table scene_lifecycle(scene_id text,state text);
+            create table scene_resource_uses(revision text,model_version_id text);''')
+        binding={'componentKeys':['cabinet'],'objectRef':{'entityUid':'installed-cabinet','projectCode':'P','ontobaseConnectionId':'source'}}
+        snapshot={'instances':[{'modelVersionId':'model-version','sceneModelInstanceId':'instance','componentBindings':[binding]}]}
+        for scene in ('one','two'):
+            db.execute('insert into scenes values(?,?,?)',(scene,scene,'P'))
+            db.execute('insert into scene_revisions values(?,?)',(scene,json.dumps(snapshot)))
+            db.execute('insert into scene_resource_uses values(?,?)',(scene,'model-version'))
+        self.reader.read.side_effect=lambda kind,value:{'components':[{'componentKey':'cabinet'}]} if kind=='model' else {'item':{}}
+        fixed=[({'evidenceRefId':'cab','sourceKind':'object'},{'entityUid':'installed-cabinet'}),
+               ({'evidenceRefId':'model','sourceKind':'model'},{'modelVersionId':'model-version'})]
+        found=relationships(self.reader,fixed,SimpleNamespace(connect=lambda:db))['items']
+        self.assertEqual(len(found),1);self.assertEqual(found[0]['anchor']['componentKeys'],['cabinet'])
+        fixed[0][1]['entityUid']='same-name-project-definition'
+        self.assertEqual(relationships(self.reader,fixed,SimpleNamespace(connect=lambda:db))['items'],[])
+        fixed[0][1]['entityUid']='installed-cabinet';fixed[1][1]['modelVersionId']='new-model-version'
+        self.assertEqual(relationships(self.reader,fixed,SimpleNamespace(connect=lambda:db))['items'],[])
+
+
+class PhotoPreviewTests(TestCase):
+    def setUp(self):
+        from PIL import Image
+        out=BytesIO();Image.new('RGB',(800,5000),'#689a82').save(out,'JPEG')
+        self.raw=out.getvalue();self.before=hashlib.sha256(self.raw).hexdigest()
+        self.reader=SimpleNamespace(read=Mock(),content=Mock(return_value={'content':self.raw}))
+        self.descriptor={'expectedDisplayRevision':self.before}
+        analysis_media._cache.clear()
+
+    def test_quick_preview_preserves_aspect_and_original_while_reusing_fixed_bytes(self):
+        from PIL import Image
+        first=analysis_media.photo_preview(self.reader,self.descriptor)
+        image=Image.open(BytesIO(first['content']));self.assertLessEqual(max(image.size),4096)
+        self.assertLess(abs(image.width/image.height-800/5000),1/4096)
+        self.assertEqual(first,analysis_media.photo_preview(self.reader,self.descriptor))
+        self.assertEqual(self.reader.content.call_count,1);self.assertEqual(self.reader.read.call_count,2)
+        self.assertEqual(hashlib.sha256(self.raw).hexdigest(),self.before)
+
+    def test_cached_preview_still_obeys_revocation(self):
+        analysis_media.photo_preview(self.reader,self.descriptor)
+        self.reader.read.side_effect=PreviewError(403,'FORBIDDEN')
+        with self.assertRaises(PreviewError):analysis_media.photo_preview(self.reader,self.descriptor)
+        self.assertEqual(self.reader.content.call_count,1)
+
+    def test_invalid_or_oversized_input_has_no_partial_cache_entry(self):
+        self.reader.content.return_value={'content':b'not an image'}
+        with self.assertRaises(PreviewError):analysis_media.photo_preview(self.reader,self.descriptor)
+        self.assertEqual(len(analysis_media._cache),0)

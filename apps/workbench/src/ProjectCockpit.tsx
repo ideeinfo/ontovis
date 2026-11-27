@@ -1,0 +1,376 @@
+import {lazy,Suspense,useCallback,useEffect,useMemo,useRef,useState,type CSSProperties} from 'react';
+import {ArrowLeft,ArrowRight,Box,Cloud,Globe2,Info,Layers,LayoutDashboard,Link2,Maximize2,Moon,Pause,Play,Rotate3D,Search,Settings2,Sun,TriangleAlert,X} from 'lucide-react';
+import logo from '../../../assets/brand/ONTOVis.png';
+import {ApiError,cancelled,failureMessage,type WorkbenchApi} from './api';
+import {usePreferences} from './Preferences';
+import {Btn,ConfirmationDialog,IconBtn,Modal} from './Primitives';
+import type {ProjectSummary} from './projectTypes';
+import type {SceneView,SceneOpen} from './sceneTypes';
+import type {TerrainVersion,ImageryVersion,ProjectModelVersion} from './resourceTypes';
+import type {SceneCameraControl} from './SceneViewport';
+import type {AnalysisEntry} from './analysisSources';
+import {SceneApi} from './sceneApi';
+import {SceneThumbnail} from './SceneThumbnail';
+import {CockpitCatalogCache,catalogIdentity,cockpitSavedOpacity,COCKPIT_OPACITY_VALUES,interfaceScale,sceneIdentity,type CockpitCatalog,type CockpitPanelOpacity,type InterfaceScale} from './cockpitState';
+import {SceneLoadingProgress} from './SceneLoadingProgress';
+import {sceneLoadingIdentity,sceneLoadingPlan,scenePreparationStatus,type ScenePreparationState} from './sceneLoading';
+import {CockpitDevice} from './CockpitDevice';
+import './projectCockpit.css';
+import './weather.css';
+import {useCockpitWeather,WeatherEffects} from './CockpitWeather';
+import {sceneGlobePoint,preparedNavigation,mayFinishNavigation,type GlobePoint,type SpaceNavigation} from './cockpitSpace';
+import type {GlobeFlight} from './CockpitGlobe';
+import {CockpitMotion} from './CockpitMotion';
+import {CockpitModelView} from './CockpitModelView';
+import type {ModelViewRequest,ModelViewStatus} from './sceneModelView';
+import './cockpitSpace.css';
+import {motionProfile,type MotionStatus} from './simulatedMotion';
+import {useCockpitSimulation} from './useCockpitSimulation';
+import {WeatherCard} from './WeatherCard';
+import {cockpitInstanceVisibility,presentationEnvironment,type CockpitLight,type CockpitWeather} from './cockpitDisplayState';
+import {PageDeck,DisplaySwitch,CockpitWeatherSummary} from './CockpitPanels';
+import {CockpitAlarmSummary,CockpitAlarmCard,CockpitAlarmStatus,useCockpitAlarms} from './CockpitAlarmSummary';
+import {cockpitAlarmPresentation,replayKey,type ReplayPosition,type ReplayPositions,type ReplaySelection} from './cockpitAlarms';
+import {useCockpitAlarmTargets} from './useCockpitAlarmTargets';
+import {cockpitAlarmInstance,cockpitAlarmTarget,cockpitAlarmTargetCurrent,type CockpitAlarmTarget} from './cockpitAlarmTarget';
+import {useCockpitEquipment,useCockpitLocation} from './useCockpitLocation';
+import {cockpitInspectionScene,cockpitPickedObject} from './cockpitLocation';
+import {cockpitQuickFocus} from './cockpitQuickFocus';
+import {cockpitFleet,cockpitOverviewIds,cockpitTurbineIds} from './cockpitFleet';
+import {cockpitAlarmLabels} from './cockpitAlarmLabels';
+import type {OverviewFrame} from './sceneModelFocus';
+import type {SceneComponentPick} from './sceneComponentPick';
+import {cockpitAddress,cockpitViewKey,type CockpitEntry} from './cockpitAddress';
+
+const CockpitGlobe=lazy(()=>import('./CockpitGlobe').then(m=>({default:m.CockpitGlobe})));
+const SceneViewport=lazy(()=>import('./SceneViewport').then(m=>({default:m.SceneViewport})));
+const CockpitAnalysis=lazy(()=>import('./CockpitAnalysis').then(m=>({default:m.CockpitAnalysis})));
+const DataAlarms=lazy(()=>import('./DataAlarms').then(m=>({default:m.DataAlarms})));
+const WorkOrders=lazy(()=>import('./WorkOrderWorkflowPage').then(m=>({default:m.WorkOrderWorkflowPage})));
+const RegionalCatalog=lazy(()=>import('./RegionalCatalog').then(m=>({default:m.RegionalCatalog})));
+type View='assets'|'scene'|'device'|'analysis'|'orders';
+type AlarmFocus={selection:ReplaySelection;target:CockpitAlarmTarget};
+type SpaceBookmark={camera?:SceneView;display?:{terrain:boolean;imagery:boolean;personal:Record<string,boolean>};device?:{uid:string;alarm:AlarmFocus|null;isolated:boolean;panel:string}};
+export type {CockpitEntry} from './cockpitAddress';
+export function ProjectCockpit({api,project,active,onExit,onWorkspace,onAnalysisWorkspace,start,onLocationChange}:{api:WorkbenchApi;project:ProjectSummary;active:boolean;onExit:()=>void;onWorkspace:(sceneId?:string)=>void;onAnalysisWorkspace:(entry:AnalysisEntry)=>void;start:{entry:CockpitEntry|null};onLocationChange:(entry:CockpitEntry|null,replace?:boolean)=>void}){
+ const {locale,resolved,setTheme}=usePreferences(),en=locale==='en',t=(zh:string,eng:string)=>en?eng:zh;
+ const initialEntry=start.entry;
+ const root=useRef<HTMLDivElement>(null),camera=useRef<SceneCameraControl|null>(null);
+ const [size,setSize]=useState({width:1920,height:1080}),[scale,setScale]=useState<InterfaceScale>('auto'),[panelOpacity,setPanelOpacity]=useState<CockpitPanelOpacity>(cockpitSavedOpacity);
+ const [catalog,setCatalog]=useState<CockpitCatalog|null>(null),[error,setError]=useState<unknown>(null),[attempt,setAttempt]=useState(0);
+ const [view,setView]=useState<View>(initialEntry?.instanceId?'device':initialEntry?'scene':'assets'),[sceneId,setSceneId]=useState(initialEntry?.sceneId||''),[instanceId,setInstanceId]=useState<string|null>(initialEntry?.instanceId||null),[uid,setUid]=useState(''),[query,setQuery]=useState('');
+ const [spatialMounted,setSpatialMounted]=useState(!!initialEntry);
+ useEffect(()=>{if(!active)setSpatialMounted(false);else if(view==='scene'||view==='device')setSpatialMounted(true);},[active,view]);
+ const [pinnedEntry,setPinnedEntry]=useState(initialEntry),[pinnedScene,setPinnedScene]=useState<SceneOpen|null>(null),[pinnedError,setPinnedError]=useState<unknown>(null);
+ const [terrain,setTerrain]=useState<TerrainVersion|null>(null),[imagery,setImagery]=useState<ImageryVersion|null>(null),[resourceError,setResourceError]=useState<unknown>(null),[resourceAttempt,setResourceAttempt]=useState(0);
+ const [terrainVisible,setTerrainVisible]=useState(true),[imageryVisible,setImageryVisible]=useState(true),[personal,setPersonal]=useState<Record<string,boolean>>({}),[focus,setFocus]=useState<{token:number;instanceId:string|null}>();
+ const [devicePanel,setDevicePanel]=useState('structure'),[isolated,setIsolated]=useState(false),[locationAttempt,setLocationAttempt]=useState(0),[inspectionGeneration,setInspectionGeneration]=useState(0);
+ const [detail,setDetail]=useState(''),[instanceQuery,setInstanceQuery]=useState(''),[settingsTab,setSettingsTab]=useState('display'),[paused,setPaused]=useState(false),[devicesVisible,setDevicesVisible]=useState(true),[lighting,setLighting]=useState<CockpitLight>('scene'),[weatherMode,setWeatherMode]=useState<CockpitWeather>('forecast');
+ const [alarmSelection,setAlarmSelection]=useState<ReplaySelection>();
+ const [alarmPositions,setAlarmPositions]=useState<ReplayPositions>({});
+ const updateAlarmPosition=useCallback((selection:ReplaySelection,position:ReplayPosition)=>{
+  const key=replayKey(selection);
+  setAlarmPositions(previous=>previous[key]?.second===position.second&&previous[key].stale===position.stale?
+   previous:{...previous,[key]:position});
+ },[]);
+ useEffect(()=>setAlarmPositions({}),[api.epoch,api.revision,active]);
+ const replay=useCockpitAlarms(api,active);
+ const alarmTargets=useCockpitAlarmTargets(catalog,project.projectRef,replay.rows);
+ const [alarmFocus,setAlarmFocus]=useState<AlarmFocus|null>(null);
+ const pendingAlarm=useRef<{token:number;target:CockpitAlarmTarget}|null>(null);
+ const [spaceNavigation,setSpaceNavigation]=useState<SpaceNavigation|null>(null),[spaceKey,setSpaceKey]=useState(''),[globeFlight,setGlobeFlight]=useState<GlobeFlight|null>(null),[focusedScene,setFocusedScene]=useState<{sceneId:string;token:number}|null>(null);
+ const [regionalOpen,setRegionalOpen]=useState(false),[regionalPoint,setRegionalPoint]=useState<GlobePoint|null>(null);
+ const openAlarms=(selection?:ReplaySelection)=>{setAlarmSelection(selection);setAlarms(true);};
+ const [settings,setSettings]=useState(false),[alarms,setAlarms]=useState(false),[notice,setNotice]=useState('');
+ const [analysisMounted,setAnalysisMounted]=useState(false),[analysisEntry,setAnalysisEntry]=useState<AnalysisEntry|null>(null),[analysisGeneration,setAnalysisGeneration]=useState(0),[orderDirty,setOrderDirty]=useState(false),[leave,setLeave]=useState<(()=>void)|null>(null);
+ const [orderQuery,setOrderQuery]=useState(''),[orderMounted,setOrderMounted]=useState(false);
+ const bookmarks=useRef(new Map<string,SpaceBookmark>(initialEntry?.camera?[[cockpitViewKey(initialEntry.sceneId+':'+initialEntry.sceneRevision,initialEntry.instanceId),{camera:initialEntry.camera}]]:[])),returnView=useRef<View>('assets');
+ const previousStart=useRef(start),entryPending=useRef(!!initialEntry),replaceAddress=useRef(false);
+ const restoring=previousStart.current!==start;
+ const [viewCommand,setViewCommand]=useState<{token:number;view:SceneView}>();
+ const client=useMemo(()=>new SceneApi(api),[api]);
+ const catalogCache=useMemo(()=>new CockpitCatalogCache(api),[api,api.epoch,api.revision]);
+ const row=catalog?.scenes.find(x=>x.summary.sceneId===sceneId);
+ const historical=!!pinnedEntry&&pinnedEntry.sceneId===sceneId&&!!row&&pinnedEntry.sceneRevision!==row.summary.headRevision;
+ const opened=historical?(pinnedScene?.sceneId===sceneId&&pinnedScene.sceneRevision===pinnedEntry?.sceneRevision?pinnedScene:null):row?.opened||null;
+ const overviewIds=useMemo(()=>opened?cockpitOverviewIds(opened):[],[opened]);
+ const initialOverviewIds=useMemo(()=>opened&&!bookmarks.current.get(opened.sceneId+':'+opened.sceneRevision)?.camera&&!(entryPending.current&&initialEntry?.instanceId)?overviewIds:undefined,[opened]);
+ const fleet=useMemo(()=>catalog?cockpitFleet(catalog,project.projectRef):null,[catalog,project.projectRef]);
+ const overviewFrame=useCallback(():OverviewFrame=>{
+  const viewport=root.current?.querySelector<HTMLElement>('.pc-viewport')?.getBoundingClientRect(),left=root.current?.querySelector<HTMLElement>('.pc-scene-info,.pc-device-tree')?.getBoundingClientRect(),right=root.current?.querySelector<HTMLElement>('.pc-side-stack,.pc-device-card')?.getBoundingClientRect();
+  if(!viewport?.width)return {left:.22,right:.22,top:.12,bottom:.14};
+  return {left:left?.width?Math.max(0,(left.right-viewport.left)/viewport.width)+.015:.02,right:right?.width?Math.max(0,(viewport.right-right.left)/viewport.width)+.015:.02,top:.12,bottom:.14};
+ },[]);
+ const selected=opened?.snapshot.instances.find(x=>x.sceneModelInstanceId===instanceId);
+ const total=catalog?catalogIdentity(catalog,project.projectRef):null;
+ const counts=opened&&catalog?sceneIdentity(opened,catalog.equipment,project.projectRef):null;
+ const sceneTurbines=useMemo(()=>opened?cockpitTurbineIds(opened).length:0,[opened]);
+ const effectiveScale=interfaceScale(scale,size.width,size.height),automaticScale=interfaceScale('auto',size.width,size.height);
+ const currentOpacity=COCKPIT_OPACITY_VALUES[panelOpacity]||COCKPIT_OPACITY_VALUES.medium;
+ const currentAlpha=resolved==='light'?currentOpacity.lightAlpha:currentOpacity.darkAlpha;
+ const spatialKey=opened?opened.sceneId+':'+opened.sceneRevision:'';
+ const modelScope=JSON.stringify([spatialKey,api.epoch,api.revision]);
+ const [loadedModels,setLoadedModels]=useState<{scope:string;models:Record<string,ProjectModelVersion>}>({scope:'',models:{}});
+ const modelReady=useCallback((model:ProjectModelVersion)=>setLoadedModels(previous=>{
+  if(previous.scope===modelScope&&previous.models[model.modelVersionId]===model)return previous;
+  return {scope:modelScope,models:{...(previous.scope===modelScope?previous.models:{}),[model.modelVersionId]:model}};
+ }),[modelScope]);
+ const weather=useCockpitWeather(api,opened?.sceneId||'',active&&(view==='scene'||view==='device'));
+ const [motionStatus,setMotionStatus]=useState<Record<string,MotionStatus>>({});
+ const motionVisible=devicesVisible&&active&&view==='device'&&!!selected&&(personal[selected.sceneModelInstanceId]??selected.visible);
+ // A fixed alarm can be located while terrain and imagery load. The view still waits for the final model.
+ const queuedAlarm=active&&spaceNavigation&&spaceNavigation.phase!=='failed'&&pendingAlarm.current?.token===spaceNavigation.token?
+  pendingAlarm.current.target:undefined;
+ const queuedInstance=queuedAlarm&&cockpitAlarmTargetCurrent(queuedAlarm,catalog)?cockpitAlarmInstance(queuedAlarm,opened):undefined;
+ const locationInstance=queuedInstance??selected;
+ const locationUid=queuedInstance?queuedAlarm!.entityUid:uid;
+ const location=useCockpitLocation(api,opened,locationInstance,locationUid,!!queuedInstance||motionVisible,locationAttempt,
+  alarmFocus?.target.entityUid===locationUid?alarmFocus.target.entityRevision:undefined);
+ const representation=location.representation;
+ const displayOpened=useMemo(()=>cockpitInspectionScene(opened,locationInstance,representation),[opened,locationInstance,representation]);
+ const bookmarkKey=spatialKey?cockpitViewKey(spatialKey,view==='device'?instanceId:null):'';
+ const viewportSnapshot=useMemo(()=>displayOpened?{...displayOpened.snapshot,initialView:bookmarks.current.get(bookmarkKey)?.camera||displayOpened.snapshot.initialView}:null,[displayOpened,bookmarkKey]);
+ const effectiveModelRefs=displayOpened?.resourceRefs??[];
+ const boundInstance=displayOpened?.snapshot.instances.find(item=>item.sceneModelInstanceId===instanceId);
+ const effectiveMotionRef=boundInstance?effectiveModelRefs.find(ref=>ref.modelVersionId===boundInstance.modelVersionId):null;
+ const loadedModel=loadedModels.scope===modelScope&&effectiveMotionRef?loadedModels.models[effectiveMotionRef.modelVersionId]:null;
+ const canInspectModel=(representation?.model??loadedModel)?.representationType==='detailed';
+ const [modelView,setModelView]=useState<ModelViewRequest|null>(null),[modelViewStatus,setModelViewStatus]=useState<ModelViewStatus>('loading');
+ const [shellMode,setShellMode]=useState<'solid'|'xray'|'exploded'|null>(null);
+ const equipment=useCockpitEquipment(api,opened,selected,motionVisible,locationAttempt);
+ const inspecting=motionVisible&&!!uid&&uid!==boundInstance?.rootBinding?.objectRef.entityUid;
+ const activeMode=inspecting?(shellMode??'xray'):(modelView?.mode??'solid');
+ const modelViewRequest=motionVisible?(
+  inspecting&&activeMode==='exploded'?(effectiveMotionRef&&selected?{instanceId:selected.sceneModelInstanceId,modelVersionId:effectiveMotionRef.modelVersionId,contentRevision:effectiveMotionRef.contentRevision,sha256:effectiveMotionRef.sha256,mode:'exploded' as const}:null):
+  !inspecting&&modelView?.instanceId===selected?.sceneModelInstanceId&&modelView?.modelVersionId===effectiveMotionRef?.modelVersionId&&modelView?.contentRevision===effectiveMotionRef?.contentRevision&&modelView?.sha256===effectiveMotionRef?.sha256?modelView:null
+ ):null;
+ const quickFocus=useMemo(()=>inspecting?cockpitQuickFocus(displayOpened,boundInstance,representation?.model||null,equipment?.record,uid,locationAttempt,isolated,alarmFocus?.target.entityUid===uid?alarmFocus.target.entityRevision:undefined):undefined,[inspecting,displayOpened,boundInstance,representation,equipment,uid,locationAttempt,isolated,alarmFocus]);
+ const componentFocus=useMemo(()=>{
+  if(!inspecting)return undefined;
+  const fadeShell=activeMode==='xray';
+  if(location.loading)return quickFocus?{...quickFocus,fadeShell}:undefined;
+  if(location.value?.status==='located'&&location.value.worldBounds){
+   return {token:locationAttempt,instanceId:location.value.sceneModelInstanceId!,bounds:location.value.worldBounds,componentKeys:location.value.componentKeys,isolate:isolated,fadeShell};
+  }
+  return undefined;
+ },[inspecting,activeMode,location.loading,quickFocus,location.value,locationAttempt,isolated]);
+ const navigationSerial=useRef(0);
+ const globePoints=useMemo(()=>{
+  const points=catalog?.scenes.filter(item=>item.summary.displayName.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+    .flatMap(item=>{const point=sceneGlobePoint(item);return point?[point]:[];})??[];
+  if(regionalPoint)points.push(regionalPoint);
+  return points;
+ },[catalog,query,regionalPoint]);
+ const preparationKey=useMemo(()=>viewportSnapshot?sceneLoadingIdentity(sceneLoadingPlan(viewportSnapshot,effectiveModelRefs),JSON.stringify([
+  spaceKey||spatialKey,resourceAttempt,api.epoch,api.revision,viewportSnapshot.instances.map(item=>[item.sceneModelInstanceId,item.modelVersionId])])):'',[viewportSnapshot,effectiveModelRefs,spaceKey,spatialKey,resourceAttempt,api.epoch,api.revision]);
+ const preparationCurrent=useRef({key:preparationKey,navigationKey:spaceKey||spatialKey});preparationCurrent.current={key:preparationKey,navigationKey:spaceKey||spatialKey};
+ const [preparation,setPreparation]=useState<ScenePreparationState|null>(null);
+ const preparationState=scenePreparationStatus(preparationKey,preparation);
+ const navigationBusy=(view==='scene'||view==='device')&&(!!spaceNavigation||location.loading||!!viewportSnapshot&&preparationState==='loading');
+ const prepared=useCallback((key:string,state:ScenePreparationState['state'])=>{
+  if(key!==preparationCurrent.current.key)return;
+  setPreparation(current=>current?.key===key&&current.state===state?current:{key,state});
+  setSpaceNavigation(current=>preparedNavigation(current,preparationCurrent.current.navigationKey,state));
+ },[]);
+ useEffect(()=>{if(spaceNavigation?.phase!=='arriving')return;const token=spaceNavigation.token;
+  if(navigationSerial.current!==token||!mayFinishNavigation(spaceNavigation,token))return;
+  if(opened?.sceneId!==spaceNavigation.sceneId||opened.sceneRevision!==spaceNavigation.revision||queuedAlarm&&!queuedInstance){
+   pendingAlarm.current=null;setAlarmFocus(null);setResourceError(new ApiError(409,'SCENE_CHANGED'));
+   setSpaceNavigation(current=>current?.token===token?{...current,phase:'failed'}:current);return;
+  }
+  if(preparationState==='error'){setSpaceNavigation(current=>current?.token===token?{...current,phase:'failed'}:current);return;}
+  if(preparationState!=='ready'||queuedAlarm&&location.loading)return;
+  pendingAlarm.current=null;
+  if(queuedAlarm){setInstanceId(queuedAlarm.instanceId);setUid(queuedAlarm.entityUid);setIsolated(true);setDevicePanel('structure');setView('device');}
+  setSpaceNavigation(null);
+ },[spaceNavigation,opened,queuedAlarm,queuedInstance,preparationState,location.loading]);
+ const missingScene=!!catalog&&!catalog.loading&&!!sceneId&&!row;
+ useEffect(()=>{if(row?.error||missingScene)setSpaceNavigation(current=>current?.sceneId===sceneId?{...current,phase:'failed'}:current);},[row?.error,missingScene,sceneId]);
+ useEffect(()=>{if(!active){pendingAlarm.current=null;setAlarmFocus(null);setSpaceNavigation(null);setGlobeFlight(null);setFocusedScene(null);++navigationSerial.current;}},[active]);
+ useEffect(()=>{setRegionalOpen(false);setRegionalPoint(null);},[active,api.epoch,api.revision]);
+ const weatherPreview=useMemo(()=>presentationEnvironment(opened?.snapshot.environment,weather.usable?weather.value:null,lighting,weatherMode),[weather.usable,weatherMode,lighting,weather.value,opened?.snapshot.environment]);
+ const visibleInstances=useMemo(()=>cockpitInstanceVisibility(opened?.snapshot.instances||[],devicesVisible,personal),[devicesVisible,personal,opened]);
+ const simulation=useCockpitSimulation(displayOpened,active&&(view==='scene'||view==='device'||!!spaceNavigation),paused,visibleInstances,modelViewRequest?.mode==='exploded'?selected?.sceneModelInstanceId??null:null);
+ const simulationReady=Object.values(motionStatus).filter(status=>status==='ready').length;
+ useEffect(()=>{const element=root.current;if(!active||!element)return;const observer=new ResizeObserver(([entry])=>setSize({width:entry.contentRect.width,height:entry.contentRect.height}));observer.observe(element);return()=>observer.disconnect();},[active]);
+ useEffect(()=>{if(!active)return;const abort=new AbortController();setCatalog(catalogCache.peek());setError(null);
+  void catalogCache.read(abort.signal,setCatalog).catch(e=>{if(!abort.signal.aborted&&!cancelled(e)){setCatalog(null);setError(e);}});return()=>abort.abort();
+ },[catalogCache,active,attempt]);
+ useEffect(()=>{setPinnedScene(null);setPinnedError(null);if(!active||!historical||!pinnedEntry)return;const abort=new AbortController();
+  void client.open(pinnedEntry.sceneId,pinnedEntry.sceneRevision,abort.signal).then(value=>{if(value.sceneId!==pinnedEntry.sceneId||value.sceneRevision!==pinnedEntry.sceneRevision||value.projectCode!==project.projectRef.projectCode)throw new ApiError(409,'SCENE_CHANGED');if(!abort.signal.aborted)setPinnedScene(value);}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setPinnedError(e);});return()=>abort.abort();
+ },[active,client,historical,pinnedEntry,attempt]);
+ useEffect(()=>{setTerrain(null);setImagery(null);setResourceError(null);if(!active||!opened||!spatialMounted)return;const abort=new AbortController();
+  const scene=opened;
+  void Promise.all([scene.snapshot.terrain?client.version(scene.snapshot.terrain.terrainVersionId,abort.signal).then(value=>{
+   if(value.contentRevision!==scene.snapshot.terrain!.expectedContentRevision)throw new ApiError(409,'RESOURCE_CHANGED');return value;
+  }):null,scene.snapshot.imagery?client.imageryVersion(scene.snapshot.imagery.imageryVersionId,abort.signal).then(value=>{
+   if(value.contentRevision!==scene.snapshot.imagery!.expectedContentRevision||value.expectedReportSha256!==scene.snapshot.imagery!.expectedReportSha256)throw new ApiError(409,'RESOURCE_CHANGED');return value;
+  }):null]).then(([ground,image])=>{if(!abort.signal.aborted){setTerrain(ground);setImagery(image);}}).catch(e=>{if(!abort.signal.aborted&&!cancelled(e))setResourceError(e);});return()=>abort.abort();
+ },[active,client,spatialMounted,spatialKey,resourceAttempt]);
+ useEffect(()=>{
+  const display=bookmarks.current.get(spatialKey)?.display;
+  setPersonal(display?.personal??{});setTerrainVisible(display?.terrain??true);setImageryVisible(display?.imagery??opened?.snapshot.imagery?.visible??true);
+ },[spatialKey]);
+ useEffect(()=>{if(!active){setAlarms(false);setSettings(false);setAnalysisMounted(false);setOrderMounted(false);setOrderDirty(false);setView(value=>value==='analysis'||value==='orders'?returnView.current:value);}},[active]);
+ useEffect(()=>{
+  if(!active||!restoring)return;
+  remember();previousStart.current=start;entryPending.current=!!initialEntry;replaceAddress.current=false;
+  pendingAlarm.current=null;++navigationSerial.current;
+  setSpaceNavigation(null);setGlobeFlight(null);setSpaceKey('');setFocusedScene(null);setAlarmFocus(null);setAlarms(false);setSettings(false);setDetail('');setNotice('');setRegionalOpen(false);
+  setModelView(null);setShellMode(null);setIsolated(false);setFocus(undefined);setViewCommand(undefined);
+  setPinnedEntry(initialEntry);setSceneId(initialEntry?.sceneId||'');setInstanceId(initialEntry?.instanceId??null);setUid('');
+  if(initialEntry?.camera)saveBookmark(cockpitViewKey(initialEntry.sceneId+':'+initialEntry.sceneRevision,initialEntry.instanceId),{camera:initialEntry.camera});
+  setView(initialEntry?.instanceId?'device':initialEntry?'scene':'assets');
+ },[active,start]);
+ useEffect(()=>{
+  if(!active||restoring||!entryPending.current||!opened||!catalog||opened.sceneRevision!==pinnedEntry?.sceneRevision||opened.sceneId!==pinnedEntry.sceneId)return;
+  entryPending.current=false;
+  if(instanceId&&!selected){replaceAddress.current=true;setInstanceId(null);setView('scene');setNotice(t('保存版本找不到此实例，已打开对应场景。','This instance is unavailable in the saved revision. The scene is open.'));restoreCamera(null);return;}
+  const device=instanceId?bookmarks.current.get(bookmarkKey)?.device:undefined;
+  const candidate=selected?.rootBinding?.objectRef.entityUid||'';
+  setUid(device?.uid||(counts?.uids.includes(candidate)?candidate:''));
+  if(device){
+   setIsolated(device.isolated);setDevicePanel(device.panel);
+   if(device.alarm&&cockpitAlarmTargetCurrent(device.alarm.target,catalog)){setAlarmFocus(device.alarm);setAlarmSelection(device.alarm.selection);}
+  }
+  if(instanceId||bookmarks.current.get(spatialKey)?.camera)restoreCamera(instanceId);
+ },[active,start,restoring,pinnedEntry,opened,catalog,instanceId]);
+ const shareEntry=opened&&!spaceNavigation&&(view==='scene'||view==='device'&&selected)?{sceneId:opened.sceneId,sceneRevision:opened.sceneRevision,instanceId:view==='device'?instanceId:null}:null;
+ useEffect(()=>{
+  if(!active||restoring||entryPending.current)return;
+  if(view==='assets'||shareEntry){onLocationChange(shareEntry,replaceAddress.current);replaceAddress.current=false;}
+ },[active,start,restoring,view,shareEntry?.sceneId,shareEntry?.sceneRevision,shareEntry?.instanceId,onLocationChange]);
+ useEffect(()=>{const handler=(event:KeyboardEvent)=>{if(event.key==='Escape'){setSettings(false);setAlarms(false);setDetail('');}};if(active)window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);},[active]);
+ function guarded(action:()=>void,blocked=orderDirty){if(blocked)setLeave(()=>action);else action();}
+ function saveBookmark(key:string,value:SpaceBookmark){
+  const previous=bookmarks.current.get(key);bookmarks.current.delete(key);bookmarks.current.set(key,{...previous,...value});
+  if(bookmarks.current.size>24)bookmarks.current.delete(bookmarks.current.keys().next().value!);
+ }
+ function remember(){
+  if((view!=='scene'&&view!=='device')||!bookmarkKey)return;
+  saveBookmark(spatialKey,{display:{terrain:terrainVisible,imagery:imageryVisible,personal}});
+  if(camera.current?.ready())saveBookmark(bookmarkKey,{camera:camera.current.getView()});
+  if(view==='device'&&selected)saveBookmark(bookmarkKey,{device:{uid,alarm:alarmFocus,isolated,panel:devicePanel}});
+ }
+ function restoreCamera(id:string|null){
+  const saved=bookmarks.current.get(cockpitViewKey(spatialKey,id))?.camera;
+  setFocus(saved?undefined:{token:++navigationSerial.current,instanceId:id});
+  setViewCommand(saved?{token:++navigationSerial.current,view:saved}:undefined);
+ }
+ async function copyLocation(entry:CockpitEntry){
+  const url=new URL(window.location.href);url.hash=cockpitAddress(project.projectRef,entry);
+  try{await navigator.clipboard.writeText(url.href);setNotice(t('已复制位置链接','Location link copied'));}
+  catch{setNotice(t('可从地址栏复制此位置链接。','Copy this location link from the address bar.'));}
+ }
+ function exit(){remember();guarded(onExit);}
+ function navigate(next:View){if(next==='device'&&navigationBusy)return;remember();if(next==='assets')entryPending.current=false;if(next==='scene'&&view==='device'){setInstanceId(null);setUid('');setIsolated(false);setModelView(null);setShellMode(null);restoreCamera(null);}pendingAlarm.current=null;setSpaceNavigation(null);if(next!=='assets')setFocusedScene(null);const point=row?sceneGlobePoint(row):null;const token=++navigationSerial.current;if(next==='assets'&&point)setGlobeFlight({token,longitude:point.longitude,latitude:point.latitude,direction:'out'});else if(next==='assets')setGlobeFlight(null);if(next==='analysis'){if(view!=='analysis'&&view!=='orders'){returnView.current=view;const selection=alarmFocus?.selection||alarmSelection;if(selection){setAnalysisEntry(selection);setAnalysisGeneration(value=>value+1);}}setAnalysisMounted(true);}setView(next);}
+ function openScene(id:string,alarm?:{selection:ReplaySelection;target:CockpitAlarmTarget},retry=false){remember();setViewCommand(undefined);setAlarmFocus(alarm||null);setModelView(null);setShellMode(null);setFocus(undefined);setIsolated(false);setPinnedEntry(null);entryPending.current=false;setFocusedScene(null);setSceneId(id);setInstanceId(null);setUid('');setGlobeFlight(null);const target=catalog?.scenes.find(x=>x.summary.sceneId===id),token=++navigationSerial.current;const revision=target?.summary.headRevision||'',key=id+':'+revision+':navigation:'+token;pendingAlarm.current=alarm?{token,target:alarm.target}:null;if(alarm)setLocationAttempt(v=>v+1);setSpaceKey(key);catalogCache.priority=id;setSpaceNavigation({token,key,sceneId:id,revision,phase:target?.error&&!retry||!target&&!catalog?.loading?'failed':'loading'});setView('scene');}
+ function cancelSpace(){setView('assets');pendingAlarm.current=null;setAlarmFocus(null);setSpaceNavigation(null);setShellMode(null);const point=row?sceneGlobePoint(row):null;const token=++navigationSerial.current;if(point)setGlobeFlight({token,longitude:point.longitude,latitude:point.latitude,direction:'out'});}
+ function selectInstance(id:string|null){if(navigationBusy||!id)return;remember();setAlarmFocus(null);setDetail('');setModelView(null);setShellMode(null);setIsolated(false);setDevicePanel('structure');setInstanceId(id);const candidate=opened?.snapshot.instances.find(x=>x.sceneModelInstanceId===id)?.rootBinding?.objectRef.entityUid||'';setUid(counts?.uids.includes(candidate)?candidate:'');restoreCamera(id);setView('device');}
+ function selectObject(id:string){if(navigationBusy)return;if(alarmFocus?.target.entityUid!==id)setAlarmFocus(null);setModelView(null);setShellMode(null);setInspectionGeneration(v=>v+1);setUid(id);setFocus(undefined);setIsolated(id!==selected?.rootBinding?.objectRef.entityUid);setLocationAttempt(v=>v+1);}
+ function locateAlarm(selection:ReplaySelection,target:CockpitAlarmTarget){
+  if(navigationBusy)return;
+  if(!cockpitAlarmTargetCurrent(target,catalog)){setNotice(t('报警目标的场景已变化，请刷新报警后重试。','The alarm scene changed. Refresh alarms and retry.'));return;}
+  setDevicesVisible(true);setDetail('');setInspectionGeneration(v=>v+1);setShellMode(null);
+  if(opened?.sceneId===target.sceneId&&opened.sceneRevision===target.sceneRevision&&(view==='scene'||view==='device')){remember();setAlarmFocus({selection,target});setModelView(null);setInstanceId(target.instanceId);setUid(target.entityUid);setFocus(undefined);setIsolated(true);setDevicePanel('structure');setLocationAttempt(v=>v+1);setView('device');}
+  else openScene(target.sceneId,{selection,target});
+ }
+ function pickComponent(pick:SceneComponentPick){if(navigationBusy)return;const id=cockpitPickedObject(boundInstance,pick);if(id){setDevicePanel('structure');selectObject(id);}else setNotice(t('该模型部件尚未绑定设备结构。','This model part has no equipment structure binding.'));}
+ function analyze(entry:AnalysisEntry){remember();guarded(()=>{if('workOrderReference' in entry){onAnalysisWorkspace(entry);return;}if(view!=='analysis'&&view!=='orders')returnView.current=view;const target='entityUid' in entry?alarmTargets.rows.find(item=>item.target?.entityUid===entry.entityUid&&cockpitAlarmPresentation(item,en,alarmPositions).state==='active'):null;setAnalysisEntry('entityUid' in entry?(alarmFocus?.target.entityUid===entry.entityUid?alarmFocus.selection:target?{datasetId:target.dataset.datasetId,datasetRevision:target.dataset.datasetRevision}:null):entry);setAnalysisGeneration(v=>v+1);setAnalysisMounted(true);setView('analysis');setAlarms(false);});}
+ function orders(code:string){guarded(()=>{if(view!=='analysis'&&view!=='orders')returnView.current=view;setOrderQuery(code);setOrderMounted(true);setView('orders');setAlarms(false);setOrderDirty(false);},orderDirty);}
+ const focusedAlarm=alarmFocus&&cockpitAlarmTargetCurrent(alarmFocus.target,catalog)&&opened?.sceneId===alarmFocus.target.sceneId&&instanceId===alarmFocus.target.instanceId?replay.rows?.find(row=>row.dataset.datasetId===alarmFocus.selection.datasetId&&row.dataset.datasetRevision===alarmFocus.selection.datasetRevision):null;
+ const focusedStatus=focusedAlarm?cockpitAlarmPresentation(focusedAlarm,en,alarmPositions):undefined;
+ const sceneAlarmRows=useMemo(()=>alarmTargets.rows.filter(item=>item.target&&
+  item.target.sceneId===opened?.sceneId&&item.target.sceneRevision===opened.sceneRevision),[alarmTargets.rows,opened]);
+ const alarmLoading=replay.loading||alarmTargets.loading;
+ const sceneAlarmStates=sceneAlarmRows.map(row=>({row,value:cockpitAlarmPresentation(row,en,alarmPositions)}));
+ const hasAlarmSource=sceneAlarmStates.some(({value})=>value.state!=='stale'&&value.state!=='unavailable');
+ const sceneAlarmCount=hasAlarmSource?new Set(sceneAlarmStates.filter(({value})=>value.state==='active')
+  .map(({row})=>JSON.stringify([row.target?.instanceId,replayKey(row.dataset)]))).size:'—';
+ const deviceRows=view==='device'?sceneAlarmRows.filter(item=>item.target?.instanceId===instanceId&&item.target.entityUid===uid)
+  .map(item=>cockpitAlarmPresentation(item,en,alarmPositions)):[];
+ const deviceAlarm=focusedStatus||deviceRows.find(item=>item.state==='active'&&item.severity==='critical')||
+  deviceRows.find(item=>item.state==='active')||deviceRows[0]||
+  (!alarmLoading&&(!hasAlarmSource||uid!==selected?.rootBinding?.objectRef.entityUid)?cockpitAlarmPresentation(undefined,en):undefined);
+ const spatialAlarms=useMemo(()=>{
+  if(spaceNavigation||!opened||(view!=='scene'&&view!=='device'))return [];
+  return cockpitAlarmLabels(sceneAlarmRows,opened.sceneId,view==='device'?instanceId:null,en,alarmFocus?.selection,
+   target=>cockpitQuickFocus(displayOpened,boundInstance,representation?.model||null,equipment?.record,target.entityUid,0,false,target.entityRevision)?.componentKeys,alarmPositions);
+ },[opened,displayOpened,view,instanceId,en,sceneAlarmRows,alarmFocus,boundInstance,representation,equipment,spaceNavigation,alarmPositions]);
+ const focusedSpatialLabel=!!alarmFocus&&spatialAlarms.some(label=>
+  label.target.entityUid===alarmFocus.target.entityUid&&replayKey(label.selection)===replayKey(alarmFocus.selection));
+ const pending=t('正在读取…','Loading…');
+ const scenes=catalog?.scenes.filter(item=>item.summary.displayName.toLocaleLowerCase().includes(query.toLocaleLowerCase()))||[];
+ const openSettings=(tab='display')=>{setSettingsTab(tab);setSettings(true);};
+ const chooseInstance=()=>{if(navigationBusy)return;setInstanceQuery('');setDetail('instances');};
+ if(!active)return null;
+ return <div className="pc-root" ref={root} data-theme={resolved} role="region" aria-label={t('项目驾驶舱','Project cockpit')}>
+  <div className="pc-frame" style={{zoom:effectiveScale,width:size.width/effectiveScale,height:size.height/effectiveScale,'--pc-scale':effectiveScale,'--pc-panel-alpha':currentAlpha} as CSSProperties}>
+   <div className={"pc-app"+(paused?" pc-paused":"")} data-device-panel={devicePanel}>
+    <header className="pc-header"><button className="pc-brand" onClick={exit} aria-label={t('返回工作台','Return to workbench')}><img src={logo} alt="ONTOVis 本源数智"/></button><div className="pc-project"><small>{t('项目','Project')}</small><strong>{project.displayName}</strong></div>
+     <nav aria-label={t('驾驶舱页面','Cockpit pages')}>{([['assets',Globe2,t('项目资产','Project assets')],['scene',Layers,t('场景总览','Scene overview')],['device',Box,t('设备','Equipment')],['analysis',LayoutDashboard,t('分析工作台','Analysis')]] as const).map(([id,Icon,label])=><button key={id} aria-current={view===id?'page':undefined} disabled={id==='device'&&navigationBusy} onClick={()=>navigate(id)}><Icon size={18}/><span>{label}</span></button>)}</nav>
+     <div className="pc-header-actions">{shareEntry&&<IconBtn label={t('复制位置链接','Copy location link')} onClick={()=>void copyLocation(shareEntry)}><Link2 size={17}/></IconBtn>}<IconBtn label={t('数据与来源','Data & sources')} onClick={()=>setDetail('sources')}><Info size={17}/></IconBtn><IconBtn label={t('返回工作台','Return to workbench')} onClick={exit}><ArrowLeft size={18}/></IconBtn><IconBtn label={t('切换主题','Switch theme')} onClick={()=>setTheme(resolved==='dark'?'light':'dark')}>{resolved==='dark'?<Sun size={18}/>:<Moon size={18}/>}</IconBtn><IconBtn label={t('显示设置','Display settings')} onClick={()=>openSettings()}><Settings2 size={18}/></IconBtn></div>
+    </header>
+    <div className="pc-breadcrumb"><button onClick={()=>navigate('assets')}>{project.displayName}</button>{row&&view!=='assets'&&<><span>/</span><button onClick={()=>navigate('scene')}>{opened?.snapshot.displayName??row.summary.displayName}</button></>}{selected&&view!=='assets'&&<><span>/</span><span>{selected.displayName}</span></>}{(view==='analysis'||view==='orders')&&<button className="pc-back" onClick={()=>navigate(returnView.current)}><ArrowLeft size={14}/>{t('返回空间','Return to space')}</button>}</div>
+    {!!error&&<div className="pc-error" role="alert">{failureMessage(error,locale)} <Btn onClick={()=>setAttempt(v=>v+1)}>{t('重试','Retry')}</Btn></div>}
+    {<main className={`pc-assets${view!=='assets'?' pc-space-hidden':''}`} aria-hidden={view!=='assets'}><Suspense fallback={<div className="pc-globe" aria-hidden="true"><div/><Globe2/></div>}><CockpitGlobe points={globePoints} active={active&&view==='assets'} en={en} light={resolved==='light'} flight={globeFlight} focusTarget={focusedScene} onSelectScene={id=>setFocusedScene(id?{sceneId:id,token:++navigationSerial.current}:null)} paused={paused||settings||alarms||!!detail||regionalOpen||!!spaceNavigation} onTogglePause={()=>setPaused(value=>!value)} onOpen={openScene}/></Suspense><section className="pc-panel pc-portfolios"><header><Layers/><h1>{t('资产组合','Asset portfolios')}</h1><Btn className="pc-regional-entry" onClick={()=>setRegionalOpen(true)}>{t('区域目录','Regional directory')}</Btn></header>
+     <div className="pc-totals"><span><b>{catalog?.scenes.length??'—'}</b>{t('场景','Scenes')}</span><span><b>{fleet?.turbines?(fleet.complete?fleet.turbines:'—'):(total?.complete?total.devices:'—')}</b>{fleet?.turbines?t('风机总数','Total turbines'):t('设备总数','Total equipment')}</span><span className="pc-alarm-total"><b>{replay.rows?.length??'—'}</b>{t('报警','Alarms')}</span></div>
+     {catalog&&!catalog.loading&&catalog.equipmentReady===false&&<small role="status">{t('暂无法统计设备。','Equipment totals are unavailable.')}</small>}
+     <label className="pc-search"><Search size={17}/><input aria-label={t('搜索场景','Search scenes')} value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('搜索当前项目场景','Search project scenes')}/></label>
+     {!catalog&&!error&&<p role="status">{pending}</p>}{catalog?.scenes.length===0&&<div className="pc-empty"><p>{t('项目尚无场景。','This project has no scenes.')}</p><Btn onClick={()=>guarded(()=>onWorkspace())}>{t('打开场景工作台','Open scene workbench')}</Btn></div>}
+     <PageDeck key={query} en={en} label={t('项目场景','Project scenes')} items={scenes} rowHeight={124} minimumRows={3} render={item=>{
+      const count=item.opened&&catalog&&catalog.equipmentReady!==false?sceneIdentity(item.opened,catalog.equipment,project.projectRef):null;const turbines=item.opened?cockpitTurbineIds(item.opened).length:0;
+      const turbineLabel=turbines?(en?`${turbines} ${turbines===1?'turbine':'turbines'}`:`${turbines} 台风机`):null;
+      const countLabel=count?(en?`${count.uids.length} ${count.uids.length===1?'device':'devices'} · ${count.representations} ${count.representations===1?'representation':'representations'}`:`${count.uids.length} 台设备 · ${count.representations} 个表示`):null;
+      return <button key={item.summary.sceneId} className="pc-scene-card" data-selected={focusedScene?.sceneId===item.summary.sceneId||undefined} onClick={()=>setFocusedScene({sceneId:item.summary.sceneId,token:++navigationSerial.current})}><span className="pc-card-visual"><SceneThumbnail client={client} sceneId={item.summary.sceneId} name={item.summary.displayName} thumbnail={item.opened?.thumbnail??item.summary.thumbnail} fallback={item.opened?.snapshot.coordinateFrame.mode==='projected_site'?<Globe2/>:<Box/>}/></span><span><strong title={item.summary.displayName}>{item.summary.displayName}</strong><small>{item.opened?(item.opened.snapshot.coordinateFrame.mode==='projected_site'?t('地理参考','Geographic reference'):t('局部模型','Local models')):item.error?t('读取待重试','Failed · Retry'):t('正在读取','Loading')}</small><small>{turbineLabel||countLabel||'—'}{!turbines&&!!count?.unresolved&&' · '+t('待解析','Unresolved')}</small></span><ArrowRight size={15}/></button>;
+     }}/>{catalog&&query&&!scenes.length&&<button onClick={()=>setQuery('')}>{t('无匹配 · 清空搜索','No matches · Clear search')}</button>}
+    </section><CockpitAlarmSummary replay={replay} targets={alarmTargets} positions={alarmPositions} en={en} onOpen={locateAlarm} onReplay={()=>openAlarms()}/></main>}
+    {spaceNavigation&&<div className="pc-entry-actions">{spaceNavigation.phase==='failed'&&<button onClick={()=>{if(!row?.opened)setAttempt(v=>v+1);setResourceAttempt(v=>v+1);openScene(spaceNavigation.sceneId,alarmFocus||undefined,true);}}>{t('重试','Retry')}</button>}<button onClick={cancelSpace}><ArrowLeft size={14}/>{t('返回资产组合','Return to portfolios')}</button></div>}
+    <div className="pc-spatial" hidden={view!=='scene'&&view!=='device'} aria-busy={!!spaceNavigation}>
+     {opened&&spatialMounted?<><div className="pc-viewport pc-native"><Suspense fallback={<p role="status">{pending}</p>}><SceneViewport sceneKey={spatialKey} api={api} active={active&&(view==='scene'||view==='device'||!!spaceNavigation)} snapshot={viewportSnapshot!} presentation overviewInstanceIds={overviewIds} initialFocusIds={initialOverviewIds} overviewFrame={overviewFrame} alarmLabels={spatialAlarms} onAlarmLabelFocus={id=>{const label=spatialAlarms.find(item=>item.id===id);if(navigationBusy||!label)return;if(uid===label.target.entityUid&&alarmFocus?.selection.datasetId===label.selection.datasetId&&alarmFocus.selection.datasetRevision===label.selection.datasetRevision)openAlarms(label.selection);else locateAlarm(label.selection,label.target);}} alarm={focusedAlarm&&focusedStatus?.state==='active'&&alarmFocus?{instanceId:alarmFocus.target.instanceId,state:focusedStatus.state,label:t('测试','Test')+' · '+focusedAlarm.dataset.faultCode,target:alarmFocus.target.displayName,bounds:componentFocus?.bounds}:null} onAlarmFocus={()=>{if(alarmFocus)selectObject(alarmFocus.target.entityUid);}} visualPaused={paused} environmentPreview={weatherPreview} simulatedMotions={simulation.requests} onMotionStatus={setMotionStatus} modelView={modelViewRequest} onModelViewStatus={setModelViewStatus} onModelReady={modelReady} modelRefs={effectiveModelRefs} terrainVersion={terrain} imageryVersion={imagery} imageryVisible={imageryVisible} terrainVisible={terrainVisible} personalVisibility={visibleInstances} editing={false} disabled={navigationBusy} pendingPlacement={false} selectedId={instanceId} cameraControl={camera} viewCommand={viewCommand} focusRequest={focus} componentFocus={componentFocus} componentPickingInstanceId={view==='device'&&!modelViewRequest?instanceId:null} onComponentPick={pickComponent} preparationKey={preparationKey} onPreparationState={prepared} preparationError={resourceError} onRetryPreparation={()=>setResourceAttempt(v=>v+1)} onSelect={selectInstance} onPoint={()=>{}} onMove={async()=>false} onViewChange={value=>{if(bookmarkKey&&!restoring)saveBookmark(bookmarkKey,{camera:value});}}/></Suspense><WeatherEffects value={weather.value} enabled={weatherMode!=='off'&&(weatherMode!=='forecast'||weather.usable)} condition={weatherMode!=='forecast'&&weatherMode!=='off'?weatherMode:undefined} paused={paused}/></div><div className="pc-space-panels" inert={!!spaceNavigation}>
+      {view==='device'&&focusedAlarm&&focusedStatus?.state==='active'&&alarmFocus&&!focusedSpatialLabel&&<div className="pc-alarm-focus pc-alarm-appearance" data-state={focusedStatus.state} data-severity={focusedStatus.severity}><TriangleAlert size={16}/><span><b>{t('测试','Test')} · {focusedAlarm.dataset.faultCode}{location.value?.geometryQuality==='proxy_schematic'?' · '+t('柜体示意','Schematic'):''}</b><strong>{alarmFocus.target.displayName}</strong></span><button onClick={()=>openAlarms(alarmFocus.selection)}>{t('报警详情','Alarm details')}</button><button aria-label={t('关闭报警定位','Close alarm focus')} disabled={navigationBusy} onClick={()=>setAlarmFocus(null)}><X size={14}/></button></div>}
+      {view!=='device'&&<><section className="pc-panel pc-scene-info"><header><Globe2 size={24}/><h2 title={opened.snapshot.displayName}>{opened.snapshot.displayName}</h2></header><button className="pc-quality-link" onClick={()=>setDetail('scene')}><Info size={13}/>{opened.snapshot.coordinateFrame.mode==='projected_site'?t('地理参考 · 精度未核实','Geographic reference · unverified'):t('局部模型','Local models')}{historical?' · '+t('历史版本','Historical'):''}</button><div className="pc-totals"><span><b>{sceneTurbines||counts?.uids.length}</b>{sceneTurbines?t('风机','Turbines'):t('设备','Equipment')}</span><span className="pc-alarm-total" data-active={typeof sceneAlarmCount==='number'&&sceneAlarmCount>0}><b>{sceneAlarmCount}</b>{t('报警','Alarms')}</span></div>
+      <CockpitWeatherSummary value={weather.value} now={weather.now} loading={weather.loading} error={weather.error} en={en} onDetails={()=>setDetail('weather')}/><button className="pc-primary-action" disabled={navigationBusy} onClick={chooseInstance}><Box size={17}/>{t('浏览设备','Browse equipment')}<ArrowRight size={15}/></button></section>
+      <aside className="pc-side-stack"><section className="pc-panel pc-alarm-summary" aria-label={t('场景报警','Scene alarms')}><header><TriangleAlert size={18}/><h3>{t('报警','Alarms')}</h3><small className="pc-sim-label">{t('测试','Test')}</small></header>
+       {alarmLoading?<p className="pc-home-alarm-state" role="status">{t('正在读取报警…','Loading alarms…')}</p>:
+        sceneAlarmRows.length?sceneAlarmRows.slice(0,2).map(item=><CockpitAlarmCard key={replayKey(item.dataset)} row={item} positions={alarmPositions} en={en} compact disabled={navigationBusy} onOpen={locateAlarm}/>):
+        <CockpitAlarmStatus value={cockpitAlarmPresentation(undefined,en)}/>}<button className="pc-overview-row" onClick={()=>openAlarms()}><span>{t('查看报警回放','Open alarm replay')}</span><ArrowRight size={14}/></button></section><section className="pc-panel pc-layers"><header><Layers size={19}/><h3>{t('图层','Layers')}</h3><button className="pc-text-action" aria-label={t('场景显示设置','Scene display settings')} onClick={()=>openSettings('scene')}><Settings2 size={15}/></button></header><DisplaySwitch label={t('设备模型','Equipment models')} checked={devicesVisible} onChange={setDevicesVisible}/><DisplaySwitch label={t('地形','Terrain')} checked={terrainVisible} onChange={setTerrainVisible}/><DisplaySwitch label={t('影像','Imagery')} checked={imageryVisible} disabled={!imagery} onChange={setImageryVisible}/><DisplaySwitch label={t('天气特效','Weather effects')} checked={weatherMode!=='off'} onChange={v=>setWeatherMode(v?'forecast':'off')}/></section></aside></>}
+      {view==='device'&&<div className="pc-device-panel-tabs" role="group" aria-label={t('设备面板','Equipment panels')}><button aria-pressed={devicePanel==='structure'} onClick={()=>setDevicePanel('structure')}>{t('结构','Structure')}</button><button aria-pressed={devicePanel==='info'} onClick={()=>setDevicePanel('info')}>{t('资料','Details')}</button></div>}
+      {view==='device'&&(uid?<CockpitDevice key={selected?.sceneModelInstanceId} api={api} uid={uid} en={en} onBack={()=>navigate('scene')} alarm={deviceAlarm} representationUid={selected?.rootBinding?.objectRef.entityUid} onSelect={selectObject} selectionToken={locationAttempt} location={location.value} preparationState={preparationState} locating={location.loading} previewing={!!quickFocus&&location.loading} locationError={location.error} isolated={isolated&&!!componentFocus} onIsolate={()=>{if(!navigationBusy&&preparationState==='ready')setIsolated(value=>!value);}} onFocus={()=>selectObject(uid)} onAnalyze={analyze} onChoose={chooseInstance} model={effectiveMotionRef}/>:<section className="pc-panel pc-scene-info"><header><Box size={22}/><h2>{selected?.displayName||t('设备','Equipment')}</h2></header><small>{selected?t('身份未绑定','Identity not bound'):t('请选择设备','Select equipment')}</small><button className="pc-primary-action" disabled={navigationBusy} onClick={chooseInstance}>{t('浏览设备','Browse equipment')}<ArrowRight size={16}/></button></section>)}
+      {motionVisible&&selected&&effectiveMotionRef&&<div className="pc-model-dock"><CockpitModelView key={spatialKey+selected.sceneModelInstanceId+effectiveMotionRef.contentRevision+inspectionGeneration} instanceId={selected.sceneModelInstanceId} modelVersionId={effectiveMotionRef.modelVersionId} contentRevision={effectiveMotionRef.contentRevision} sha256={effectiveMotionRef.sha256} canInspect={canInspectModel} pending={navigationBusy||preparationState==='error'} en={en} mode={activeMode} onModeSelect={mode=>{if(inspecting)setShellMode(mode);}} onChange={value=>{if(!inspecting)setModelView(value);else if(value?.mode==='exploded')setModelView(value);else setModelView(null);}} status={modelViewStatus}/></div>}
+      {view==='scene'&&<div className="pc-simulation-badge"><button className="pc-demo-button" onClick={()=>openSettings('demo')}><Rotate3D size={16}/>{t('运行预览','Motion preview')} · {paused||!simulation.running||simulation.reduced?t('已暂停','Paused'):simulation.preset==='stopped'?t('停机展示','Stationary'):simulationReady+' '+t('台运行','running')}</button></div>}
+      <div className="pc-space-status"><button onClick={()=>openAlarms(focusedAlarm?alarmFocus?.selection:undefined)}><TriangleAlert size={13}/>{focusedAlarm?t('报警详情','Alarm details'):t('报警回放','Alarm replay')}</button>{focusedAlarm&&(focusedSpatialLabel||focusedStatus?.state!=='active')&&<button aria-label={t('关闭报警定位','Close alarm focus')} disabled={navigationBusy} onClick={()=>setAlarmFocus(null)}><X size={13}/></button>}<button onClick={()=>setDetail('scene')}><Info size={13}/>{t('场景详情','Scene details')}</button>{weatherMode!=='forecast'&&weatherMode!=='off'&&<span>{t('天气预览','Weather preview')}</span>}<button onClick={()=>setPaused(v=>!v)} aria-label={paused?t('继续可视化','Resume visuals'):t('暂停可视化','Pause visuals')}>{paused?<Play size={13}/>:<Pause size={13}/>}</button></div>
+     </div></>:sceneId?<section className="pc-scene-shell"><Layers size={28}/><h2>{row?.summary.displayName||t('场景总览','Scene overview')}</h2>{pinnedError||row?.error||missingScene?<div role="alert">{failureMessage(pinnedError||row?.error||new ApiError(404,'SCENE_NOT_FOUND'),locale)} <Btn onClick={()=>setAttempt(v=>v+1)}>{t('重试','Retry')}</Btn></div>:<SceneLoadingProgress locale={locale}/>}</section>:<div className="pc-space-panels"><section className="pc-panel pc-selection"><h2>{t('选择场景','Select scene')}</h2>{!!(pinnedError||row?.error)&&<p role="alert">{failureMessage(pinnedError||row?.error,locale)} <Btn onClick={()=>setAttempt(v=>v+1)}>{t('重新读取','Reload')}</Btn></p>}{!catalog&&!error?<p role="status">{pending}</p>:<PageDeck en={en} label={t('选择场景','Select scene')} items={catalog?.scenes||[]} rowHeight={68} render={item=><button className="pc-branch" key={item.summary.sceneId} onClick={()=>openScene(item.summary.sceneId)}><Globe2 size={18}/><span>{item.summary.displayName}</span><ArrowRight size={15}/></button>}/>}{catalog?.scenes.length===0&&<p>{t('项目尚无场景。','This project has no scenes.')}</p>}</section></div>}
+    </div>
+    {analysisMounted&&<div className="pc-workspace pc-native ov-app" hidden={view!=='analysis'}><Suspense fallback={<p role="status">{pending}</p>}><CockpitAnalysis key={analysisGeneration} api={api} active={active&&view==='analysis'} en={en} entry={analysisEntry} faults={(replay.rows||[]).map(item=>({...item.dataset}))} onChooseFault={setAnalysisEntry} onBackend={entry=>guarded(()=>onAnalysisWorkspace(entry))}/></Suspense></div>}
+    {orderMounted&&<div className="pc-workspace pc-native ov-app" hidden={view!=='orders'}><Suspense fallback={<p role="status">{pending}</p>}><WorkOrders readOnly key={orderQuery} api={api} locale={locale} initialQuery={orderQuery} onDirtyChange={setOrderDirty} onAnalyze={orderId=>analyze({orderId})} onOpenReference={analyze} onOpenAnalysis={(analysisSessionId,analysisRevision,assistantRunId)=>analyze({analysisSessionId,analysisRevision,...(assistantRunId?{assistantRunId}:{})})}/></Suspense></div>}
+    {notice&&<p role="status" className="pc-notice">{notice}<button onClick={()=>setNotice('')}><X size={14}/></button></p>}
+   </div>
+  </div>
+  {settings&&<Modal className="pc-settings-dialog" title={t('显示设置','Display settings')} description={t('调整当前会话显示偏好。','Display preferences for this session.')} onClose={()=>setSettings(false)}><div className="pc-settings"><div className="pc-settings-tabs" role="tablist" aria-label={t('设置分类','Settings sections')}>{[['display',t('显示','Display')],['scene',t('场景','Scene')],['demo',t('运行预览','Motion preview')]].map(([id,label])=><button key={id} role="tab" aria-selected={settingsTab===id} onClick={()=>setSettingsTab(id)}>{label}</button>)}</div>
+   {settingsTab==='display'&&<div role="tabpanel"><label>{t('界面缩放','Interface scale')}<select aria-label={t('界面缩放','Interface scale')} value={scale} onChange={e=>setScale(e.target.value as InterfaceScale)}><option value="auto">{t('自动','Automatic')}（{automaticScale*100}%）</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select></label><label>{t('视觉主题','Theme')}<select aria-label={t('视觉主题','Theme')} value={resolved} onChange={e=>setTheme(e.target.value as 'light'|'dark')}><option value="dark">{t('深色','Dark')}</option><option value="light">{t('浅色','Light')}</option></select></label><label>{t('面板透明度','Panel opacity')}<select aria-label={t('面板透明度','Panel opacity')} value={panelOpacity} onChange={e=>{const val=e.target.value as CockpitPanelOpacity;setPanelOpacity(val);try{localStorage.setItem('ontovis.cockpit.panel_opacity',val);}catch{}}}><option value="ultra">{t('超高通透 (35%)','Ultra high transparency (35%)')}</option><option value="high">{t('高通透 (50%)','High transparency (50%)')}</option><option value="medium">{t('标准通透 (65% · 推荐)','Standard (65% · recommended)')}</option><option value="low">{t('微透 (85%)','Low transparency (85%)')}</option><option value="solid">{t('实心 (100%)','Solid (100%)')}</option></select></label><DisplaySwitch label={t('暂停可视化','Pause visuals')} checked={paused} onChange={setPaused}/><div className="pc-settings-actions"><Btn onClick={()=>{setScale('auto');setPanelOpacity('medium');try{localStorage.setItem('ontovis.cockpit.panel_opacity','medium');}catch{}}}>{t('恢复默认显示','Default display')}</Btn><Btn onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen();else void document.documentElement.requestFullscreen().catch(()=>setNotice(t('当前浏览器无法进入全屏。','Fullscreen is unavailable.')));}}><Maximize2 size={16}/>{t('全屏显示','Fullscreen')}</Btn></div><small>{t('毛玻璃通透度随当前视觉主题自适应调整；三维镜头、分析画布和照片原像素比例独立保持。','Frosted glass transparency adapts to the active theme; 3D cameras, analysis zoom and photo pixels stay independent.')}</small></div>}
+   {settingsTab==='scene'&&<div role="tabpanel"><label>{t('场景光照','Scene lighting')}<select aria-label={t('场景光照','Scene lighting')} value={lighting} onChange={e=>setLighting(e.target.value as CockpitLight)}><option value="scene">{t('跟随场景 / 预报','Scene / forecast')}</option><option value="day">{t('白天','Day')}</option><option value="dusk">{t('黄昏','Dusk')}</option><option value="night">{t('夜景补光','Night with fill light')}</option></select></label><label>{t('天气呈现','Weather presentation')}<select aria-label={t('天气呈现','Weather presentation')} value={weatherMode} onChange={e=>setWeatherMode(e.target.value as CockpitWeather)}><option value="forecast">{t('按有效预报','Current forecast')}</option><option value="off">{t('关闭特效','Effects off')}</option>{[['clear',t('晴','Clear')],['cloud',t('多云','Cloudy')],['rain',t('雨','Rain')],['snow',t('雪','Snow')],['fog',t('雾','Fog')]].map(([id,label])=><option key={id} value={id}>{label} · {t('运行预览','Motion preview')}</option>)}</select></label><DisplaySwitch label={t('设备模型','Equipment models')} checked={devicesVisible} onChange={setDevicesVisible}/><DisplaySwitch label={t('地形','Terrain')} checked={terrainVisible} onChange={setTerrainVisible}/><DisplaySwitch label={t('影像','Imagery')} checked={imageryVisible} disabled={!imagery} onChange={setImageryVisible}/>{view==='assets'&&<small>{t('进入场景后应用场景设置。','Scene settings apply after entering a scene.')}</small>}</div>}
+   {settingsTab==='demo'&&<div role="tabpanel"><CockpitMotion simulation={simulation} opened={opened} selected={view==='device'?selected:undefined} selectedRef={effectiveMotionRef} status={motionStatus} en={en} paused={paused} inspecting={!!modelViewRequest} sceneCount={catalog?.scenes.length??0}/></div>}
+  </div></Modal>}
+  {regionalOpen&&view==='assets'&&<Suspense fallback={<p role="status">{pending}</p>}><RegionalCatalog api={api} en={en} onClose={()=>setRegionalOpen(false)}
+   onLocate={point=>{setRegionalPoint(point);setFocusedScene({sceneId:point.sceneId,token:++navigationSerial.current});setRegionalOpen(false);}}/></Suspense>}
+  {detail&&<Modal className={detail==='instances'?'pc-instance-dialog':'pc-detail-dialog'} title={detail==='weather'?t('天气详情','Weather details'):detail==='instances'?t('场景设备','Scene equipment'):detail==='scene'?t('场景详情','Scene details'):t('数据与来源','Data & sources')} description={t('查看详细信息','View detailed information')} onClose={()=>setDetail('')}>
+   {detail==='weather'&&<WeatherCard value={weather.value} loading={weather.loading} error={weather.error} now={weather.now} en={en}/>}
+   {detail==='instances'&&opened&&<div className="pc-instance-browser"><label className="pc-search"><Search size={17}/><input aria-label={t('搜索设备','Search equipment')} placeholder={t('搜索设备','Search equipment')} value={instanceQuery} onChange={e=>setInstanceQuery(e.target.value)}/></label><PageDeck key={instanceQuery} label={t('模型列表','Model list')} en={en} rowHeight={65} items={opened.snapshot.instances.filter(item=>item.displayName.toLocaleLowerCase().includes(instanceQuery.toLocaleLowerCase()))} render={item=><div className="pc-instance-row" key={item.sceneModelInstanceId} data-selected={item.sceneModelInstanceId===instanceId||undefined}><button aria-pressed={item.sceneModelInstanceId===instanceId} disabled={navigationBusy} onClick={()=>selectInstance(item.sceneModelInstanceId)}><Box size={18}/><span>{item.displayName}</span><ArrowRight size={14}/></button><input type="checkbox" aria-label={`${t('显示','Show')} ${item.displayName}`} disabled={navigationBusy} checked={personal[item.sceneModelInstanceId]??item.visible} onChange={e=>setPersonal(value=>({...value,[item.sceneModelInstanceId]:e.target.checked}))}/></div>}/></div>}
+   {detail==='scene'&&opened&&<div className="pc-detail-copy"><h3>{opened.snapshot.displayName}</h3><p>{opened.snapshot.description}</p><p>{t('地理参考与示意模型，工程精度尚未核实。','Geographic references and model representations; engineering accuracy unverified.')}</p><p>{counts?.uids.length} {t('台去重设备','distinct devices')} · {counts?.representations} {t('个模型表示','representations')} · {counts?.unresolved} {t('个身份待解析','unresolved identities')}</p><Btn onClick={()=>guarded(()=>onWorkspace(sceneId))}>{t('在工作台管理场景','Manage in workbench')}</Btn></div>}
+   {detail==='sources'&&<div className="pc-detail-copy"><p>{t('场景为资产组合。风机总数按完整风机模型的布置统计。已绑定的设备跨场景只计一次。未绑定的模型按场景实例计数，设备身份待核实。当前报警来自固定测试数据的回放。设备遥测和现场报警尚未接入。','Turbine totals count placed whole-turbine models. Bound equipment counts once across scenes. Unbound models count by scene instance and their equipment identities need verification. Alarms use a fixed set of test data for replay. Live telemetry and field alarms are unconnected.')}</p><p>{t('地球点位来自当前授权场景参考锚点，位置精度未核实。','Globe points use authorized scene reference anchors with unverified accuracy.')}</p><p><a href="https://svs.gsfc.nasa.gov/2915/" target="_blank" rel="noreferrer">NASA/GSFC SVS · Blue Marble</a> · {t('历史合成底图，云层与光照为示意。','Historical mosaic; clouds and lighting are illustrative.')}</p>
+    {imagery&&<section aria-label={t('场景影像来源','Scene imagery sources')}><h3>{t('场景影像','Scene imagery')}</h3><p>{imagery.displayName}</p><dl className="cw-kv"><dt>{t('采集时间','Acquired')}</dt><dd>{imagery.metadata.acquiredAt}</dd><dt>{t('署名','Attribution')}</dt><dd>{imagery.metadata.attribution}</dd><dt>{t('许可','License')}</dt><dd>{imagery.metadata.licenseNote}</dd></dl><details><summary>{t('来源与质量说明','Source and quality details')}</summary><p>{imagery.metadata.sourceNote}</p><p>{imagery.metadata.qualityNote}</p></details></section>}
+   </div>}
+  </Modal>}
+  {alarms&&<Modal className="pc-alarm-dialog" title={t('报警回放','Alarm replay')} description={t('回放来源为固定测试数据。','Replay uses fixed test data.')} onClose={()=>setAlarms(false)}><Suspense fallback={<p role="status">{pending}</p>}><p className="pc-dialog-note">{t('回放数据源 · 测试数据','Replay source · Test data')}</p><DataAlarms key={alarmSelection?`${alarmSelection.datasetId}:${alarmSelection.datasetRevision}`:'all'} initialDataset={alarmSelection} positions={alarmPositions} onPosition={updateAlarmPosition} api={api} locale={locale} onAnalyze={analyze} onOpenWorkOrders={orders} onLocate={(selection,registration)=>{
+   const target=cockpitAlarmTarget(catalog,project.projectRef,registration);
+   if(!target||navigationBusy)return false;
+   setAlarms(false);locateAlarm(selection,target);return true;
+  }} locatePending={registration=>navigationBusy||!error&&(!catalog||!!catalog.loading)&&!cockpitAlarmTarget(catalog,project.projectRef,registration)}/></Suspense></Modal>}
+  {leave&&<ConfirmationDialog title={t('修改尚未保存','Unsaved changes')}
+    description={t('离开会丢失当前修改。','Leaving discards the current edits.')}
+    cancelLabel={t('继续编辑','Keep editing')} onClose={()=>setLeave(null)}>
+    <Btn data-danger onClick={()=>{const change=leave;setLeave(null);change();}}>{t('放弃并离开','Discard and leave')}</Btn>
+  </ConfirmationDialog>}
+ </div>;
+}

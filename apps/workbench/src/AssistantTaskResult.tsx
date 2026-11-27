@@ -1,0 +1,127 @@
+import {displayText} from './displayText';
+import {materialKindLabel} from './analysisMaterials';
+import type {AssistantRun} from './assistantApi';
+import {Btn} from './Primitives';
+import {adoptedModelTarget,equipmentConfigurationTarget,taskActionNames,taskMaterialName,taskResultReceipt,type AssistantModelTarget,type TaskCandidate} from './assistantTasks';
+import type {EquipmentConfigurationTarget} from './equipmentApi';
+import type {AssistantSceneTarget} from './assistantScene';
+import type {DeviceMaterialsTarget} from './AssistantDeviceMaterials';
+import type {FixedDocumentTarget} from './FixedDocumentPreview';
+import {AssistantModelSceneList,AssistantModelUsage,type ModelUsagePage,type ModelUsageQuery} from './AssistantModelUsage';
+import type {CanvasCard} from './analysisCanvas';
+
+const processingLabels:Record<string,[string,string]>={
+ drawing_batch:['图纸处理批次','Drawing processing batch'],drawing_recognition:['图纸识别','Drawing recognition'],
+ drawing_import:['图纸导入','Drawing import'],document_batch:['资料导入批次','Document import batch'],
+ document_source:['原文处理','Source processing'],document_generation:['知识生成','Knowledge generation'],
+ photo:['照片关联','Photo association'],knowledge_import:['知识导入','Knowledge import'],knowledge_release:['知识发布','Knowledge release'],
+ queued:['排队中','Queued'],running:['处理中','Running'],awaiting_input:['等待输入','Awaiting input'],completed:['处理已完成','Processing complete'],
+ failed:['处理失败','Processing failed'],cancelled:['已取消','Cancelled'],unknown:['状态待确认','Status unconfirmed'],
+ not_formed:['结果尚未形成','Result unavailable'],applied:['已应用','Applied'],pending_review:['结果待复核','Result pending review'],
+ available:['结果可查看','Result available'],source_ready:['原文已准备','Source ready'],published:['已发布','Published'],
+ superseded:['已被新版本替代','Superseded'],withdrawn:['已撤回','Withdrawn'],
+};
+
+export function AssistantTaskResult({run,en,locked,cards,onLocateCard,onExecute,onPage,onHandoff,onViewScene,onViewDevice,onViewDocument,onViewModel,onViewConfiguration,onViewCandidate,loadModelUsage,hasUnsaved=false,operationFailure,onRetryAddition}:{
+ run:AssistantRun;en:boolean;locked:boolean;onExecute?:(keys:string[])=>void;onPage:(index:number)=>void;onHandoff?:()=>void;
+ cards:CanvasCard[];onLocateCard:(card:CanvasCard)=>void;
+ onViewScene?:(target:AssistantSceneTarget,trigger?:HTMLButtonElement)=>void;onViewDevice?:(target:DeviceMaterialsTarget)=>void;
+ onViewDocument?:(target:FixedDocumentTarget)=>void;onViewModel?:(target:AssistantModelTarget,trigger:HTMLButtonElement)=>void;
+ onViewConfiguration?:(target:EquipmentConfigurationTarget,title:string)=>void;
+ onViewCandidate?:(candidate:TaskCandidate,trigger:HTMLButtonElement)=>void;
+ loadModelUsage?:(query:ModelUsageQuery,signal:AbortSignal)=>Promise<ModelUsagePage>;hasUnsaved?:boolean;
+ operationFailure?:string;onRetryAddition?:()=>void}){
+ const task=run.result?.task;if(!task)return null;
+ if(!onHandoff&&!task.results.length&&!task.plan.actions.length&&!task.receipts.length&&!task.trace.length&&!task.graphs.length)return null;
+ const t=(zh:string,english:string)=>en?english:zh;
+ const processingLabel=(key?:string)=>processingLabels[key??'']?.[en?1:0];
+ const materialKind=(key?:string)=>materialKindLabel(key,en);
+ const linked=task.linkedAnchorRef!==undefined;
+ const results=linked?task.results.filter(row=>!taskResultReceipt(task.receipts,row)):task.results;
+ const pendingKeys=results.filter(row=>row.selector&&!taskResultReceipt(task.receipts,row)).map(row=>row.key);
+ const names:Record<string,string>={work_orders:t('项目工单','Project work orders'),objects:t('工程对象','Objects'),graph:t('工程关系','Engineering graph'),knowledge:t('文档知识图谱','Document knowledge'),materials:t('项目资料','Materials'),related_drawings:t('登记关联图纸','Linked drawings'),related_photos:t('登记关联照片','Linked photos'),alarm_object:t('报警对象','Alarm object'),alarm_manuals:t('故障码手册','Fault-code manuals'),disposition:t('生成处置建议','Generate response plan'),scenes:t('项目场景','Project scenes'),adopted_models:t('项目采用模型','Project model adoption'),equipment_materials:t('安装设备目录','Installed equipment'),equipment_applicable_materials:t('设备适用资料','Applicable materials'),processing_tasks:t('资料处理任务','Processing tasks'),fixed_manual_neighborhood:t('固定发布版知识邻域','Fixed publication neighborhood'),selected_material:t('画布补充资料','Canvas context')};
+ const states:Record<string,string>={complete:t('已读取','Read'),unavailable:t('读取失败','Unavailable'),budget_limited:t('当时读取次数达上限 · 未读取','Previous read count reached · unread'),policy_excluded:t('项目策略未允许读取','Excluded by policy')};
+ return <section className="as-task-result" aria-label={t('项目检索与操作','Project results and actions')}>
+  {task.mode==='cockpit_query'&&onHandoff&&<Btn disabled={locked} onClick={onHandoff}>{t('转后台继续','Continue in workbench')}</Btn>}
+  {operationFailure&&<div className="as-failure" role="alert"><p>{operationFailure}</p><Btn disabled={locked} onClick={onRetryAddition}>{t('重新填写这条指令','Fill in this instruction again')}</Btn></div>}
+  {!!results.length&&<><div className="as-result-heading"><h4>{linked?t('关联资料','Linked materials'):t('项目检索结果','Project results')}</h4>
+   {onExecute&&pendingKeys.length>1&&<Btn disabled={locked} onClick={()=>onExecute(pendingKeys)}>{t('全部加入','Add all')}</Btn>}
+  </div><div className="as-project-results">{results.map(row=>{
+   const scene=row.kind==='scene',adopted=row.kind==='adopted_model',device=row.kind==='equipment_material_scope',version=String(row.version);
+   const model=adoptedModelTarget(row),configuration=equipmentConfigurationTarget(row);
+   const name=displayText(taskMaterialName(row.title,en));
+   const applied=taskResultReceipt(task.receipts,row);
+   const add=row.selector&&onExecute&&<Btn disabled={locked||!!applied}
+    aria-label={applied?undefined:t('加入画布','Add to canvas')+' · '+materialKind(row.kind)+' · '+name}
+    onClick={()=>onExecute([row.key])}>{applied?t('已处理','Applied'):t('加入画布','Add to canvas')}</Btn>;
+   if(row.selector&&onViewCandidate&&['object','drawing','document','photo'].includes(row.kind)){
+    const reason=displayText(row.reason);
+    return <article className="ac-material-candidate" data-card-kind={row.kind} key={row.key}>
+     <header><span>{materialKind(row.kind)}</span><strong>{name}</strong></header>
+     <div className="ac-candidate-body">
+      <span title={reason}>{reason}</span>
+      <div className="as-result-actions">
+       <Btn aria-haspopup="dialog" aria-label={t('查看详情','View details')+' · '+name} disabled={locked}
+        onClick={event=>onViewCandidate(row,event.currentTarget)}>{t('查看详情','View details')}</Btn>
+       {add}
+      </div>
+     </div>
+    </article>;
+   }
+   return <article key={row.key}><div><strong>{name}</strong>
+    {row.kind==='equipment_configuration'?<><small>{[row.installation,row.deviceCode,row.identifier].filter(Boolean).join(' · ')}</small>
+     <p>{row.configurationId?row.configuration+' · '+row.modelCount+' '+t('个固定模型','fixed models'):t('当前无已保存的采用配置','No saved configuration for the current adoption')}</p></>:
+    scene?<><small title={version}>{t('保存版本','Saved revision')} · {version.replace(/^scene:/,'').slice(0,8)}</small>
+     <p>{row.instanceCount} {t('个实例','instances')}</p></>:adopted?<>
+     <small title={version}>{t('固定模型版本','Fixed model revision')} · {version.slice(0,8)} · {row.representation==='appearance'?t('外观版','Exterior'):row.representation==='detailed'?t('完整版','Full model'):t('表示用途未登记','Representation not recorded')}{row.state==='deleted'?' · '+t('模型在回收站','Model in trash'):''}</small>
+     <p title={row.configurationRevision??undefined}>{row.configuration}</p>
+     <small>{row.instanceCount? t('已保存场景共引用','References across saved scenes')+' '+row.instanceCount:t('暂无已保存场景引用','No saved scene references')}</small>
+     <AssistantModelSceneList scenes={row.scenes} modelVersionId={model?.modelVersionId} en={en} locked={locked} onViewScene={onViewScene}/>
+     {row.moreScenes&&<small>{t('还有场景引用未展开','More saved scene references')}</small>}</>:
+     row.kind==='processing_task'?<>
+      <small>{processingLabel(row.processingKind)}</small>
+      <p>{processingLabel(row.state)} · {processingLabel(row.resultState)}{row.totalUnits!==undefined?' · '+row.completedUnits+'/'+row.totalUnits:''}</p>
+     </>:device?<small>{t('已登记安装设备','Registered installation')}</small>:
+     row.kind==='material_unavailable'?<small>{t('固定版本','Fixed version')} v{version} · {t('原文暂不可查看','Preview unavailable')}</small>:
+     row.documentPreview&&typeof row.version==='number'?<small>{materialKind(row.kind)} · {t('设备适用资料','Applicable material')} · v{version}</small>:<>
+     <small>{materialKind(row.kind)}{row.kind==='work_order'?' · '+row.identifier:''}{row.simulated?' · '+t('测试记录','Test record'):''}</small>
+     <p>{displayText(row.reason)}{row.state?' · '+row.state:''}</p></>}
+    </div><div className="as-result-actions">
+     {scene&&onViewScene&&<Btn disabled={locked} onClick={()=>onViewScene({sceneId:row.identifier,sceneRevision:version,title:row.title})}>{t('查看场景','View scene')}</Btn>}
+     {model&&onViewModel&&<Btn aria-haspopup="dialog" disabled={locked} onClick={event=>onViewModel(model,event.currentTarget)}>{t('查看固定模型','View fixed model')}</Btn>}
+     {configuration&&onViewConfiguration&&<Btn aria-haspopup="dialog" disabled={locked} onClick={()=>onViewConfiguration(configuration,row.kind==='adopted_model'?row.configuration??row.title:row.title)}>{t('查看设备配置','View device configuration')}</Btn>}
+     {device&&onViewDevice&&<Btn disabled={locked} onClick={()=>onViewDevice({entityUid:row.identifier,entityRevision:version,title:row.title,showDrawings:row.showDrawings})}>{t('查看设备资料','View materials')}</Btn>}
+     {row.documentPreview&&onViewDocument&&<Btn disabled={locked} onClick={()=>onViewDocument(row.documentPreview!)}>{t('查看原文','View source')}</Btn>}
+     {add}
+    </div></article>;
+  })}</div></>}
+  {loadModelUsage&&task.trace.some(row=>row.tool==='adopted_models'&&row.state==='complete')&&
+   <AssistantModelUsage loadPage={loadModelUsage} en={en} locked={locked} onViewScene={onViewScene}/>}
+  {!!task.plan.actions.length&&(!linked||!task.receipts.length)&&<div className="as-proposed-actions"><h4>{t('画布操作','Canvas actions')}</h4>{hasUnsaved&&task.plan.actions.some(a=>a.kind==='save')&&<p>{t('当前还有未保存内容；执行将保存整张画布，包括这些已有修改。','This canvas has unsaved edits. Applying this plan saves the whole canvas, including those edits.')}</p>}<ul>{task.plan.actions.map((action,i)=><li key={i}>{taskActionNames[action.kind]?.[en?1:0]??action.kind}{displayText(action.text&&['rename','add_note','add_relation','update_note','append_note','rename_card','group_cards','rename_group','update_relation','add_support','add_contradiction','add_reference','restore_revision','set_window'].includes(action.kind)?' · '+action.text:'')}</li>)}</ul>{task.mode==='cockpit_query'?<p>{t('驾驶舱仅查询。请转到后台执行这些操作。','Cockpit is query only. Open the workbench to execute these actions.')}</p>:onExecute&&<Btn primary disabled={locked||!!task.receipts.length} onClick={()=>onExecute([])}>{hasUnsaved&&task.plan.actions.some(a=>a.kind==='save')?t('应用并保存全部草稿','Apply and save entire draft'):t('执行画布操作','Apply canvas actions')}</Btn>}<small>{t('修改先进入草稿，可撤销；仅明确的保存指令会保存。','Edits enter the draft and can be undone. Saving requires an explicit instruction.')}</small></div>}
+  {task.receipts.map(receipt=><div className="as-execution-receipt" role="status" key={receipt.operationId}>
+   <strong>{receipt.state==='saved'?t('画布已保存','Canvas saved'):receipt.saveRequested?t('执行时草稿已应用 · 保存未确认','Draft applied at execution · save unconfirmed'):t('已应用到草稿 · 执行时未保存','Applied to draft · unsaved at execution')}</strong>
+   {receipt.items.map((item,i)=>{
+    const row=item.kind==='add_results'?task.results.find(candidate=>candidate.key===item.resultKey||
+      (!item.resultKey&&candidate.identifier===item.identifier&&candidate.version===item.sourceVersion)):undefined;
+    if(item.kind!=='add_results')return <p key={i}>{[taskActionNames[item.kind]?.[en?1:0]??item.kind,
+      displayText(item.label??item.restoredFrom)].filter(Boolean).join(' · ')}</p>;
+    const card=cards.find(card=>card.id===item.cardId);
+    const title=displayText(taskMaterialName(card?.title??item.label??row?.title,en));
+    return <p key={i}>{materialKind(item.sourceKind??row?.kind)} · {card?
+      <button type="button" className="as-receipt-card" disabled={locked}
+       aria-label={t('在画布中定位','Locate on canvas')+' · '+title} onClick={()=>onLocateCard(card)}>{title}</button>:title}
+      {' · '+(item.status==='already_present'?t('已在画布上','Already on the canvas'):t('已加入','Added'))}
+      {item.simulated?' · '+t('测试来源','Test source'):''}{linked&&row?.reason&&<small>{displayText(row.reason)}</small>}</p>;
+   })}
+  </div>)}
+  <details className="as-task-trace"><summary>{t('检索范围与过程','Search scope and process')} · {task.reads} {t('次资料读取','source reads')}</summary><p>{t('项目资料与画布资料分别读取；同码工单不等于相同根因。','Project and canvas sources are read independently. Matching fault codes do not establish a shared root cause.')}</p>{task.trace.map((trace,i)=><div key={i}><span>{names[trace.tool]??trace.tool} · {states[trace.state]??trace.state}{trace.count!==undefined?' · '+trace.count:''}{trace.total!==undefined?' / '+trace.total:''}{displayText(trace.reason?' · '+trace.reason:'')}</span>{trace.tool==='work_orders'&&trace.nextCursor!=null&&<Btn disabled={locked} onClick={()=>onPage(i)}>{t('继续查找','More results')}</Btn>}{trace.scope&&<small>{displayText(trace.tool==='scenes'?t(trace.scope,'Current project active scenes · saved revisions and instance counts'):trace.tool==='adopted_models'?t(trace.scope,'Current project adoption and saved scene references'):trace.scope)}</small>}{trace.nextCursor!=null&&trace.tool!=='work_orders'&&<small>{t('还有项目结果未读取，可缩小查询范围继续查找','More project results remain unread; narrow the query to continue')}</small>}{trace.truncated&&<small>{trace.tool==='scenes'?t('还有匹配场景，可按更具体的名称查找','More scenes match; narrow the search by name'):['equipment_materials','equipment_applicable_materials','processing_tasks'].includes(trace.tool)?t('仅列出本次读取范围','Only results within this read scope are shown'):trace.tool==='adopted_models'?t('结果已达到列出上限，可按配置名称继续查询','The result limit was reached. Narrow the search by configuration name.'):t('已达到本次邻域上限，未遍历全部关系','Neighborhood limit reached; not all relationships were read')}</small>}</div>)}</details>
+  {task.graphs.map((entry,i)=>{
+   const graph=entry.graph,engineering=entry.kind==='engineering';
+   const nodes=(graph.nodes??[]) as {id?:string;local_id?:string;title?:string;statement?:string;kind?:string;source?:{release_id?:string;document?:{name:string};version?:{version_number:number}};payload?:{properties?:Record<string,{value:unknown}[]>}}[];
+   const edges=(graph.relations??[]) as {id?:string;type?:string;status?:string;source?:string|{release_id?:string;document?:{name:string}};target?:string;provenance?:{recordId:string;recordRevision:string;pageNumber?:number};payload?:{subject_id:string;object_id:string;predicate:string;evidence_ids?:string[]}}[];
+   const property=(node:typeof nodes[number],name:string)=>String(Object.entries(node.payload?.properties??{}).find(([key])=>key==='urn:ontobase:document-knowledge:1:'+name)?.[1]?.[0]?.value??'');
+   const label=(id:string|undefined)=>{const node=nodes.find(n=>n.id===id||n.local_id===id);return node?.title||(node&&property(node,'title'))||node?.kind||id;};
+   return <details className="as-task-graph" key={i}><summary>{engineering?t('工程关系与出处','Engineering relations and provenance'):t('文档知识与出处','Document knowledge and provenance')} · {nodes.length}{t('个节点',' nodes')}</summary><p>{engineering?t('已登记关系、候选连接分别标注；关系相连不确认信号方向或现场接线。','Recorded relations and candidate connections are labelled separately; connectivity does not confirm wiring or signal direction.'):t('仅已发布知识；名称关联不代表电气连通。原文证据与缺口保留在各节点。','Published knowledge only; name associations do not establish electrical continuity.')}</p>{!engineering&&nodes.slice(0,12).map((node,j)=><article key={'node'+j}><strong>{label(node.id??node.local_id)}</strong><p>{node.statement??property(node,'statement')}</p><small>{displayText(node.source?.document?.name??String(graph.documentId??''))} · {node.source?.release_id?.slice(0,8)??String(graph.releaseId??'').slice(0,8)}{node.source?.version?.version_number?' · v'+node.source.version.version_number:''}</small></article>)}{edges.length?edges.map((edge,j)=><article key={edge.id??j}><strong>{label(typeof edge.source==='string'?edge.source:edge.payload?.subject_id)} → {label(edge.target??edge.payload?.object_id)}</strong><p>{edge.type??edge.payload?.predicate} · {edge.status==='needs_review'?t('候选 · 待复核','Candidate · needs review'):edge.payload?.predicate?.startsWith('association:')?t('名称关联 · 仅供检索','Name association · search only'):t('已登记','Recorded')}</p>{edge.provenance&&<small>{t('出处','Source')} {edge.provenance.recordId} · {edge.provenance.recordRevision.slice(0,8)}{edge.provenance.pageNumber?' · p'+edge.provenance.pageNumber:''}</small>}</article>):<p>{t('当前有限结果未返回关系；不能据此认定没有关联。','No relationships returned in this bounded result; this does not establish that none exist.')}</p>}{(!!graph.truncated||graph.next_cursor!=null)&&<p>{t('本次结果未包含全部关系，可缩小对象或知识名称继续查询。','This result is incomplete. Narrow the object or knowledge query to continue.')}</p>}</details>;
+  })}
+ </section>;
+}

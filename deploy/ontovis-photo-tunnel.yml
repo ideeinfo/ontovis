@@ -1,0 +1,10 @@
+protocol: quic
+no-autoupdate: true
+metrics: 127.0.0.1:18518
+ingress:
+  - hostname: vis-media.ontobase.ai
+    path: ^/v1/fixed-photo$
+    service: http://127.0.0.1:18084
+    originRequest:
+      httpHostHeader: vis-media.ontobase.ai
+  - service: http_status:404

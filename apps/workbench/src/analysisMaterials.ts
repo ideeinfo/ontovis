@@ -1,0 +1,73 @@
+import type {CanvasCard,CanvasSnapshot,Viewport} from './analysisCanvas';
+import type {Recommendation,RecommendationRelevance,SourceKind} from './analysisSources';
+
+export const MATERIAL_CATEGORIES=[
+  {id:'alarms',kind:'alarm',zh:'故障报警',en:'Fault alarms',hint:'本项目的报警事件',hintEn:'Alarm events in this project'},
+  {id:'materials',kind:'document',zh:'相关资料',en:'Related materials',hint:'相关图纸、照片和文档，含型号适用资料',hintEn:'Related drawings, photos and documents, including materials for the equipment model'},
+  {id:'objects',kind:'object',zh:'工程对象',en:'Engineering objects',hint:'报警对象及相关设备',hintEn:'Alarm objects and related equipment'},
+  {id:'project_documents',kind:'document',zh:'本项目文档库',en:'Project document library',hint:'本项目有权读取的PDF与照片',hintEn:'Authorized project PDFs and photos'},
+  {id:'drawings',kind:'drawing',zh:'图纸',en:'Drawings',hint:'所选对象的关联图纸',hintEn:'Drawings linked to the selected object'},
+  {id:'documents',kind:'document',zh:'文档',en:'Documents',hint:'故障代码手册及知识证据',hintEn:'Fault manuals and knowledge evidence'},
+  {id:'photos',kind:'photo',zh:'照片',en:'Photos',hint:'对象照片与区域定位',hintEn:'Object photos and located regions'},
+  {id:'models',kind:'model3d',zh:'三维模型',en:'3D models',hint:'模型构件与空间参照',hintEn:'Model components and spatial references'},
+  {id:'trends',kind:'trend',zh:'趋势',en:'Trends',hint:'当前报警的信号与时间窗',hintEn:'Signals and time window of the current alarm'},
+  {id:'orders',kind:'work_order',zh:'历史工单',en:'Work orders',hint:'同故障码的处理记录',hintEn:'Work orders with the same fault code'},
+  {id:'analysis',kind:'analysis',zh:'分析笔记',en:'Analysis note',hint:'观察、假设与排查记录',hintEn:'Observations, hypotheses and checks'},
+] as const;
+export function materialCategories(query:string){
+  const needle=query.trim().toLocaleLowerCase();
+  return MATERIAL_CATEGORIES.filter(row=>[row.zh,row.en,row.hint,row.hintEn].join(' ').toLocaleLowerCase().includes(needle));
+}
+export function relatedMaterialSection(_objectScope:string|undefined){
+  return 'materials';
+}
+const materialKinds:Record<string,[string,string]>={
+  object:['工程对象','Engineering object'],drawing:['图纸','Drawing'],document:['文档','Document'],photo:['照片','Photo'],
+  work_order:['工单','Work order'],alarm:['故障报警','Alarm'],trend:['趋势','Trend'],model:['三维模型','3D model'],
+};
+export function materialKindLabel(kind:string|undefined,en:boolean){
+  return materialKinds[kind??'']?.[en?1:0]??(en?'Material':'资料');
+}
+const relevanceLabels:Record<RecommendationRelevance,[string,string]>={field_record:['本设备现场','This equipment'],same_event:['本次事件','Current event'],selected_object:['当前对象','Selected object'],object_association:['本对象关联','Object link'],shared_definition:['共享定义','Shared definition'],binding:['模型绑定','Recorded binding'],fault_evidence:['故障码证据','Fault-code evidence'],simulation_mapping:['报警对象','Alarm target'],same_object_fault:['同对象同故障','Same object and fault'],descendant:['下级对象','Registered descendants'],shared_photos:['共享照片','Shared photos'],parent_photos:['所属设备照片','Parent equipment photo'],model_applicable:['型号适用','Applicable model'],same_fault:['同故障码','Same fault code'],historical_binding:['历史绑定','Historical binding'],simulation_rule:['建议检查','Suggested check'],name_candidate:['名称候选','Name candidate'],catalogue_search:['目录检索','Catalogue search']};
+export function recommendationRelevanceLabel(item:Recommendation,en:boolean){
+  const basis=item.relevance||item.matchType;
+  return basis&&relevanceLabels[basis]?.[en?1:0]||'';
+}
+export function addedMaterialCard(cards:readonly CanvasCard[],kind:SourceKind,revisions:readonly string[]=[]){
+  const cardKind=kind==='model'?'model3d':kind;
+  return cards.find(card=>!card.historical&&card.kind===cardKind&&card.source&&revisions.includes(card.source.revision));
+}
+export function mergeRecommendations(previous:Recommendation[],incoming:Recommendation[]){
+  const result:Recommendation[]=[],positions=new Map<string,number>();
+  for(const item of [...previous,...incoming]){
+    const identity=item.assetKey||item.key,index=positions.get(identity);
+    if(index===undefined){positions.set(identity,result.length);result.push(item);continue;}
+    const old=result[index],usable=!item.availability||item.availability==='available',oldUsable=!old.availability||old.availability==='available';
+    const preferred=usable&&!oldUsable||usable===oldUsable&&(item.relevancePriority??90)<(old.relevancePriority??90)?item:old;
+    const revisions=[...new Set([...(old.registeredSourceRevisions||[]),...(item.registeredSourceRevisions||[])])];
+    result[index]=revisions.length?{...preferred,registeredSourceRevisions:revisions}:preferred;
+    if(old.relatedSourceRefs||item.relatedSourceRefs){
+      result[index]={...result[index],relatedSourceRefs:[...new Set([...(old.relatedSourceRefs||[]),...(item.relatedSourceRefs||[])])]};
+    }
+  }
+  return result.sort((a,b)=>(a.relevancePriority??90)-(b.relevancePriority??90));
+}
+export function groupMaterialRecommendations(items:readonly Recommendation[],sourceTitles:ReadonlyMap<string,string>){
+  const groups=new Map([...sourceTitles.keys()].map(ref=>[ref,[] as Recommendation[]]));
+  const ungrouped:Recommendation[]=[];
+  for(const item of items){
+    const ref=item.relatedSourceRefs?.find(id=>groups.has(id));
+    (ref?groups.get(ref)!:ungrouped).push(item);
+  }
+  return {groups:[...groups].filter(([,rows])=>rows.length),ungrouped};
+}
+export function materialPosition(view:Viewport,point:{x:number;y:number}){
+  return {x:Math.max(-20000,Math.min(20000,Math.round((point.x-view.x)/view.zoom))),
+    y:Math.max(-20000,Math.min(20000,Math.round((point.y-view.y)/view.zoom)))};
+}
+export function withPrimaryAlarm(snapshot:CanvasSnapshot,item:Recommendation):CanvasSnapshot{
+  const dataset=item.preview?.dataset,eventId=item.selector.eventId;
+  if(item.kind!=='alarm'||snapshot.context.datasetId||snapshot.context.eventId||!dataset?.branch||typeof eventId!=='string')return snapshot;
+  return {...snapshot,context:{...snapshot.context,eventId,faultCode:dataset.faultCode,sourceConnectionId:dataset.sourceConnectionId,
+    branch:dataset.branch,datasetId:dataset.datasetId,datasetRevision:dataset.datasetRevision,timeFrom:dataset.timeFrom,timeTo:dataset.timeTo}};
+}
