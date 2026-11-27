@@ -2,19 +2,10 @@ import {useLayoutEffect,useRef,useState,type KeyboardEvent,type PointerEvent,typ
 import {GripHorizontal,MoveDiagonal,MoveDiagonal2,X} from 'lucide-react';
 import {IconBtn} from './Primitives';
 import {displayText} from './displayText';
+import {adjustAssistantWindow,assistantWindowKeyDelta,assistantWindowViewport,fitAssistantWindow,type AssistantWindowBox,type AssistantWindowHandle} from './assistantWindowGeometry';
 
-type Size={width:number;height:number};
-type Box=Size&{x:number;y:number};
-type Handle='move'|'left'|'right';
 const WINDOW_POSITION='ontovis.workbench.analysis_assistant_window';
-const arrows:Record<string,[number,number]>={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
-const clamp=(value:number,low:number,high:number)=>Math.min(Math.max(value,low),high);
-function fit(box:Box,area:Box):Box{
- const width=clamp(box.width,Math.min(300,area.width),area.width);
- const height=clamp(box.height,Math.min(340,area.height),area.height);
- return {width,height,x:clamp(box.x,area.x,area.x+area.width-width),y:clamp(box.y,area.y,area.y+area.height-height)};
-}
-function savedWindow():Box|null{
+function savedWindow():AssistantWindowBox|null{
  try{
   const saved=JSON.parse(localStorage.getItem(WINDOW_POSITION)??'null');
   if(saved&&[saved.x,saved.y,saved.width,saved.height].every(Number.isFinite)&&saved.width>0&&saved.height>0){
@@ -23,27 +14,25 @@ function savedWindow():Box|null{
  }catch{}
  return null;
 }
-function rememberWindow(box:Box|null){
+function rememberWindow(box:AssistantWindowBox|null){
  if(box)try{localStorage.setItem(WINDOW_POSITION,JSON.stringify(box));}catch{}
 }
 
 export function AnalysisAssistantWindow({title,en,onClose,children}:{title:string;en:boolean;onClose:()=>void;children:ReactNode}){
- const [box,setBox]=useState<Box|null>(null);
- const windowRef=useRef<HTMLElement>(null),area=useRef<Box>({x:0,y:0,width:0,height:0});
- const preferred=useRef<Box|null>(null);
- const drag=useRef<{pointer:number;handle:Handle;x:number;y:number;box:Box}|null>(null);
+ const [box,setBox]=useState<AssistantWindowBox|null>(null);
+ const windowRef=useRef<HTMLElement>(null),area=useRef<AssistantWindowBox>({x:0,y:0,width:0,height:0});
+ const preferred=useRef<AssistantWindowBox|null>(null);
+ const drag=useRef<{pointer:number;handle:AssistantWindowHandle;x:number;y:number;box:AssistantWindowBox}|null>(null);
  const t=(zh:string,english:string)=>en?english:zh;
  useLayoutEffect(()=>{
   const initialArea=windowRef.current?.parentElement?.getBoundingClientRect();
   const viewport=window.visualViewport;
   preferred.current=savedWindow();
   const update=()=>{
-   const width=viewport?.width??document.documentElement.clientWidth;
-   const height=viewport?.height??document.documentElement.clientHeight;
+   const bounds=assistantWindowViewport(),{width,height}=bounds;
    if(!width||!height)return;
-   const bounds={x:viewport?.offsetLeft??0,y:viewport?.offsetTop??0,width,height};
    area.current=bounds;
-   setBox(fit(preferred.current??{
+   setBox(fitAssistantWindow(preferred.current??{
     x:(initialArea?.right||bounds.x+width)-444,y:(initialArea?.top??bounds.y)+12,
     width:432,height:Math.min((initialArea?.height||height)-68,640),
    },bounds));
@@ -59,19 +48,12 @@ export function AnalysisAssistantWindow({title,en,onClose,children}:{title:strin
    viewport?.removeEventListener('scroll',update);
   };
  },[]);
- function place(next:Box){preferred.current=next;setBox(next);}
- function adjust(initial:Box,handle:Handle,dx:number,dy:number){
-  const bounds=area.current;
-  const start=fit(initial,bounds);
-  if(handle==='move'){place(fit({...start,x:start.x+dx,y:start.y+dy},bounds));return;}
-  const right=start.x+start.width;
-  const maxWidth=handle==='left'?right-bounds.x:bounds.x+bounds.width-start.x;
-  const width=clamp(start.width+(handle==='left'?-dx:dx),Math.min(300,maxWidth),maxWidth);
-  const maxHeight=bounds.y+bounds.height-start.y;
-  const height=clamp(start.height+dy,Math.min(340,maxHeight),maxHeight);
-  place({...start,width,height,x:handle==='left'?right-width:start.x});
+ function adjust(initial:AssistantWindowBox,handle:AssistantWindowHandle,dx:number,dy:number){
+  const next=adjustAssistantWindow(initial,area.current,handle,dx,dy);
+  preferred.current=next;
+  setBox(next);
  }
- function begin(event:PointerEvent<HTMLButtonElement>,handle:Handle){
+ function begin(event:PointerEvent<HTMLButtonElement>,handle:AssistantWindowHandle){
   if(!box||event.button!==0||drag.current)return;
   event.preventDefault();
   event.currentTarget.setPointerCapture(event.pointerId);
@@ -84,15 +66,14 @@ export function AnalysisAssistantWindow({title,en,onClose,children}:{title:strin
  function end(event:PointerEvent<HTMLButtonElement>){
   if(drag.current?.pointer===event.pointerId){drag.current=null;rememberWindow(preferred.current);}
  }
- function keyboard(event:KeyboardEvent<HTMLButtonElement>,handle:Handle){
-  const direction=arrows[event.key];
-  if(!box||!direction)return;
+ function keyboard(event:KeyboardEvent<HTMLButtonElement>,handle:AssistantWindowHandle){
+  const delta=assistantWindowKeyDelta(event.key,event.shiftKey);
+  if(!box||!delta)return;
   event.preventDefault();
-  const step=event.shiftKey?40:12;
-  adjust(box,handle,direction[0]*step,direction[1]*step);
+  adjust(box,handle,...delta);
   rememberWindow(preferred.current);
  }
- function grip(handle:Handle,label:string){
+ function grip(handle:AssistantWindowHandle,label:string){
   return {type:'button' as const,'aria-label':label,title:label,onPointerDown:(event:PointerEvent<HTMLButtonElement>)=>begin(event,handle),
    onPointerMove:move,onLostPointerCapture:end,onPointerCancel:end,onPointerUp:end,
    onKeyDown:(event:KeyboardEvent<HTMLButtonElement>)=>keyboard(event,handle)};

@@ -34,6 +34,14 @@ async (page, facts, phase) => {
       done:()=>wait(done,'Held response did not finish'),deliver,async close(){deliver();await page.unroute(matches,handler);}};
   };
   const title = facts.title;
+  const drag=async (target,dx,dy)=>{
+    const box=await target.boundingBox();
+    const x=box.x+box.width/2,y=box.y+box.height/2;
+    await page.mouse.move(x,y);
+    await page.mouse.down();
+    await page.mouse.move(x+dx,y+dy,{steps:8});
+    await page.mouse.up();
+  };
   await page.setViewportSize({width:1500,height:956});
   await page.goto(facts.origin+'/');
   await button('登录').click();
@@ -574,13 +582,6 @@ async (page, facts, phase) => {
 
     await sendLinked('查找四类资料候选');
     const floating=canvas.locator('.ad-assistant-window');
-    const drag=async (target,dx,dy)=>{
-      const box=await target.boundingBox();
-      await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
-      await page.mouse.down();
-      await page.mouse.move(box.x+box.width/2+dx,box.y+box.height/2+dy,{steps:8});
-      await page.mouse.up();
-    };
     const canvasBefore=await canvas.locator('.ad-canvas').boundingBox();
     const before=(await floating.boundingBox());
     await drag(button('移动助手窗口',floating),-90,40);
@@ -779,22 +780,51 @@ async (page, facts, phase) => {
     }),'The floated header is clipped or blocked by the cockpit');
     check(await query.inputValue()==='拖动验收草稿','Floating the assistant discarded its draft');
     await page.screenshot({path:'cockpit-assistant-outside-canvas.png'});
+    const leftGrip=button('向左缩放助手窗口',assistant),rightGrip=button('向右缩放助手窗口',assistant);
+    const near=(a,b)=>Math.abs(a-b)<2;
+    await drag(rightGrip,70,-48);
+    const wider=await assistant.boundingBox();
+    check(near(wider.x,outside.x)&&near(wider.y,outside.y)&&near(wider.width,outside.width+70)&&near(wider.height,outside.height-48),
+      'Dragging the lower-right handle did not keep the top-left corner fixed');
+    await drag(leftGrip,54,26);
+    const narrower=await assistant.boundingBox();
+    check(near(narrower.x,wider.x+54)&&near(narrower.width+54,wider.width)&&near(narrower.height,wider.height+26),
+      'Dragging the lower-left handle did not keep the right edge fixed');
+    await rightGrip.press('Shift+ArrowRight');
+    const resized=await assistant.boundingBox();
+    check(near(resized.width,narrower.width+40)&&near(resized.height,narrower.height),
+      'The resize handle did not respond to the keyboard');
+    check(same(await plot.boundingBox(),canvasBounds),'Resizing the assistant also resized the canvas');
     await button('收起工程助手',assistant).click();
     await assistant.waitFor({state:'hidden'});
     await button('展开工程助手',canvas).click();
-    check(Math.abs((await assistant.boundingBox()).y-outside.y)<2&&await query.inputValue()==='拖动验收草稿',
-      'Expanding the floated assistant moved it or discarded its draft');
+    const reopened=await assistant.boundingBox();
+    check(['x','y','width','height'].every(key=>near(reopened[key],resized[key]))&&await query.inputValue()==='拖动验收草稿',
+      'Expanding the floated assistant changed its geometry or discarded its draft');
+    await drag(rightGrip,60-reopened.width,60-reopened.height);
+    const smallest=await assistant.boundingBox();
+    check(near(smallest.width,300)&&near(smallest.height,340),'The assistant could be shrunk beyond its usable size');
+    check(await button('发送',assistant).evaluate(node=>{
+      const {x,y,width,height}=node.getBoundingClientRect();
+      return node.contains(document.elementFromPoint(x+width/2,y+height/2));
+    }),'The composer became inaccessible at the minimum size');
+    await query.fill('');
+    await button('发送',assistant).scrollIntoViewIfNeeded();
+    await query.fill('拖动验收草稿');
+    await drag(rightGrip,200,270);
+    await page.screenshot({path:'cockpit-assistant-resized.png'});
     await page.setViewportSize({width:950,height:540});
     await page.waitForFunction(()=>{
       const {left,top,right,bottom}=document.querySelector('.pa-assistant[data-floating]').getBoundingClientRect();
       return left>=0&&top>=0&&right<=innerWidth&&bottom<=innerHeight;
     });
     await button('恢复停靠至右侧',assistant).click();
-    check(await assistant.getAttribute('data-floating')===null,'Docking did not return the assistant to the side');
+    check(await assistant.getAttribute('data-floating')===null&&await rightGrip.count()===0,
+      'Docking did not restore the side panel');
     await page.setViewportSize(previousSize);
     return {groups:facts.frames.length,cards:await plot.locator('.pa-card').count(),dragPastBounds:true,
       expands:true,shrinks:true,linkFollows:true,fit:true,reset:true,cardTextSelection:true,copySelectedText:true,
-      assistantBeyondCanvas:true,assistantDraftRetained:true,assistantDocked:true};
+      assistantBeyondCanvas:true,assistantDraftRetained:true,assistantDocked:true,assistantResizable:true,assistantSizeRetained:true};
   }
   const kind = photoPhase?'photo':phase==='withdraw-document'?'document':phase==='expire-session'?'work_order':'drawing';
   const target=facts.cards[kind];

@@ -1,6 +1,6 @@
 import {displayText} from './displayText';
 import {lazy,Suspense,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,type KeyboardEvent as ReactKeyboardEvent,type PointerEvent as ReactPointerEvent} from 'react';
-import {ArrowUpRight,BookOpen,Box,CheckCheck,ChevronLeft,ChevronRight,FileText,GitBranch,GripHorizontal,GripVertical,Hand,Image,LayoutDashboard,Maximize2,PanelRightClose,PanelRightOpen,Plus,RefreshCw,RotateCcw,Sparkles,StickyNote,TriangleAlert,TrendingUp,ZoomIn,ZoomOut} from 'lucide-react';
+import {ArrowUpRight,BookOpen,Box,CheckCheck,ChevronLeft,ChevronRight,FileText,GitBranch,GripHorizontal,GripVertical,Hand,Image,LayoutDashboard,Maximize2,MoveDiagonal,MoveDiagonal2,PanelRightClose,PanelRightOpen,Plus,RefreshCw,RotateCcw,Sparkles,StickyNote,TriangleAlert,TrendingUp,ZoomIn,ZoomOut} from 'lucide-react';
 import {cancelled,failureMessage,type WorkbenchApi} from './api';
 import {Btn,IconBtn,Modal} from './Primitives';
 import {AnalysisSourceCard,materialNames} from './AnalysisSourceCard';
@@ -10,10 +10,12 @@ import {cockpitRelationGraph,cockpitRelationLabels,cockpitRelationRoute,type Coc
 import type {CanvasCard,Viewport} from './analysisCanvas';
 import {COCKPIT_CANVAS_MIN_ZOOM,COCKPIT_CANVAS_MAX_ZOOM,cockpitAnalysisLayout,cockpitCardMove,cockpitCardOutsideFrame,cockpitCanvasFit,cockpitCanvasZoom,cockpitCanvasPan,cockpitCanvasFocus,cockpitCanvasReveal,cockpitCanvasWheel,type CockpitCardPositions} from './cockpitAnalysisCanvas';
 import {assistantSourceAnchor,type AssistantRun} from './assistantApi';
+import {adjustAssistantWindow,assistantWindowKeyDelta,assistantWindowViewport,fitAssistantWindow,type AssistantWindowBox,type AssistantWindowHandle} from './assistantWindowGeometry';
 import {CockpitAnalysisRecord,type CockpitRecordReference} from './CockpitAnalysisRecord';
 import {PageDeck} from './CockpitPanels';
 import {cockpitAnalysisDetail,cockpitAnalysisHistorical,cockpitAnalysisIndex,cockpitAnalysisTurns,cockpitNoteRecords,type CockpitAnalysisDetail,type CockpitFault} from './cockpitAnalysisState';
 import './analysisMaterials.css';
+import './assistant.css';
 import './cockpitAnalysis.css';
 
 const icons={object:Box,drawing:FileText,document:BookOpen,photo:Image,model3d:Box,trend:TrendingUp,alarm:TriangleAlert,work_order:CheckCheck,analysis:StickyNote};
@@ -21,35 +23,24 @@ const ignore=()=>{};
 const AssistantPanel=lazy(()=>import('./AssistantPanel').then(module=>({default:module.AssistantPanel})));
 type Index=Awaited<ReturnType<typeof cockpitAnalysisIndex>>;
 type Props={api:WorkbenchApi;active:boolean;en:boolean;entry:AnalysisEntry|null;faults:CockpitFault[];onChooseFault:(entry:AnalysisEntry)=>void;onBackend:(entry:AnalysisEntry)=>void};
-type AssistantBox={x:number;y:number;width:number;height:number};
-
-function fitAssistantWindow(box:AssistantBox):AssistantBox{
- const viewport=window.visualViewport,margin=8;
- const left=viewport?.offsetLeft??0,top=viewport?.offsetTop??0;
- const availableWidth=viewport?.width??document.documentElement.clientWidth;
- const availableHeight=viewport?.height??document.documentElement.clientHeight;
- const width=Math.min(box.width,Math.max(0,availableWidth-2*margin));
- const height=Math.min(box.height,Math.max(0,availableHeight-2*margin));
- return {
-  x:Math.max(left+margin,Math.min(box.x,left+availableWidth-width-margin)),
-  y:Math.max(top+margin,Math.min(box.y,top+availableHeight-height-margin)),
-  width,height,
- };
-}
+const ASSISTANT_WINDOW_MARGIN=8;
 
 export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBackend}:Props){
  const t=(zh:string,eng:string)=>en?eng:zh,board=useRef<HTMLDivElement>(null),workspace=useRef<HTMLElement>(null),assistantRef=useRef<HTMLElement>(null);
  const [assistantTab,setAssistantTab]=useState<'chat'|'record'>('chat'),[recordAttempt,setRecordAttempt]=useState(0);
  const returnToRecord=useRef(false);
  const [assistantCollapsed,setAssistantCollapsed]=useState<boolean>(()=>{try{return localStorage.getItem('ontovis.cockpit.assistant_collapsed')==='true';}catch{return false;}});
- const [assistantFloating,setAssistantFloating]=useState<AssistantBox|null>(null);
+ const [assistantFloating,setAssistantFloating]=useState<AssistantWindowBox|null>(null);
  const [assistantDragging,setAssistantDragging]=useState(false);
- const assistantDrag=useRef<{pointerId:number;startX:number;startY:number;origin:AssistantBox;moved:boolean;header:HTMLElement}|null>(null);
+ const assistantDrag=useRef<{pointerId:number;startX:number;startY:number;origin:AssistantWindowBox;handle:AssistantWindowHandle;moved:boolean;node:HTMLElement}|null>(null);
  const assistantIsFloating=assistantFloating!==null;
  useLayoutEffect(()=>{
   if(!active||!assistantIsFloating)return;
   const viewport=window.visualViewport;
-  const keepInView=()=>setAssistantFloating(current=>current&&fitAssistantWindow(current));
+  const keepInView=()=>{
+   const area=assistantWindowViewport(ASSISTANT_WINDOW_MARGIN);
+   setAssistantFloating(current=>current&&fitAssistantWindow(current,area));
+  };
   keepInView();
   window.addEventListener('resize',keepInView);
   viewport?.addEventListener('resize',keepInView);
@@ -190,18 +181,19 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
   try{localStorage.setItem('ontovis.cockpit.assistant_collapsed','false');}catch{}
  }
  function resetAssistantPosition(){
+  endAssistantDrag();
   setAssistantFloating(null);
  }
- function startAssistantDrag(event:ReactPointerEvent<HTMLElement>){
+ function startAssistantDrag(event:ReactPointerEvent<HTMLElement>,handle:AssistantWindowHandle='move'){
   if(event.button!==0||!event.isPrimary||assistantDrag.current)return;
-  if((event.target as Element).closest('button,input,select,textarea,a'))return;
+  if(handle==='move'&&(event.target as Element).closest('button,input,select,textarea,a'))return;
   const panel=assistantRef.current?.getBoundingClientRect();
   if(!panel)return;
-  const header=event.currentTarget;
+  const node=event.currentTarget;
   event.preventDefault();
-  try{header.setPointerCapture(event.pointerId);}catch{}
+  try{node.setPointerCapture(event.pointerId);}catch{}
   assistantDrag.current={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
-   origin:{x:panel.left,y:panel.top,width:panel.width,height:panel.height},moved:false,header};
+   origin:{x:panel.left,y:panel.top,width:panel.width,height:panel.height},handle,moved:handle!=='move',node};
   setAssistantDragging(true);
  }
  function moveAssistantDrag(event:ReactPointerEvent<HTMLElement>){
@@ -212,16 +204,23 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
    if(Math.hypot(dx,dy)<4)return;
    drag.moved=true;
   }
-  setAssistantFloating(fitAssistantWindow({...drag.origin,x:drag.origin.x+dx,y:drag.origin.y+dy}));
+  setAssistantFloating(adjustAssistantWindow(drag.origin,assistantWindowViewport(ASSISTANT_WINDOW_MARGIN),drag.handle,dx,dy));
  }
  function endAssistantDrag(event?:ReactPointerEvent<HTMLElement>){
   const drag=assistantDrag.current;
   if(!drag)return;
   if(event&&drag.pointerId!==event.pointerId)return;
   assistantDrag.current=null;
-  if(drag.header.hasPointerCapture(drag.pointerId))drag.header.releasePointerCapture(drag.pointerId);
+  if(drag.node.hasPointerCapture(drag.pointerId))drag.node.releasePointerCapture(drag.pointerId);
   setAssistantDragging(false);
  }
+ function resizeAssistantWithKeyboard(event:ReactKeyboardEvent<HTMLButtonElement>,handle:'left'|'right'){
+  const delta=assistantWindowKeyDelta(event.key,event.shiftKey);
+  if(!assistantFloating||!delta)return;
+  event.preventDefault();
+  setAssistantFloating(adjustAssistantWindow(assistantFloating,assistantWindowViewport(ASSISTANT_WINDOW_MARGIN),handle,...delta));
+ }
+ const assistantDragEvents={onPointerMove:moveAssistantDrag,onPointerUp:endAssistantDrag,onPointerCancel:endAssistantDrag,onLostPointerCapture:endAssistantDrag};
  function openChat(){
   openAssistant();
   setAssistantTab('chat');
@@ -312,7 +311,7 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
    </main>
    {assistantCollapsed&&<button type="button" className="pa-assistant-launcher" onClick={openAssistant} title={t('展开工程助手','Expand engineering assistant')} aria-label={t('展开工程助手','Expand engineering assistant')}><Sparkles size={16}/><span>{t('工程助手','Engineering assistant')}</span><PanelRightOpen size={15}/></button>}
    <aside ref={assistantRef} className="pa-record pa-assistant pc-panel" aria-label={t('工程助手','Engineering assistant')} data-floating={assistantIsFloating||undefined} data-dragging={assistantDragging||undefined} style={{...(assistantFloating?{left:assistantFloating.x,top:assistantFloating.y,width:assistantFloating.width,height:assistantFloating.height}:undefined),display:assistantCollapsed?'none':undefined}}>
-    <header onPointerDown={startAssistantDrag} onPointerMove={moveAssistantDrag} onPointerUp={endAssistantDrag} onPointerCancel={endAssistantDrag} onLostPointerCapture={endAssistantDrag} onDoubleClick={resetAssistantPosition} title={assistantFloating?t('按住拖拽移动，双击恢复停靠','Drag to move, double-click to dock'):t('按住拖拽浮动','Drag to float')}>
+    <header {...assistantDragEvents} onPointerDown={startAssistantDrag} onDoubleClick={resetAssistantPosition} title={assistantFloating?t('按住拖拽移动，双击恢复停靠','Drag to move, double-click to dock'):t('按住拖拽浮动','Drag to float')}>
      <div className="pa-assistant-title-group"><GripHorizontal size={15} className="pa-assistant-grip" aria-hidden="true"/><Sparkles size={18}/><h2>{t('工程助手','Engineering assistant')}</h2><small>{t('基于当前资料','Current materials')}</small></div>
      <div className="pa-assistant-controls">
       {!!assistantFloating&&<button type="button" className="pa-assistant-ctrl-btn" title={t('恢复停靠至右侧','Dock to side')} aria-label={t('恢复停靠至右侧','Dock to side')} onClick={resetAssistantPosition}><RotateCcw size={14}/></button>}
@@ -328,6 +327,12 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
     {!!groups.length&&<PageDeck key={detail.analysisSessionId+':'+detail.analysisRevision+':'+turnIndex} en={en} label={t('已保存分析记录','Saved analysis record')} items={groups} rowHeight={160} minimumRows={1} render={group=><section key={group.id} className="pa-answer" data-kind={group.id}><h3>{group.id==='hypotheses'?<TriangleAlert size={17}/>:<CheckCheck size={17}/>}<span>{displayText(group.title)}</span></h3>{group.rows.slice(0,2).map((row,i)=><p key={i}>{displayText(row.text)}<span>{row.refs.map(ref=>{const source=run?.sources.find(item=>item.key===ref),card=detail.snapshot.cards.find(item=>item.source?.id===source?.evidenceRefId);return <button key={ref} disabled={!card} onClick={()=>card&&focusCard(card)}>{ref}</button>;})}</span></p>)}</section>}/>}
     <button className="pa-record-more" disabled={turns===null} onClick={()=>setRecordOpen(true)}>{t('查看完整记录','View full record')}<Maximize2 size={14}/></button><button className="pa-edit-action" onClick={openChat}><Sparkles size={17}/>{t('基于当前资料提问','Ask about these materials')}</button>
     </div>
+    {assistantFloating&&([
+     ['left',MoveDiagonal,t('向左缩放助手窗口','Resize assistant from the left')],
+     ['right',MoveDiagonal2,t('向右缩放助手窗口','Resize assistant from the right')],
+    ] as const).map(([side,Icon,label])=><button key={side} type="button" className={`as-window-resize as-window-resize-${side}`}
+     aria-label={label} title={label} {...assistantDragEvents} onPointerDown={event=>startAssistantDrag(event,side)}
+     onKeyDown={event=>resizeAssistantWithKeyboard(event,side)}><Icon size={13}/></button>)}
    </aside>
   </div>:null}
   {relation&&<Modal className="pa-relation-dialog" title={t('资料关系','Evidence relationship')} description={displayText(relation.label)} onClose={()=>setRelation(null)}><div className="pa-relation-chain">{[relation.from,...relation.via,relation.to].map((card,i)=><span key={card.id}>{i>0&&<ChevronRight size={15}/>}<button onClick={()=>{setRelation(null);focusCard(card);openCard(card);}}>{displayText(card.title)}</button></span>)}</div>{relation.via.length>0&&<p>{t('经已登记对象关系连接，属于间接关联。','Connected through recorded object relationships; this is an indirect association.')}</p>}{relation.steps.map(step=><section key={step.id}><strong>{displayText(step.label)}{step.origin==='candidate'?' · '+t('候选','Candidate'):''}</strong><small>{displayText(step.from.title)} → {displayText(step.to.title)}</small><p>{displayText(step.reason)}</p></section>)}{!relation.steps.length&&<p>{displayText(relation.reason)}</p>}<Btn onClick={()=>{setRelation(null);focusCard(relation.to);setExpanded(relation.to);setAnchor(relation.anchor);}}><ArrowUpRight size={15}/>{relation.anchor?t('展开并定位','Open at location'):t('展开查看','Open material')}</Btn></Modal>}

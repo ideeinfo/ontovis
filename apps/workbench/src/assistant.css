@@ -145,8 +145,9 @@
 .as-window-grip{flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:3px;text-align:left;cursor:move}
 .as-window-grip svg,.as-window-grip strong{flex:none}.as-window-grip strong{color:var(--text)}.as-window-grip span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px}
 .as-window-resize{position:absolute;bottom:0;z-index:2;display:grid;place-items:center;width:23px;height:23px;padding:0;border-radius:4px}
-.as-window-resize-left{left:0;cursor:nesw-resize}.as-window-resize-right{right:0;cursor:nwse-resize}
+.as-window-resize.as-window-resize-left{left:0;cursor:nesw-resize}.as-window-resize.as-window-resize-right{right:0;cursor:nwse-resize}
 .as-window-grip:hover,.as-window-resize:hover{background:var(--surfaceRaised)}
+.as-window-resize:focus-visible{outline:2px solid var(--focus);outline-offset:-3px}
 .ad-assistant-window .as-composer{padding-bottom:18px}.ad-assistant-window .as-composer textarea{min-height:58px}
 .as-previous-turns{padding:8px 0;border-bottom:1px solid var(--borderSubtle);color:var(--textSecondary)}
 .as-previous-turns>summary{cursor:pointer;font-size:12px}
