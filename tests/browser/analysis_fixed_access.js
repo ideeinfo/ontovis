@@ -760,8 +760,41 @@ async (page, facts, phase) => {
     await dragText(otherText,endText,facts.cards.alarm.id);
     await page.mouse.click(endText.x,endText.y);
     check(await selectedText()==='','Clicking another card did not clear the selection');
+    const assistant=canvas.getByRole('complementary',{name:'工程助手',exact:true});
+    const query=assistant.getByRole('textbox',{name:'向分析助手提问',exact:true});
+    await query.fill('拖动验收草稿');
+    const assistantHeader=assistant.locator(':scope > header');
+    const previousSize=await page.viewportSize(),assistantStart=await assistant.boundingBox(),grip=await assistantHeader.boundingBox();
+    const grabX=24,grabY=grip.y-assistantStart.y+grip.height/2;
+    await page.mouse.move(assistantStart.x+grabX,assistantStart.y+grabY);
+    await page.mouse.down();
+    await page.mouse.move(12+grabX,16+grabY,{steps:16});
+    await page.mouse.up();
+    const outside=await assistant.boundingBox(),canvasBounds=await plot.boundingBox();
+    check(outside.x<canvasBounds.x&&outside.y<canvasBounds.y&&Math.abs(outside.x-12)<2&&Math.abs(outside.y-16)<2,
+      'The assistant did not follow the pointer beyond the canvas');
+    check(await assistantHeader.evaluate(node=>{
+      const {x,y,height}=node.getBoundingClientRect();
+      return node.contains(document.elementFromPoint(x+24,y+height/2));
+    }),'The floated header is clipped or blocked by the cockpit');
+    check(await query.inputValue()==='拖动验收草稿','Floating the assistant discarded its draft');
+    await page.screenshot({path:'cockpit-assistant-outside-canvas.png'});
+    await button('收起工程助手',assistant).click();
+    await assistant.waitFor({state:'hidden'});
+    await button('展开工程助手',canvas).click();
+    check(Math.abs((await assistant.boundingBox()).y-outside.y)<2&&await query.inputValue()==='拖动验收草稿',
+      'Expanding the floated assistant moved it or discarded its draft');
+    await page.setViewportSize({width:950,height:540});
+    await page.waitForFunction(()=>{
+      const {left,top,right,bottom}=document.querySelector('.pa-assistant[data-floating]').getBoundingClientRect();
+      return left>=0&&top>=0&&right<=innerWidth&&bottom<=innerHeight;
+    });
+    await button('恢复停靠至右侧',assistant).click();
+    check(await assistant.getAttribute('data-floating')===null,'Docking did not return the assistant to the side');
+    await page.setViewportSize(previousSize);
     return {groups:facts.frames.length,cards:await plot.locator('.pa-card').count(),dragPastBounds:true,
-      expands:true,shrinks:true,linkFollows:true,fit:true,reset:true,cardTextSelection:true,copySelectedText:true};
+      expands:true,shrinks:true,linkFollows:true,fit:true,reset:true,cardTextSelection:true,copySelectedText:true,
+      assistantBeyondCanvas:true,assistantDraftRetained:true,assistantDocked:true};
   }
   const kind = photoPhase?'photo':phase==='withdraw-document'?'document':phase==='expire-session'?'work_order':'drawing';
   const target=facts.cards[kind];

@@ -21,14 +21,45 @@ const ignore=()=>{};
 const AssistantPanel=lazy(()=>import('./AssistantPanel').then(module=>({default:module.AssistantPanel})));
 type Index=Awaited<ReturnType<typeof cockpitAnalysisIndex>>;
 type Props={api:WorkbenchApi;active:boolean;en:boolean;entry:AnalysisEntry|null;faults:CockpitFault[];onChooseFault:(entry:AnalysisEntry)=>void;onBackend:(entry:AnalysisEntry)=>void};
+type AssistantBox={x:number;y:number;width:number;height:number};
+
+function fitAssistantWindow(box:AssistantBox):AssistantBox{
+ const viewport=window.visualViewport,margin=8;
+ const left=viewport?.offsetLeft??0,top=viewport?.offsetTop??0;
+ const availableWidth=viewport?.width??document.documentElement.clientWidth;
+ const availableHeight=viewport?.height??document.documentElement.clientHeight;
+ const width=Math.min(box.width,Math.max(0,availableWidth-2*margin));
+ const height=Math.min(box.height,Math.max(0,availableHeight-2*margin));
+ return {
+  x:Math.max(left+margin,Math.min(box.x,left+availableWidth-width-margin)),
+  y:Math.max(top+margin,Math.min(box.y,top+availableHeight-height-margin)),
+  width,height,
+ };
+}
+
 export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBackend}:Props){
- const t=(zh:string,eng:string)=>en?eng:zh,board=useRef<HTMLDivElement>(null),workspace=useRef<HTMLElement>(null),contentRef=useRef<HTMLDivElement>(null),assistantRef=useRef<HTMLElement>(null);
+ const t=(zh:string,eng:string)=>en?eng:zh,board=useRef<HTMLDivElement>(null),workspace=useRef<HTMLElement>(null),assistantRef=useRef<HTMLElement>(null);
  const [assistantTab,setAssistantTab]=useState<'chat'|'record'>('chat'),[recordAttempt,setRecordAttempt]=useState(0);
  const returnToRecord=useRef(false);
  const [assistantCollapsed,setAssistantCollapsed]=useState<boolean>(()=>{try{return localStorage.getItem('ontovis.cockpit.assistant_collapsed')==='true';}catch{return false;}});
- const [assistantFloating,setAssistantFloating]=useState<{x:number;y:number}|null>(null);
+ const [assistantFloating,setAssistantFloating]=useState<AssistantBox|null>(null);
  const [assistantDragging,setAssistantDragging]=useState(false);
- const assistantDrag=useRef<{pointerId:number;startX:number;startY:number;originX:number;originY:number;panelWidth:number;panelHeight:number;parentWidth:number;parentHeight:number;moved:boolean;header:HTMLElement}|null>(null);
+ const assistantDrag=useRef<{pointerId:number;startX:number;startY:number;origin:AssistantBox;moved:boolean;header:HTMLElement}|null>(null);
+ const assistantIsFloating=assistantFloating!==null;
+ useLayoutEffect(()=>{
+  if(!active||!assistantIsFloating)return;
+  const viewport=window.visualViewport;
+  const keepInView=()=>setAssistantFloating(current=>current&&fitAssistantWindow(current));
+  keepInView();
+  window.addEventListener('resize',keepInView);
+  viewport?.addEventListener('resize',keepInView);
+  viewport?.addEventListener('scroll',keepInView);
+  return()=>{
+   window.removeEventListener('resize',keepInView);
+   viewport?.removeEventListener('resize',keepInView);
+   viewport?.removeEventListener('scroll',keepInView);
+  };
+ },[active,assistantIsFloating]);
  const [index,setIndex]=useState<Index|null>(null),[selected,setSelected]=useState(''),[detail,setDetail]=useState<CockpitAnalysisDetail|null>(null);
  const [loading,setLoading]=useState(false),[error,setError]=useState<unknown>(null),[attempt,setAttempt]=useState(0);
  const [focused,setFocused]=useState(''),[expanded,setExpanded]=useState<CanvasCard|null>(null),[anchor,setAnchor]=useState<SourceAnchor|null>(null);
@@ -162,16 +193,15 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
   setAssistantFloating(null);
  }
  function startAssistantDrag(event:ReactPointerEvent<HTMLElement>){
-  if(event.button!==0)return;
-  if((event.target as HTMLElement).closest('button,input,select,textarea,a'))return;
-  const contentEl=contentRef.current,panelEl=assistantRef.current;
-  if(!contentEl||!panelEl)return;
-  const contentRect=contentEl.getBoundingClientRect(),panelRect=panelEl.getBoundingClientRect();
-  const originX=assistantFloating?assistantFloating.x:(panelRect.left-contentRect.left);
-  const originY=assistantFloating?assistantFloating.y:(panelRect.top-contentRect.top);
+  if(event.button!==0||!event.isPrimary||assistantDrag.current)return;
+  if((event.target as Element).closest('button,input,select,textarea,a'))return;
+  const panel=assistantRef.current?.getBoundingClientRect();
+  if(!panel)return;
   const header=event.currentTarget;
+  event.preventDefault();
   try{header.setPointerCapture(event.pointerId);}catch{}
-  assistantDrag.current={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,originX,originY,panelWidth:panelRect.width,panelHeight:panelRect.height,parentWidth:contentRect.width,parentHeight:contentRect.height,moved:false,header};
+  assistantDrag.current={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
+   origin:{x:panel.left,y:panel.top,width:panel.width,height:panel.height},moved:false,header};
   setAssistantDragging(true);
  }
  function moveAssistantDrag(event:ReactPointerEvent<HTMLElement>){
@@ -182,18 +212,14 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
    if(Math.hypot(dx,dy)<4)return;
    drag.moved=true;
   }
-  const maxX=Math.max(8,drag.parentWidth-drag.panelWidth-8);
-  const maxY=Math.max(8,drag.parentHeight-60);
-  const nextX=Math.min(maxX,Math.max(8,drag.originX+dx));
-  const nextY=Math.min(maxY,Math.max(8,drag.originY+dy));
-  setAssistantFloating({x:nextX,y:nextY});
+  setAssistantFloating(fitAssistantWindow({...drag.origin,x:drag.origin.x+dx,y:drag.origin.y+dy}));
  }
  function endAssistantDrag(event?:ReactPointerEvent<HTMLElement>){
   const drag=assistantDrag.current;
   if(!drag)return;
   if(event&&drag.pointerId!==event.pointerId)return;
-  try{drag.header.releasePointerCapture(drag.pointerId);}catch{}
   assistantDrag.current=null;
+  if(drag.header.hasPointerCapture(drag.pointerId))drag.header.releasePointerCapture(drag.pointerId);
   setAssistantDragging(false);
  }
  function openChat(){
@@ -263,7 +289,7 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
    <span className="pa-context-spacer"/><IconBtn label={t('刷新推荐画布','Refresh recommendations')} onClick={()=>setAttempt(value=>value+1)}><RefreshCw size={15}/></IconBtn><Btn disabled={!detail||loading} onClick={edit}><ArrowUpRight size={15}/>{t('后台编辑','Edit in workbench')}</Btn><Btn onClick={()=>onBackend({newDraft:true})}><Plus size={15}/>{t('新建画布','New canvas')}</Btn>
   </header>
   {!!error&&<div className="pa-error" role="alert"><TriangleAlert size={18}/><p>{displayText(message)}</p><Btn onClick={()=>setAttempt(value=>value+1)}>{t('重试','Retry')}</Btn></div>}
-  {loading&&!detail?<div className="pa-empty" role="status"><LayoutDashboard size={42}/><p>{t('正在加载相关画布…','Loading related canvas…')}</p></div>:!detail&&!error?<div className="pa-empty"><GitBranch size={52}/><h2>{index?.entry?t('暂无相关分析画布','No related analysis canvases'):t('选择当前故障','Choose the current fault')}</h2><p>{index?.entry?t('可在后台新建分析画布。','Create an analysis canvas in the workbench.'):t('查看此故障的已保存分析与关联资料。','View saved analysis and evidence for this fault.')}</p></div>:detail&&sources?<div className="pa-content" ref={contentRef} data-assistant-collapsed={assistantCollapsed||undefined} data-assistant-floating={!!assistantFloating||undefined}>
+  {loading&&!detail?<div className="pa-empty" role="status"><LayoutDashboard size={42}/><p>{t('正在加载相关画布…','Loading related canvas…')}</p></div>:!detail&&!error?<div className="pa-empty"><GitBranch size={52}/><h2>{index?.entry?t('暂无相关分析画布','No related analysis canvases'):t('选择当前故障','Choose the current fault')}</h2><p>{index?.entry?t('可在后台新建分析画布。','Create an analysis canvas in the workbench.'):t('查看此故障的已保存分析与关联资料。','View saved analysis and evidence for this fault.')}</p></div>:detail&&sources?<div className="pa-content" data-assistant-collapsed={assistantCollapsed||undefined} data-assistant-floating={assistantIsFloating||undefined}>
    <main className="pa-evidence"><div className="pa-canvas-caption"><div><strong>{displayText(detail.snapshot.title)}</strong><small>{historical?t('历史参考','Historical reference'):t('固定分析','Fixed analysis')} · r{detail.analysisRevision} · {new Date(detail.snapshot.context.timeFrom).toLocaleString(en?'en-GB':'zh-CN',{timeZone:detail.snapshot.context.timezone})}</small></div><button title={displayText(candidate?.reason)} onClick={()=>setRecordOpen(true)}><InfoLabel en={en}/></button></div>
     <div className="pa-board" ref={board} tabIndex={0} role="region" aria-label={t('可视化分析画布','Visual analysis canvas')} aria-describedby="pa-canvas-help" data-pan-tool={hand||undefined} data-panning={panning||undefined}
      onPointerDownCapture={event=>beginPan(event,true)} onPointerDown={event=>beginPan(event)} onPointerMove={movePan} onPointerUp={()=>endPan()} onPointerCancel={()=>endPan(true)} onLostPointerCapture={()=>endPan(true)} onAuxClick={event=>{if(event.button===1)event.preventDefault();}} onKeyDown={canvasKey} onKeyUp={event=>{if(event.code==='Space')space.current=false;}} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node)){space.current=false;endPan();}}}>
@@ -285,7 +311,7 @@ export function CockpitAnalysis({api,active,en,entry,faults,onChooseFault,onBack
     </div></div><footer className="pa-board-footer"><small title={t('实线：登记关系 · 虚线：候选或人工关联 · 经对象：关联链','Solid: recorded · Dashed: candidate or manual · Via object: relationship path')}>{sourceRelations.error?<button onClick={sourceRelations.retry}>{t('关系读取失败，重试','Retry relationships')}</button>:sourceRelations.loading?t('正在读取关系…','Loading relationships…'):t('实线：登记关系 · 虚线：候选/人工 · 经对象：关联链','Solid: recorded · Dashed: candidate/manual · Via object: path')}</small><button className="pa-layout-reset" disabled={!Object.keys(cardPositions).length} onClick={resetLayout}><RotateCcw size={13}/>{t('恢复布局','Reset layout')}</button><span>{layout.cards.length} {t('张卡片','cards')}</span><div className="pa-canvas-tools" role="group" aria-label={t('画布视图','Canvas view')}><IconBtn label={t('平移画布','Pan canvas')} aria-pressed={hand} onClick={()=>setHand(value=>!value)}><Hand size={15}/></IconBtn><IconBtn label={t('缩小画布','Zoom out canvas')} disabled={viewport.zoom<=minZoom} onClick={()=>zoomCanvas(viewport.zoom*.8)}><ZoomOut size={15}/></IconBtn><button className="pa-zoom-value" aria-label={t('画布原尺寸100%','Canvas actual size 100%')} title={t('恢复100%','Reset to 100%')} onClick={()=>zoomCanvas(1)}>{Math.round(viewport.zoom*100)}%</button><IconBtn label={t('放大画布','Zoom in canvas')} disabled={viewport.zoom>=COCKPIT_CANVAS_MAX_ZOOM} onClick={()=>zoomCanvas(viewport.zoom*1.25)}><ZoomIn size={15}/></IconBtn><IconBtn label={t('适应全部资料','Fit all evidence')} onClick={fitCanvas}><Maximize2 size={15}/></IconBtn></div></footer>
    </main>
    {assistantCollapsed&&<button type="button" className="pa-assistant-launcher" onClick={openAssistant} title={t('展开工程助手','Expand engineering assistant')} aria-label={t('展开工程助手','Expand engineering assistant')}><Sparkles size={16}/><span>{t('工程助手','Engineering assistant')}</span><PanelRightOpen size={15}/></button>}
-   <aside ref={assistantRef} className="pa-record pa-assistant pc-panel" aria-label={t('工程助手','Engineering assistant')} data-floating={!!assistantFloating||undefined} data-dragging={assistantDragging||undefined} style={{...(assistantFloating?{left:assistantFloating.x,top:assistantFloating.y}:undefined),...(assistantCollapsed?{display:'none'}:undefined)}}>
+   <aside ref={assistantRef} className="pa-record pa-assistant pc-panel" aria-label={t('工程助手','Engineering assistant')} data-floating={assistantIsFloating||undefined} data-dragging={assistantDragging||undefined} style={{...(assistantFloating?{left:assistantFloating.x,top:assistantFloating.y,width:assistantFloating.width,height:assistantFloating.height}:undefined),display:assistantCollapsed?'none':undefined}}>
     <header onPointerDown={startAssistantDrag} onPointerMove={moveAssistantDrag} onPointerUp={endAssistantDrag} onPointerCancel={endAssistantDrag} onLostPointerCapture={endAssistantDrag} onDoubleClick={resetAssistantPosition} title={assistantFloating?t('按住拖拽移动，双击恢复停靠','Drag to move, double-click to dock'):t('按住拖拽浮动','Drag to float')}>
      <div className="pa-assistant-title-group"><GripHorizontal size={15} className="pa-assistant-grip" aria-hidden="true"/><Sparkles size={18}/><h2>{t('工程助手','Engineering assistant')}</h2><small>{t('基于当前资料','Current materials')}</small></div>
      <div className="pa-assistant-controls">
