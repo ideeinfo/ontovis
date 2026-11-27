@@ -39,6 +39,8 @@ import {sceneText} from './sceneMessages';
 import {cloneSnapshot, commitScene, duplicateAt, hasSceneChanges, isLocalInstance, isLocalScene, moveInstance, placeModel, redoScene, sceneHistory, undoScene, updateInstance, type SceneHistory} from './sceneState';
 import {sceneSnapshotWithView,sceneViewChanged} from './sceneSaveView';
 import {scenePublicGeoCenter} from './publicGeoForm';
+import {publicGeoMessages} from './publicGeoMessages';
+import type {ResourceTab} from './ResourcePanel';
 import {fromDisplay, toDisplay} from './sceneTransforms';
 import type {ProjectModelVersion, TerrainVersion, ProjectTurbineDefinition} from './resourceTypes';
 import type {ModelResourceSelection} from './resourceForms';
@@ -53,6 +55,8 @@ import './scenes.css';
 const SceneAlarmPanel=lazy(()=>import('./SceneAlarmPanel').then(module=>({default:module.SceneAlarmPanel})));
 const SceneViewport=lazy(()=>import('./SceneViewport').then(module=>({default:module.SceneViewport})));
 const ResourcePanel=lazy(()=>import('./ResourcePanel').then(module=>({default:module.ResourcePanel})));
+const PublicGeoDataPanel=lazy(()=>import('./PublicGeoDataPanel').then(module=>({default:module.PublicGeoDataPanel})));
+const leftTabs={content:'sceneContents',position:'position',resources:'modelResources',objects:'projectObjects'} as const;
 export interface SceneWorkspaceHandle {requestLeave:(after:()=>void)=>void;cockpitEntry:()=>{sceneId:string;sceneRevision:string;instanceId:string|null;camera?:SceneView}|null}
 export interface SceneWorkspaceTarget extends Omit<AssistantSceneEditTarget,'sceneRevision'> {sceneRevision?:string}
 const modelRef=(model:ProjectModelVersion):ModelResourceRef=>({modelAssetId:model.modelAssetId,modelVersionId:model.modelVersionId,contentRevision:model.contentRevision,sha256:model.sha256});
@@ -149,8 +153,10 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
   const [metadataErrors,setMetadataErrors]=useState<{terrain:unknown;imagery:unknown}>({terrain:null,imagery:null});
   const [entryPending,setEntryPending]=useState(!!initialEntry||!!initialScene?.sceneRevision);
   const [editing,setEditing]=useState(false),[readOnly,setReadOnly]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<unknown>(null);
-  const [left,setLeft]=useState<'content'|'resources'|'objects'>('content'),[side,setSide]=useState<'left'|'right'|null>(null);
-  const [modal,setModal]=useState<'info'|'create'|'leave'|'conflict'|'anchor'|'replaceTerrain'|'bindingReview'|'engineeringReview'|null>(null),[newName,setNewName]=useState('');
+  const [left,setLeft]=useState<keyof typeof leftTabs>('content'),[side,setSide]=useState<'left'|'right'|null>(null);
+  const [resourceStartTab,setResourceStartTab]=useState<ResourceTab>('models');
+  const publicGeoResultTab=useRef<ResourceTab|null>(null);
+  const [modal,setModal]=useState<'info'|'create'|'leave'|'conflict'|'anchor'|'replaceTerrain'|'bindingReview'|'engineeringReview'|'publicGeo'|null>(null),[newName,setNewName]=useState('');
   const [newDescription,setNewDescription]=useState(''),[projectOptions,setProjectOptions]=useState<ProjectSummary[]>(project?[project]:[]),[createProject,setCreateProject]=useState(project?.projectRef.projectCode||api.project?.projectCode||'');
   const [createAccess,setCreateAccess]=useState<ProjectAccess|null>(null);
   useEffect(()=>{setCreateAccess(null);if(modal!=='create'||!createProject)return;const abort=new AbortController();const ref=projectOptions.find(value=>value.projectRef.projectCode===createProject)?.projectRef;if(!ref)return;void api.request<ProjectAccess>('/api/workbench/projects/access',{projectRef:ref},abort.signal).then(value=>{if(!abort.signal.aborted)setCreateAccess(value);}).catch(value=>{if(!abort.signal.aborted&&!cancelled(value))setError(value);});return()=>abort.abort();},[api,modal,createProject,projectOptions]);
@@ -183,7 +189,8 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
   const [alarmOpen,setAlarmOpen]=useState(false),[sceneAlarm,setSceneAlarm]=useState<SceneAlarm|null>(null);
   const [viewCommand,setViewCommand]=useState<{token:number,view:SceneView}|undefined>(),[focus,setFocus]=useState<{token:number,instanceId:string|null,instanceIds?:string[]}|undefined>();
   const [anchor,setAnchor]=useState({x:'0',z:'0',longitude:'',latitude:'',heading:'0',offset:'0',strategy:'resample_each_ground' as GeographicAnchor['heightStrategy']});
-  const [position,setPosition]=useState({name:'',mode:'local',x:'0',z:'0',longitude:'',latitude:'',heading:'0',heightMode:'relative',height:'0',source:''});
+  const [instanceName,setInstanceName]=useState('');
+  const [position,setPosition]=useState({mode:'local',x:'0',z:'0',longitude:'',latitude:'',heading:'0',heightMode:'relative',height:'0',source:''});
   const mounted=useRef(false),requests=useRef(new Set<AbortController>()),sequence=useRef(0),listSequence=useRef(0);
   const leave=useRef<(()=>void)|null>(null),liveView=useRef<SceneView|null>(null),beforeAnchorView=useRef<SceneView|null>(null);
   const saveRequest=useRef<{body:SceneSaveRequest,models:ModelResourceRef[],terrain:TerrainVersion|null}|null>(null);
@@ -197,6 +204,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
   const createRequest=useRef<{name:string,id:string}|null>(null);
   const [imageryVersion,setImageryVersion]=useState<ImageryVersion|null>(null),[imageryVisible,setImageryVisible]=useState(true);
   const draft=history?.present||null,current=draft?.instances.find(item=>item.sceneModelInstanceId===selected)||null;
+  const sceneCenter=draft?scenePublicGeoCenter(draft.coordinateFrame):undefined;
   const turbinePoint=useMemo(()=>{
     if(!turbinePlacementModal||!draft)return null;
     try{return fromDisplay(draft.coordinateFrame,turbinePlacementModal.point);}catch{return null;}
@@ -319,6 +327,7 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     const initialId=instanceId||(value.snapshot.instances.find(item=>item.visible)||value.snapshot.instances[0])?.sceneModelInstanceId||null;
     setSelection(initialId?[initialId]:[]);
     setBase(value);setHistory(sceneHistory(value.snapshot));setSelected(initialId);
+    setResourceStartTab('models');
     setPersonal({});setEditing(false);setReadOnly(value.sceneRevision!==value.headRevision);setPending(null);setPreview(null);setAnchorResult(null);setUpdate(value.headRevision!==value.sceneRevision);setHints({});setSide(null);setResourceSelection(null);
     setSaveUnknown(false);setViewDirty(false);saveRequest.current=null;
     acceptedEngineering.current=engineeringReviews(value.validation);approvedRoots.current=[];setReviewDirty(false);setReviewCandidate(null);
@@ -353,10 +362,11 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     const timer=window.setInterval(()=>void check(),30000);document.addEventListener('visibilitychange',check);
     return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',check);abort.abort();done(abort);};
   },[base?.sceneId,base?.sceneRevision]);
+  useEffect(()=>{setInstanceName(current?.displayName||'');},[selected,current?.displayName]);
   useEffect(()=>{
     if(!current||!draft)return;
     try{const point=toDisplay(draft.coordinateFrame,current.placement.position,current.placement.height),height=current.placement.height;
-      setPosition({name:current.displayName,mode:isLocalScene(draft)?'local':'geographic',x:String(point[0]),z:String(point[2]),
+      setPosition({mode:isLocalScene(draft)?'local':'geographic',x:String(point[0]),z:String(point[2]),
         longitude:isLocalInstance(current)?'':String(current.placement.position.longitude),latitude:isLocalInstance(current)?'':String(current.placement.position.latitude),heading:String(Number(current.placement.headingDeg.toFixed(8))%360),
         heightMode:height.mode==='local_relative'?'relative':height.mode==='terrain_ground'?'ground':'absolute',
         height:String(height.mode==='local_relative'?height.relativeHeightM:height.mode==='terrain_ground'?height.offsetM:height.valueM),source:height.mode==='absolute'?height.sourceNote:''});
@@ -617,14 +627,18 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     else next.instances=next.instances.filter(item=>item.sceneModelInstanceId!==current.sceneModelInstanceId);
     void commit(pruneSceneGroups(next)).then(ok=>{if(ok){setSelected(null);setSelection([]);}});
   }
-  async function applyPosition(){
+  async function applyInstanceName(){
     if(!current||!draft||!editable)return;
-    if(!position.name.trim()||position.name.trim().length>200){setError(new Error(t('invalidName')));return;}
-    if(current.positionLocked){await commit(updateInstance(draft,{...current,displayName:position.name.trim()}));return;}
+    const name=instanceName.trim();
+    if(!name||name.length>200){setError(new Error(t('invalidName')));return;}
+    if(name!==current.displayName)await commit(updateInstance(draft,{...current,displayName:name}));
+  }
+  async function applyPosition(){
+    if(!current||!draft||!editable||current.positionLocked)return;
     const inputs=[position.heading,position.height,...(position.mode==='local'?[position.x,position.z]:[position.longitude,position.latitude])];
     if(!inputs.every(finite)){setError(new Error(t('invalidPosition')));return;}
     try{const item=structuredClone(current),heading=((snapNumber(Number(position.heading),snap.angle)%360)+360)%360;
-      item.displayName=position.name.trim();item.placement.headingDeg=heading;
+      item.placement.headingDeg=heading;
       if(isLocalInstance(item)){item.placement.position={mode:'local',xM:Number(position.x),zM:Number(position.z)};item.placement.height={mode:'local_relative',relativeHeightM:Number(position.height)};}
       else if(!isLocalScene(draft)){
         const coordinate=position.mode==='local'?fromDisplay(draft.coordinateFrame,[Number(position.x),0,Number(position.z)]).position:
@@ -642,6 +656,14 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
       const next=updateInstance(draft,item);
       await commit(snap.grid?moveInstance(next,item.sceneModelInstanceId,snapPoint(toDisplay(draft.coordinateFrame,item.placement.position,item.placement.height),snap.grid)):next);
     }catch(value){failed(value);}
+  }
+  function showResources(tab:ResourceTab='models'){
+    setResourceStartTab(tab);setLeft('resources');setSide('left');
+  }
+  function closePublicGeo(){
+    setModal(null);
+    if(publicGeoResultTab.current)showResources(publicGeoResultTab.current);
+    publicGeoResultTab.current=null;
   }
   function adoptTerrain(value:TerrainVersion){
     if(!draft||!editable)return;
@@ -1010,9 +1032,38 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     })():
       <><div className="sw-editor-toolbar"><IconBtn label={t('back')} disabled={busy} onClick={()=>requestLeave(()=>{setBase(null);setHistory(null);setTerrain(null);setPreview(null);setModal(null);void readList();})}><ArrowLeft size={16}/></IconBtn><strong>{draft?.displayName}</strong><Btn disabled={busy||!!anchorResult||saveUnknown||routePlaying} onClick={()=>{if(draft){setInfo({name:draft.displayName,description:draft.description||''});setInfoThumbFile(null);setModal('info');}}}>{en?'Basic information':'基本信息'}</Btn><Badge>{unsaved?t('unsaved'):t('saved')}</Badge>{!canWrite&&<Badge>{t('readOnly')}</Badge>}<span className="sw-grow"/>{update&&<Btn disabled={busy} onClick={()=>setModal('conflict')}>{t('updateAvailable')}</Btn>}
         <Btn disabled={busy||unsaved||editing||routePlaying||!!preview||!!anchorResult} onClick={()=>setAlarmOpen(v=>!v)}>{en?'Alarm replay':'告警回放'}</Btn><div className="sw-mode" role="group" aria-label={t('scenes')}><button type="button" aria-pressed={!editing} disabled={busy||!!anchorResult||routePlaying} onClick={()=>{setEditing(false);setPending(null);setContinuous(false);}}>{t('read')}</button><button type="button" aria-pressed={editing} disabled={!canWrite||busy||!!anchorResult||routePlaying} onClick={()=>{setEditing(true);setPreview(null);}}>{t('edit')}</button></div><Btn primary title={t('saveViewHint')} disabled={!canWrite||(!dirty&&!reviewDirty&&!saveUnknown)||busy||!!anchorResult||routePlaying||environmentInvalid||!!preview} onClick={()=>void save()}><Save size={14}/>{busy?t('saving'):t('save')}</Btn>{base.capabilities.sceneLifecycleWriteVersion===1&&<IconBtn label={t('deleteScene')} disabled={!canWrite||busy||unsaved||routePlaying} title={unsaved?t('beforeDelete'):undefined} onClick={()=>{setError(null);setDeleteTarget({sceneId:base.sceneId,headRevision:base.sceneRevision,lifecycleRevision:base.lifecycleRevision,displayName:draft!.displayName,updatedAt:base.savedAt,instanceCount:draft!.instances.length});}}><Trash2 size={15}/></IconBtn>}</div>
-      {snapshot&&<><div className="sw-mobile-tools"><IconBtn label={t('content')} onClick={()=>setSide(side==='left'?null:'left')}><PanelLeft size={16}/></IconBtn><span className="sw-grow"/><IconBtn label={t('position')} onClick={()=>setSide(side==='right'?null:'right')}><PanelRight size={16}/></IconBtn></div>
-      <div className="sw-editor" data-side={side||undefined}><aside className="sw-left"><div className="sw-tabs" role="tablist">{(['content','resources','objects'] as const).map(value=><button type="button" role="tab" disabled={busy||!!anchorResult} aria-selected={left===value} key={value} onClick={()=>{setLeft(value);if(value!=='resources')setPreview(null);}}>{t(value==='objects'?'projectObjects':value==='resources'?'modelResources':'sceneContents')}</button>)}</div>
-        {left==='objects'?<SceneObjectsPanel key={internal?'equipment':'project'} api={api} root={internal?rootObject:null} rootReading={internal&&rootReading} selectedUid={object?.item.entityUid||''} ancestorUids={object?.ancestors.path.map(row=>row.object.entityUid)||[]} onSelect={(uid,scope)=>void chooseObject(uid,scope)}/>:left==='resources'?<>{preview&&<ModelComponentTree version={preview} inspection={inspection} onClose={()=>setPreview(null)} onSelect={()=>{if(matchMedia('(max-width:999px)').matches)setSide('right');}}/>}<div className="mp-catalog" hidden={!!preview}><Suspense fallback={<p role="status">{t('loading')}</p>}><ResourcePanel key={base.sceneId} projectCode={base.projectCode} api={api} publicGeoCenter={scenePublicGeoCenter(draft!.coordinateFrame)} canPlace={editable} canAcquire={canWrite&&!busy} geographic={!isLocalScene(draft!)} modelSelection={resourceSelection} onModelSelected={setResourceSelection} canReplace={editable&&!dirty&&!!current&&!current.positionLocked} replaceTargetVersion={current?.modelVersionId}
+      {snapshot&&<><div className="sw-mobile-tools"><IconBtn label={t('content')} onClick={()=>setSide(side==='left'?null:'left')}><PanelLeft size={16}/></IconBtn><span className="sw-grow"/><IconBtn label={ot('properties')} onClick={()=>setSide(side==='right'?null:'right')}><PanelRight size={16}/></IconBtn></div>
+      <div className="sw-editor" data-side={side||undefined}><aside className="sw-left"><div className="sw-tabs" role="tablist">{(Object.keys(leftTabs) as (keyof typeof leftTabs)[]).map(value=><button type="button" role="tab" disabled={busy||!!anchorResult} aria-selected={left===value} key={value} onClick={()=>{
+        if(value==='resources'&&left!=='resources')setResourceStartTab('models');
+        setLeft(value);if(value!=='resources')setPreview(null);
+      }}>{t(leftTabs[value])}</button>)}</div>
+        {left==='position'?<div role="tabpanel" aria-label={t('position')}>
+          <section className="sw-position-section" aria-label={t('sceneLocation')}>
+            <h3>{t('sceneLocation')}</h3>
+            {sceneCenter?<dl className="sw-field-pair sw-scene-coordinates">
+              <div><dt>{t('longitude')}</dt><dd>{sceneCenter.longitude.toFixed(7)}°</dd></div>
+              <div><dt>{t('latitude')}</dt><dd>{sceneCenter.latitude.toFixed(7)}°</dd></div>
+            </dl>:<p className="sw-position-note">{t('unanchored')}</p>}
+            <p className="sw-position-note">{t(sceneCenter?'sceneLocationHint':'sceneLocationSetup')}</p>
+            <Btn className="sw-public-geo-entry" disabled={!canWrite||busy||!!anchorResult||routePlaying} onClick={()=>{publicGeoResultTab.current=null;setModal('publicGeo');}}>{publicGeoMessages[locale].title}</Btn>
+          </section>
+          <section className="sw-position-section" aria-label={t('instancePosition')}>
+            <h3>{t('instancePosition')}</h3>
+            {current?<>
+              <p className="sw-position-target">{current.displayName}</p>
+              <fieldset disabled={!editable||current.positionLocked}>
+                {!isLocalScene(draft!)&&<label className="sw-coordinate-mode">{t('coordinateMode')}<select value={position.mode} onChange={event=>setPosition(value=>({...value,mode:event.target.value}))}><option value="geographic">{t('geographic')}</option><option value="local">{t('local')}</option></select></label>}
+                <div className="sw-field-pair">{fields(position.mode==='local'?['x','z']:['longitude','latitude'])}</div>
+                <div className="sw-field-pair">{fields(['heading'])}{!isLocalScene(draft!)&&<label>{t('height')}<select value={position.heightMode} onChange={event=>setPosition(value=>({...value,heightMode:event.target.value,height:'0'}))}><option value="ground">{t('ground')}</option>{draft!.coordinateFrame.mode==='projected_site'&&draft!.coordinateFrame.verticalDatum!=='UNKNOWN_RELATIVE'&&<option value="absolute">{t('absolute')}</option>}</select></label>}</div>{fields(['height'])}
+                {position.heightMode==='absolute'&&<label>{t('heightSource')}<input value={position.source} onChange={event=>setPosition(value=>({...value,source:event.target.value}))}/></label>}
+              </fieldset>
+              {editing&&<div className="sw-position-apply">
+                <Btn disabled={!editable||current.positionLocked} onClick={()=>void applyPosition()}><Check size={14}/>{t('apply')}</Btn>
+                <Btn disabled={!editable} onClick={()=>changeCurrent(item=>({...item,positionLocked:!item.positionLocked}))}>{current.positionLocked?<UnlockKeyhole size={14}/>:<LockKeyhole size={14}/>} {t(current.positionLocked?'unlock':'lock')}</Btn>
+              </div>}
+            </>:<Btn onClick={()=>setLeft('content')}>{t('selectPositionInstance')}</Btn>}
+          </section>
+        </div>:left==='objects'?<SceneObjectsPanel key={internal?'equipment':'project'} api={api} root={internal?rootObject:null} rootReading={internal&&rootReading} selectedUid={object?.item.entityUid||''} ancestorUids={object?.ancestors.path.map(row=>row.object.entityUid)||[]} onSelect={(uid,scope)=>void chooseObject(uid,scope)}/>:left==='resources'?<>{preview&&<ModelComponentTree version={preview} inspection={inspection} onClose={()=>setPreview(null)} onSelect={()=>{if(matchMedia('(max-width:999px)').matches)setSide('right');}}/>}<div className="mp-catalog" hidden={!!preview}><Suspense fallback={<p role="status">{t('loading')}</p>}><ResourcePanel key={base.sceneId} initialTab={resourceStartTab} projectCode={base.projectCode} api={api} canPlace={editable} geographic={!isLocalScene(draft!)} modelSelection={resourceSelection} onModelSelected={setResourceSelection} canReplace={editable&&!dirty&&!!current&&!current.positionLocked} replaceTargetVersion={current?.modelVersionId}
           onEnterEdit={()=>{if(!editing&&canWrite)setEditing(true);}}
           onPlaceTurbine={turbine=>{
             if(!editing&&canWrite)setEditing(true);
@@ -1052,16 +1103,18 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
           </section><div className="sw-tabs" role="tablist" aria-label={et('selectedObject')}><button type="button" role="tab" aria-selected={objectTab==='links'} onClick={()=>setObjectTab('links')}>{et('componentLinks')}</button><button type="button" role="tab" aria-selected={objectTab==='evidence'} onClick={()=>setObjectTab('evidence')}>{et('evidence')}</button></div>
           {objectTab==='evidence'?<SourceEvidence key={object.item.entityUid} api={api} object={object.item} context={object.context} host={location?.hostObject?.displayName||'—'} endpointPrefix="/api/workbench/objects/evidence"/>:links}
         </>:current?<><section className="sw-instance-overview" aria-label={t('modelProperties')}>
-          <fieldset disabled={!editable}><label>{t('modelName')}<input value={position.name} onChange={event=>setPosition(value=>({...value,name:event.target.value}))}/></label></fieldset>
-          <dl className="sw-instance-facts"><dt>{t('instanceId')}</dt><dd className="sw-instance-id">{current.sceneModelInstanceId}</dd><dt>{t('modelResource')}</dt><dd>{currentModel?.displayName||resourceNames[current.modelVersionId]||t('loading')}<button type="button" className="sw-text-button" onClick={()=>{const resource=refs.find(value=>value.modelVersionId===current.modelVersionId);if(resource?.modelAssetId)setResourceSelection({modelAssetId:resource.modelAssetId,modelVersionId:resource.modelVersionId});setLeft('resources');setSide('left');}}>{t('viewResource')}</button></dd><dt>{t('sameVersionInstances')}</dt><dd>{draft!.instances.filter(item=>item.modelVersionId===current.modelVersionId).length}</dd><dt>{t('version')}</dt><dd><span className="sw-fixed-version" title={current.modelVersionId}>{current.modelVersionId.slice(0,8)}</span>{editing&&<button type="button" className="sw-text-button" disabled={!editable||dirty||current.positionLocked} title={dirty?t('saveFirst'):undefined} onClick={()=>{setLeft('resources');setSide('left');}}>{t('changeVersion')}</button>}</dd></dl>
+          <form onSubmit={event=>{event.preventDefault();void applyInstanceName();}}>
+            <fieldset className="sw-instance-name" disabled={!editable}>
+              <label>{t('modelName')}<input value={instanceName} onChange={event=>setInstanceName(event.target.value)}/></label>
+              {editing&&<Btn type="submit" disabled={instanceName.trim()===current.displayName}>{t('apply')}</Btn>}
+            </fieldset>
+          </form>
+          <dl className="sw-instance-facts"><dt>{t('instanceId')}</dt><dd className="sw-instance-id">{current.sceneModelInstanceId}</dd><dt>{t('modelResource')}</dt><dd>{currentModel?.displayName||resourceNames[current.modelVersionId]||t('loading')}<button type="button" className="sw-text-button" onClick={()=>{const resource=refs.find(value=>value.modelVersionId===current.modelVersionId);if(resource?.modelAssetId)setResourceSelection({modelAssetId:resource.modelAssetId,modelVersionId:resource.modelVersionId});showResources();}}>{t('viewResource')}</button></dd><dt>{t('sameVersionInstances')}</dt><dd>{draft!.instances.filter(item=>item.modelVersionId===current.modelVersionId).length}</dd><dt>{t('version')}</dt><dd><span className="sw-fixed-version" title={current.modelVersionId}>{current.modelVersionId.slice(0,8)}</span>{editing&&<button type="button" className="sw-text-button" disabled={!editable||dirty||current.positionLocked} title={dirty?t('saveFirst'):undefined} onClick={()=>showResources()}>{t('changeVersion')}</button>}</dd></dl>
           {links}
-          </section><section className="sw-position-section" aria-label={t('position')}><h3>{t('position')}</h3><fieldset disabled={!editable||current.positionLocked}>
-          {!isLocalScene(draft!)&&<label className="sw-coordinate-mode">{t('coordinateMode')}<select value={position.mode} onChange={event=>setPosition(value=>({...value,mode:event.target.value}))}><option value="geographic">{t('geographic')}</option><option value="local">{t('local')}</option></select></label>}
-          <div className="sw-field-pair">{fields(position.mode==='local'?['x','z']:['longitude','latitude'])}</div>
-          <div className="sw-field-pair">{fields(['heading'])}{!isLocalScene(draft!)&&<label>{t('height')}<select value={position.heightMode} onChange={event=>setPosition(value=>({...value,heightMode:event.target.value,height:'0'}))}><option value="ground">{t('ground')}</option>{draft!.coordinateFrame.mode==='projected_site'&&draft!.coordinateFrame.verticalDatum!=='UNKNOWN_RELATIVE'&&<option value="absolute">{t('absolute')}</option>}</select></label>}</div>{fields(['height'])}
-          {position.heightMode==='absolute'&&<label>{t('heightSource')}<input value={position.source} onChange={event=>setPosition(value=>({...value,source:event.target.value}))}/></label>}
-          </fieldset>{editing&&<div className="sw-position-apply"><Btn disabled={!editable} onClick={()=>void applyPosition()}><Check size={14}/>{t('apply')}</Btn></div>}
-          </section><div className="sw-actions sw-instance-actions">{editing&&<><Btn disabled={!editable} onClick={()=>changeCurrent(item=>({...item,positionLocked:!item.positionLocked}))}>{current.positionLocked?<UnlockKeyhole size={14}/>:<LockKeyhole size={14}/>} {t(current.positionLocked?'unlock':'lock')}</Btn><Btn disabled={!editable} onClick={()=>setPending({kind:'copy',sourceId:current.sceneModelInstanceId})}><Copy size={14}/>{t('duplicate')}</Btn><Btn disabled={!editable||current.positionLocked} onClick={removeCurrent}><Trash2 size={14}/>{t('remove')}</Btn></>}</div>
+          </section><div className="sw-actions sw-instance-actions">
+            <Btn className="sw-instance-position-link" disabled={busy||!!anchorResult} onClick={()=>{setPreview(null);setLeft('position');setSide('left');}}><MapPin size={14}/>{t('instancePosition')}</Btn>
+            {editing&&<><Btn disabled={!editable} onClick={()=>setPending({kind:'copy',sourceId:current.sceneModelInstanceId})}><Copy size={14}/>{t('duplicate')}</Btn><Btn disabled={!editable||current.positionLocked} onClick={removeCurrent}><Trash2 size={14}/>{t('remove')}</Btn></>}
+          </div>
         </>:<p className="sw-empty">{t('noSelection')}</p>}
         {inspectorTab==='properties'&&<><SceneEnvironmentPanel key={`${base?.sceneId}:${base?.sceneRevision}`} value={draft?.environment} editable={environmentEditable&&!!base?.capabilities.environmentSchemaVersions?.includes(1)} waterSupported={!!draft&&waterSurfaceSupported(draft.coordinateFrame,terrain)} locale={locale} surroundingsSupported={!!base?.capabilities.surroundingBackgroundModes?.includes('auto')} cloudsSupported={!!base?.capabilities.cloudModes?.includes('procedural-cumulus-v1')} terrainMaterial={draft?.defaults.terrainMaterial} terrainCovered={terrainCovered} onValidityChange={setEnvironmentInvalid} onChange={value=>{if(environmentEditable)setHistory(previous=>previous?commitScene(previous,sceneWithEnvironment(previous.present,value)):previous);}}/><details className="sw-details"><summary>{effectiveEnvironment?(locale==='en'?'Base ground':'基础地表'):t('appearance')}</summary>{effectiveEnvironment&&<p className="se-note">{locale==='en'?'Background and lighting are controlled by Environment. This style only affects uncovered ground.':'背景和光照由环境渲染统一控制；此处仅设置未被影像或水面覆盖的基础地表。'}</p>}<fieldset disabled={!editable}>{(effectiveEnvironment?['terrainMaterial'] as const:['background','lighting','terrainMaterial'] as const).map(key=><label key={key}>{t(key==='terrainMaterial'?'material':key)}<select value={draft!.defaults[key]} onChange={event=>{if(draft)void commit({...draft,defaults:{...draft.defaults,[key]:event.target.value}} as EditableSceneSnapshot);}}>{(key==='background'?['plain','sky'] as const:key==='lighting'?['neutral','dusk'] as const:['solid','grass'] as const).map(value=><option key={value} value={value}>{t(value)}</option>)}</select></label>)}</fieldset></details>{!anchorResult&&!objectLoading&&!object&&current&&<details className="sw-details"><summary>{t('details')}</summary><p>{t('geometryNote')}</p>{currentModel&&<p>{currentModel.sourceNote}</p>}</details>}</>}
       </>}</aside></div>
@@ -1092,6 +1145,12 @@ export const SceneWorkspace=forwardRef<SceneWorkspaceHandle,{api:WorkbenchApi;su
     </ConfirmationDialog>}
     {modal==='bindingReview'&&bindingReview&&base&&draft&&<SceneBindingReview api={api} check={bindingReview} instances={draft.instances} previousInstances={base.snapshot.instances} busy={busy} onClose={()=>{if(!busy){setModal(null);leave.current=null;}}} onConfirm={()=>{approvedRoots.current=structuredClone(bindingReview.rootBindingChanges||[]);void save(bindingReview).then(ok=>{if(ok&&leave.current){leave.current();leave.current=null;}});}}/>}
     {modal==='engineeringReview'&&reviewCandidate&&<Modal title={et('reviewObject')} description={et('reviewObjectHint')} onClose={()=>{if(!busy){setModal(null);setReviewCandidate(null);}}}><div className="se-root-review"><strong>{reviewCandidate.item.displayName}</strong><p>{[...reviewCandidate.ancestors.path].reverse().map(row=>row.object.displayName).concat(reviewCandidate.item.displayName).join(' › ')}</p>{reviewCandidate.context?.purpose==='demonstration'&&<Badge tone="warning">{et('demonstration')}</Badge>}</div><div className="sw-actions"><Btn disabled={busy} onClick={()=>{setModal(null);setReviewCandidate(null);}}>{et('cancel')}</Btn><Btn primary disabled={busy} onClick={()=>{acceptedEngineering.current=reviewSelectedObject(acceptedEngineering.current,reviewCandidate);if(object&&refKey(object.objectRef)===refKey(reviewCandidate.objectRef))setObject(reviewCandidate);if(rootObject&&refKey(rootObject.objectRef)===refKey(reviewCandidate.objectRef))setRootRead({identity:currentIdentity,value:reviewCandidate,reading:false});setReviewDirty(true);saveRequest.current=null;setModal(null);setReviewCandidate(null);setError(null);}}>{et('confirmReview')}</Btn></div></Modal>}
+    {modal==='publicGeo'&&base&&draft&&<Modal title={publicGeoMessages[locale].title} description={publicGeoMessages[locale].hint} onClose={closePublicGeo}>
+      <Suspense fallback={<p role="status">{t('loading')}</p>}>
+        <PublicGeoDataPanel key={base.sceneId} api={api} canWrite={canWrite&&!busy} initialCenter={sceneCenter} onClose={closePublicGeo}
+          onImported={result=>{publicGeoResultTab.current=result.terrainVersionId?'terrains':'imagery';}}/>
+      </Suspense>
+    </Modal>}
     {modal==='replaceTerrain'&&candidate&&<Modal title={t('replaceTerrain')} description={t('replacementHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><label>{t('terrainStrategy')}<select value={terrainStrategy} onChange={event=>setTerrainStrategy(event.target.value as 'keep_height'|'resample_ground')}><option value="resample_ground">{t('resampleGround')}</option><option value="keep_height">{t('keepHeight')}</option></select></label><Btn primary onClick={()=>void previewReplacement({kind:'terrain',candidateTerrainVersionId:candidate.terrainVersionId,strategy:terrainStrategy})}>{t('previewReplacement')}</Btn></fieldset></Modal>}
     {modal==='anchor'&&candidate&&<Modal title={t('anchor')} description={t('anchorHint')} onClose={()=>{if(!busy){setModal(null);setCandidate(null);}}}><fieldset className="sw-form" disabled={busy}>{errorText&&<div className="sw-notice" role="alert"><span>{errorText}</span></div>}<strong>{candidate.displayName}</strong><div className="sw-field-pair">{(['x','z','longitude','latitude','heading','offset'] as const).map(key=><label key={key}>{t(key==='heading'?'anchorHeading':key==='offset'?'offset':key)}<input type="number" step="any" value={anchor[key]} onChange={event=>setAnchor(value=>({...value,[key]:event.target.value}))}/></label>)}</div><label>{t('height')}<select value={anchor.strategy} onChange={event=>setAnchor(value=>({...value,strategy:event.target.value as GeographicAnchor['heightStrategy']}))}><option value="resample_each_ground">{t('resample')}</option><option value="keep_relative_to_anchor">{t('keepRelative')}</option></select></label><Btn primary onClick={()=>void previewAnchor()}>{t('anchorPreview')}</Btn></fieldset></Modal>}
     {turbinePlacementModal&&<Modal className="sw-turbine-modal" title={locale==='zh'?`布置风机 · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`:`Place Turbine · ${turbinePlacementModal.turbine.displayName||turbinePlacementModal.turbine.modelCode}`} description={locale==='zh'?'已在三维地表选定机位落点，请选择要装配的模型形态版本':'Ground position selected. Choose representation model to place.'} onClose={()=>{if(!busy)setTurbinePlacementModal(null);}}>

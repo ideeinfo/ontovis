@@ -186,7 +186,7 @@ export function AssistantEquipmentConfiguration({api,target,title,en,onClose,onE
       }}/>}
     {picker&&onEdit&&<Modal title={t('选择固定模型版本','Choose a fixed model version')} description={t('从模型目录选择已保存版本。','Select a saved version from the model catalogue.')}
       onClose={()=>setPicker(false)} className="as-configuration-dialog">
-      <ResourcePanel api={api} modelsOnly canPlace={false} canAcquire={false} onPlace={()=>{}} onTerrainReady={()=>{}}
+      <ResourcePanel api={api} modelsOnly canPlace={false} onPlace={()=>{}} onTerrainReady={()=>{}}
         onPreview={value=>{if(value)selectCandidate(value.modelVersionId);}}/>
     </Modal>}
   </>;

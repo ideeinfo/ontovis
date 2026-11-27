@@ -85,7 +85,6 @@
 .ov-resource-card .ov-resource-details{border:0;padding:0;margin:8px 0 0}
 .ov-resource-card .ov-resource-actions{gap:6px}.ov-resource-card .ov-resource-actions>.ov-btn{white-space:normal;overflow-wrap:normal;word-break:normal}
 
-.ov-resource-public-entry{padding:8px 10px;border-bottom:1px solid var(--border)}.ov-resource-public-entry .ov-btn{width:100%;white-space:normal;line-height:1.5}
 
 .ov-resource-panel [hidden]{display:none!important}
 

@@ -154,6 +154,7 @@ def configured_site(public, fixture):
         assert latest['sceneRevision']==revision
         expected = deepcopy(target['snapshot']['instances'])
         expected[1]['displayName'] += ' · 编辑验收'
+        expected[1]['placement']['headingDeg'] = (expected[1]['placement']['headingDeg'] + 15) % 360
         assert latest['snapshot']['instances']==expected
         assert fixture.open_ok(target,target['sceneRevision'])['snapshot']==target['snapshot']
 

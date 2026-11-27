@@ -12,9 +12,6 @@ import {RowActions,RowContext,type ListAction} from './ListMenus';
 import type {ProjectRef} from './projectTypes';
 import {TerrainImport} from './TerrainImport';
 import {ImageryPanel} from './ImageryPanel';
-import {PublicGeoDataPanel} from './PublicGeoDataPanel';
-import {publicGeoMessages} from './publicGeoMessages';
-import type {PublicGeoCenter} from './publicGeoForm';
 import {imageryText} from './imageryMessages';
 import type {ImageryVersion,ModelUploadJob} from './resourceTypes';
 import {modelMetadata, privateDenial, ResourceFormError, ResourceRequestGate, ResourceRequestId, resourceFailure,
@@ -23,14 +20,16 @@ import {resourceText} from './resourceMessages';
 import type {LegacyModelCandidate, LegacyModelCatalog, ModelInfoReceipt, ModelInfoTarget, ModelPurpose, ModelThumbnailInfo, ProjectModel, ProjectModelAsset, ProjectModelCatalog, ProjectModelVersion, ProjectModelWrite, TerrainVersion,  ProjectTurbineDefinition} from './resourceTypes';
 import './resourcePanel.css';
 
+export type ResourceTab='models'|'terrains'|'imagery';
+
 export interface Props {
   api:WorkbenchApi;canPlace:boolean;geographic?:boolean;canReplace?:boolean;replaceTargetVersion?:string|null;onReplace?:(version:ProjectModelVersion)=>void;onPlace:(version:ProjectModelVersion)=>void;
   onPreview:(version:ProjectModelVersion|null)=>void;onTerrainReady:(version:TerrainVersion)=>void;
   activeTerrainVersion?:TerrainVersion|null;
-  publicGeoCenter?:PublicGeoCenter;
+  initialTab?:ResourceTab;
   onImageryReady?:(value:ImageryVersion)=>void;
   detailsTarget?:HTMLElement|null;
-  canAcquire?:boolean;modelsOnly?:boolean;onOpenScene?:(sceneId:string,projectRef?:ProjectRef)=>void;
+  modelsOnly?:boolean;onOpenScene?:(sceneId:string,projectRef?:ProjectRef)=>void;
   modelSelection?:ModelResourceSelection|null;onModelSelected?:(value:ModelResourceSelection|null)=>void;
   initialModelInfo?:ModelInfoTarget;
   onModelInfoExit?:(saved?:ModelInfoReceipt)=>void;
@@ -41,10 +40,10 @@ export interface Props {
 const purposes=['equipment','simplified_scene','environment'] as const;
 const jobRunning=(job:ModelUploadJob)=>job.state==='queued'||job.state==='processing';
 
-export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,publicGeoCenter,onImageryReady,geographic=false,modelSelection,onModelSelected,projectCode,onEnterEdit,onPlaceTurbine,initialModelInfo,onModelInfoExit}:Props) {
+export function ResourcePanel({api,canPlace,modelsOnly=false,detailsTarget,onOpenScene,canReplace,replaceTargetVersion,onReplace,onPlace,onPreview,onTerrainReady,activeTerrainVersion,initialTab='models',onImageryReady,geographic=false,modelSelection,onModelSelected,projectCode,onEnterEdit,onPlaceTurbine,initialModelInfo,onModelInfoExit}:Props) {
   const {locale}=usePreferences(),t=(key:Parameters<typeof resourceText>[1])=>resourceText(locale,key);
   const client=useMemo(()=>new SceneApi(api),[api]);
-  const [tab,setTab]=useState<'models'|'terrains'|'imagery'>('models'),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
+  const [tab,setTab]=useState<ResourceTab>(initialTab),[catalog,setCatalog]=useState<ProjectModelCatalog|null>(null);
   const [turbines,setTurbines]=useState<ProjectTurbineDefinition[]>([]);
   const [turbineLoading,setTurbineLoading]=useState(true),[turbineError,setTurbineError]=useState<unknown>(null);
   const [turbineRefresh,setTurbineRefresh]=useState(0);
@@ -52,7 +51,6 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   const [turbineMode,setTurbineMode]=useState<'turbines'|'all'>('turbines');
   const [selectedTurbineUid,setSelectedTurbineUid]=useState<string>('');
   const [representationType,setRepresentationType]=useState<'appearance'|'detailed'>('appearance');
-  const [publicAcquisition,setPublicAcquisition]=useState(false),[resourceRefresh,setResourceRefresh]=useState(0);
   const [query,setQuery]=useState(''),[purpose,setPurpose]=useState<ModelPurpose|''>('');
   const [filters,setFilters]=useState<{q:string;purpose:ModelPurpose|'';state:'active'|'deleted'}>({q:'',purpose:'',state:'active'});
   const latestFilters=useRef(filters);latestFilters.current=filters;const recycled=filters.state==='deleted';
@@ -96,7 +94,6 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
   function clearPrivate() {
     cardIntent.current++;lifecycleGate.cancel();setDeleteTarget(null);setLifecycleBusy(false);setLifecycleError(null);setLifecycleNotice('');
     turbineGate.cancel();setTurbines([]);setTurbineLoading(false);setTurbineError(null);setSelectedTurbineUid('');
-    setPublicAcquisition(false);setResourceRefresh(0);
     catalogGate.cancel();detailGate.cancel();uploadGate.cancel();legacyGate.cancel();importGate.cancel();setCatalog(null);setVersion(null);setAssetId(null);setVersionId('');
     previewCallback.current(null);setUpload(null);setFile(null);setName('');setSource('');setError(null);setUploadError(null);
     setLoading(false);setDetailLoading(false);setUploading(false);setPrivacyEpoch(previous=>previous+1);
@@ -404,7 +401,6 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
       <button id="ov-resource-terrain-tab" role="tab" aria-selected={tab==='terrains'} aria-controls="ov-resource-terrains" onClick={()=>{cardIntent.current++;setTab('terrains');}}>{t('terrains')}</button>
       <button id="ov-resource-imagery-tab" role="tab" aria-selected={tab==='imagery'} aria-controls="ov-resource-imagery" onClick={()=>{cardIntent.current++;setTab('imagery');}}>{imageryText(locale,'imagery')}</button>
     </div>
-    <div hidden={modelsOnly} className="ov-resource-public-entry"><Btn disabled={!canAcquire||denied} onClick={()=>setPublicAcquisition(true)}>{publicGeoMessages[locale].title}</Btn></div>
     <section id="ov-resource-models" role={modelsOnly?undefined:"tabpanel"} aria-label={modelsOnly?t("models"):undefined} aria-labelledby={modelsOnly?undefined:"ov-resource-models-tab"} hidden={tab!=='models'} className="ov-resource-tab-body">
       <div className={modelsOnly?'pm-library-tools':undefined}><form className="ov-resource-search" onSubmit={event=>{event.preventDefault();changeFilters(query,purpose);}}>
         <input aria-label={t('search')} placeholder={t('search')} value={query} maxLength={120} onChange={event=>setQuery(event.target.value)}/>
@@ -509,16 +505,11 @@ export function ResourcePanel({api,canPlace,canAcquire=canPlace,modelsOnly=false
       </details>}
     </section>
     {!modelsOnly&&<><section id="ov-resource-terrains" role="tabpanel" aria-labelledby="ov-resource-terrain-tab" hidden={tab!=='terrains'} className="ov-resource-tab-body">
-      <TerrainImport key={`${privacyEpoch}:${resourceRefresh}`} api={client} writeBlocked={denied} canUse={canPlace} activeTerrainVersion={activeTerrainVersion} onTerrainReady={onTerrainReady} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>
+      <TerrainImport key={privacyEpoch} api={client} writeBlocked={denied} canUse={canPlace} activeTerrainVersion={activeTerrainVersion} onTerrainReady={onTerrainReady} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>
     </section>
     <section id="ov-resource-imagery" role="tabpanel" aria-labelledby="ov-resource-imagery-tab" hidden={tab!=='imagery'} className="ov-resource-tab-body">
-      {tab==='imagery'&&<ImageryPanel key={resourceRefresh} api={client} writeBlocked={denied} canUse={canPlace&&geographic&&!!onImageryReady} onUse={value=>onImageryReady?.(value)} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>}
+      {tab==='imagery'&&<ImageryPanel api={client} writeBlocked={denied} canUse={canPlace&&geographic&&!!onImageryReady} onUse={value=>onImageryReady?.(value)} onWriteDenied={()=>setDenied(true)} onPrivateDenied={clearPrivate}/>}
     </section></>}
-    {publicAcquisition&&<Modal title={publicGeoMessages[locale].title} description={publicGeoMessages[locale].hint} onClose={()=>setPublicAcquisition(false)}>
-      <PublicGeoDataPanel api={api} canWrite={canAcquire&&!denied} onClose={()=>setPublicAcquisition(false)}
-        initialCenter={publicGeoCenter}
-        onImported={result=>{setResourceRefresh(value=>value+1);setTab(result.terrainVersionId?'terrains':'imagery');}}/>
-    </Modal>}
     {deleteTarget&&<ConfirmationDialog title={text('将模型移至回收站？','Move this model to the recycle bin?')}
       subject={deleteTarget.displayName} closeDisabled={lifecycleBusy} onClose={closeDelete}
       description={text(`共 ${deleteTarget.versions.length} 个版本。可从回收站恢复，已使用该模型的场景仍可打开。`,

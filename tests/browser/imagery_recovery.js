@@ -38,6 +38,44 @@ async (page, facts, phase) => {
   check(sceneList.ok()&&(await sceneList.json()).items.some(item=>item.sceneId===facts.sceneId),
     'The project did not return the test scene, HTTP '+sceneList.status());
   await page.getByTestId('scene-open-'+facts.sceneId).click();
+  if(phase==='disconnect'){
+    const left=page.locator('.sw-left');
+    const tabs=left.locator('.sw-tabs').getByRole('tab');
+    await tabs.first().waitFor();
+    check((await tabs.allTextContents()).join('／')==='场景内容／位置／模型资源／项目对象','The location tab is out of order');
+    await left.getByRole('tab',{name:'位置',exact:true}).click();
+    const location=left.getByRole('region',{name:'场景地理位置',exact:true});
+    const [longitude,latitude]=facts.sceneCenter.map(value=>value.toFixed(7));
+    check((await location.locator('dd').allTextContents()).join(',')===`${longitude}°,${latitude}°`,
+      'The position tab does not show the saved scene center');
+    check(await left.getByRole('combobox',{name:'坐标方式',exact:true}).isDisabled(),'View mode can edit instance coordinates');
+
+    await page.route('https://tile.openstreetmap.org/**',route=>route.abort());
+    await page.route('**/api/workbench/public-geodata/job',route=>route.fulfill({status:404,json:{code:'NOT_FOUND_OR_FORBIDDEN'}}));
+    await page.route('**/api/workbench/public-geodata/start',route=>route.fulfill({json:{
+      jobId:'synthetic-acquisition',jobRevision:'ready',state:'ready',stage:'complete',
+      request:route.request().postDataJSON(),results:{terrainVersionId:facts.terrainVersionId},errorCode:null
+    }}));
+    const openAcquisition=()=>button('获取公开地形与影像',location).click();
+    await openAcquisition();
+    const acquisition=page.getByRole('dialog',{name:'获取公开地形与影像',exact:true});
+    const center=acquisition.getByLabel('中心经度',{exact:true});
+    check(await center.inputValue()===longitude&&await acquisition.getByLabel('中心纬度',{exact:true}).inputValue()===latitude,
+      'The acquisition query did not inherit the scene center');
+    await acquisition.getByLabel('资源名称',{exact:true}).fill('合成获取回执');
+    await center.fill(String(Number(longitude)+0.01));
+    await button('获取并加入资源库',acquisition).click();
+    await acquisition.getByRole('status').getByText('资源已加入，返回资源页签采用。',{exact:true}).waitFor();
+    await button('关闭',acquisition.locator('.ov-public-geo-actions')).click();
+    const terrainTab=left.getByRole('tab',{name:'地形',exact:true});
+    await terrainTab.waitFor();
+    check(await terrainTab.getAttribute('aria-selected')==='true','Acquired terrain did not lead back to Terrain resources');
+    await left.getByRole('tab',{name:'位置',exact:true}).click();
+    await openAcquisition();
+    check(await center.inputValue()===longitude,'A different query center overwrote the scene center');
+    await page.keyboard.press('Escape');
+    await acquisition.waitFor({state:'hidden'});
+  }
   await button('布置').click();
   await page.getByRole('tab',{name:'模型资源',exact:true}).click();
   await page.getByRole('tab',{name:'影像',exact:true}).click();

@@ -50,16 +50,40 @@ async (page, facts, phase) => {
     const save = button('保存',toolbar);
     check(await save.isDisabled(),'Opening the editor changed its saved snapshot');
     await page.screenshot({path:'assistant-scene-instance-editor.png'});
+    await button('实例位置',page.locator('.sw-inspector')).click();
+    const position = page.getByRole('tabpanel',{name:'位置',exact:true});
+    const coordinates = position.getByRole('region',{name:'实例位置',exact:true});
+    await position.getByRole('region',{name:'场景地理位置',exact:true})
+      .getByText('未设置地理位置',{exact:true}).waitFor();
+    check(Number(await coordinates.getByLabel('X（米）',{exact:true}).inputValue())===35,
+      'Position settings show a different same-name instance');
+    check(!await page.locator('.sw-inspector').getByLabel('X（米）',{exact:true}).count(),
+      'Placement fields still appear in the inspector');
+    await page.route('https://tile.openstreetmap.org/**',route=>route.abort());
+    await button('获取公开地形与影像',position).click();
+    const acquisition = page.getByRole('dialog',{name:'获取公开地形与影像',exact:true});
+    check(await acquisition.getByLabel('中心经度').inputValue()===''&&await acquisition.getByLabel('中心纬度').inputValue()==='',
+      'The unanchored scene acquired a location from its selected instance');
+    await page.keyboard.press('Escape');
+    await acquisition.waitFor({state:'hidden'});
+    const heading = coordinates.getByLabel('朝向（°）',{exact:true});
+    await heading.fill(String((Number(await heading.inputValue())+15)%360));
+    await button('应用',coordinates).click();
+    await button('锁定位置',coordinates).click();
+    check(await heading.isDisabled()&&await button('应用',coordinates).isDisabled(),'The position lock was ignored');
     const name = instance.getByRole('textbox',{name:'实例名称',exact:true});
     check(await name.inputValue()===facts.instanceName,'Editor displayed a different instance');
     await name.fill(facts.instanceName+' · 编辑验收');
-    await button('应用',page.locator('.sw-position-apply')).click();
+    await name.press('Enter');
+    await coordinates.getByText(facts.instanceName+' · 编辑验收',{exact:true}).waitFor();
+    await button('解锁位置',coordinates).click();
     const [response] = await Promise.all([watch('scenes/save'),save.click()]);
     const sent = response.request().postDataJSON();
     const saved = await response.json();
     check(response.ok()&&sent.expectedSceneRevision===facts.newRevision&&saved.sceneRevision!==facts.newRevision,
       'The human save did not create a new scene revision from the intended head');
-    return {selectedInstance:facts.instanceId,enteredEditor:true,savedRevision:saved.sceneRevision};
+    return {selectedInstance:facts.instanceId,enteredEditor:true,savedRevision:saved.sceneRevision,
+      positionTab:true,positionLock:true,unanchoredQuery:true};
   }
 
   if (phase === 'changed') {
