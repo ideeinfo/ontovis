@@ -140,14 +140,16 @@
 .as-execution-receipt small{display:block}.as-receipt-card{border:0;padding:0;background:none;color:inherit;font:inherit;text-align:left;text-decoration:underline;text-underline-offset:2px;cursor:pointer}.as-receipt-card:disabled{cursor:default}
 .ad-workspace .ad-canvas-row{position:relative}
 .ad-workspace .ad-canvas-row>.ad-assistant-window{position:fixed;inset:auto;z-index:35;max-width:none;min-width:0;border:1px solid var(--borderControl);border-radius:10px;overflow:hidden;box-shadow:0 8px 28px #172d3033}
-.ad-assistant-window>header{gap:6px}
-.as-window-grip,.as-window-resize{border:0;background:none;color:var(--textSecondary);touch-action:none;user-select:none}
-.as-window-grip{flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:3px;text-align:left;cursor:move}
-.as-window-grip svg,.as-window-grip strong{flex:none}.as-window-grip strong{color:var(--text)}.as-window-grip span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px}
+.ad-assistant-window>header{gap:6px;cursor:grab;touch-action:none;user-select:none}
+.ad-assistant-window>header:active{cursor:grabbing}
+.as-window-title{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+.as-window-title svg,.as-window-title strong{flex:none}.as-window-title svg{color:var(--textSecondary)}
+.as-window-title span{margin-inline-start:auto;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px}
+.as-window-resize{border:0;background:none;color:var(--textSecondary);touch-action:none;user-select:none}
 .as-window-resize{position:absolute;bottom:0;z-index:2;display:grid;place-items:center;width:23px;height:23px;padding:0;border-radius:4px}
 .as-window-resize.as-window-resize-left{left:0;cursor:nesw-resize}.as-window-resize.as-window-resize-right{right:0;cursor:nwse-resize}
-.as-window-grip:hover,.as-window-resize:hover{background:var(--surfaceRaised)}
-.as-window-resize:focus-visible{outline:2px solid var(--focus);outline-offset:-3px}
+.as-window-resize:hover{background:var(--surfaceRaised)}
+.ad-assistant-window>header:focus-visible,.as-window-resize:focus-visible{outline:2px solid var(--focus);outline-offset:-3px}
 .ad-assistant-window .as-composer{padding-bottom:18px}.ad-assistant-window .as-composer textarea{min-height:58px}
 .as-previous-turns{padding:8px 0;border-bottom:1px solid var(--borderSubtle);color:var(--textSecondary)}
 .as-previous-turns>summary{cursor:pointer;font-size:12px}

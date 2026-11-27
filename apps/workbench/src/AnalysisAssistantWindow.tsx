@@ -53,37 +53,40 @@ export function AnalysisAssistantWindow({title,en,onClose,children}:{title:strin
   preferred.current=next;
   setBox(next);
  }
- function begin(event:PointerEvent<HTMLButtonElement>,handle:AssistantWindowHandle){
-  if(!box||event.button!==0||drag.current)return;
+ function begin(event:PointerEvent<HTMLElement>,handle:AssistantWindowHandle){
+  if(!box||event.button!==0||!event.isPrimary||drag.current)return;
   event.preventDefault();
   event.currentTarget.setPointerCapture(event.pointerId);
   drag.current={pointer:event.pointerId,handle,x:event.clientX,y:event.clientY,box};
  }
- function move(event:PointerEvent<HTMLButtonElement>){
+ function move(event:PointerEvent<HTMLElement>){
   const value=drag.current;
   if(value?.pointer===event.pointerId)adjust(value.box,value.handle,event.clientX-value.x,event.clientY-value.y);
  }
- function end(event:PointerEvent<HTMLButtonElement>){
+ function end(event:PointerEvent<HTMLElement>){
   if(drag.current?.pointer===event.pointerId){drag.current=null;rememberWindow(preferred.current);}
  }
- function keyboard(event:KeyboardEvent<HTMLButtonElement>,handle:AssistantWindowHandle){
+ function keyboard(event:KeyboardEvent<HTMLElement>,handle:AssistantWindowHandle){
   const delta=assistantWindowKeyDelta(event.key,event.shiftKey);
   if(!box||!delta)return;
   event.preventDefault();
   adjust(box,handle,...delta);
   rememberWindow(preferred.current);
  }
- function grip(handle:AssistantWindowHandle,label:string){
-  return {type:'button' as const,'aria-label':label,title:label,onPointerDown:(event:PointerEvent<HTMLButtonElement>)=>begin(event,handle),
-   onPointerMove:move,onLostPointerCapture:end,onPointerCancel:end,onPointerUp:end,
+ const dragEvents={onPointerMove:move,onLostPointerCapture:end,onPointerCancel:end,onPointerUp:end};
+ function grip(handle:'left'|'right',label:string){
+  return {type:'button' as const,'aria-label':label,title:label,...dragEvents,onPointerDown:(event:PointerEvent<HTMLButtonElement>)=>begin(event,handle),
    onKeyDown:(event:KeyboardEvent<HTMLButtonElement>)=>keyboard(event,handle)};
  }
  const label=t('分析助手','Analysis assistant');
  return <aside ref={windowRef} className="ad-inspector ad-assistant ad-assistant-window" aria-label={label}
   style={box?{left:box.x,top:box.y,width:box.width,height:box.height}:{visibility:'hidden'}}>
-  <header><button className="as-window-grip" {...grip('move',t('移动助手窗口','Move assistant window'))}>
-   <GripHorizontal size={16}/><strong>{label}</strong><span title={title}>{displayText(title)}</span>
-  </button><IconBtn label={t('关闭助手','Close assistant')} onClick={onClose}><X size={16}/></IconBtn></header>
+  <header {...dragEvents} role="group" aria-label={t('移动助手窗口','Move assistant window')} tabIndex={0}
+   onPointerDown={event=>{if(!(event.target as Element).closest('button'))begin(event,'move');}}
+   onKeyDown={event=>{if(event.target===event.currentTarget)keyboard(event,'move');}}>
+   <div className="as-window-title"><GripHorizontal size={16} aria-hidden="true"/><strong>{label}</strong><span title={title}>{displayText(title)}</span></div>
+   <IconBtn label={t('关闭助手','Close assistant')} onClick={onClose}><X size={16}/></IconBtn>
+  </header>
   {children}
   <button className="as-window-resize as-window-resize-left" {...grip('left',t('向左缩放助手窗口','Resize assistant from the left'))}><MoveDiagonal size={13}/></button>
   <button className="as-window-resize as-window-resize-right" {...grip('right',t('向右缩放助手窗口','Resize assistant from the right'))}><MoveDiagonal2 size={13}/></button>

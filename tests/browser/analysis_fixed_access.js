@@ -34,9 +34,9 @@ async (page, facts, phase) => {
       done:()=>wait(done,'Held response did not finish'),deliver,async close(){deliver();await page.unroute(matches,handler);}};
   };
   const title = facts.title;
-  const drag=async (target,dx,dy)=>{
+  const drag=async (target,dx,dy,point)=>{
     const box=await target.boundingBox();
-    const x=box.x+box.width/2,y=box.y+box.height/2;
+    const x=box.x+(point?.x??box.width/2),y=box.y+(point?.y??box.height/2);
     await page.mouse.move(x,y);
     await page.mouse.down();
     await page.mouse.move(x+dx,y+dy,{steps:8});
@@ -582,26 +582,33 @@ async (page, facts, phase) => {
 
     await sendLinked('查找四类资料候选');
     const floating=canvas.locator('.ad-assistant-window');
+    const header=floating.getByRole('group',{name:'移动助手窗口',exact:true});
+    check(await header.getByRole('button').count()===1,'The title bar still includes a separate move button');
     const canvasBefore=await canvas.locator('.ad-canvas').boundingBox();
     const before=(await floating.boundingBox());
-    await drag(button('移动助手窗口',floating),-90,40);
+    await drag(header,-90,40,{x:8,y:7});
     const moved=await floating.boundingBox();
-    check(moved.x<before.x-65&&moved.y>before.y+20,'The floating assistant did not move with its header');
-    const grip=button('移动助手窗口',floating);
-    await drag(grip,8-moved.x,8-moved.y);
+    check(moved.x<before.x-65&&moved.y>before.y+20,'Dragging the title bar padding did not move the assistant');
+    await drag(header.getByText('分析助手',{exact:true}),8-moved.x,8-moved.y);
     const overNavigation=await floating.boundingBox();
     check(overNavigation.x<=10&&overNavigation.y<=10&&overNavigation.x<canvasBefore.x&&overNavigation.y<canvasBefore.y,
       'The assistant could not leave the canvas in both directions');
-    check(await grip.evaluate(node=>{
+    check(await header.evaluate(node=>{
       const rect=node.getBoundingClientRect();
       return node.contains(document.elementFromPoint(rect.left+10,rect.top+rect.height/2));
     }),'The assistant stopped receiving input over the workbench navigation');
+    await header.press('ArrowRight');
+    check(Math.abs((await floating.boundingBox()).x-overNavigation.x-12)<2,'The title bar lost keyboard movement');
+    await header.press('ArrowLeft');
     await drag(button('向右缩放助手窗口',floating),65,-40);
     const resized=await floating.boundingBox();
     check(resized.width>overNavigation.width+40&&resized.height<overNavigation.height-20,'The assistant did not resize outside the canvas');
     const canvasAfter=await canvas.locator('.ad-canvas').boundingBox();
     check(canvasBefore.width===canvasAfter.width&&canvasBefore.height===canvasAfter.height,'Resizing the assistant changed the canvas layout');
-    await drag(grip,before.x-resized.x,before.y-resized.y);
+    const headerBox=await header.boundingBox();
+    await drag(header,before.x-resized.x,before.y-resized.y,{x:headerBox.width-8,y:7});
+    const returned=await floating.boundingBox();
+    check(Math.abs(returned.y-before.y)<2&&returned.x>resized.x+60,'Dragging the padding near the close button did not move the assistant');
     for(const [kind,name] of Object.entries(facts.candidateTitles)){
       const candidate=floating.locator('.ac-material-candidate[data-card-kind="'+kind+'"]').last();
       await candidate.getByText(name,{exact:true}).waitFor();
@@ -663,7 +670,7 @@ async (page, facts, phase) => {
       alarmCategoryFirst:true,unifiedRelatedMaterials:true,assistantDrawingLinked:true,assistantCompoundEdit:true,
       recentAssistantPrompts:true,assistantKeyboard:true,assistantAlarmDisposition:true,assistantCardSelection:true,
       assistantLinkedObjectAndDrawing:true,assistantLinkedDedupAndUndo:true,assistantManualAddAfterZoom:true,assistantAddAll:true,
-      drawingObjectParentPhotos:true,assistantWindowRestored:true,
+      drawingObjectParentPhotos:true,assistantWindowRestored:true,assistantWholeHeaderDrag:true,
       mixedDescendantDrawings:true,sharedPhotoLinkedAfterDrawing:true,toolbarTextSelectionPrevented:true,
       recommendationCardStylesMatchAssistant:true,
       inlinePhotoWithoutControls:true,expandedPhotoControls:true,
